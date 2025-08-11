@@ -499,8 +499,14 @@ class TranscriptManager(BaseTranscriptManager):
         k: int = 10,
     ) -> List[Message]:
         """
-        Return the *k* transcript messages whose **content** embedding is
-        *closest* to the embedding of **text** (cosine similarity).
+        Search the messages based on a general text description for the contents.
+        Specifically, return the *k* transcript messages whose **content** embedding
+        is *closest* to the embedding of **text** (cosine similarity).
+
+        It's always best to use *this tool* when searching for messages with similar
+        semantic context to your reference text. Semantic similarity based on embeddings
+        are *much* more robust and accurate than trying to get an exact match on
+        multi-word substrings for any text-based columns.
 
         Parameters
         ----------
@@ -539,6 +545,11 @@ class TranscriptManager(BaseTranscriptManager):
         """
         Fetch **raw transcript messages** matching an arbitrary Python
         boolean *filter*.
+
+        Do *not* use this tool when searching for messages based on semantic content.
+        Trying to get an exact match on substrings (especially with multiple words)
+        is very brittle, and likely to return no matches. The `search_messages` tool is
+        *much* more robust and accurate when searching for semantic content in messages.
 
         Parameters
         ----------
