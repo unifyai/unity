@@ -728,7 +728,7 @@ async def _async_tool_use_loop_inner(
         """
         meta = assistant_meta.setdefault(
             id(parent_msg),
-            {"original_tool_calls": [], "results_count": 0},
+            {"results_count": 0},
         )
         await _append_msgs([tool_msg])
         insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
@@ -1074,18 +1074,268 @@ async def _async_tool_use_loop_inner(
         lim = norm_tools[t_name].max_concurrent
         return lim is None or _active_count(t_name) < lim
 
-    # ── initial **user** message
-    if isinstance(message, dict):
-        initial_user_msg = message
-    else:
-        initial_user_msg = {"role": "user", "content": message}
+    # Helper: scan transcript for assistant messages that have tool_calls with
+    # missing tool replies (before the next assistant message).
+    def _find_unreplied_assistant_entries() -> list[dict]:
+        findings: list[dict] = []
+        try:
+            for i, m in enumerate(client.messages):
+                if m.get("role") != "assistant":
+                    continue
+                tcs = m.get("tool_calls") or []
+                if not tcs:
+                    continue
+                ids = [tc.get("id") for tc in tcs if isinstance(tc, dict)]
+                if not ids:
+                    continue
+                responded: set[str] = set()
+                j = i + 1
+                while (
+                    j < len(client.messages)
+                    and client.messages[j].get("role") != "assistant"
+                ):
+                    mm = client.messages[j]
+                    if mm.get("role") == "tool":
+                        tcid = mm.get("tool_call_id")
+                        if tcid in ids:
+                            responded.add(tcid)
+                    j += 1
+                missing = [c for c in ids if c not in responded]
+                if missing:
+                    findings.append(
+                        {
+                            "assistant_index": i,
+                            "assistant_msg": m,
+                            "missing": missing,
+                        },
+                    )
+        except Exception:
+            pass
+        return findings
 
-    await _append_msgs([initial_user_msg])
+    # Ensure placeholder tool messages exist for pending tasks. If assistant_msg
+    # is provided, only affects tasks spawned by that assistant turn; otherwise
+    # applies to all pending tasks. Returns the list of call_ids for which a
+    # placeholder was created.
+    async def _ensure_placeholders_for_pending(
+        assistant_msg: Optional[dict] = None,
+        *,
+        reason: str = "",
+        content: Optional[str] = None,
+    ) -> list[str]:
+        created: list[str] = []
+        placeholder_content = (
+            content
+            if content is not None
+            else "Pending… tool call accepted. Working on it."
+        )
+        for _t in list(pending):
+            _inf = task_info.get(_t)
+            if not _inf:
+                continue
+            if (
+                assistant_msg is not None
+                and _inf.get("assistant_msg") is not assistant_msg
+            ):
+                continue
+            if (
+                _inf.get("tool_reply_msg")
+                or _inf.get("continue_msg")
+                or _inf.get("clarify_placeholder")
+            ):
+                continue
 
+            placeholder = {
+                "role": "tool",
+                "tool_call_id": _inf["call_id"],
+                "name": _inf["name"],
+                "content": placeholder_content,
+            }
+            await _insert_after_assistant(_inf["assistant_msg"], placeholder)
+            _inf["tool_reply_msg"] = placeholder
+            created.append(_inf["call_id"])
+
+        return created
+
+    # Helper: schedule a base tool call (shared by main path and backfill)
+    async def _schedule_base_tool_call(
+        asst_msg: dict,
+        *,
+        name: str,
+        args_json: Any,
+        call_id: str,
+        call_idx: int,
+    ) -> None:
+        # Base tool must exist
+        if name not in norm_tools:
+            return
+
+        fn = norm_tools[name].fn
+
+        # Build extra kwargs (chat context, interject/clarification/pause)
+        extra_kwargs: dict = {}
+        if propagate_chat_context:
+            cur_msgs = [m for m in client.messages if not m.get("_ctx_header")]
+            ctx_repr = _chat_context_repr(parent_chat_context, cur_msgs)
+            extra_kwargs["parent_chat_context"] = ctx_repr
+
+        sig = inspect.signature(fn)
+        params = sig.parameters
+        has_varkw = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+
+        sig_accepts_interject_q = "interject_queue" in params or has_varkw
+        sig_accepts_pause_event = "pause_event" in params or has_varkw
+        sig_accepts_clar_qs = (
+            "clarification_up_q" in params and "clarification_down_q" in params
+        ) or has_varkw
+
+        pause_ev: Optional[asyncio.Event] = None
+        if sig_accepts_pause_event:
+            pause_ev = asyncio.Event()
+            pause_ev.set()  # start running
+            extra_kwargs["pause_event"] = pause_ev
+
+        clar_up_q: Optional[asyncio.Queue[str]] = None
+        clar_down_q: Optional[asyncio.Queue[str]] = None
+        if sig_accepts_clar_qs:
+            clar_up_q = asyncio.Queue()
+            clar_down_q = asyncio.Queue()
+            extra_kwargs["clarification_up_q"] = clar_up_q
+            extra_kwargs["clarification_down_q"] = clar_down_q
+
+        sub_q: Optional[asyncio.Queue[str]] = None
+        if sig_accepts_interject_q:
+            sub_q = asyncio.Queue()
+            extra_kwargs["interject_queue"] = sub_q
+
+        # Parse args
+        try:
+            call_args = (
+                json.loads(args_json)
+                if isinstance(args_json, str)
+                else (args_json or {})
+            )
+        except Exception:
+            call_args = {}
+
+        # Filter extras to match fn signature
+        sig = inspect.signature(fn)
+        params = sig.parameters
+        has_varkw = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        filtered_extras = {
+            k: v for k, v in extra_kwargs.items() if k in params or has_varkw
+        }
+
+        # Keep only supported call args
+        allowed_call_args = {k: v for k, v in call_args.items() if k in params}
+        merged_kwargs = {**allowed_call_args, **filtered_extras}
+
+        # Build coroutine
+        if asyncio.iscoroutinefunction(fn):
+            coro = fn(**merged_kwargs)
+        else:
+            coro = asyncio.to_thread(fn, **merged_kwargs)
+
+        call_dict = {
+            "id": call_id,
+            "type": "function",
+            "function": {"name": name, "arguments": args_json},
+        }
+
+        t = asyncio.create_task(coro, name=f"ToolCall_{name}")
+        pending.add(t)
+        task_info[t] = {
+            "name": name,
+            "call_id": call_id,
+            "assistant_msg": asst_msg,
+            "call_dict": call_dict,
+            "call_idx": call_idx,
+            "is_interjectable": sig_accepts_interject_q,
+            "interject_q": sub_q,
+            "chat_ctx": extra_kwargs.get("parent_chat_context"),
+            "clar_up_q": clar_up_q,
+            "clar_down_q": clar_down_q,
+            "pause_event": pause_ev,
+        }
+
+        if clar_up_q is not None:
+            clarification_channels[call_id] = (
+                clar_up_q,
+                clar_down_q,
+            )
+
+        # Ensure assistant meta exists for deterministic insertion ordering
+        assistant_meta.setdefault(id(asst_msg), {"results_count": 0})
+
+    # Helper: schedule a subset of tool_calls on a past assistant message and
+    # insert placeholders immediately. Skips already-scheduled/finished ids.
+    async def _schedule_missing_for_message(
+        asst_msg: dict,
+        only_ids: set[str],
+    ) -> list[str]:
+        scheduled: list[str] = []
+        try:
+            tool_calls = asst_msg.get("tool_calls") or []
+            for idx, call in enumerate(tool_calls):
+                cid = call.get("id")
+                if cid not in only_ids:
+                    continue
+
+                # Skip if already pending or completed
+                if any(inf.get("call_id") == cid for _t, inf in task_info.items()):
+                    continue
+                if cid in completed_results:
+                    continue
+
+                name = call["function"]["name"]
+                args_json = call["function"].get("arguments", "{}")
+
+                # Handle dynamic helpers similarly to main path
+                if (
+                    name.startswith("continue_")
+                    or name.startswith("stop_")
+                    or name.startswith("pause_")
+                    or name.startswith("resume_")
+                    or name.startswith("clarify_")
+                    or name.startswith("interject_")
+                ):
+                    # We don't auto-trigger helpers here; they are orchestration tools.
+                    scheduled.append(cid)
+                    continue
+
+                # Base tool: locate function
+                if name not in norm_tools:
+                    scheduled.append(cid)
+                    continue
+
+                await _schedule_base_tool_call(
+                    asst_msg,
+                    name=name,
+                    args_json=args_json,
+                    call_id=cid,
+                    call_idx=idx,
+                )
+                scheduled.append(cid)
+        except Exception:
+            pass
+        # Ensure placeholders are present for backfilled items
+        try:
+            await _ensure_placeholders_for_pending(
+                assistant_msg=asst_msg,
+                reason="backfill",
+            )
+        except Exception:
+            pass
+        return scheduled
+
+    # Initialise loop state early so preflight backfill can schedule tasks
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
-    # How many base-tool calls have actually been launched so far?
-    total_tool_calls_made: int = 0
+    total_tool_calls_made: int = 0  # base-tool calls actually launched
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
     clarification_channels: Dict[
         str,
@@ -1093,9 +1343,27 @@ async def _async_tool_use_loop_inner(
     ] = {}
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
+    step_index: int = 0  # per assistant turn
 
-    # per-turn index (incremented each time the assistant speaks)
-    step_index: int = 0
+    # Preflight repair: backfill any pre-existing assistant tool_calls without replies
+    try:
+        unreplied = _find_unreplied_assistant_entries()
+        if unreplied:
+            # backfill for all such assistant messages (oldest → newest)
+            for entry in unreplied:
+                amsg = entry["assistant_msg"]
+                missing_ids = set(entry["missing"])
+                await _schedule_missing_for_message(amsg, missing_ids)
+    except Exception:
+        pass
+
+    # ── initial **user** message
+    if isinstance(message, dict):
+        initial_user_msg = message
+    else:
+        initial_user_msg = {"role": "user", "content": message}
+
+    await _append_msgs([initial_user_msg])
 
     # ── helper: graceful early-exit when limits are hit ────────────────────
     async def _handle_limit_reached(reason: str) -> str:
@@ -1216,6 +1484,24 @@ async def _async_tool_use_loop_inner(
                     return await _handle_limit_reached(
                         f"max_steps ({max_steps}) exceeded",
                     )
+
+            # 0-γ. Repair any outstanding assistant tool_calls missing replies
+            #      before we allow new user interjections to be appended.
+            try:
+                unreplied = _find_unreplied_assistant_entries()
+                # Only consider the very latest assistant with missing replies first
+                if unreplied:
+                    last_problem = unreplied[-1]
+                    amsg = last_problem["assistant_msg"]
+                    missing_ids = set(last_problem["missing"])
+                    # Skip if we already scheduled for this assistant turn
+                    if id(amsg) not in assistant_meta:
+                        backfilled = await _schedule_missing_for_message(
+                            amsg,
+                            missing_ids,
+                        )
+            except Exception:
+                pass
 
             # ── 0. Drain *all* queued interjections, allowed at any time ──
             # NOTE: We must do this *before* waiting on tool completion so a
@@ -1363,6 +1649,14 @@ async def _async_tool_use_loop_inner(
             # ── B: wait for remaining tools before asking the LLM again,
             # unless the model already deserves a turn
             if pending and not llm_turn_required:
+                # Ensure placeholders exist for any pending calls before the next assistant turn
+                await _ensure_placeholders_for_pending(
+                    reason="pre_llm_wait",
+                    content=(
+                        "Still running… you can use any of the available helper tools "
+                        "to interact with this tool call while it is in progress."
+                    ),
+                )
                 continue  # still waiting for other tool tasks
 
             # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
@@ -1696,34 +1990,13 @@ async def _async_tool_use_loop_inner(
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
-            for _task in list(pending):
-                inf = task_info[_task]
-                if (
-                    inf.get("tool_reply_msg")
-                    or inf.get("continue_msg")
-                    or inf.get("clarify_placeholder")
-                ):
-                    continue  # already covered
-
-                name = inf["name"]
-                call_id = inf["call_id"]
-                arg_json = inf["call_dict"]["function"]["arguments"]
-                asst_msg = inf["assistant_msg"]
-                meta = assistant_meta[id(asst_msg)]
-
-                placeholder = {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "name": name,
-                    "content": (
-                        "Still running… you can use any of the available helper tools "
-                        "to interact with this tool call while it is in progress."
-                    ),
-                }
-                await _insert_after_assistant(asst_msg, placeholder)
-
-                # remember so we can patch later
-                inf["tool_reply_msg"] = placeholder
+            await _ensure_placeholders_for_pending(
+                reason="pre_llm_merge_helpers",
+                content=(
+                    "Still running… you can use any of the available helper tools "
+                    "to interact with this tool call while it is in progress."
+                ),
+            )
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
             tmp_tools = visible_base_tools_schema + [
@@ -1837,7 +2110,12 @@ async def _async_tool_use_loop_inner(
             await _to_event_bus(msg)
 
             if log_steps:
-                LOGGER.info(f"🤖 [{loop_id}] {json.dumps(msg, indent=4)}\n")
+                try:
+                    LOGGER.info(f"🤖 [{loop_id}] {json.dumps(msg, indent=4)}\n")
+                except Exception:
+                    LOGGER.info(
+                        f"🤖 [{loop_id}] Assistant message appended (unserializable)",
+                    )
 
             # ── timeout guard (post-LLM) ───────────────────────────────
             if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
@@ -1885,7 +2163,7 @@ async def _async_tool_use_loop_inner(
             # where we wait for the **first** task / cancel / interjection.
             if msg["tool_calls"]:
 
-                original_tool_calls: list = []
+                pass  # removed: original_tool_calls collector no longer used
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
@@ -2136,7 +2414,7 @@ async def _async_tool_use_loop_inner(
                             )  # down-queue
                             # ✔️ the tool is un-blocked – start watching it again
                             for _t, _inf in task_info.items():
-                                if _call_id in inf["call_id"]:
+                                if call_id in _inf["call_id"]:
                                     _inf["waiting_for_clarification"] = False
                                     break
                         tool_reply_msg = {
@@ -2225,159 +2503,92 @@ async def _async_tool_use_loop_inner(
                     # first check any dynamic helpers we generated for long-running handles
                     if name in dynamic_tools:
                         fn = dynamic_tools[name]
+
+                        # ── build **extra** kwargs (chat context + queue) for dynamic helper ──
+                        extra_kwargs: dict = {}
+                        if propagate_chat_context:
+                            cur_msgs = [
+                                m for m in client.messages if not m.get("_ctx_header")
+                            ]
+                            ctx_repr = _chat_context_repr(parent_chat_context, cur_msgs)
+                            extra_kwargs["parent_chat_context"] = ctx_repr
+
+                        sig = inspect.signature(fn)
+                        params = sig.parameters
+                        has_varkw = any(
+                            p.kind == inspect.Parameter.VAR_KEYWORD
+                            for p in params.values()
+                        )
+                        filtered_extras = {
+                            k: v
+                            for k, v in extra_kwargs.items()
+                            if k in params or has_varkw
+                        }
+                        allowed_call_args = {
+                            k: v for k, v in args.items() if k in params
+                        }
+                        merged_kwargs = {**allowed_call_args, **filtered_extras}
+
+                        if asyncio.iscoroutinefunction(fn):
+                            coro = fn(**merged_kwargs)
+                        else:
+                            coro = asyncio.to_thread(fn, **merged_kwargs)
+
+                        call_dict = {
+                            "id": call["id"],
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": call["function"]["arguments"],
+                            },
+                        }
+                        # original_tool_calls removed
+
+                        t = asyncio.create_task(coro, name=f"ToolCall_{name}")
+                        pending.add(t)
+                        task_info[t] = {
+                            "name": name,
+                            "call_id": call["id"],
+                            "assistant_msg": msg,
+                            "call_dict": call_dict,
+                            "call_idx": idx,
+                            "is_interjectable": False,
+                            "interject_q": None,
+                            "chat_ctx": extra_kwargs.get("parent_chat_context"),
+                            "clar_up_q": None,
+                            "clar_down_q": None,
+                            "pause_event": None,
+                        }
                     else:
-                        fn = norm_tools[name].fn
                         # ⇢ counts only "real" (base) tool invocations
                         total_tool_calls_made += 1
 
-                    # ── build **extra** kwargs (chat context + queue) ───
-                    extra_kwargs: dict = {}
-
-                    # ------- build nested chat context --------------------
-                    # Combine any *inherited* context with the messages of
-                    # this loop, but strip the synthetic system header
-                    # (marked `_ctx_header`) so it isn't duplicated further
-                    # down the call-stack.
-                    if propagate_chat_context:
-                        cur_msgs = [
-                            m for m in client.messages if not m.get("_ctx_header")
-                        ]
-                        ctx_repr = _chat_context_repr(
-                            parent_chat_context,
-                            cur_msgs,
-                        )
-                        extra_kwargs["parent_chat_context"] = ctx_repr
-
-                    # ── interjection capability (implicit) ─────────────
-                    sig = inspect.signature(fn)
-                    params = sig.parameters
-                    has_varkw = any(
-                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-                    )
-
-                    sig_accepts_interject_q = "interject_queue" in params or has_varkw
-                    sig_accepts_pause_event = "pause_event" in params or has_varkw
-
-                    # ── dedicated pause/resume event (optional) ────────────────────
-                    pause_ev: Optional[asyncio.Event] = None
-                    if sig_accepts_pause_event:
-                        pause_ev = asyncio.Event()
-                        pause_ev.set()  # start *running*
-                        extra_kwargs["pause_event"] = pause_ev
-
-                    # ── clarification capability (implicit) ─────────────
-                    sig_accepts_clar_qs = (
-                        "clarification_up_q" in params
-                        and "clarification_down_q" in params
-                    ) or has_varkw
-
-                    # sanity: must provide *both* queues or neither
-                    if (
-                        ("clarification_up_q" in params)
-                        ^ ("clarification_down_q" in params)
-                    ) and not has_varkw:
-                        raise TypeError(
-                            f"Tool {name!r} provides only one of "
-                            "'clarification_up_q' / 'clarification_down_q'. "
-                            "Both are required for clarification support.",
+                        # Use shared helper for base tools
+                        await _schedule_base_tool_call(
+                            msg,
+                            name=name,
+                            args_json=call["function"]["arguments"],
+                            call_id=call["id"],
+                            call_idx=idx,
                         )
 
-                    sub_q: Optional[asyncio.Queue[str]] = None
-                    is_interj = sig_accepts_interject_q  # may be upgraded later
-                    # ── per-call clarification queues (optional) ─────────
-                    clar_up_q: Optional[asyncio.Queue[str]] = None
-                    clar_down_q: Optional[asyncio.Queue[str]] = None
-                    # Always provide queues when the tool supports them – the LLM
-                    # never passes them explicitly anymore.
-                    if sig_accepts_clar_qs:
-                        clar_up_q = asyncio.Queue()
-                        clar_down_q = asyncio.Queue()
-                        extra_kwargs["clarification_up_q"] = clar_up_q
-                        extra_kwargs["clarification_down_q"] = clar_down_q
-                    if sig_accepts_interject_q:
-                        sub_q = asyncio.Queue()
-                        extra_kwargs["interject_queue"] = sub_q
-
-                    # ---- filter extras to match fn signature ----------
-                    sig = inspect.signature(fn)
-                    params = sig.parameters
-                    has_varkw = any(
-                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-                    )
-
-                    filtered_extras = {
-                        k: v
-                        for k, v in extra_kwargs.items()
-                        if k in params or has_varkw
-                    }
-
-                    # 1️⃣ re-fetch the real signature of the chosen fn
-                    sig = inspect.signature(fn)
-                    params = sig.parameters
-
-                    # 2️⃣ only keep those caller-supplied args the fn actually declares
-                    allowed_call_args = {k: v for k, v in args.items() if k in params}
-
-                    # 3️⃣ filter any extra_kwargs the same way
-                    has_varkw = any(
-                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-                    )
-                    filtered_extras = {
-                        k: v
-                        for k, v in extra_kwargs.items()
-                        if k in params or has_varkw
-                    }
-
-                    # 4️⃣ finally merge
-                    merged_kwargs = {**allowed_call_args, **filtered_extras}
-
-                    # avoid double-passing the queue if the model already
-                    # supplied an `interject_queue` argument
-                    if "interject_queue" in args and sig_accepts_interject_q:
-                        merged_kwargs["interject_queue"] = sub_q
-
-                    if asyncio.iscoroutinefunction(fn):
-                        coro = fn(**merged_kwargs)
-                    else:
-                        coro = asyncio.to_thread(fn, **merged_kwargs)
-
-                    call_dict = {
-                        "id": call["id"],
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": call["function"]["arguments"],
-                        },
-                    }
-                    original_tool_calls.append(call_dict)
-
-                    t = asyncio.create_task(coro, name=f"ToolCall_{name}")
-                    pending.add(t)
-                    task_info[t] = {
-                        "name": name,
-                        "call_id": call["id"],
-                        "assistant_msg": msg,
-                        "call_dict": call_dict,
-                        "call_idx": idx,
-                        "is_interjectable": is_interj,  # may later become True automatically
-                        "interject_q": sub_q,
-                        "chat_ctx": extra_kwargs.get("parent_chat_context"),
-                        "clar_up_q": clar_up_q,
-                        "clar_down_q": clar_down_q,
-                        "pause_event": pause_ev,
-                    }
-
-                    if clar_up_q is not None:
-                        clarification_channels[call["id"]] = (
-                            clar_up_q,
-                            clar_down_q,
-                        )
-
-                # metadata for orderly insertion of results
+                # metadata for orderly insertion
                 assistant_meta[id(msg)] = {
-                    "original_tool_calls": original_tool_calls,
                     "results_count": 0,
                 }
+
+                # Immediately insert placeholder tool replies for every newly scheduled call
+                #  to satisfy API ordering even if a user interjection arrives instantly.
+                try:
+                    await _ensure_placeholders_for_pending(
+                        assistant_msg=msg,
+                        reason="post_schedule_immediate",
+                        content="Pending… tool call accepted. Working on it.",
+                    )
+                except Exception as _ph_exc:
+                    LOGGER.error(
+                        f"Failed to insert immediate placeholders: {_ph_exc!r}",
+                    )
 
                 continue  # finished scheduling tools, back to the very top
 
@@ -2642,7 +2853,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     # -- public API -----------------------------------------------------------
     @functools.wraps(SteerableToolHandle.interject, updated=())
     async def interject(self, message: str) -> None:
-        LOGGER.info(f"��️ [{self._loop_id}] Interject requested: {message}")
+        LOGGER.info(f"️ [{self._loop_id}] Interject requested: {message}")
         if self._delegate is not None:
             await self._delegate.interject(message)
             return
