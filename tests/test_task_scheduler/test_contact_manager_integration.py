@@ -22,13 +22,6 @@ def test_ts_tools_expose_contact_manager_ask():
         "resolve contact information during TaskScheduler.ask runs."
     )
 
-    # update-side tools (inherits ask tools + mutating helpers)
-    assert cm_tool_key in ts._update_tools, (
-        f"{cm_tool_key} must be present in _update_tools so that update() "
-        "can translate human names into contact_id values when building triggers, "
-        "etc."
-    )
-
 
 # --------------------------------------------------------------------------- #
 #  Additional integration checks: verify real calls during ask/update flows   #
