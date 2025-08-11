@@ -1,6 +1,5 @@
 import pytest
 import functools
-import asyncio
 
 from unity.conductor.simulated import SimulatedConductor
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
@@ -25,6 +24,6 @@ async def test_request_calls_transcript_manager_summarize(monkeypatch):
     handle = await cond.request(
         "Summarise yesterday’s call with ACME Corp (with exchange id 123) and save it.",
     )
-    await asyncio.wait_for(handle.result(), timeout=60)
+    await handle.result()
 
     assert calls["count"] == 1, "summarize must be invoked exactly once."

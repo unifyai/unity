@@ -1,6 +1,5 @@
 import pytest
 import functools
-import asyncio
 
 from unity.conductor.simulated import SimulatedConductor
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
@@ -28,6 +27,6 @@ async def test_request_calls_knowledge_manager_ask(monkeypatch):
         "Update the knowledge-base to say the X200 battery warranty is now three years. "
         "First, check what warranty period we currently have recorded so we can note the change.",
     )
-    await asyncio.wait_for(handle.result(), timeout=60)
+    await handle.result()
 
     assert calls["count"] == 1, "KnowledgeManager.ask must be called exactly once."

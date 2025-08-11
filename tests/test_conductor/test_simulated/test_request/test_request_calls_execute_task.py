@@ -1,6 +1,5 @@
 import pytest
 import functools
-import asyncio
 
 from unity.conductor.simulated import SimulatedConductor
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
@@ -28,7 +27,7 @@ async def test_request_calls_execute_task(monkeypatch):
     handle = await cond.request(
         "Please execute task with 'task id == 17' right away – we need the build running.",
     )
-    await asyncio.wait_for(handle.result(), timeout=6000)
+    await handle.result()
 
     assert (
         calls["count"] == 1

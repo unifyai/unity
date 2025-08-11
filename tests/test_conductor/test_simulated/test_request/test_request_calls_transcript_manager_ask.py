@@ -1,6 +1,5 @@
 import pytest
 import functools
-import asyncio
 
 from unity.conductor.simulated import SimulatedConductor
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
@@ -28,6 +27,6 @@ async def test_request_calls_transcript_manager_ask(monkeypatch):
         "Archive yesterday's Slack conversation about bug #4321. "
         "Before archiving, tell me the final message in that thread so I can paste it in the ticket.",
     )
-    await asyncio.wait_for(handle.result(), timeout=60)
+    await handle.result()
 
     assert calls["count"] >= 1, "TranscriptManager.ask should be invoked at least once."

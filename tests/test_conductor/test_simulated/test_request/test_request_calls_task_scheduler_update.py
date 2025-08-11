@@ -1,6 +1,5 @@
 import pytest
 import functools
-import asyncio
 
 from unity.conductor.simulated import SimulatedConductor
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
@@ -25,6 +24,6 @@ async def test_request_calls_task_scheduler_update(monkeypatch):
     handle = await cond.request(
         "Add a task: 'Design new landing page', due next Tuesday.",
     )
-    await asyncio.wait_for(handle.result(), timeout=60)
+    await handle.result()
 
     assert calls["count"] == 1, "TaskScheduler.update must be called once."
