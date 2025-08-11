@@ -138,7 +138,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
 
         # Retrieve contact info for clearer context (run in thread to avoid nested loop)
         contacts = await asyncio.to_thread(
-            self._contact_manager._search_contacts,
+            self._contact_manager._filter_contacts,
             filter=f"contact_id == {contact_id}",
             limit=1,
         )
@@ -214,7 +214,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
         # ----------------------------------------------------------------
         try:
             contacts = await asyncio.to_thread(
-                self._contact_manager._search_contacts,
+                self._contact_manager._filter_contacts,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
             )
@@ -304,7 +304,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
 
         # Retrieve current policy & contact label (thread-safe)
         contacts = await asyncio.to_thread(
-            self._contact_manager._search_contacts,
+            self._contact_manager._filter_contacts,
             filter=f"contact_id == {contact_id}",
             limit=1,
         )

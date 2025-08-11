@@ -1374,14 +1374,14 @@ class TranscriptGenerator:
                 first_name = name.split(" ")[0].lower()
 
                 # Attempt 1: exact case-insensitive match
-                match = cm._search_contacts(
+                match = cm._filter_contacts(
                     filter=f"first_name.lower() == '{first_name}'",
                     limit=1,
                 )
 
                 # Attempt 2: prefix match (e.g. 'dan' → 'daniel') if nothing found
                 if not match:
-                    match = cm._search_contacts(
+                    match = cm._filter_contacts(
                         filter=f"first_name.lower().startswith('{first_name}')",
                         limit=1,
                     )
@@ -1657,7 +1657,7 @@ class TranscriptGenerator:
 
         try:
             cm = self._tm._contact_manager  # type: ignore[attr-defined]
-            existing = cm._search_contacts(limit=1000)
+            existing = cm._filter_contacts(limit=1000)
         except Exception:
             existing = []  # graceful fallback
 

@@ -101,7 +101,7 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         """
 
     @abstractmethod
-    def _search_contacts(
+    def _filter_contacts(
         self,
         *,
         filter: Optional[str] = None,

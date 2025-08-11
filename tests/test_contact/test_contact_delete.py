@@ -19,13 +19,13 @@ def test_delete_contact_private():
 
     cid = cm._create_contact(first_name="Eve")["details"]["contact_id"]
     # Ensure contact exists before deletion
-    assert cm._search_contacts(filter=f"contact_id == {cid}"), "Contact creation failed"
+    assert cm._filter_contacts(filter=f"contact_id == {cid}"), "Contact creation failed"
 
     cm._delete_contact(contact_id=cid)
 
     # Verify contact is gone
     assert (
-        len(cm._search_contacts(filter=f"contact_id == {cid}")) == 0
+        len(cm._filter_contacts(filter=f"contact_id == {cid}")) == 0
     ), "Contact should be deleted via _delete_contact"
 
 
@@ -62,5 +62,5 @@ async def test_update_delete_contact_via_nl():
     handle = await cm.update(f"Please delete contact ID {cid}.")
     await handle.result()
 
-    remaining = cm._search_contacts(filter=f"contact_id == {cid}")
+    remaining = cm._filter_contacts(filter=f"contact_id == {cid}")
     assert len(remaining) == 0, "Contact should be deleted after NL update request"

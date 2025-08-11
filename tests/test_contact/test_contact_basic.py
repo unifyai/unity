@@ -15,7 +15,7 @@ def test_create_contact():
 
     # Exclude both the built-in assistant (id 0) *and* the default user (id 1)
     user_contacts = [
-        c for c in contact_manager._search_contacts() if c.contact_id not in {0, 1}
+        c for c in contact_manager._filter_contacts() if c.contact_id not in {0, 1}
     ]
 
     assert len(user_contacts) == 1, "Exactly one user contact should have been created"
@@ -48,7 +48,7 @@ def test_update_contact():
 
     # check (exclude assistant)
     user_contacts = [
-        c for c in contact_manager._search_contacts() if c.contact_id not in (0, 1)
+        c for c in contact_manager._filter_contacts() if c.contact_id not in (0, 1)
     ]
     assert len(user_contacts) == 1
     contact = user_contacts[0]
@@ -62,7 +62,7 @@ def test_update_contact():
     )
 
     user_contacts = [
-        c for c in contact_manager._search_contacts() if c.contact_id not in (0, 1)
+        c for c in contact_manager._filter_contacts() if c.contact_id not in (0, 1)
     ]
     assert len(user_contacts) == 1
     contact = user_contacts[0]
@@ -83,7 +83,7 @@ def test_create_contacts():
         first_name="Dan",
     )
     user_contacts = [
-        c for c in contact_manager._search_contacts() if c.contact_id not in (0, 1)
+        c for c in contact_manager._filter_contacts() if c.contact_id not in (0, 1)
     ]
     assert len(user_contacts) == 1
     contact = user_contacts[0]
@@ -96,7 +96,7 @@ def test_create_contacts():
         response_policy=custom_policy,
     )
     user_contacts = [
-        c for c in contact_manager._search_contacts() if c.contact_id not in (0, 1)
+        c for c in contact_manager._filter_contacts() if c.contact_id not in (0, 1)
     ]
     assert len(user_contacts) == 2
     tom_contact = next(c for c in user_contacts if c.first_name == "Tom")
@@ -137,14 +137,14 @@ def test_system_contacts_respond_to_true():
     """Assistant (id 0) and default user (id 1) should have respond_to == True."""
     cm = ContactManager()
 
-    assistant = cm._search_contacts(filter="contact_id == 0")
+    assistant = cm._filter_contacts(filter="contact_id == 0")
     assert assistant, "Assistant contact (id 0) must exist"
     assert (
         assistant[0].respond_to is True
     ), "Assistant should default to respond_to=True"
     assert assistant[0].response_policy == ""
 
-    user = cm._search_contacts(filter="contact_id == 1")
+    user = cm._filter_contacts(filter="contact_id == 1")
     assert user, "Default user contact (id 1) must exist"
     assert user[0].respond_to is True, "User should default to respond_to=True"
 

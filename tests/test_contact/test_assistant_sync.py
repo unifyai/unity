@@ -63,7 +63,7 @@ def test_dummy_assistant_created(monkeypatch):
 
     cm = ContactManager()
 
-    assistants = cm._search_contacts(filter="contact_id == 0")
+    assistants = cm._filter_contacts(filter="contact_id == 0")
     assert len(assistants) == 1, "Exactly one assistant contact (ID 0) should exist"
 
     a = assistants[0]
@@ -98,7 +98,7 @@ def test_real_assistant_synced(monkeypatch):
 
     cm = ContactManager()
 
-    assistants = cm._search_contacts(filter="contact_id == 0")
+    assistants = cm._filter_contacts(filter="contact_id == 0")
     assert len(assistants) == 1
 
     a = assistants[0]

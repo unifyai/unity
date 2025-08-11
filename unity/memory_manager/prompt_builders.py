@@ -47,7 +47,7 @@ def _assistant_name() -> str:
         from unity.contact_manager.contact_manager import ContactManager  # noqa: WPS433
 
         cm = ContactManager()
-        assist = cm._search_contacts(filter="contact_id == 0", limit=1)
+        assist = cm._filter_contacts(filter="contact_id == 0", limit=1)
         if assist:
             a = assist[0]
             name = " ".join(p for p in [a.first_name, a.surname] if p).strip()

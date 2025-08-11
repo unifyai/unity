@@ -70,7 +70,7 @@ class ScenarioBuilderContacts:
             if not contact_data.get("email_address"):
                 return None
 
-            existing_contacts = self.cm._search_contacts(
+            existing_contacts = self.cm._filter_contacts(
                 filter=f"email_address == '{contact_data['email_address']}'",
             )
             if existing_contacts:
@@ -105,7 +105,7 @@ class ScenarioBuilderContacts:
         for contact_data in _CONTACTS_DATA:
             # Check if contact already exists
             if contact_data.get("email_address"):
-                existing_contacts = self.cm._search_contacts(
+                existing_contacts = self.cm._filter_contacts(
                     filter=f"email_address == '{contact_data['email_address']}'",
                 )
                 if existing_contacts:

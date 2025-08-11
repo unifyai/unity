@@ -57,7 +57,7 @@ async def test_request_multi_step_workflow(
     await update_handle.result()
 
     # Programmatic check
-    carlos_contact = cm._search_contacts(filter=f"contact_id == {carlos_id}")[0]
+    carlos_contact = cm._filter_contacts(filter=f"contact_id == {carlos_id}")[0]
     assert carlos_contact.description == "Lead from GlobalCorp"
 
     # Step 2: Create a task based on the update
