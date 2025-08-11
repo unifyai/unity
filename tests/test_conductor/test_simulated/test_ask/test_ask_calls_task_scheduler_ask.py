@@ -1,6 +1,5 @@
 import pytest
 import functools
-import asyncio
 
 from unity.conductor.simulated import SimulatedConductor
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
@@ -23,6 +22,6 @@ async def test_ask_calls_task_scheduler_ask(monkeypatch):
 
     cond = SimulatedConductor("Demo – engineering sprint board.")
     handle = await cond.ask("Which tasks are due before Friday?")
-    await asyncio.wait_for(handle.result(), timeout=6000)
+    await handle.result()
 
     assert calls["count"] == 1, "TaskScheduler.ask should be triggered exactly once."

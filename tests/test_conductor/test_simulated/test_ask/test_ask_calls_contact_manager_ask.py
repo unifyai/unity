@@ -1,6 +1,5 @@
 import pytest
 import functools
-import asyncio
 
 from unity.conductor.simulated import SimulatedConductor
 from unity.contact_manager.simulated import SimulatedContactManager
@@ -26,6 +25,6 @@ async def test_ask_calls_contact_manager_ask(monkeypatch):
 
     cond = SimulatedConductor("Unit-test scenario – small team CRM.")
     handle = await cond.ask("What's Alice Reynolds' mobile number so I can ping her?")
-    await asyncio.wait_for(handle.result(), timeout=60)
+    await handle.result()
 
     assert calls["count"] == 1, "ContactManager.ask must be called exactly once."

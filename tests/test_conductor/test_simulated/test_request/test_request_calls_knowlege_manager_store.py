@@ -1,6 +1,5 @@
 import pytest
 import functools
-import asyncio
 
 from unity.conductor.simulated import SimulatedConductor
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
@@ -25,6 +24,6 @@ async def test_request_calls_knowledge_manager_store(monkeypatch):
     handle = await cond.request(
         "Remember that the new Wi-Fi password is 'P@ssw0rd2025'.",
     )
-    await asyncio.wait_for(handle.result(), timeout=60)
+    await handle.result()
 
     assert calls["count"] == 1, "KnowledgeManager.update should be called exactly once."

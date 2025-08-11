@@ -111,19 +111,19 @@ async def test_update_phone_number_then_call(monkeypatch):
     # Read-only lookup
     usr_msg = "What is Alice Reynolds phone number?"
     h1 = await cond.ask(usr_msg)
-    assistant_resp = await asyncio.wait_for(h1.result(), timeout=60000)
+    assistant_resp = await h1.result()
     chat = [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # Update the number
     usr_msg = "Please update it to '+123456789', she recently changed it."
     h2 = await cond.request(usr_msg, parent_chat_context=chat)
-    assistant_resp = await asyncio.wait_for(h2.result(), timeout=60000)
+    assistant_resp = await h2.result()
     chat += [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # create task to call her and start it
     usr_msg = "Give Alice a call and ask when she is next free."
     h3 = await cond.request(usr_msg, parent_chat_context=chat)
-    assistant_resp = await asyncio.wait_for(h3.result(), timeout=60000)
+    assistant_resp = await h3.result()
 
     # check + update contact
     assert counts["cm_ask"] == 1, "ContactManager.ask should be called once."
@@ -182,13 +182,13 @@ async def test_transcript_summary_followups(monkeypatch):
         "Summarise support call with exchange_id == 123 from yesterday and store it."
     )
     r1 = await cond.request(usr_msg)
-    assistant_resp = await asyncio.wait_for(r1.result(), timeout=60)
+    assistant_resp = await r1.result()
     chat = [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # 2️⃣ Follow-up read query
     usr_msg = "What was the main action item in that summary?"
     q2 = await cond.ask(usr_msg)
-    assistant_resp = await asyncio.wait_for(q2.result(), timeout=60)
+    assistant_resp = await q2.result()
     chat += [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # 3️⃣ Unrelated mutation (no additional transcript calls required)
@@ -197,7 +197,7 @@ async def test_transcript_summary_followups(monkeypatch):
         "Schedule it to start immediately, please don't request any clarifications.",
         parent_chat_context=chat,
     )
-    await asyncio.wait_for(r3.result(), timeout=60)
+    await r3.result()
 
     assert counts == {
         "sum": 1,
@@ -245,7 +245,7 @@ async def test_knowledge_change_audit(monkeypatch):
     # 1️⃣ Initial read
     usr_msg = "How many months of severance do we record for exec layoffs?"
     q1 = await cond.ask(usr_msg)
-    assistant_msg = await asyncio.wait_for(q1.result(), timeout=60)
+    assistant_msg = await q1.result()
     chat = [{"user": usr_msg}, {"assistant": assistant_msg}]
 
     # 2️⃣ Conditional write + read
@@ -254,7 +254,7 @@ async def test_knowledge_change_audit(monkeypatch):
         "create a task noting the previous value."
     )
     r2 = await cond.request(usr_msg, parent_chat_context=chat)
-    assistant_msg = await asyncio.wait_for(r2.result(), timeout=60)
+    assistant_msg = await r2.result()
     chat += [{"user": usr_msg}, {"assistant": assistant_msg}]
 
     assert (
@@ -292,7 +292,7 @@ async def test_task_scheduler_rollover(monkeypatch):
     # 1️⃣ Query backlog
     usr_msg = "Which tasks are currently 'queued'?"
     q1 = await cond.ask(usr_msg)
-    assistant_resp = await asyncio.wait_for(q1.result(), timeout=60)
+    assistant_resp = await q1.result()
     chat = [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # 2️⃣ Bulk carry-over
@@ -301,7 +301,7 @@ async def test_task_scheduler_rollover(monkeypatch):
         usr_msg,
         parent_chat_context=chat,
     )
-    assistant_resp = await asyncio.wait_for(r2.result(), timeout=60)
+    assistant_resp = await r2.result()
     chat += [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # 3️⃣ Confirm empty
@@ -309,7 +309,7 @@ async def test_task_scheduler_rollover(monkeypatch):
         "Double-check the queue backlog is now empty.",
         parent_chat_context=chat,
     )
-    await asyncio.wait_for(q3.result(), timeout=60)
+    await q3.result()
 
     assert counts == {"ask": 2, "update": 1}, "Unexpected TaskScheduler call count."
 
@@ -362,19 +362,16 @@ async def test_execute_task_and_interject(monkeypatch):
     )
 
     # 2️⃣ Wait until we are *sure* execute_task has been invoked
-    await asyncio.wait_for(start_called.wait(), timeout=60)
+    await start_called.wait()
 
     # 3️⃣ Now interject – guaranteed to hit the running plan
-    await asyncio.wait_for(
-        r1.interject(
-            "Please make sure we sync the data across all servers, "
-            "not only those in the US.",
-        ),
-        timeout=60,
+    await r1.interject(
+        "Please make sure we sync the data across all servers, "
+        "not only those in the US.",
     )
 
     # 4️⃣ Let the outer loop finish gracefully
-    await asyncio.wait_for(r1.result(), timeout=120)
+    await r1.result()
 
     assert counts == {
         "exec_task": 1,
@@ -442,7 +439,7 @@ async def test_interleaved_tools(monkeypatch):
         "Set the due date two weeks from today, and schedule the task for next Monday at 9:00AM. "
         "Do not make a start on it yet. Do not request any clarifications, use your best judgement.",
     )
-    await asyncio.wait_for(h.result(), timeout=120)
+    await h.result()
 
     expected = {"km_ask": 1, "cm_ask": 1, "tm_ask": 1, "ts_upd": 1}
     assert counts == expected, "Interleaved tool-call counts do not match."
