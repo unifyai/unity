@@ -52,6 +52,7 @@ from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
 import argparse
 from unity.common.llm_helpers import SteerableToolHandle
+from pydantic import BaseModel, Field
 
 # Added for direct logging of generated messages
 from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -904,6 +905,152 @@ def steering_controls_hint() -> str:
     return "Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /r (record voice), /stop, /help"
 
 
+# Shared steering intent model and router system prompt
+class _SteeringIntent(BaseModel):
+    action: str = Field(..., pattern="^(ask|interject|pause|resume|stop|status)$")
+
+
+def _steering_router_sys() -> str:
+    return (
+        "You are a router that maps a user's free-form message to one of these steering commands: "
+        "'ask', 'interject', 'pause', 'resume', 'stop', or 'status'.\n"
+        "Decide based on the user's intent relative to an ONGOING task.\n"
+        "Definitions:\n"
+        "- 'interject': Any directive that would change, add, remove, create, continue, or otherwise steer what the running task should do next. "
+        "Treat polite or indirect phrasing (e.g., 'could you', 'please', 'let's', 'why don't we'), and requests containing action verbs (set/add/update/change/modify/remove/delete/replace/make/use/fill/assign/write/generate) as interjections. "
+        "If a message mixes a question with a requested action, choose 'interject'.\n"
+        "- 'ask': A read-only question about the running task or its data (progress, status, what has happened/what will happen, counts, why, how long). "
+        "It must NOT request any change to behaviour or data.\n"
+        "- 'pause'/'resume'/'stop'/'status': Direct control commands. Map common synonyms: 'continue' ⇒ 'resume'.\n"
+        "Rules:\n"
+        "- Only decide the action; do not rewrite, summarize, or clean the user's text.\n"
+        "- Ignore pleasantries and judge the semantics.\n"
+        "- When uncertain between 'ask' and 'interject', choose 'interject' (safer).\n"
+        "Return ONLY JSON matching the response schema with an 'action' field."
+    )
+
+
+async def _apply_steering_action(
+    handle: "SteerableToolHandle",
+    action: str,
+    text: str,
+    enable_voice_steering: bool,
+    HELP_TEXT: str,
+) -> bool:
+    """Apply a routed steering action. Returns True if the caller should break (on stop)."""
+    try:
+        if action == "ask":
+            print(f"asking question: {text}")
+            nested = await handle.ask(text)
+            ans = await nested.result()
+            print(f"[ask] → {ans}")
+            if enable_voice_steering:
+                speak(str(ans))
+                _wait_for_tts_end()
+                print(HELP_TEXT)
+            return False
+        if action == "interject":
+            txt_to_inject = text.strip()
+            if not txt_to_inject:
+                print("⚠️  Router produced empty interjection – ignoring")
+                return False
+            print(f"interjecting: {txt_to_inject}")
+            run_in_loop(handle.interject(txt_to_inject))
+            print("✅ Interjection sent.")
+            if enable_voice_steering:
+                speak("Interjection sent")
+                _wait_for_tts_end()
+                print(HELP_TEXT)
+            else:
+                print(HELP_TEXT)
+            return False
+        if action == "pause":
+            try:
+                print("pausing…")
+                handle.pause()
+                print("⏸️  Paused")
+                if enable_voice_steering:
+                    speak("Paused")
+                    _wait_for_tts_end()
+                    print(HELP_TEXT)
+                else:
+                    print(HELP_TEXT)
+            except Exception as exc:
+                print(f"⚠️  Pause failed: {exc}")
+            return False
+        if action == "resume":
+            try:
+                print("resuming…")
+                handle.resume()
+                print("▶️  Resumed")
+                if enable_voice_steering:
+                    speak("Resumed")
+                    _wait_for_tts_end()
+                    print(HELP_TEXT)
+                else:
+                    print(HELP_TEXT)
+            except Exception as exc:
+                print(f"⚠️  Resume failed: {exc}")
+            return False
+        if action == "stop":
+            print("stopping…")
+            handle.stop()
+            print("✅ Stop sent.")
+            if enable_voice_steering:
+                speak("Stop sent")
+                _wait_for_tts_end()
+                print(HELP_TEXT)
+            else:
+                print(HELP_TEXT)
+            return True
+        if action == "status":
+            print("status requested")
+            _state = "done" if handle.done() else "running"
+            print(_state)
+            if enable_voice_steering:
+                speak(f"Status: {_state}")
+                _wait_for_tts_end()
+                print(HELP_TEXT)
+            else:
+                print(HELP_TEXT)
+            return False
+        # Fallback to interject if unknown
+        print(f"interjecting: {text}")
+        run_in_loop(handle.interject(text))
+        print("✅ Interjection sent.")
+        if enable_voice_steering:
+            speak("Interjection sent")
+            _wait_for_tts_end()
+            print(HELP_TEXT)
+        else:
+            print(HELP_TEXT)
+        return False
+    except Exception as exc:
+        print(f"⚠️  Freeform routing failed: {exc}")
+        return False
+
+
+async def _route_freeform_and_apply(
+    handle: "SteerableToolHandle",
+    text: str,
+    enable_voice_steering: bool,
+    HELP_TEXT: str,
+) -> bool:
+    import unify as _unify
+
+    judge = _unify.Unify("gpt-4o@openai", response_format=_SteeringIntent)
+    intent = _SteeringIntent.model_validate_json(
+        judge.set_system_message(_steering_router_sys()).generate(text),
+    )
+    return await _apply_steering_action(
+        handle,
+        intent.action,
+        text,
+        enable_voice_steering,
+        HELP_TEXT,
+    )
+
+
 async def await_with_interrupt(  # noqa: D401 – imperative helper
     handle: "SteerableToolHandle",
     poll: float = 0.05,
@@ -1022,117 +1169,14 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         if not transcript:
                             print("⚠️  Empty transcript – ignoring")
                             continue
-                        try:
-                            from pydantic import BaseModel, Field
-                            import unify as _unify
-
-                            class _SteeringIntent(BaseModel):
-                                action: str = Field(
-                                    ...,
-                                    pattern="^(ask|interject|pause|resume|stop|status)$",
-                                )
-
-                            _SYS = (
-                                "You are a router that maps a user's free-form message to one of these steering commands: "
-                                "'ask', 'interject', 'pause', 'resume', 'stop', or 'status'.\n"
-                                "Rules:\n"
-                                "- Only decide the action; do not rewrite, summarize, or clean the user's text.\n"
-                                "- If the user requests progress, status, or similar, prefer 'ask'.\n"
-                                "Return ONLY JSON matching the response schema with an 'action' field."
-                            )
-
-                            _judge = _unify.Unify(
-                                "gpt-4o@openai",
-                                response_format=_SteeringIntent,
-                            )
-                            _intent = _SteeringIntent.model_validate_json(
-                                _judge.set_system_message(_SYS).generate(transcript),
-                            )
-
-                            if _intent.action == "ask":
-                                print(f"asking question: {transcript}")
-                                nested = await handle.ask(transcript)
-                                ans = await nested.result()
-                                print(f"[ask] → {ans}")
-                                if enable_voice_steering:
-                                    speak(str(ans))
-                                    _wait_for_tts_end()
-                                    print(HELP_TEXT)
-                            elif _intent.action == "interject":
-                                txt_to_inject = transcript.strip()
-                                if not txt_to_inject:
-                                    print(
-                                        "⚠️  Router produced empty interjection – ignoring",
-                                    )
-                                else:
-                                    print(f"interjecting: {txt_to_inject}")
-                                    run_in_loop(handle.interject(txt_to_inject))
-                                    print("✅ Interjection sent.")
-                                    if enable_voice_steering:
-                                        speak("Interjection sent")
-                                        _wait_for_tts_end()
-                                        print(HELP_TEXT)
-                                    else:
-                                        print(HELP_TEXT)
-                            elif _intent.action == "pause":
-                                try:
-                                    print("pausing…")
-                                    handle.pause()
-                                    print("⏸️  Paused")
-                                    if enable_voice_steering:
-                                        speak("Paused")
-                                        _wait_for_tts_end()
-                                        print(HELP_TEXT)
-                                    else:
-                                        print(HELP_TEXT)
-                                except Exception as exc:
-                                    print(f"⚠️  Pause failed: {exc}")
-                            elif _intent.action == "resume":
-                                try:
-                                    print("resuming…")
-                                    handle.resume()
-                                    print("▶️  Resumed")
-                                    if enable_voice_steering:
-                                        speak("Resumed")
-                                        _wait_for_tts_end()
-                                        print(HELP_TEXT)
-                                    else:
-                                        print(HELP_TEXT)
-                                except Exception as exc:
-                                    print(f"⚠️  Resume failed: {exc}")
-                            elif _intent.action == "stop":
-                                print("stopping…")
-                                handle.stop()
-                                print("✅ Stop sent.")
-                                if enable_voice_steering:
-                                    speak("Stop sent")
-                                    _wait_for_tts_end()
-                                    print(HELP_TEXT)
-                                else:
-                                    print(HELP_TEXT)
-                                break
-                            elif _intent.action == "status":
-                                print("status requested")
-                                _state = "done" if handle.done() else "running"
-                                print(_state)
-                                if enable_voice_steering:
-                                    speak(f"Status: {_state}")
-                                    _wait_for_tts_end()
-                                    print(HELP_TEXT)
-                                else:
-                                    print(HELP_TEXT)
-                            else:
-                                print(f"interjecting: {transcript}")
-                                run_in_loop(handle.interject(transcript))
-                                print("✅ Interjection sent.")
-                                if enable_voice_steering:
-                                    speak("Interjection sent")
-                                    _wait_for_tts_end()
-                                    print(HELP_TEXT)
-                                else:
-                                    print(HELP_TEXT)
-                        except Exception as exc:
-                            print(f"⚠️  Freeform routing failed: {exc}")
+                        should_break = await _route_freeform_and_apply(
+                            handle,
+                            transcript,
+                            enable_voice_steering,
+                            HELP_TEXT,
+                        )
+                        if should_break:
+                            break
                     except Exception as exc:
                         print(f"⚠️  Voice steering failed: {exc}")
                     continue
@@ -1140,119 +1184,14 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     if not arg:
                         print("Usage: /freeform <text>")
                         continue
-                    try:
-                        from pydantic import BaseModel, Field
-                        import unify as _unify
-
-                        class _SteeringIntent(BaseModel):
-                            action: str = Field(
-                                ...,
-                                pattern="^(ask|interject|pause|resume|stop|status)$",
-                            )
-
-                        _SYS = (
-                            "You are a router that maps a user's free-form message to one of these steering commands: "
-                            "'ask', 'interject', 'pause', 'resume', 'stop', or 'status'.\n"
-                            "Rules:\n"
-                            "- Only decide the action; do not rewrite, summarize, or clean the user's text.\n"
-                            "- If the user requests progress, status, or similar, prefer 'ask'.\n"
-                            "Return ONLY JSON matching the response schema with an 'action' field."
-                        )
-
-                        _judge = _unify.Unify(
-                            "gpt-4o@openai",
-                            response_format=_SteeringIntent,
-                        )
-                        _intent = _SteeringIntent.model_validate_json(
-                            _judge.set_system_message(_SYS).generate(arg),
-                        )
-
-                        if _intent.action == "ask":
-                            q = arg.strip()
-                            print(f"asking question: {q}")
-                            nested = await handle.ask(q)
-                            ans = await nested.result()
-                            print(f"[ask] → {ans}")
-                            if enable_voice_steering:
-                                speak(str(ans))
-                                _wait_for_tts_end()
-                                print(HELP_TEXT)
-                        elif _intent.action == "interject":
-                            txt_to_inject = arg.strip()
-                            if not txt_to_inject:
-                                print(
-                                    "⚠️  Router produced empty interjection – ignoring",
-                                )
-                            else:
-                                print(f"interjecting: {txt_to_inject}")
-                                run_in_loop(handle.interject(txt_to_inject))
-                                print("✅ Interjection sent.")
-                                if enable_voice_steering:
-                                    speak("Interjection sent")
-                                    _wait_for_tts_end()
-                                    print(HELP_TEXT)
-                                else:
-                                    print(HELP_TEXT)
-                        elif _intent.action == "pause":
-                            try:
-                                print("pausing…")
-                                handle.pause()
-                                print("⏸️  Paused")
-                                if enable_voice_steering:
-                                    speak("Paused")
-                                    _wait_for_tts_end()
-                                    print(HELP_TEXT)
-                                else:
-                                    print(HELP_TEXT)
-                            except Exception as exc:
-                                print(f"⚠️  Pause failed: {exc}")
-                        elif _intent.action == "resume":
-                            try:
-                                print("resuming…")
-                                handle.resume()
-                                print("▶️  Resumed")
-                                if enable_voice_steering:
-                                    speak("Resumed")
-                                    _wait_for_tts_end()
-                                    print(HELP_TEXT)
-                                else:
-                                    print(HELP_TEXT)
-                            except Exception as exc:
-                                print(f"⚠️  Resume failed: {exc}")
-                        elif _intent.action == "stop":
-                            print("stopping…")
-                            handle.stop()
-                            print("✅ Stop sent.")
-                            if enable_voice_steering:
-                                speak("Stop sent")
-                                _wait_for_tts_end()
-                                print(HELP_TEXT)
-                            else:
-                                print(HELP_TEXT)
-                            break
-                        elif _intent.action == "status":
-                            print("status requested")
-                            _state = "done" if handle.done() else "running"
-                            print(_state)
-                            if enable_voice_steering:
-                                speak(f"Status: {_state}")
-                                _wait_for_tts_end()
-                                print(HELP_TEXT)
-                            else:
-                                print(HELP_TEXT)
-                        else:
-                            # Fallback to interject if unknown
-                            print(f"interjecting: {arg}")
-                            run_in_loop(handle.interject(arg))
-                            print("✅ Interjection sent.")
-                            if enable_voice_steering:
-                                speak("Interjection sent")
-                                _wait_for_tts_end()
-                                print(HELP_TEXT)
-                            else:
-                                print(HELP_TEXT)
-                    except Exception as exc:
-                        print(f"⚠️  Freeform routing failed: {exc}")
+                    should_break = await _route_freeform_and_apply(
+                        handle,
+                        arg,
+                        enable_voice_steering,
+                        HELP_TEXT,
+                    )
+                    if should_break:
+                        break
                     continue
                 if cmd in {"status", "st"}:
                     print("status requested")
