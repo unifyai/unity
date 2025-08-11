@@ -45,7 +45,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     await_with_interrupt as _await_with_interrupt,
     steering_controls_hint as _steer_hint,
     build_cli_parser,
-    activate_project,
+    setup_unify_context,
     _wait_for_tts_end as _wait_tts_end,
     configure_sandbox_logging,
 )

@@ -43,7 +43,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     get_custom_scenario,
     await_with_interrupt as _await_with_interrupt,
     build_cli_parser,
-    activate_project,
+    setup_unify_context,
 )
 
 LG = logging.getLogger("knowledge_sandbox")
