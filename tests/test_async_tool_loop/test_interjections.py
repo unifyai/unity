@@ -436,7 +436,7 @@ async def test_immediate_interjection_after_toolcall_has_tool_reply() -> None:
     for _ in range(50):
         await asyncio.sleep(0.1)
         if any(
-            m.get("role") == "user" and m.get("content") == "finish"
+            m.get("role") == "system" and "user: **finish**" in (m.get("content") or "")
             for m in client.messages
         ):
             saw_interjection = True
