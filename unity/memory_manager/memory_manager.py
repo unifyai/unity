@@ -196,6 +196,7 @@ class MemoryManager(BaseMemoryManager):
         knowledge_manager: Optional[KnowledgeManager] = None,
         task_scheduler: Optional[TaskScheduler] = None,
     ):
+
         self._contact_manager = contact_manager or ContactManager()
         self._transcript_manager = transcript_manager or TranscriptManager(
             contact_manager=self._contact_manager,
@@ -1140,6 +1141,18 @@ class MemoryManager(BaseMemoryManager):
     def _ensure_rolling_context(cls) -> str:
         """Create the `RollingActivity` context (idempotent) and return its name."""
         active_ctx = unify.get_active_context()["write"] or ""
+        if not active_ctx:
+            # Ensure the global assistant/context is selected before we derive our sub-context
+            try:
+                from .. import (
+                    ensure_initialised as _ensure_initialised,
+                )  # local to avoid cycles
+
+                _ensure_initialised()
+                active_ctx = unify.get_active_context()["write"] or ""
+            except Exception:
+                # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
+                pass
         ctx = f"{active_ctx}/RollingActivity" if active_ctx else "RollingActivity"
         if ctx not in unify.get_contexts():
             unify.create_context(ctx, unique_column_ids="row_id")
