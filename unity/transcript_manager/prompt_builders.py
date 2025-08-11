@@ -92,25 +92,13 @@ def build_ask_prompt(
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     # Heuristically infer canonical names — fall back to placeholders if absent
-    summarise_name = next(
-        (n for n in tools if "summarize" in n.lower()),
-        "summarize",
-    )
-    search_contacts_name = next(
-        (n for n in tools if "search" in n.lower() and "contact" in n.lower()),
-        "search_contacts",
+    filter_messages_name = next(
+        (n for n in tools if "filter" in n.lower() and "message" in n.lower()),
+        "filter_messages",
     )
     search_messages_name = next(
-        (n for n in tools if "search" in n.lower() and "message" in n.lower()),
+        (n for n in tools if "search" in n.lower()),
         "search_messages",
-    )
-    search_summaries_name = next(
-        (n for n in tools if "search" in n.lower() and "summary" in n.lower()),
-        "search_summaries",
-    )
-    nearest_messages_name = next(
-        (n for n in tools if "nearest" in n.lower()),
-        "nearest_messages",
     )
     clar_name = next(
         (n for n in tools if "clarification" in n.lower()),
@@ -122,15 +110,15 @@ def build_ask_prompt(
         Examples
         --------
         • **Semantic search** – top-3 messages about *banking and budgeting*
-          `{nearest_messages_name}(text="banking and budgeting", k=3)`
+          `{search_messages_name}(text="banking and budgeting", k=3)`
 
         • **Ask for clarification** when the user's request is underspecified
           `{clar_name}(question="Which conversation are you referring to?")`
 
         • **Filter search** – most recent WhatsApp from *contact 7*
-          `{search_messages_name}(filter="contact_id == 7 and medium == 'whatsapp_message'", limit=1, offset=0)`
+          `{filter_messages_name}(filter="contact_id == 7 and medium == 'whatsapp_message'", limit=1, offset=0)`
 
-        Important: if the question, refers to message *content* (topic etc.) rather than meta-data (datetime, medium etc.) then you should *almost always* use {nearest_messages_name} before trying exact string matching via {search_messages_name}. You're much more likely to get a match on your first attempt.
+        Important: if the question, refers to message *content* (topic etc.) rather than meta-data (datetime, medium etc.) then you should *almost always* use {search_messages_name} before trying exact string matching via {filter_messages_name}. You're much more likely to get a match on your first attempt.
     """,
     ).strip()
 
