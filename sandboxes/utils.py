@@ -1662,3 +1662,26 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     )
     # Clears all contexts in the EventBus
     EVENT_BUS.reset()
+
+
+def setup_unify_context(
+    project_name: str,
+    overwrite: bool,
+    trace_context: str = "Traces",
+) -> None:
+    """Initialize Unify project and trace context across sandboxes.
+
+    - Activates the project (and resets EventBus contexts)
+    - If overwrite=True, deletes all existing Unify contexts
+    - Sets the trace context to the provided name (default: "Traces")
+    """
+    # Ensure project is active and event bus reset
+    activate_project(project_name, overwrite)
+
+    # Local import to keep utils import surface minimal
+    import unify as _unify
+
+    if overwrite:
+        for ctx in _unify.get_contexts():
+            _unify.delete_context(ctx)
+    _unify.set_trace_context(trace_context)

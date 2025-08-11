@@ -2,7 +2,6 @@ import asyncio
 import unify
 from sandboxes.utils import (
     build_cli_parser,
-    activate_project,
     speak,
     record_until_enter,
     transcribe_deepgram,
@@ -151,7 +150,7 @@ async def simulate():
     )
 
     args = parser.parse_args()
-    activate_project(args.project_name, args.overwrite)
+    setup_unify_context(args.project_name, args.overwrite)
 
     # Input for customised user profile
     print("Configure Bob (user) profile behaviour:")
