@@ -39,6 +39,10 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         Interrogate the current **task list** in natural language and obtain
         a *live* :class:`~unify.common.llm_helpers.SteerableToolHandle`.
 
+        Do *not* request *how* the question should be answered; just ask the
+        question in natural language and allow the `ask` method to determine
+        the best method to answer it.
+
         Parameters
         ----------
         text : str
@@ -64,8 +68,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         -------
         SteerableToolHandle
             Await :pymeth:`SteerableToolHandle.result` for the final answer or
-            steer the interaction via ``pause()``, ``resume()``,
-            ``interject()`` or ``stop()``.
+            steer the interaction via ``pause()``, ``resume()``, ``interject()`` or ``stop()``.
         """
 
     @abstractmethod
@@ -82,6 +85,10 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         """
         Apply a **mutation** request – create, edit, delete or reorder tasks –
         expressed in plain English and receive a steerable LLM handle.
+
+        Do *not* request *how* the change should be implemented; just
+        describe the desired end-state in natural language and allow the
+        `update` method to determine the best method to apply it.
 
         Please always be explicit about the *ordering* of tasks.
         If the order *doesn't* matter please say so explicitly.
@@ -115,6 +122,10 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
     ) -> SteerableToolHandle:
         """
         Start a **task** given a *free-form* textual instruction (*text*).
+
+        Do *not* request *how* the task should be executed; state what you
+        want to run in natural language and allow the `execute_task` method to
+        determine the best method and steps.
 
         The assistant should interpret *text* to figure out which task the user
         wants to run.  Typical workflow:

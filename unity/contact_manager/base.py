@@ -38,6 +38,10 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         reasoning handle** (`SteerableToolHandle`) that can be awaited,
         paused/resumed, interjected, or cancelled.
 
+        Do *not* request *how* the question should be answered, just ask a
+        question in natural language and allow the `ask` method to determine
+        the best method to best answer the question.
+
         Parameters
         ----------
         text : str
@@ -76,6 +80,10 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         Execute a natural-language **mutation** request on the contact book
         (create, update, delete, rename, …) and obtain a steerable handle to
         the LLM conversation.
+
+        Do *not* request *how* the change should be implemented; just
+        describe the desired end-state in natural language and allow the
+        `update` method to determine the best method to apply it.
 
         Parameters
         ----------

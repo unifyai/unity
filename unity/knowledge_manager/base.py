@@ -53,6 +53,10 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
         **plain English**. The LLM will translate the request into a series
         of table/column manipulations and data-writes.
 
+        Do *not* request *how* the storage should be performed; describe the
+        knowledge in natural language and allow the `update` method to
+        determine the best method to apply it.
+
         Parameters
         ----------
         text : str
@@ -88,6 +92,10 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
         Answer a **natural-language query** by reading from the knowledge
         store (and optionally reshaping the schema to make retrieval easier).
 
+        Do *not* request *how* the question should be answered; just ask the
+        question in natural language and allow the `ask` method to determine
+        the best method to answer it.
+
         Parameters
         ----------
         text : str
@@ -118,6 +126,10 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
         **Restructure the schema** of *all* knowledge tables **and** the
         contacts table so that data are de-duplicated, normalised and stored
         as clearly and efficiently as possible.
+
+        Do *not* request *how* to perform the refactor; state the high-level
+        intent in natural language and allow the `refactor` method to
+        determine the best method and specific operations.
 
         Parameters
         ----------
