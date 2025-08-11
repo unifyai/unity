@@ -45,7 +45,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     await_with_interrupt as _await_with_interrupt,
     steering_controls_hint as _steer_hint,
     build_cli_parser,
-    setup_unify_context,
+    activate_project,
     _wait_for_tts_end as _wait_tts_end,
     configure_sandbox_logging,
 )
@@ -117,7 +117,7 @@ async def _main_async() -> None:
 
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
-    setup_unify_context(args.project_name, args.overwrite)
+    activate_project(args.project_name, args.overwrite)
 
     # ─────────────────── project version handling ────────────────────
     if args.project_version != -1:

@@ -63,7 +63,7 @@ from sandboxes.utils import (
     TranscriptGenerator,
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
-    setup_unify_context,
+    activate_project,
     speak as _speak,
     _wait_for_tts_end as _wait_tts_end,
 )
@@ -280,7 +280,7 @@ async def _main_async() -> None:
                 LG.warning("[voice] Failed to speak feedback.")
 
     # Unify context
-    setup_unify_context(args.project_name, args.overwrite)
+    activate_project(args.project_name, args.overwrite)
     if args.traced:
         LG.info("[trace] Unify tracing enabled")
         os.environ["UNIFY_TRACED"] = "true"

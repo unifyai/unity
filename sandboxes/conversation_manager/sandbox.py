@@ -22,7 +22,7 @@ from sandboxes.utils import (
     speak as _speak,
     _wait_for_tts_end,
     TranscriptGenerator,
-    setup_unify_context,
+    activate_project,
 )
 
 LG = logging.getLogger("contact_sandbox")
@@ -172,7 +172,7 @@ async def main():
         # tracing flag
         os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
-        setup_unify_context(args.project_name, args.overwrite)
+        activate_project(args.project_name, args.overwrite)
 
         # ─────────────────── project version handling ────────────────────
         if args.project_version != -1:
