@@ -1809,7 +1809,8 @@ class TaskScheduler(BaseTaskScheduler):
         k: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        Return the **k** tasks whose *name + description* embeddings are
+        Search the tasks based on a general text description for the overall task.
+        Specifically, return the **k** tasks whose *name + description* embeddings are
         *closest* (cosine distance) to the supplied *text*.
 
         Always best to use *this tool* when searching for a task with a similar
@@ -1856,7 +1857,7 @@ class TaskScheduler(BaseTaskScheduler):
         Do *not* use this tool when searching for a task with a similar name
         or description. Trying to get an exact match on substrings (especially
         with multiple words) is very brittle, and likely to return no matches.
-        The `nearest_tasks` tool is *much* more robust and accurate in such cases.
+        The `search_tasks` tool is *much* more robust and accurate in such cases.
 
         Parameters
         ----------
