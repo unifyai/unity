@@ -85,8 +85,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Write-capable helpers – every mutating operation as well as the read-only ones.
         self._update_tools = {
-            **self._ask_tools,
             **methods_to_tool_dict(
+                # Ask
+                self.ask,
                 # Creation / deletion / cancellation
                 self._create_task,
                 self._delete_task,
