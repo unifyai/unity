@@ -117,20 +117,7 @@ async def _main_async() -> None:
 
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
-    activate_project(args.project_name, args.overwrite)
-    base_ctx = unify.get_active_context().get("write")
-    traces_ctx = f"{base_ctx}/Traces" if base_ctx else "Traces"
-    unify.set_trace_context(traces_ctx)
-    if args.overwrite:
-        ctxs = unify.get_contexts()
-        for tbl in (
-            "Transcripts",
-            "Contacts",
-            traces_ctx,
-        ):
-            if tbl in ctxs:
-                unify.delete_context(tbl)
-        unify.create_context(traces_ctx)
+    setup_unify_context(args.project_name, args.overwrite)
 
     # ─────────────────── project version handling ────────────────────
     if args.project_version != -1:
