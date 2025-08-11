@@ -19,7 +19,7 @@ def test_cancel_single_task():
     ts._cancel_tasks([0])
 
     # Verify the task was cancelled
-    tasks = ts._search_tasks()
+    tasks = ts._filter_tasks()
     assert tasks[0]["status"] == "cancelled"
 
 
@@ -43,7 +43,7 @@ def test_cancel_multiple_tasks():
     ts._cancel_tasks([0, 1])
 
     # Verify both tasks were cancelled
-    tasks = ts._search_tasks()
+    tasks = ts._filter_tasks()
     status_by_id = {t["task_id"]: t["status"] for t in tasks}
     assert status_by_id[0] == "cancelled"
     assert status_by_id[1] == "cancelled"

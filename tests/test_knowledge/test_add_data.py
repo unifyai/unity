@@ -12,7 +12,7 @@ def test_add_data():
         table="MyTable",
         rows=[{"item": "WidgetA", "units": 30}, {"item": "WidgetB", "units": 25}],
     )
-    data = knowledge_manager._search()
+    data = knowledge_manager._filter()
     assert data == {
         "MyTable": [
             {"row_id": 1, "item": "WidgetB", "units": 25},
@@ -34,7 +34,7 @@ def test_add_more_data():
         table="MyTable",
         rows=[{"item": "WidgetB", "units": 25}],
     )
-    data = knowledge_manager._search()
+    data = knowledge_manager._filter()
     assert data == {
         "MyTable": [
             {"row_id": 1, "item": "WidgetB", "units": 25},

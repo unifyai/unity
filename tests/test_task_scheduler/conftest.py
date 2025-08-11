@@ -45,7 +45,7 @@ class ScenarioBuilderTasks:
 
         def search_task_by_name(task_data):
             """Helper function to search for a task by name and return its ID."""
-            existing_tasks = self.ts._search_tasks(
+            existing_tasks = self.ts._filter_tasks(
                 filter=f"name == '{task_data['name']}'",
             )
             if existing_tasks:
@@ -79,7 +79,7 @@ class ScenarioBuilderTasks:
 
         for i, task_data in enumerate(_TASKS_DATA):
             # Check if task already exists
-            existing_tasks = self.ts._search_tasks(
+            existing_tasks = self.ts._filter_tasks(
                 filter=f"name == '{task_data['name']}'",
             )
             if existing_tasks:

@@ -48,7 +48,7 @@ async def test_update_uses_parent_context():
 
     # the raw knowledge dump should contain Alpha but NOT Carlos
     all_data_json = json.dumps(
-        km._search(),
+        km._filter(),
     )  # private helper OK for assertions
     assert (
         "Alpha" in all_data_json and "Project Nova" not in all_data_json
@@ -95,7 +95,7 @@ async def test_update_requests_clarification():
 
     # ➌ wait for completion and verify the data was stored correctly
     await handle.result()
-    data_json = json.dumps(km._search())
+    data_json = json.dumps(km._filter())
     assert _contains(data_json, "NV-1990", "1990"), assertion_failed(
         "Row containing registry code 'NV-1990' and initiation year '1990'",
         data_json,
@@ -143,7 +143,7 @@ async def test_ask_uses_parent_context():
         answer,
         reasoning,
         "Parent-context mapping not respected",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
 
@@ -193,5 +193,5 @@ async def test_ask_requests_clarification():
         "Answer containing 'silver' (silver Porsche)",
         answer,
         "Clarification flow failed",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )

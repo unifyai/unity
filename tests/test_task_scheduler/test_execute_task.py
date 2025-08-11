@@ -292,7 +292,7 @@ async def test_execute_task_creates_new_task_and_executes(monkeypatch):
     # Description may be normalised (e.g. trailing period removed).  Accept any
     # task whose *name* or *description* contains our original phrase without
     # the trailing period.
-    created_tasks = ts._search_tasks()
+    created_tasks = ts._filter_tasks()
     phrase = description.rstrip(".")
     assert any(
         phrase in t.get("name", "") or phrase in t.get("description", "")

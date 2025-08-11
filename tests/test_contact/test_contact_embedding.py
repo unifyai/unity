@@ -2,7 +2,7 @@
 Vector-embedding & semantic-search tests for **ContactManager**.
 
 We mirror the pattern used in `test_knowledge_embedding` but operate on the
-single contacts table, exercising `_nearest_column` and the automatic creation
+single contacts table, exercising `_search_contacts` and the automatic creation
 of `<source>_vec` derived columns.
 """
 
@@ -17,7 +17,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_contact_embedding_and_nearest_search():
+def test_contact_embedding_and_search():
     cm = ContactManager()
 
     # ------------------------------------------------------------------ #

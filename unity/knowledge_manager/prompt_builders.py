@@ -234,7 +234,7 @@ def build_ask_prompt(
         Mandatory steps:
         1. List each distinct piece of information the question asks for.
         2. Identify which tables / columns can hold that info.
-        3. Fetch *all* relevant rows (use `_nearest` if useful).
+        3. Fetch *all* relevant rows (use `_search` if useful).
         4. If the schema is awkward, refactor it before continuing.
         5. Aggregate results into a concise answer covering every fact.
         6. Double-check nothing is missing; if so, repeat the search/refactor.

@@ -61,7 +61,7 @@ def test_update_contact_id_rewrites_sender_and_receivers():
     tm.join_published()
 
     # Sanity pre-check
-    initial = tm._search_messages(filter=f"exchange_id == {EX_ID}")
+    initial = tm._filter_messages(filter=f"exchange_id == {EX_ID}")
     assert len(initial) == 3, "Exactly three messages should have been logged initially"
 
     # --- Run the update ---------------------------------------------------
@@ -76,7 +76,7 @@ def test_update_contact_id_rewrites_sender_and_receivers():
     ), "All three messages should be counted as updated"
 
     # --- Post-conditions --------------------------------------------------
-    updated = tm._search_messages(filter=f"exchange_id == {EX_ID}")
+    updated = tm._filter_messages(filter=f"exchange_id == {EX_ID}")
     assert len(updated) == 3, "Message count should remain unchanged after update"
 
     for msg in updated:

@@ -77,8 +77,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         self._ask_tools = {
             **methods_to_tool_dict(
                 self._tables_overview,
+                self._filter,
                 self._search,
-                self._nearest,
                 self._search_join,
                 self._search_multi_join,
             ),
@@ -150,8 +150,8 @@ class KnowledgeManager(BaseKnowledgeManager):
     def _look_first_tool_policy(self, step: int, tls: Dict[str, Callable]):
         if step < 1:
             return "required", methods_to_tool_dict(
+                self._filter,
                 self._search,
-                self._nearest,
                 self._search_join,
                 include_class_name=False,
             )
@@ -1002,7 +1002,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             source_column=source_column,
         )
 
-    def _nearest(
+    def _search(
         self,
         *,
         tables: Optional[Union[str, List[str]]],
@@ -1142,7 +1142,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return dest_ctx
 
-    def _search(
+    def _filter(
         self,
         *,
         filter: Optional[str] = None,

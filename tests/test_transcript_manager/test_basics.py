@@ -81,7 +81,7 @@ async def test_get_messages():
 
     ## get all
 
-    messages = tm._search_messages()
+    messages = tm._filter_messages()
     assert len(messages) == 10
     assert all(isinstance(msg, Message) for msg in messages)
 
@@ -89,25 +89,25 @@ async def test_get_messages():
 
     # sender
 
-    messages = tm._search_messages(filter="sender_id == 0")
+    messages = tm._filter_messages(filter="sender_id == 0")
     assert len(messages) == 3
     assert all(isinstance(msg, Message) for msg in messages)
 
     # contains
 
-    messages = tm._search_messages(filter="'Hell' in content")
+    messages = tm._filter_messages(filter="'Hell' in content")
     assert len(messages) == 3
     assert all(isinstance(msg, Message) for msg in messages)
 
     # does not contain
 
-    messages = tm._search_messages(filter="',' not in content")
+    messages = tm._filter_messages(filter="',' not in content")
     assert len(messages) == 5
     assert all(isinstance(msg, Message) for msg in messages)
 
     # medium
 
-    messages = tm._search_messages(
+    messages = tm._filter_messages(
         filter="medium in ('email', 'whatsapp_message')",
     )
     assert len(messages) == 1
@@ -115,9 +115,9 @@ async def test_get_messages():
 
     # timestamp
 
-    messages = tm._search_messages(filter=f"timestamp < '{start_time}'")
+    messages = tm._filter_messages(filter=f"timestamp < '{start_time}'")
     assert len(messages) == 0
-    messages = tm._search_messages(filter=f"timestamp > '{start_time}'")
+    messages = tm._filter_messages(filter=f"timestamp > '{start_time}'")
     assert len(messages) == 10
 
 
@@ -147,7 +147,7 @@ async def test_multiple_receivers():
     tm.join_published()
 
     # Retrieve the message back – simplest: list everything for this exchange
-    found = tm._search_messages(filter="exchange_id == 4242")
+    found = tm._filter_messages(filter="exchange_id == 4242")
     assert (
         len(found) == 1
     ), "Exactly one message should have been logged for exchange 4242"

@@ -24,7 +24,7 @@ def test_knowledge_embedding():
     manager._add_rows(table=table_name, rows=entries)
 
     # Keyword-based search should find no hits for the term 'preferences'
-    keyword_results = manager._search(
+    keyword_results = manager._filter(
         filter="'preferences' in content",
         tables=[table_name],
     )[table_name]
@@ -33,7 +33,7 @@ def test_knowledge_embedding():
 
     # Embedding-based nearest search for k=1 should return the most relevant entry
     query = "favorite means of communication"
-    emb_results_k1 = manager._nearest(
+    emb_results_k1 = manager._search(
         tables=[table_name],
         source="content",
         text=query,
@@ -43,7 +43,7 @@ def test_knowledge_embedding():
     assert emb_results_k1[0]["content"] == entries[1]["content"]
 
     # Embedding-based nearest search for k=2 should respect ordering and limit
-    emb_results_k2 = manager._nearest(
+    emb_results_k2 = manager._search(
         tables=[table_name],
         source="content",
         text=query,

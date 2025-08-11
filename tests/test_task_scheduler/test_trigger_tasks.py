@@ -37,7 +37,7 @@ def test_create_triggerable_task():
         trigger=trig,
     )["details"]["task_id"]
 
-    row = ts._search_tasks(filter=f"task_id == {task_id}", limit=1)[0]
+    row = ts._filter_tasks(filter=f"task_id == {task_id}", limit=1)[0]
     assert row["status"] == Status.triggerable
     assert row["schedule"] is None
     assert row["trigger"]["medium"] == Medium.EMAIL
@@ -109,7 +109,7 @@ def test_clear_trigger_transitions_status():
 
     ts._update_task_trigger(task_id=tid, new_trigger=None)
 
-    row = ts._search_tasks(filter=f"task_id == {tid}", limit=1)[0]
+    row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
     assert row["trigger"] is None
     assert row["status"] == Status.queued
 
@@ -190,14 +190,14 @@ async def test_triggerable_start_clones_instance():
     )["details"]["task_id"]
 
     # One physical row before activation
-    rows_before = ts._search_tasks(filter=f"task_id == {tid}")
+    rows_before = ts._filter_tasks(filter=f"task_id == {tid}")
     assert len(rows_before) == 1 and rows_before[0]["instance_id"] == 0
 
     # Activate
     handle = await ts.execute_task(text=str(tid))
 
     # Two rows should now exist: 0 (active) and 1 (still triggerable)
-    rows_after = ts._search_tasks(filter=f"task_id == {tid}")
+    rows_after = ts._filter_tasks(filter=f"task_id == {tid}")
     assert len(rows_after) == 2
 
     status_by_inst = {r["instance_id"]: r["status"] for r in rows_after}

@@ -198,8 +198,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         # Re-create the real TaskScheduler prompts *dynamically* so the
         # simulated assistant can use them for grounding.
         ask_tools = methods_to_tool_dict(
+            TaskScheduler._filter_tasks,
             TaskScheduler._search_tasks,
-            TaskScheduler._nearest_tasks,
             TaskScheduler._get_task_queue,
             include_class_name=False,
         )
@@ -215,8 +215,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             TaskScheduler._update_task_deadline,
             TaskScheduler._update_task_repetition,
             TaskScheduler._update_task_priority,
+            TaskScheduler._filter_tasks,
             TaskScheduler._search_tasks,
-            TaskScheduler._nearest_tasks,
             TaskScheduler._get_task_queue,
             include_class_name=False,
         )

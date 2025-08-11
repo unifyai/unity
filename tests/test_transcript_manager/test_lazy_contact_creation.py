@@ -44,7 +44,7 @@ async def test_lazy_contact_creation_creates_contacts_and_logs_message():
     ), "Exactly two new contacts should be created."
 
     # Fetch the stored message
-    stored_msgs = tm._search_messages(filter="exchange_id == 98765")
+    stored_msgs = tm._filter_messages(filter="exchange_id == 98765")
     assert len(stored_msgs) == 1, "Message should have been logged exactly once."
 
     stored = stored_msgs[0]

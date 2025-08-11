@@ -107,7 +107,7 @@ def test_merge_contacts_updates_transcripts():
     tm.join_published()
 
     # Sanity – cid2 should be present as sender before merge
-    before = tm._search_messages(
+    before = tm._filter_messages(
         filter=f"sender_id == {cid2} and exchange_id == {EX_ID}",
     )
     assert len(before) == 1, "Precondition failed: expected one message from cid2"
@@ -124,7 +124,7 @@ def test_merge_contacts_updates_transcripts():
     )
 
     # After merge, there should be *no* messages referencing cid2
-    after_old = tm._search_messages(
+    after_old = tm._filter_messages(
         filter=f"sender_id == {cid2} and exchange_id == {EX_ID}",
     )
     assert (
@@ -132,7 +132,7 @@ def test_merge_contacts_updates_transcripts():
     ), "sender_id referencing deleted contact should be updated"
 
     # The same message should now reference cid1 instead
-    after_new = tm._search_messages(
+    after_new = tm._filter_messages(
         filter=f"sender_id == {cid1} and exchange_id == {EX_ID}",
     )
     assert len(after_new) == 1, "sender_id should be rewritten to surviving contact id"

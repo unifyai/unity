@@ -12,7 +12,7 @@ def test_search_basic():
         table="MyTable",
         rows=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
     )
-    data = knowledge_manager._search()
+    data = knowledge_manager._filter()
     assert data == {
         "MyTable": [
             {"row_id": 1, "x": 2, "y": 3},
@@ -30,7 +30,7 @@ def test_search_filter():
         table="MyTable",
         rows=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
     )
-    data = knowledge_manager._search(filter="x > 0")
+    data = knowledge_manager._filter(filter="x > 0")
     assert data == {
         "MyTable": [
             {"row_id": 1, "x": 2, "y": 3},
@@ -53,7 +53,7 @@ def test_search_specific_tables():
         rows=[{"a": 9, "b": 10}],
     )
     # default
-    data = knowledge_manager._search()
+    data = knowledge_manager._filter()
     assert data == {
         "MyTable": [
             {"row_id": 1, "x": 2, "y": 3},
@@ -64,7 +64,7 @@ def test_search_specific_tables():
         ],
     }
     # specific tables
-    data = knowledge_manager._search(tables=["MyTable"])
+    data = knowledge_manager._filter(tables=["MyTable"])
     assert data == {
         "MyTable": [
             {"row_id": 1, "x": 2, "y": 3},
@@ -82,7 +82,7 @@ def test_search_w_filter():
         table="MyTable",
         rows=[{"x": 0, "y": 1}, {"x": 1, "y": 2}, {"x": 2, "y": 3}, {"x": 3, "y": 4}],
     )
-    data = knowledge_manager._search(filter="x > 1 and y < 4")
+    data = knowledge_manager._filter(filter="x > 1 and y < 4")
     assert data == {
         "MyTable": [
             {"row_id": 2, "x": 2, "y": 3},
