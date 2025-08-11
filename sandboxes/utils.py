@@ -1031,19 +1031,14 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                     ...,
                                     pattern="^(ask|interject|pause|resume|stop|status)$",
                                 )
-                                question: str | None = None
-                                cleaned_text: str | None = None
 
                             _SYS = (
                                 "You are a router that maps a user's free-form message to one of these steering commands: "
-                                "'ask' (include a specific, concise question in 'question'), "
-                                "'interject' (include the text to inject in 'cleaned_text'), "
-                                "'pause', 'resume', 'stop', or 'status'.\n"
+                                "'ask', 'interject', 'pause', 'resume', 'stop', or 'status'.\n"
                                 "Rules:\n"
-                                "- If the user requests progress, status, or 'how is it going', prefer 'ask' with a concrete question like 'what is the current task progress?'.\n"
-                                "- If the user gives guidance or additional info to incorporate, choose 'interject' and pass it via 'cleaned_text'.\n"
-                                "- Polite commands like 'please pause' → 'pause'. 'continue' → 'resume'. 'cancel/abort/stop' → 'stop'.\n"
-                                "- Return ONLY JSON matching the response schema."
+                                "- Only decide the action; do not rewrite, summarize, or clean the user's text.\n"
+                                "- If the user requests progress, status, or similar, prefer 'ask'.\n"
+                                "Return ONLY JSON matching the response schema with an 'action' field."
                             )
 
                             _judge = _unify.Unify(
@@ -1055,13 +1050,8 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             )
 
                             if _intent.action == "ask":
-                                q = (
-                                    _intent.question or _intent.cleaned_text or ""
-                                ).strip()
-                                if not q:
-                                    q = "What is the current task progress?"
-                                print(f"asking question: {q}")
-                                nested = await handle.ask(q)
+                                print(f"asking question: {transcript}")
+                                nested = await handle.ask(transcript)
                                 ans = await nested.result()
                                 print(f"[ask] → {ans}")
                                 if enable_voice_steering:
@@ -1069,9 +1059,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                     _wait_for_tts_end()
                                     print(HELP_TEXT)
                             elif _intent.action == "interject":
-                                txt_to_inject = (
-                                    _intent.cleaned_text or transcript
-                                ).strip()
+                                txt_to_inject = transcript.strip()
                                 if not txt_to_inject:
                                     print(
                                         "⚠️  Router produced empty interjection – ignoring",
@@ -1161,19 +1149,14 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                 ...,
                                 pattern="^(ask|interject|pause|resume|stop|status)$",
                             )
-                            question: str | None = None
-                            cleaned_text: str | None = None
 
                         _SYS = (
                             "You are a router that maps a user's free-form message to one of these steering commands: "
-                            "'ask' (include a specific, concise question in 'question'), "
-                            "'interject' (include the text to inject in 'cleaned_text'), "
-                            "'pause', 'resume', 'stop', or 'status'.\n"
+                            "'ask', 'interject', 'pause', 'resume', 'stop', or 'status'.\n"
                             "Rules:\n"
-                            "- If the user requests progress, status, or 'how is it going', prefer 'ask' with a concrete question like 'what is the current task progress?'.\n"
-                            "- If the user gives guidance or additional info to incorporate, choose 'interject' and pass it via 'cleaned_text'.\n"
-                            "- Polite commands like 'please pause' → 'pause'. 'continue' → 'resume'. 'cancel/abort/stop' → 'stop'.\n"
-                            "- Return ONLY JSON matching the response schema."
+                            "- Only decide the action; do not rewrite, summarize, or clean the user's text.\n"
+                            "- If the user requests progress, status, or similar, prefer 'ask'.\n"
+                            "Return ONLY JSON matching the response schema with an 'action' field."
                         )
 
                         _judge = _unify.Unify(
@@ -1185,9 +1168,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         )
 
                         if _intent.action == "ask":
-                            q = (_intent.question or _intent.cleaned_text or "").strip()
-                            if not q:
-                                q = "What is the current task progress?"
+                            q = arg.strip()
                             print(f"asking question: {q}")
                             nested = await handle.ask(q)
                             ans = await nested.result()
@@ -1197,7 +1178,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                 _wait_for_tts_end()
                                 print(HELP_TEXT)
                         elif _intent.action == "interject":
-                            txt_to_inject = (_intent.cleaned_text or arg).strip()
+                            txt_to_inject = arg.strip()
                             if not txt_to_inject:
                                 print(
                                     "⚠️  Router produced empty interjection – ignoring",
