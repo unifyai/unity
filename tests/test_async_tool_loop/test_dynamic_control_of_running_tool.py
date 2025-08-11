@@ -316,3 +316,74 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
     assert "all done" in final.strip().lower()
     assert pause_calls == 1, f"expected exactly 1 pause_ helper, got {pause_calls}"
     assert resume_calls == 1, f"expected exactly 1 resume_ helper, got {resume_calls}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_global_pause_blocks_llm_until_resume(client):
+    """
+    The global `pause()` should prevent the LLM from speaking while paused.
+
+    Scenario
+    --------
+    * Ask the assistant to call `slow` then reply with the word 'OK'.
+    * Pause the outer loop while the tool is still running.
+    * Wait long enough for the tool to finish.
+
+    Expected
+    --------
+    * While paused, no new assistant turn should appear after the assistant
+      turn that requested the tool.
+    * After `resume()`, the loop should complete and return the final 'OK'.
+    """
+    handle = start_async_tool_use_loop(
+        client,
+        message=(
+            "Call the tool `slow`, wait for the result, then reply with the word OK (nothing else)."
+        ),
+        tools={"slow": slow},
+    )
+
+    # Ensure the tool has been requested so pausing happens while it is running
+    await _wait_for_tool_request(client, "slow")
+
+    # Pause the outer loop (tools should keep running; the LLM must not speak)
+    handle.pause()
+
+    # Give enough time for `slow` to complete and for the loop to process the tool result
+    await asyncio.sleep(1.0)
+
+    msgs = client.messages or []
+
+    # Locate the assistant turn that requested `slow`
+    assistant_tool_call_indices = [
+        i
+        for i, m in enumerate(msgs)
+        if m.get("role") == "assistant"
+        and any(
+            tc.get("function", {}).get("name") == "slow"
+            for tc in (m.get("tool_calls") or [])
+        )
+    ]
+    assert (
+        assistant_tool_call_indices
+    ), "expected at least one assistant turn requesting the `slow` tool"
+
+    last_request_idx = assistant_tool_call_indices[-1]
+
+    # While paused, there must be no further assistant messages after the tool
+    # result messages that were appended during pause
+    assistant_after_pause = any(
+        m.get("role") == "assistant" for m in msgs[last_request_idx + 1 :]
+    )
+    assert (
+        not assistant_after_pause
+    ), "assistant produced a new message while the loop was paused"
+
+    # Resume and allow the conversation to complete
+    handle.resume()
+    final = await handle.result()
+
+    assert (
+        final.strip().upper().startswith("OK")
+    ), "final reply should be 'OK' after resume"
