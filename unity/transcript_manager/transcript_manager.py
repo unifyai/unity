@@ -7,6 +7,7 @@ import functools
 from typing import List, Dict, Optional, Union, Any
 
 import unify
+import requests
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
@@ -27,6 +28,13 @@ from ..events.manager_event_logging import (
 )
 from .prompt_builders import build_ask_prompt
 from .base import BaseTranscriptManager
+from ..helpers import _handle_exceptions
+from ..common.semantic_search import (
+    is_plain_identifier,
+    escape_single_quotes,
+    ensure_vector_for_source,
+    ensure_sum_cosine_column,
+)
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -495,45 +503,238 @@ class TranscriptManager(BaseTranscriptManager):
     def _search_messages(
         self,
         *,
-        text: str,
+        references: Dict[str, str],
         k: int = 10,
     ) -> List[Message]:
         """
-        Search the messages based on a general text description for the contents.
-        Specifically, return the *k* transcript messages whose **content** embedding
-        is *closest* to the embedding of **text** (cosine similarity).
+        Search transcript messages by minimising the sum of cosine distances to multiple reference texts.
 
-        It's always best to use *this tool* when searching for messages with similar
-        semantic context to your reference text. Semantic similarity based on embeddings
-        are *much* more robust and accurate than trying to get an exact match on
-        multi-word substrings for any text-based columns.
+        The references map allows mixing message-side expressions (e.g. "content") with
+        sender contact-side expressions (e.g. "bio"). Each key is either a plain column name
+        or a full expression using Unify's expression language, with field references in braces
+        (e.g. "str({first_name}) + ' ' + str({bio})").
+
+        Example:
+            references={"content": "let's meet up soon", "bio": "accountant"}
 
         Parameters
         ----------
-        text : str
-            Free-form query text to embed.
-        k : int, default ``10``
-            Number of neighbours to return.
+        references : Dict[str, str]
+            Mapping from a source expression → reference text. Expressions may refer to
+            message fields (e.g. content) or contact fields of the sender (e.g. bio).
+        k : int, default 10
+            Number of closest messages to return.
 
         Returns
         -------
-        list[Message]
-            Messages sorted by **ascending** cosine distance (best match first).
+        List[Message]
+            Messages sorted by ascending summed cosine distance (best match first).
         """
-        ensure_vector_column(self._transcripts_ctx, self._MSG_EMB, "content")
-        logs = unify.get_logs(
-            context=self._transcripts_ctx,
-            sorting={
-                f"cosine({self._MSG_EMB}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
-            },
+        assert (
+            isinstance(references, dict) and len(references) > 0
+        ), "references must be a non-empty dict"
+
+        # Field name sets to classify expressions as message-side vs contact-side
+        msg_fields = set(Message.model_fields.keys())
+        contact_fields = set(Contact.model_fields.keys())
+
+        def _extract_placeholders(expr: str) -> list[str]:
+            import re as _re
+
+            return _re.findall(r"\{\s*([a-zA-Z_][\w]*)\s*\}", expr)
+
+        # Ensure/embed columns and gather terms
+        msg_embed_columns: list[str] = []
+        contact_embed_columns: list[str] = []
+        eq_terms: list[str] = []
+
+        # For deterministic naming of derived columns and the join context
+        import hashlib
+
+        canonical = "|".join(f"{k}=>{references[k]}" for k in sorted(references.keys()))
+        query_hash = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+
+        # 1) Prepare message-side vector columns in transcripts context
+        for source_expr, ref_text in references.items():
+            placeholders = (
+                _extract_placeholders(source_expr)
+                if not is_plain_identifier(source_expr)
+                else []
+            )
+            is_message_side = False
+            if is_plain_identifier(source_expr):
+                is_message_side = source_expr in msg_fields
+            else:
+                # If any placeholder matches a message field, treat as message-side
+                is_message_side = any(ph in msg_fields for ph in placeholders)
+
+            if is_message_side:
+                embed_column_name = ensure_vector_for_source(
+                    self._transcripts_ctx,
+                    source_expr,
+                )
+                msg_embed_columns.append((embed_column_name, ref_text))
+
+        # 2) Prepare contact-side vector columns in contacts context via ContactManager helper
+        for source_expr, ref_text in references.items():
+            placeholders = (
+                _extract_placeholders(source_expr)
+                if not is_plain_identifier(source_expr)
+                else []
+            )
+            is_contact_side = False
+            if is_plain_identifier(source_expr):
+                is_contact_side = (source_expr in contact_fields) and (
+                    source_expr not in msg_fields
+                )
+            else:
+                # If all placeholders are contact fields (or there are placeholders and none are message fields), treat as contact-side
+                is_contact_side = (
+                    (len(placeholders) > 0)
+                    and all(ph in contact_fields for ph in placeholders)
+                    and not any(ph in msg_fields for ph in placeholders)
+                )
+
+            if is_contact_side:
+                embed_column_name = ensure_vector_for_source(
+                    self._contact_manager._ctx,
+                    source_expr,
+                )
+                contact_embed_columns.append((embed_column_name, ref_text))
+
+        # 3) If there are no contact-side terms, we can compute directly in transcripts context (no join)
+        if not contact_embed_columns:
+            # Build sum of message-side terms (fallback to legacy single-term behaviour)
+            # Ensure at least one message-side term exists; otherwise default to content
+            if not msg_embed_columns:
+                ensure_vector_column(self._transcripts_ctx, self._MSG_EMB, "content")
+                msg_embed_columns = [(self._MSG_EMB, next(iter(references.values())))]
+
+            # Fast path: single message-side term → sort directly by the expression
+            if len(msg_embed_columns) == 1:
+                embed_col, ref_text = msg_embed_columns[0]
+                escaped_ref = escape_single_quotes(ref_text)
+                logs = unify.get_logs(
+                    context=self._transcripts_ctx,
+                    sorting={
+                        f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
+                    },
+                    limit=k,
+                    exclude_fields=[
+                        fld
+                        for fld in unify.get_fields(
+                            context=self._transcripts_ctx,
+                        ).keys()
+                        if fld.endswith("_emb")
+                    ],
+                )
+                return [Message(**lg.entries) for lg in logs]
+
+            eq_terms_local: list[str] = []
+            for embed_col, ref_text in msg_embed_columns:
+                escaped_ref = escape_single_quotes(ref_text)
+                eq_terms_local.append(
+                    f"cosine({{lg:{embed_col}}}, embed('{escaped_ref}', model='{EMBED_MODEL}'))",
+                )
+
+            sum_key = f"_sum_cos_{query_hash}"
+            sum_equation = " + ".join(eq_terms_local) if eq_terms_local else "0"
+
+            existing_fields = unify.get_fields(context=self._transcripts_ctx)
+            if sum_key not in existing_fields:
+                ensure_sum_cosine_column(
+                    self._transcripts_ctx,
+                    msg_embed_columns,
+                    query_hash,
+                )
+
+            logs = unify.get_logs(
+                context=self._transcripts_ctx,
+                sorting={sum_key: "ascending"},
+                limit=k,
+                exclude_fields=[
+                    fld
+                    for fld in unify.get_fields(context=self._transcripts_ctx).keys()
+                    if fld.endswith("_emb")
+                ],
+            )
+            return [Message(**lg.entries) for lg in logs]
+
+        # 4) Otherwise, create a temporary joined context between transcripts and contacts
+        left_ctx = self._transcripts_ctx
+        right_ctx = self._contact_manager._ctx  # reuse the active Contacts table
+
+        # Select columns to carry into the joined context
+        select: Dict[str, str] = {
+            f"{left_ctx}.message_id": "message_id",
+        }
+        for embed_col, _ in msg_embed_columns:
+            select[f"{left_ctx}.{embed_col}"] = embed_col
+        for embed_col, _ in contact_embed_columns:
+            select[f"{right_ctx}.{embed_col}"] = embed_col
+
+        # Create a deterministic destination context name
+        join_ctx = f"{left_ctx}__sender_join__{query_hash}"
+
+        # Fire the join request
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
+        payload: Dict[str, Any] = {
+            "project": unify.active_project(),
+            "pair_of_args": (
+                {"context": left_ctx},
+                {"context": right_ctx},
+            ),
+            "join_expr": f"{left_ctx}.sender_id == {right_ctx}.contact_id",
+            "mode": "inner",
+            "new_context": join_ctx,
+            "columns": select,
+        }
+        resp = requests.request("POST", url, json=payload, headers=headers)
+        _handle_exceptions(resp)
+
+        # Build the summed cosine equation across all included embed columns
+        for embed_col, ref_text in msg_embed_columns + contact_embed_columns:
+            escaped_ref = escape_single_quotes(ref_text)
+            eq_terms.append(
+                f"cosine({{lg:{embed_col}}}, embed('{escaped_ref}', model='{EMBED_MODEL}'))",
+            )
+
+        sum_key = f"_sum_cos_{query_hash}"
+        sum_equation = " + ".join(eq_terms) if eq_terms else "0"
+
+        existing_fields = unify.get_fields(context=join_ctx)
+        if sum_key not in existing_fields:
+            ensure_sum_cosine_column(
+                join_ctx,
+                msg_embed_columns + contact_embed_columns,
+                query_hash,
+            )
+
+        # Query top-k joined rows by the summed cosine, then fetch corresponding Messages
+        joined_logs = unify.get_logs(
+            context=join_ctx,
+            sorting={sum_key: "ascending"},
             limit=k,
-            exclude_fields=[
-                k
-                for k in unify.get_fields(context=self._transcripts_ctx).keys()
-                if k.endswith("_emb")
-            ],
         )
-        return [Message(**lg.entries) for lg in logs]
+
+        results: List[Message] = []
+        for lg in joined_logs:
+            mid = lg.entries.get("message_id")
+            if mid is None:
+                continue
+            rows = unify.get_logs(
+                context=left_ctx,
+                filter=f"message_id == {int(mid)}",
+                limit=1,
+            )
+            if rows:
+                results.append(Message(**rows[0].entries))
+
+        return results
 
     def _filter_messages(
         self,

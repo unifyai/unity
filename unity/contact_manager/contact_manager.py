@@ -4,6 +4,7 @@ import requests
 import json
 import functools
 import os
+import hashlib
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..knowledge_manager.types import ColumnType
@@ -26,6 +27,10 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 import asyncio
+from ..common.semantic_search import (
+    ensure_vector_for_source,
+    ensure_sum_cosine_column,
+)
 
 
 class ContactManager(BaseContactManager):
@@ -1291,120 +1296,42 @@ class ContactManager(BaseContactManager):
     ) -> List[Contact]:
         """
         Search contacts by minimising the sum of cosine distances to multiple reference texts.
-
-        Parameters
-        ----------
-        references : Dict[str, str]
-            Mapping from a source expression → reference text to compare against.
-            The source expression may be either a plain column name (e.g. "bio")
-            or a full Unify expression (e.g. "str({first_name}) + ' ' + str({surname})").
-            For each entry we ensure an embedding column exists for the source and
-            compute ``cosine(<row_vec>, embed('<reference>', model=...))``.
-            All such cosine distances are then summed into a dedicated derived column
-            and used for sorting (ascending) to return the top-k closest rows.
-        k : int, default 5
-            Number of closest rows to return.
-
-        Returns
-        -------
-        List[Contact]
-            Rows sorted by ascending summed cosine distance.
         """
 
         assert (
             isinstance(references, dict) and len(references) > 0
         ), "references must be a non-empty dict"
 
-        # Helper: determine whether an expression is a simple identifier (column name)
-        def _is_plain_identifier(expr: str) -> bool:
-            return (
-                ("{" not in expr)
-                and ("}" not in expr)
-                and any(c.isalpha() for c in expr)
-            )
-
-        # Helper: escape single quotes in literals for inclusion in Unify expressions
-        def _escape_single_quotes(text: str) -> str:
-            return text.replace("'", "\\'")
-
-        # Ensure/derive a vector column for each provided source expression
-        # Build equation terms for the summed cosine distance derived column
-        eq_terms: list[str] = []
-        used_embed_columns: list[str] = []
-
+        # Ensure vectors for each source expression
+        terms: list[tuple[str, str]] = []
         for source_expr, ref_text in references.items():
-            # Decide source column key and embedding column key
-            if _is_plain_identifier(source_expr):
-                source_column_name = source_expr
-                embed_column_name = f"_{source_expr}_emb"
-                ensure_vector_column(
-                    self._ctx,
-                    embed_column=embed_column_name,
-                    source_column=source_column_name,
-                    derived_expr=None,
-                )
-            else:
-                # Stable name for the derived source column based on the expression
-                import hashlib
-                import re
+            embed_col = ensure_vector_for_source(self._ctx, source_expr)
+            terms.append((embed_col, ref_text))
 
-                def _wrap_str_placeholders(expr: str) -> str:
-                    # Replace every str({field}) with ((str({field})) if exists({field}) else '')
-                    pattern = re.compile(r"str\(\{\s*([a-zA-Z_][\w]*)\s*\}\)")
-
-                    def _repl(m: re.Match[str]) -> str:
-                        fld = m.group(1)
-                        return f"((str({{{fld}}})) if exists({{{fld}}}) else '')"
-
-                    return pattern.sub(_repl, expr)
-
-                expr_hash = hashlib.sha1(source_expr.encode("utf-8")).hexdigest()[:10]
-                source_column_name = f"_expr_{expr_hash}"
-                embed_column_name = f"{source_column_name}_emb"
-                # Sanitize to avoid embedding literal 'None' values
-                sanitized_expr = _wrap_str_placeholders(source_expr)
-                ensure_vector_column(
-                    self._ctx,
-                    embed_column=embed_column_name,
-                    source_column=source_column_name,
-                    derived_expr=sanitized_expr,
-                )
-
-            used_embed_columns.append(embed_column_name)
-            escaped_ref = _escape_single_quotes(ref_text)
-            # Each term: cosine({lg:<embed_col>}, embed('<ref>', model='...'))
-            eq_terms.append(
-                f"cosine({{lg:{embed_column_name}}}, embed('{escaped_ref}', model='{EMBED_MODEL}'))",
+        # Fast path: single term → sort directly by cosine
+        if len(terms) == 1:
+            embed_col, ref_text = terms[0]
+            escaped_ref = ref_text.replace("'", "\\'")
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter="contact_id != 0 and contact_id != 1",
+                sorting={
+                    f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
+                },
+                limit=k,
+                exclude_fields=[
+                    fld
+                    for fld in unify.get_fields(context=self._ctx).keys()
+                    if fld.endswith("_emb")
+                ],
             )
+            return [Contact(**lg.entries) for lg in logs]
 
-        # Build/ensure the summed cosine-distance derived column
-        import hashlib
-
-        # Canonicalise the references map for a deterministic name
+        # Sum-of-cosine path
         canonical = "|".join(f"{k}=>{references[k]}" for k in sorted(references.keys()))
         sum_hash = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
-        sum_key = f"_sum_cos_{sum_hash}"
-        sum_equation = " + ".join(eq_terms) if eq_terms else "0"
+        sum_key = ensure_sum_cosine_column(self._ctx, terms, sum_hash)
 
-        # Ensure the derived sum column exists
-        existing_fields = unify.get_fields(context=self._ctx)
-        if sum_key not in existing_fields:
-            import os
-            import requests
-
-            url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
-            headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
-            json_input = {
-                "project": unify.active_project(),
-                "context": self._ctx,
-                "key": sum_key,
-                "equation": sum_equation,
-                "referenced_logs": {"lg": {"context": self._ctx}},
-            }
-            response = requests.request("POST", url, json=json_input, headers=headers)
-            assert response.status_code == 200, response.text
-
-        # Execute the query sorted by the summed cosine distance
         logs = unify.get_logs(
             context=self._ctx,
             filter="contact_id != 0 and contact_id != 1",
