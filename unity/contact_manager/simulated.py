@@ -193,14 +193,19 @@ class SimulatedContactManager(BaseContactManager):
         # Re-create the same tool-dicts the real manager uses, then
         # build the *exact* same prompts via the shared builders.
         ask_tools = methods_to_tool_dict(
+            ContactManager._list_columns,
             ContactManager._filter_contacts,
+            ContactManager._search_contacts,
             include_class_name=False,
         )
         upd_tools = methods_to_tool_dict(
+            ContactManager.ask,
             ContactManager._create_contact,
             ContactManager._update_contact,
             ContactManager._delete_contact,
-            ContactManager._filter_contacts,
+            ContactManager._create_custom_column,
+            ContactManager._delete_custom_column,
+            ContactManager._merge_contacts,
             include_class_name=False,
         )
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
