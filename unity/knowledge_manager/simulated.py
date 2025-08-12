@@ -21,6 +21,7 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
+from ..common.simulated import mirror_knowledge_manager_tools
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,19 +189,23 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
-        # Build *empty* reference prompts (no tools, empty schema) purely for flavour.
+        # Mirror the real knowledge manager's tool exposure for prompts
+        ref_tools = mirror_knowledge_manager_tools("refactor")
+        upd_tools = mirror_knowledge_manager_tools("update")
+        ask_tools = mirror_knowledge_manager_tools("ask")
+
         refactor_ref = build_refactor_prompt(
-            {},
+            ref_tools,
             table_schemas_json="{}",
             include_activity=self._rolling_summary_in_prompts,
         )
         store_ref = build_update_prompt(
-            {},
+            upd_tools,
             table_schemas_json="{}",
             include_activity=self._rolling_summary_in_prompts,
         )
         retrieve_ref = build_ask_prompt(
-            {},
+            ask_tools,
             table_schemas_json="{}",
             include_activity=self._rolling_summary_in_prompts,
         )
