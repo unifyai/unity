@@ -60,25 +60,33 @@ def test_search_contacts_multi_columns_json_and_vec_created():
 def test_search_contacts_all_columns_default_derivation():
     cm = ContactManager()
 
+    # Create a custom column to be included in the composite expression
+    from unity.knowledge_manager.types import ColumnType
+
+    cm._create_custom_column(column_name="occupation", column_type=ColumnType.str)
+
     # Populate different fields so the all-columns JSON helps similarity
     cm._create_contact(
         first_name="Helen",
         bio="Reads a lot",
         email_address="helen@example.com",
+        custom_fields={"occupation": "Designer"},
     )
     cm._create_contact(
         first_name="Ian",
         bio="Responds best to emails",
         email_address="ian@example.com",
+        custom_fields={"occupation": "Email specialist"},
     )
     cm._create_contact(
         first_name="Judy",
         bio="Text first please",
         phone_number="1234567890",
+        custom_fields={"occupation": "Engineer"},
     )
 
-    # Build a composite expression spanning multiple fields
-    expr = "str({first_name}) + ' ' + str({bio}) + ' ' + str({email_address}) + ' ' + str({phone_number}) + ' ' + str({whatsapp_number})"
+    # Build a composite expression spanning multiple fields including the custom column
+    expr = "str({first_name}) + ' ' + str({bio}) + ' ' + str({email_address}) + ' ' + str({phone_number}) + ' ' + str({whatsapp_number}) + ' ' + str({occupation})"
     query = "best to emails"
     results = cm._search_contacts(references={expr: query}, k=2)
 
@@ -94,47 +102,6 @@ def test_search_contacts_all_columns_default_derivation():
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_contacts_sum_of_cosine_ranking():
-    cm = ContactManager()
-
-    # A: matches both references
-    cm._create_contact(
-        first_name="Alex",
-        bio="Professional footballer playing striker",
-        rolling_summary="We had a phone call last week about training",
-    )
-    # B: matches only the bio reference
-    cm._create_contact(
-        first_name="Blake",
-        bio="Retired footballer and youth coach",
-        rolling_summary="Haven't spoken yet",
-    )
-    # C: matches only the rolling_summary reference
-    cm._create_contact(
-        first_name="Casey",
-        bio="Senior accountant focused on audits",
-        rolling_summary="Had a phone call last week regarding taxes",
-    )
-
-    refs = {"bio": "footballer", "rolling_summary": "phone call last week"}
-    results = cm._search_contacts(references=refs, k=3)
-
-    assert len(results) == 3
-    # Ensure Alex (matches both) is ranked above the others
-    names = [c.first_name for c in results]
-    assert names[0] == "Alex"
-    assert names.index("Alex") < names.index("Blake")
-    assert names.index("Alex") < names.index("Casey")
-
-    # Ensure vector columns for each reference were created
-    cols = cm._list_columns()
-    assert "_bio_emb" in cols
-    assert "_rolling_summary_emb" in cols
-
-
-@pytest.mark.unit
-@pytest.mark.requires_real_unify
-@_handle_project
-def test_search_contacts_custom_column_in_sum_of_cosine_ranking():
     cm = ContactManager()
 
     # Ensure custom column exists
