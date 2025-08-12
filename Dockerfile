@@ -87,9 +87,9 @@ RUN mkdir -p /opt/novnc && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
 
-    # Install Node.js & npm for agent-service
-    RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-        && apt-get install -y nodejs
+# Install Node.js & npm for agent-service
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs
 
 # Copy requirements file
 COPY requirements.txt .
@@ -100,14 +100,14 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy and build agent-service
-COPY agent-service/ /app/agent-service/
+# Copy all application files
+COPY . /app
+
+# Build agent-service
 WORKDIR /app/agent-service
 RUN npm ci
 WORKDIR /app
 
-# Copy all application files
-COPY . .
 
 # Set environment variables
 ENV PYTHONPATH=/app
