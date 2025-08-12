@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-import inspect
 import json
 import textwrap
-from datetime import datetime, timezone
 from typing import Dict, Callable, List
 
 from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
-from ..common.prompt_helpers import clarification_guidance
+from ..common.prompt_helpers import (
+    clarification_guidance,
+    sig_dict,
+    now_utc_str,
+    tool_name as _shared_tool_name,
+    require_tools as _shared_require_tools,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -17,12 +21,12 @@ from ..common.prompt_helpers import clarification_guidance
 
 
 def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
-    """Return {tool_name: '(<argspec>)', …} for pretty JSON dumps."""
-    return {n: str(inspect.signature(fn)) for n, fn in tools.items()}
+    """Return {tool_name: '(<argspec>)', …} using shared helper."""
+    return sig_dict(tools)
 
 
 def _now() -> str:  # UTC timestamp helper
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return now_utc_str()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -41,27 +45,13 @@ def _permanent_columns() -> str:
 
 
 def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
-    """
-    Best-effort lookup utility: find the *first* tool whose name contains
-    the given *needle* (case-insensitive).  Returns ``None`` if not found.
-    """
-    needle = needle.lower()
-    return next((n for n in tools if needle in n.lower()), None)
+    """Delegates to shared tool name resolver."""
+    return _shared_tool_name(tools, needle)
 
 
 def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> None:
-    """Raise a clear error if any required tool lookup failed.
-
-    pairs maps a human-readable expected substring → resolved tool name (or None).
-    """
-    missing = [substr for substr, resolved in pairs.items() if resolved is None]
-    if missing:
-        available = ", ".join(sorted(tools.keys())) or "<none>"
-        expected = ", ".join(missing)
-        raise ValueError(
-            f"Missing required tools: expected to find tool names containing: {expected}. "
-            f"Available tools: {available}.",
-        )
+    """Delegate validation to the shared helper for consistent errors."""
+    _shared_require_tools(pairs, tools)
 
 
 def build_ask_prompt(
