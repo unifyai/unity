@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Callable, Any, Tuple
+from typing import List, Dict, Optional, Callable, Any, Tuple, Union
 import asyncio
 import requests
 import json
@@ -554,7 +554,13 @@ class ContactManager(BaseContactManager):
     #  Vector-search helpers                                             #
     # ------------------------------------------------------------------ #
 
-    def _ensure_table_vector(self, *, column: str, source: str) -> None:
+    def _ensure_table_vector(
+        self,
+        *,
+        column: str,
+        source: str,
+        source_derived_expr: str | None = None,
+    ) -> None:
         """
         Ensure that column exists as a vector-embedding derived from source.
 
@@ -564,11 +570,15 @@ class ContactManager(BaseContactManager):
             The (private) vector column name (e.g. "_notes_emb").
         source : str
             The source column name (e.g. "notes").
+        source_derived_expr : str | None
+            Optional expression to derive the source column when it does not
+            yet exist in the table.
         """
         ensure_vector_column(
             self._ctx,  # contacts live in a single context
             embed_column=column,
             source_column=source,
+            derived_expr=source_derived_expr,
         )
 
     # Public #
@@ -1247,24 +1257,24 @@ class ContactManager(BaseContactManager):
     def _search_contacts(
         self,
         *,
-        column: str,
+        columns: Optional[Union[str, List[str]]] = None,
         text: str,
         k: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[Contact]:
         """
-        Search the contacts based on a general text description for the column contents.
-        Specifically, return the **k** tasks whose text embeddings are *closest*
-        (cosine distance) to the supplied *text*
+        Search the contacts based on a general text description for selected column contents.
+        Returns the k rows whose embeddings are closest (cosine distance) to the query.
 
-        It's always best to use *this tool* when searching for a contact with a similar
-        description, role, or any other text-based column. Semantic similarity based
-        on embeddings are *much* more robust and accurate than trying to get an exact
-        match on multi-word substrings for any text-based columns.
+        Behavior:
+        - columns == None: concatenate and embed all columns using a JSON-style string
+          built via a derived expression: {"col": "value", ...}.
+        - columns is a list with len >= 2: same as above but only include specified columns.
+        - columns is a single string or a list of length 1: embed that column's raw content directly.
 
         Parameters
         ----------
-        column : str
-            Name of the text column to embed (any default or custom column).
+        columns : str | List[str] | None
+            Which columns to include when computing embeddings, per the behavior above.
         text : str
             Query text.
         k : int, default 5
@@ -1272,21 +1282,103 @@ class ContactManager(BaseContactManager):
 
         Returns
         -------
-        List[Dict[str, Any]]
+        List[Contact]
             Rows sorted by ascending cosine distance.
         """
-        vec_col = f"_{column}_emb"
-        self._ensure_table_vector(column=vec_col, source=column)
+
+        # Helper to build the derived expression that forms a JSON-like string
+        def _json_derived_expr(cols: List[str]) -> str:
+            parts = []
+            for c in cols:
+                # Builds: ('**<col>**: ' + str({<col>})) if exists({<col>}) else ''
+                key_literal_expr = "'**" + c + "**: '"
+                value_expr = "str({" + c + "})"
+                conditional_expr = (
+                    "(("
+                    + key_literal_expr
+                    + " + "
+                    + value_expr
+                    + ") if exists({"
+                    + c
+                    + "}) else '')"
+                )
+                parts.append(conditional_expr)
+            # Join with comma+space; empty segments will contribute empty strings
+            joiner = " + ', ' + "
+            return joiner.join(parts)
+
+        # Normalize columns argument
+        single_column: Optional[str] = None
+        selected_columns: Optional[List[str]] = None
+        # Prefer string-typed, public, non-embedding columns for the default (all-columns) case
+        cols_with_types = self._get_columns()
+        # Curated built-in text-like fields to include by default
+        builtin_text_defaults = [
+            "first_name",
+            "surname",
+            "email_address",
+            "phone_number",
+            "whatsapp_number",
+            "bio",
+            "rolling_summary",
+            "response_policy",
+        ]
+        existing_builtins = [c for c in builtin_text_defaults if c in cols_with_types]
+        string_like = {"str", "string", "text"}
+        custom_text_cols = [
+            name
+            for name, typ in cols_with_types.items()
+            if name not in self._BUILTIN_FIELDS
+            and not name.endswith("_emb")
+            and not name.startswith("_")
+            and (typ in string_like)
+        ]
+        default_candidates = existing_builtins + custom_text_cols
+
+        if columns is None:
+            selected_columns = sorted(default_candidates)
+        elif isinstance(columns, str):
+            single_column = columns
+        else:
+            # columns is a list
+            if len(columns) == 1:
+                single_column = columns[0]
+            else:
+                selected_columns = sorted(columns)
+
+        # Build or ensure vector column
+        if single_column is not None:
+            vec_col = f"_{single_column}_emb"
+            self._ensure_table_vector(column=vec_col, source=single_column)
+            query_expr = f"embed('{text}', model='{EMBED_MODEL}')"
+        else:
+            assert selected_columns is not None and len(selected_columns) > 0
+            # Name stable source/vec columns based on selection
+            if columns is None:
+                source_name = "_all_columns_json"
+            else:
+                source_name = "_json_" + "_".join(selected_columns)
+            vec_col = f"{source_name}_emb"
+            derived_expr = _json_derived_expr(selected_columns)
+            self._ensure_table_vector(
+                column=vec_col,
+                source=source_name,
+                source_derived_expr=derived_expr,
+            )
+            # Build query string mirroring the row structure (bolded column names)
+            query_expr = f"embed('{text}', model='{EMBED_MODEL}')"
+
         logs = unify.get_logs(
             context=self._ctx,
+            filter="contact_id != 0 and contact_id != 1",
             sorting={
-                f"cosine({vec_col}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                f"cosine({vec_col}, {query_expr})": "ascending",
             },
             limit=k,
             exclude_fields=[
-                k
-                for k in unify.get_fields(context=self._ctx).keys()
-                if k.endswith("_emb")
+                fld
+                for fld in unify.get_fields(context=self._ctx).keys()
+                if fld.endswith("_emb")
             ],
         )
         return [Contact(**lg.entries) for lg in logs]
