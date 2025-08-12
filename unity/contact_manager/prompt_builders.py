@@ -109,8 +109,7 @@ def build_ask_prompt(
         else ""
     )
 
-    usage_examples = textwrap.dedent(
-        f"""
+    usage_examples_base = f"""
         Examples
         --------
 
@@ -141,9 +140,10 @@ def build_ask_prompt(
           `{filter_contacts_fname}(filter="phone_number is None")`
         • Has any email (not None)
           `{filter_contacts_fname}(filter="email_address is not None")`
-        {('\n' + clarification_block) if clarification_block else ''}
-    """,
-    ).strip()
+    """
+    usage_examples = textwrap.dedent(usage_examples_base).strip()
+    if clarification_block:
+        usage_examples = f"{usage_examples}\n{clarification_block}"
 
     if num_contacts < 50:
         guidance = f"given that the number of contacts is so small, you should simply use {filter_contacts_fname} with *no filter arguments* for now, so you can unpack the *full* contact list and answer the question directly."
@@ -231,8 +231,7 @@ def build_update_prompt(
         else ""
     )
 
-    usage_examples = textwrap.dedent(
-        f"""
+    usage_examples_base = f"""
         Examples
         --------
         • **Create** a new contact
@@ -257,9 +256,10 @@ def build_update_prompt(
           `{delete_custom_fname}(column_name='department')`
 
         (If you need to locate contacts by fuzzy criteria, first use `{ask_fname}` to retrieve candidate contact_id(s) and then perform the update.)
-        {('\n' + clarification_block) if clarification_block else ''}
-    """,
-    ).strip()
+    """
+    usage_examples = textwrap.dedent(usage_examples_base).strip()
+    if clarification_block:
+        usage_examples = f"{usage_examples}\n{clarification_block}"
 
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
