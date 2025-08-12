@@ -144,8 +144,8 @@ from unity.singleton_registry import SingletonRegistry
 @pytest.fixture(autouse=True)
 def _clear_singletons_between_tests():
     """Ensure *singleton* instances never leak from one test to the next."""
-    SingletonRegistry.clear()  # Clear the registry before each test
     yield
+    SingletonRegistry.clear()  # Clear the registry after each test
 
 
 # --------------------------------------------------------------------------- #
