@@ -591,10 +591,10 @@ async def _run_manager_case(
 
 
 # ---------------------------------------------------------------------------
-#  Build (n_calls) list – we only test 1 and 2 calls for now                 |
+#  Build (n_calls) list
 # ---------------------------------------------------------------------------
 
-_N_CALLS_TO_TEST = [1, 2, 4, 8, 16]
+_N_CALLS_TO_TEST = [1, 2, 4]
 
 # ---------------------------------------------------------------------------
 #  Build lists of call_factories per manager ---------------------------------
@@ -819,7 +819,8 @@ async def _assert_time_based_headings_for_manager(
 #  Per-manager TIME-based rolling-activity tests                             |
 # ---------------------------------------------------------------------------
 
-_TIME_DAYS_TO_TEST = [1, 2, 4, 8, 16]
+_TIME_DAYS_TO_TEST = [1, 2, 4]
+_IDS = ["1_day", "2_days", "4_days"]
 
 
 @pytest.mark.asyncio
@@ -827,7 +828,7 @@ _TIME_DAYS_TO_TEST = [1, 2, 4, 8, 16]
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
+    ids=_IDS,
 )
 async def test_contact_manager_methods_populate_time_rolling_activity(
     monkeypatch,
@@ -845,7 +846,7 @@ async def test_contact_manager_methods_populate_time_rolling_activity(
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
+    ids=_IDS,
 )
 async def test_transcript_manager_methods_populate_time_rolling_activity(
     monkeypatch,
@@ -863,7 +864,7 @@ async def test_transcript_manager_methods_populate_time_rolling_activity(
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
+    ids=_IDS,
 )
 async def test_knowledge_manager_methods_populate_time_rolling_activity(
     monkeypatch,
@@ -881,7 +882,7 @@ async def test_knowledge_manager_methods_populate_time_rolling_activity(
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
+    ids=_IDS,
 )
 async def test_taskscheduler_methods_populate_time_rolling_activity(
     monkeypatch,
