@@ -91,16 +91,15 @@ printf "# Minimal Fluxbox init\n" > ~/.fluxbox/init
 fluxbox 2>/dev/null &
 x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900 \
        -rfbportv6 0 -noxdamage -nowf -noxfixes -nodpms
-websockify --web=/opt/novnc 6080 localhost:5900
+websockify --web=/opt/novnc 6080 localhost:5900 &
+BROWSER_PID=$!
 
 /usr/libexec/xdg-desktop-portal &
 /usr/libexec/xdg-desktop-portal-gtk &
 
-BROWSER_PID=$!
-
 
 # Create the virtual sink/mic
-pipewire --disable-module=module-rt &
+pipewire &
 pipewire-pulse &
 wireplumber &
 sleep 2
