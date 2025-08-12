@@ -46,6 +46,7 @@ RUN apt update && apt install -y \
     libpipewire-0.3-modules libportaudio2 portaudio19-dev \
     pulseaudio-utils alsa-utils alsa-tools \
     dbus dbus-x11 python3-pip \
+    xdg-desktop-portal xdg-desktop-portal-gtk \
     && rm -rf /var/lib/apt/lists/*
 
 # Dependencies for virtual camera
