@@ -11,7 +11,6 @@ from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.conductor.conductor import Conductor
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +22,6 @@ MANAGER_CLASSES = [
     MemoryManager,
     TranscriptManager,
     TaskScheduler,
-    Conductor,
 ]
 
 
