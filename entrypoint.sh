@@ -59,10 +59,10 @@ redis-server --save "" --appendonly no &
 REDIS_PID=$!
 echo "Redis started with PID: $REDIS_PID"
 
-# Start the BrowserAgent (Node) service
-echo "Starting BrowserAgent service..."
+# Start the BrowserAgent (Node) service via ts-node
+echo "Starting BrowserAgent service via ts-node..."
 cd /app/agent-service
-npm start &
+npx ts-node src/index.ts &
 NODE_PID=$!
 cd /app
 
