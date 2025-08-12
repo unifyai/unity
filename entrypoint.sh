@@ -79,6 +79,26 @@ eval "$(dbus-launch)"
 export DBUS_SESSION_BUS_ADDRESS
 
 
+# Set up for live viewing browser
+Xvfb :99 -screen 0 1920x1080x16 &
+sleep 2
+
+# Provide minimal Fluxbox init to suppress missing-key warnings
+mkdir -p ~/.fluxbox
+printf "# Minimal Fluxbox init\n" > ~/.fluxbox/init
+
+# Start window manager, VNC server and noVNC proxy
+fluxbox 2>/dev/null &
+x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900 \
+       -rfbportv6 0 -noxdamage -nowf -noxfixes -nodpms
+websockify --web=/opt/novnc 6080 localhost:5900
+
+/usr/libexec/xdg-desktop-portal &
+/usr/libexec/xdg-desktop-portal-gtk &
+
+BROWSER_PID=$!
+
+
 # Create the virtual sink/mic
 pipewire --disable-module=module-rt &
 pipewire-pulse &
@@ -97,8 +117,8 @@ pactl set-default-source meet_mic
 pactl set-default-sink agent_sink
 
 # Set up for remote browser/os
-bash device.sh &
-BROWSER_PID=$!
+# bash device.sh &
+# BROWSER_PID=$!
 
 
 # Start the main application in parallel
