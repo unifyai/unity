@@ -108,8 +108,10 @@ def build_ask_prompt(
           `{list_columns_fname}()`
 
         ─ Semantic search ─
-        • Find contacts *similar* to "machine-learning expert" in the *bio* field
-          `{search_contacts_fname}(source='bio', text='machine-learning expert')`
+        • Find contacts similar to a reference in the bio field
+          `{search_contacts_fname}(references={'bio': 'machine-learning expert'})`
+        • Use multiple references (sum of cosine distances)
+          `{search_contacts_fname}(references={'bio': 'machine-learning expert', 'rolling_summary': 'worked on ML systems'})`
 
         ─ Filtering ─
         • Find contacts with first name **John**
