@@ -7,7 +7,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_contacts_single_string_vs_single_list_equivalence():
+def test_search_contacts_single_reference_basic():
     cm = ContactManager()
 
     entries = [
@@ -20,11 +20,9 @@ def test_search_contacts_single_string_vs_single_list_equivalence():
         cm._create_contact(first_name=fname, bio=bio)
 
     query = "short messages"
-    by_str = cm._search_contacts(columns="bio", text=query, k=3)
-    by_list = cm._search_contacts(columns=["bio"], text=query, k=3)
+    results = cm._search_contacts(references={"bio": query}, k=3)
 
-    assert [c.contact_id for c in by_str] == [c.contact_id for c in by_list]
-    assert by_str[0].first_name == "Bob"
+    assert results[0].first_name == "Bob"
 
     cols = cm._list_columns()
     assert "_bio_emb" in cols
@@ -41,23 +39,19 @@ def test_search_contacts_multi_columns_json_and_vec_created():
     cm._create_contact(first_name="Frank", bio="Short notes, hates phone calls")
     cm._create_contact(first_name="Grace", bio="Prefers texting and quick pings")
 
-    # Use two columns so the source is derived as JSON over both
-    selected = ["first_name", "bio"]
-    # Sorted order is used internally to form the source/vec names
-    selected_sorted = sorted(selected)
-    expected_source = "_json_" + "_".join(selected_sorted)  # e.g. __json_bio_first_name
-    expected_vec = f"{expected_source}_emb"  # leading underscore by implementation
-
     query = "quick text pings"
-    results = cm._search_contacts(columns=selected, text=query, k=2)
+    # Provide separate references; ranking should still pick Grace
+    refs = {"bio": query, "first_name": "irrelevant"}
+    results = cm._search_contacts(references=refs, k=2)
 
     assert len(results) == 2
     # Grace mentions texting and quick pings – should be the top hit
     assert results[0].first_name == "Grace"
 
-    # Ensure vector column was created for the JSON-derived source
+    # Ensure vector columns were created for each referenced source
     cols = cm._list_columns()
-    assert expected_vec in cols, "Expected multi-column vector column not created"
+    assert "_bio_emb" in cols
+    assert "_first_name_emb" in cols
 
 
 @pytest.mark.unit
@@ -83,15 +77,14 @@ def test_search_contacts_all_columns_default_derivation():
         phone_number="1234567890",
     )
 
+    # Build a composite expression spanning multiple fields
+    expr = "str({first_name}) + ' ' + str({bio}) + ' ' + str({email_address}) + ' ' + str({phone_number}) + ' ' + str({whatsapp_number})"
     query = "best to emails"
-    results = cm._search_contacts(text=query, k=2)  # columns=None default
+    results = cm._search_contacts(references={expr: query}, k=2)
 
     assert len(results) == 2
     assert results[0].first_name == "Ian"
 
-    # Ensure the all-columns derived/vector columns exist
+    # Ensure a derived embedding column exists for the composite expression
     cols = cm._list_columns()
-    # source name: _all_columns_json -> vec: _<source>_emb
-    assert (
-        "_all_columns_json_emb" in cols
-    ), "Expected all-columns vector column not created"
+    assert any(k.startswith("_expr_") and k.endswith("_emb") for k in cols.keys())
