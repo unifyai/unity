@@ -78,7 +78,11 @@ dbus-daemon --system --fork
 eval "$(dbus-launch)"
 export DBUS_SESSION_BUS_ADDRESS
 
-pipewire &
+# Start XDG portal services so PipeWire's rtkit module finds org.freedesktop.portal.Desktop
+xdg-desktop-portal &
+xdg-desktop-portal-gtk &
+
+pipewire --disable-module=module-rt &
 pipewire-pulse &
 wireplumber &
 sleep 2
