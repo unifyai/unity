@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Callable, Any, Tuple, Union
+from typing import List, Dict, Optional, Callable, Any, Tuple
 import asyncio
 import requests
 import json
@@ -1286,129 +1286,129 @@ class ContactManager(BaseContactManager):
     def _search_contacts(
         self,
         *,
-        columns: Optional[Union[str, List[str]]] = None,
-        text: str,
+        references: Dict[str, str],
         k: int = 5,
     ) -> List[Contact]:
         """
-        Search the contacts based on a general text description for selected column contents.
-        Returns the k rows whose embeddings are closest (cosine distance) to the query.
-
-        Behavior:
-        - columns == None: concatenate and embed all columns using a JSON-style string
-          built via a derived expression: {"col": "value", ...}.
-        - columns is a list with len >= 2: same as above but only include specified columns.
-        - columns is a single string or a list of length 1: embed that column's raw content directly.
+        Search contacts by minimising the sum of cosine distances to multiple reference texts.
 
         Parameters
         ----------
-        columns : str | List[str] | None
-            Which columns to include when computing embeddings, per the behavior above.
-        text : str
-            Query text.
+        references : Dict[str, str]
+            Mapping from a source expression → reference text to compare against.
+            The source expression may be either a plain column name (e.g. "bio")
+            or a full Unify expression (e.g. "str({first_name}) + ' ' + str({surname})").
+            For each entry we ensure an embedding column exists for the source and
+            compute ``cosine(<row_vec>, embed('<reference>', model=...))``.
+            All such cosine distances are then summed into a dedicated derived column
+            and used for sorting (ascending) to return the top-k closest rows.
         k : int, default 5
             Number of closest rows to return.
 
         Returns
         -------
         List[Contact]
-            Rows sorted by ascending cosine distance.
+            Rows sorted by ascending summed cosine distance.
         """
 
-        # Helper to build the derived expression that forms a JSON-like string
-        def _json_derived_expr(cols: List[str]) -> str:
-            parts = []
-            for c in cols:
-                # Builds: ('**<col>**: ' + str({<col>})) if exists({<col>}) else ''
-                key_literal_expr = "'**" + c + "**: '"
-                value_expr = "str({" + c + "})"
-                conditional_expr = (
-                    "(("
-                    + key_literal_expr
-                    + " + "
-                    + value_expr
-                    + ") if exists({"
-                    + c
-                    + "}) else '')"
-                )
-                parts.append(conditional_expr)
-            # Join with comma+space; empty segments will contribute empty strings
-            joiner = " + ', ' + "
-            return joiner.join(parts)
+        assert (
+            isinstance(references, dict) and len(references) > 0
+        ), "references must be a non-empty dict"
 
-        # Normalize columns argument
-        single_column: Optional[str] = None
-        selected_columns: Optional[List[str]] = None
-        # Prefer string-typed, public, non-embedding columns for the default (all-columns) case
-        cols_with_types = self._get_columns()
-        # Derive built-in text-like fields to include by default from the Contact model
-        from typing import get_origin, get_args
-
-        def _is_optional_str(annotation: Any) -> bool:
-            if annotation is str:
-                return True
-            origin = get_origin(annotation)
-            if origin is Union:
-                args = get_args(annotation)
-                return str in args and all(arg in (str, type(None)) for arg in args)
-            return False
-
-        derived_builtin_text_fields = [
-            name
-            for name, model_field in Contact.model_fields.items()
-            if name in cols_with_types
-            and name != "contact_id"
-            and _is_optional_str(model_field.annotation)
-        ]
-        string_like = {"str", "string", "text"}
-        custom_text_cols = [
-            name
-            for name, typ in cols_with_types.items()
-            if name not in self._BUILTIN_FIELDS
-            and not name.endswith("_emb")
-            and not name.startswith("_")
-            and (typ in string_like)
-        ]
-        default_candidates = derived_builtin_text_fields + custom_text_cols
-
-        if columns is None:
-            selected_columns = sorted(default_candidates)
-        elif isinstance(columns, str):
-            single_column = columns
-        else:
-            # columns is a list
-            if len(columns) == 1:
-                single_column = columns[0]
-            else:
-                selected_columns = sorted(columns)
-
-        # Build or ensure vector column
-        if single_column is not None:
-            vec_col = f"_{single_column}_emb"
-            self._ensure_table_vector(column=vec_col, source_expr=single_column)
-            query_expr = f"embed('{text}', model='{EMBED_MODEL}')"
-        else:
-            assert selected_columns is not None and len(selected_columns) > 0
-            # Name stable source/vec columns based on selection
-            if columns is None:
-                source_name = "_all_columns_json"
-            else:
-                source_name = "_json_" + "_".join(selected_columns)
-            vec_col = f"{source_name}_emb"
-            derived_expr = _json_derived_expr(selected_columns)
-            self._ensure_table_vector(
-                column=vec_col,
-                source_expr=derived_expr,
+        # Helper: determine whether an expression is a simple identifier (column name)
+        def _is_plain_identifier(expr: str) -> bool:
+            return (
+                ("{" not in expr)
+                and ("}" not in expr)
+                and any(c.isalpha() for c in expr)
             )
-            # Build query string mirroring the row structure (bolded column names)
-            query_expr = f"embed('{text}', model='{EMBED_MODEL}')"
 
+        # Helper: escape single quotes in literals for inclusion in Unify expressions
+        def _escape_single_quotes(text: str) -> str:
+            return text.replace("'", "\\'")
+
+        # Ensure/derive a vector column for each provided source expression
+        # Build equation terms for the summed cosine distance derived column
+        eq_terms: list[str] = []
+        used_embed_columns: list[str] = []
+
+        for source_expr, ref_text in references.items():
+            # Decide source column key and embedding column key
+            if _is_plain_identifier(source_expr):
+                source_column_name = source_expr
+                embed_column_name = f"_{source_expr}_emb"
+                ensure_vector_column(
+                    self._ctx,
+                    embed_column=embed_column_name,
+                    source_column=source_column_name,
+                    derived_expr=None,
+                )
+            else:
+                # Stable name for the derived source column based on the expression
+                import hashlib
+                import re
+
+                def _wrap_str_placeholders(expr: str) -> str:
+                    # Replace every str({field}) with ((str({field})) if exists({field}) else '')
+                    pattern = re.compile(r"str\(\{\s*([a-zA-Z_][\w]*)\s*\}\)")
+
+                    def _repl(m: re.Match[str]) -> str:
+                        fld = m.group(1)
+                        return f"((str({{{fld}}})) if exists({{{fld}}}) else '')"
+
+                    return pattern.sub(_repl, expr)
+
+                expr_hash = hashlib.sha1(source_expr.encode("utf-8")).hexdigest()[:10]
+                source_column_name = f"_expr_{expr_hash}"
+                embed_column_name = f"{source_column_name}_emb"
+                # Sanitize to avoid embedding literal 'None' values
+                sanitized_expr = _wrap_str_placeholders(source_expr)
+                ensure_vector_column(
+                    self._ctx,
+                    embed_column=embed_column_name,
+                    source_column=source_column_name,
+                    derived_expr=sanitized_expr,
+                )
+
+            used_embed_columns.append(embed_column_name)
+            escaped_ref = _escape_single_quotes(ref_text)
+            # Each term: cosine({lg:<embed_col>}, embed('<ref>', model='...'))
+            eq_terms.append(
+                f"cosine({{lg:{embed_column_name}}}, embed('{escaped_ref}', model='{EMBED_MODEL}'))",
+            )
+
+        # Build/ensure the summed cosine-distance derived column
+        import hashlib
+
+        # Canonicalise the references map for a deterministic name
+        canonical = "|".join(f"{k}=>{references[k]}" for k in sorted(references.keys()))
+        sum_hash = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+        sum_key = f"_sum_cos_{sum_hash}"
+        sum_equation = " + ".join(eq_terms) if eq_terms else "0"
+
+        # Ensure the derived sum column exists
+        existing_fields = unify.get_fields(context=self._ctx)
+        if sum_key not in existing_fields:
+            import os
+            import requests
+
+            url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+            headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+            json_input = {
+                "project": unify.active_project(),
+                "context": self._ctx,
+                "key": sum_key,
+                "equation": sum_equation,
+                "referenced_logs": {"lg": {"context": self._ctx}},
+            }
+            response = requests.request("POST", url, json=json_input, headers=headers)
+            assert response.status_code == 200, response.text
+
+        # Execute the query sorted by the summed cosine distance
         logs = unify.get_logs(
             context=self._ctx,
             filter="contact_id != 0 and contact_id != 1",
-            sorting={
-                f"cosine({vec_col}, {query_expr})": "ascending",
-            },
+            sorting={sum_key: "ascending"},
             limit=k,
             exclude_fields=[
                 fld
