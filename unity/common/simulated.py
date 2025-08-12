@@ -283,3 +283,84 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
             TaskScheduler._update_task_trigger,
             include_class_name=False,
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KnowledgeManager mirroring
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def mirror_knowledge_manager_tools(kind: str) -> Dict[str, Any]:
+    """Build a tool-dict mirroring the real KnowledgeManager's tools.
+
+    kind: one of "ask", "update", or "refactor". Uses AST reflection of
+    KnowledgeManager.__init__ with a static fallback. For "update" we also
+    merge tools referenced by "_refactor_tools" because the real implementation
+    unions those into "_update_tools".
+    """
+    from unity.common.llm_helpers import methods_to_tool_dict
+    from unity.knowledge_manager.knowledge_manager import KnowledgeManager as KM
+
+    target_map = {
+        "ask": "_ask_tools",
+        "update": "_update_tools",
+        "refactor": "_refactor_tools",
+    }
+    target_attr = target_map.get(kind, "_ask_tools")
+
+    try:
+        pairs = _extract_owner_method_pairs(
+            KM,
+            target_attr,
+            self_external_map=None,
+        )
+        # Ensure update includes the refactor set as well (it's merged in __init__)
+        if kind == "update":
+            ref_pairs = _extract_owner_method_pairs(KM, "_refactor_tools")
+            pairs.extend(ref_pairs)
+
+        if pairs:
+            tools = _build_tool_dict(pairs)
+            if tools:
+                return tools
+    except Exception:
+        pass
+
+    # Static fallbacks – keep in sync with KnowledgeManager.__init__
+    if kind == "ask":
+        return methods_to_tool_dict(
+            KM._tables_overview,
+            KM._filter,
+            KM._search,
+            KM._search_join,
+            KM._search_multi_join,
+            include_class_name=False,
+        )
+    if kind == "refactor":
+        return methods_to_tool_dict(
+            KM.ask,
+            # Tables
+            KM._create_table,
+            KM._rename_table,
+            KM._delete_tables,
+            # Columns
+            KM._rename_column,
+            KM._copy_column,
+            KM._move_column,
+            KM._delete_column,
+            KM._create_empty_column,
+            KM._create_derived_column,
+            KM._transform_column,
+            KM._vectorize_column,
+            # Rows
+            KM._delete_rows,
+            KM._update_rows,
+            include_class_name=False,
+        )
+    # update fallback = refactor tools + _add_rows
+    ref_tools = mirror_knowledge_manager_tools("refactor")
+    add_rows_tools = methods_to_tool_dict(KM._add_rows, include_class_name=False)
+    merged: Dict[str, Any] = {}
+    merged.update(ref_tools)
+    merged.update(add_rows_tools)
+    return merged
