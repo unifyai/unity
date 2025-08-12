@@ -7,7 +7,7 @@ mkdir -p ~/.fluxbox
 printf "# Minimal Fluxbox init\n" > ~/.fluxbox/init
 
 # Start window manager, VNC server and noVNC proxy
-fluxbox &
+fluxbox 2>/dev/null &
 x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900 \
        -rfbportv6 0 -noxdamage -nowf -noxfixes -nodpms
 websockify --web=/opt/novnc 6080 localhost:5900
