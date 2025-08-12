@@ -114,10 +114,6 @@ pactl load-module module-remap-source master=agent_sink.monitor source_name=agen
 pactl set-default-source meet_mic
 pactl set-default-sink agent_sink
 
-# Set up for remote browser/os
-# bash device.sh &
-# BROWSER_PID=$!
-
 
 # Start the main application in parallel
 echo "Starting convo manager..."
