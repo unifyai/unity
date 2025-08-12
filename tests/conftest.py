@@ -129,7 +129,7 @@ def stub_controller_deps(monkeypatch):
     # Patch all _now functions in prompt builders
     monkeypatch.setattr("unity.contact_manager.prompt_builders._now", _static_now)
     monkeypatch.setattr("unity.knowledge_manager.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.conductor.prompt_builders._now", _static_now)
+    # monkeypatch.setattr("unity.conductor.prompt_builders._now", _static_now)
     monkeypatch.setattr("unity.task_scheduler.prompt_builders._now", _static_now)
     monkeypatch.setattr("unity.transcript_manager.prompt_builders._now", _static_now)
 
