@@ -558,28 +558,57 @@ class ContactManager(BaseContactManager):
         self,
         *,
         column: str,
-        source: str,
-        source_derived_expr: str | None = None,
+        source_expr: str,
     ) -> None:
         """
-        Ensure that column exists as a vector-embedding derived from source.
+        Ensure that an embedding column exists for the provided source expression.
 
         Parameters
         ----------
         column : str
-            The (private) vector column name (e.g. "_notes_emb").
-        source : str
-            The source column name (e.g. "notes").
-        source_derived_expr : str | None
-            Optional expression to derive the source column when it does not
-            yet exist in the table.
+            The (private) vector column name (e.g. "_notes_emb"). Must end with
+            the suffix "_emb". The corresponding source column name will be
+            derived by stripping the suffix.
+        source_expr : str
+            A Unify expression string that produces the source text to embed.
+            This may be either:
+            - a plain column name like "bio" (treated as an existing column), or
+            - a full expression using Unify's expression language, e.g.
+              "str({first_name}) + ' ' + str({surname})".
+
+        Notes
+        -----
+        When a plain column name is provided, the function will reference that
+        column directly. When a full expression is provided, a derived source
+        column will be created (if needed) using the name obtained by removing
+        the trailing "_emb" from the provided embedding column key.
         """
-        ensure_vector_column(
-            self._ctx,  # contacts live in a single context
-            embed_column=column,
-            source_column=source,
-            derived_expr=source_derived_expr,
+        # Derive a stable source column key from the embedding column name.
+        source_column_name = column[:-4] if column.endswith("_emb") else f"{column}_src"
+
+        # Heuristic: treat simple identifiers (no braces or ops) as direct columns
+        is_plain_identifier = (
+            "{" not in source_expr
+            and "}" not in source_expr
+            and any(c.isalpha() for c in source_expr)
         )
+
+        if is_plain_identifier:
+            # Use the provided identifier as the source column directly
+            ensure_vector_column(
+                self._ctx,
+                embed_column=column,
+                source_column=source_expr,
+                derived_expr=None,
+            )
+        else:
+            # Treat the input as a full expression that defines/derives the source
+            ensure_vector_column(
+                self._ctx,
+                embed_column=column,
+                source_column=source_column_name,
+                derived_expr=source_expr,
+            )
 
     # Public #
     # -------#
@@ -1356,7 +1385,7 @@ class ContactManager(BaseContactManager):
         # Build or ensure vector column
         if single_column is not None:
             vec_col = f"_{single_column}_emb"
-            self._ensure_table_vector(column=vec_col, source=single_column)
+            self._ensure_table_vector(column=vec_col, source_expr=single_column)
             query_expr = f"embed('{text}', model='{EMBED_MODEL}')"
         else:
             assert selected_columns is not None and len(selected_columns) > 0
@@ -1369,8 +1398,7 @@ class ContactManager(BaseContactManager):
             derived_expr = _json_derived_expr(selected_columns)
             self._ensure_table_vector(
                 column=vec_col,
-                source=source_name,
-                source_derived_expr=derived_expr,
+                source_expr=derived_expr,
             )
             # Build query string mirroring the row structure (bolded column names)
             query_expr = f"embed('{text}', model='{EMBED_MODEL}')"
