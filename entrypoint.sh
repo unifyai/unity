@@ -78,16 +78,13 @@ dbus-daemon --system --fork
 eval "$(dbus-launch)"
 export DBUS_SESSION_BUS_ADDRESS
 
-# Start XDG portal services so PipeWire's rtkit module finds org.freedesktop.portal.Desktop
-xdg-desktop-portal &
-xdg-desktop-portal-gtk &
 
+# Create the virtual sink/mic
 pipewire --disable-module=module-rt &
 pipewire-pulse &
 wireplumber &
 sleep 2
 
-# Create the virtual sink/mic
 # 1. For capturing Meet participant audio
 pactl load-module module-null-sink sink_name=meet_sink
 pactl load-module module-remap-source master=meet_sink.monitor source_name=meet_mic

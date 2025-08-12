@@ -12,6 +12,9 @@ x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900 \
        -rfbportv6 0 -noxdamage -nowf -noxfixes -nodpms
 websockify --web=/opt/novnc 6080 localhost:5900
 
+/usr/libexec/xdg-desktop-portal &
+/usr/libexec/xdg-desktop-portal-gtk &
+
 ## Set up for virtual camera (host.sh)
 # sudo apt-get update && sudo apt-get install -y v4l2loopback-dkms v4l2loopback-utils v4l-utils linux-modules-extra-$(uname -r)
 
