@@ -9,6 +9,26 @@ from os import sep
 from typing import Any, Callable
 from unity.events.event_bus import EVENT_BUS
 
+TESTS_DEFAULT_ENV_VARS = {
+    "UNIFY_TRACED": "true",
+    "UNIFY_CACHE": "true",
+    "UNIFY_DELETE_CONTEXT_ON_EXIT": "false",
+    "UNIFY_OVERWRITE_PROJECT": "false",
+    "UNIFY_REGISTER_SUMMARY_CALLBACKS": "false",
+    "UNIFY_REGISTER_UPDATE_CALLBACKS": "false",
+    "UNIFY_TESTS_RAND_PROJ": "false",
+    "UNIFY_TESTS_DELETE_PROJ_ON_EXIT": "false",
+}
+
+
+def _get_unity_test_env_var(name):
+    """
+    Get the value of an environment variable for tests. If requested variable is not set, return the default value.
+    If requested variable is not one of the test environment variables, return None.
+    """
+    default = TESTS_DEFAULT_ENV_VARS.get(name, None)
+    return json.loads(os.environ.get(name, default))
+
 
 def _handle_project(
     test_fn: Callable | None = None,
@@ -16,7 +36,7 @@ def _handle_project(
     try_reuse_prev_ctx: bool = False,
     delete_ctx_on_exit: bool = False,
 ):
-    if json.loads(os.getenv("UNIFY_DELETE_CONTEXT_ON_EXIT", "false")):
+    if _get_unity_test_env_var("UNIFY_DELETE_CONTEXT_ON_EXIT"):
         delete_ctx_on_exit = True
     if test_fn is None:  # called with parameters → return real decorator
         return lambda f: _handle_project(
@@ -33,7 +53,7 @@ def _handle_project(
 
     async def _call(fn: Callable, *a: Any, **kw: Any):
         """Call *fn* and await it if it returns an awaitable."""
-        if json.loads(os.environ.get("UNIFY_TRACED", "true")):
+        if _get_unity_test_env_var("UNIFY_TRACED"):
             result = unify.traced(fn)(*a, **kw)
         else:
             result = fn(*a, **kw)
@@ -70,7 +90,7 @@ def _handle_project(
 
                         _unity_mod.init("UnityTests")
                         EVENT_BUS.reset()
-                    if json.loads(os.environ.get("UNIFY_TRACED", "true")):
+                    if _get_unity_test_env_var("UNIFY_TRACED"):
                         unify.set_trace_context("Traces")
                     await _call(test_fn, *args, **kwargs)
 
@@ -112,7 +132,7 @@ def _handle_project(
 
                         _unity_mod.init("UnityTests")
                         EVENT_BUS.reset()
-                    if json.loads(os.environ.get("UNIFY_TRACED", "true")):
+                    if _get_unity_test_env_var("UNIFY_TRACED"):
                         unify.set_trace_context("Traces")
                         unify.traced(test_fn)(*args, **kwargs)
                     else:

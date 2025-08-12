@@ -1,13 +1,11 @@
 import asyncio
-import os
-import json
 import types
 
 import pytest
 import unify
 
 from unity.common.llm_helpers import start_async_tool_use_loop, AsyncToolUseLoopHandle
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, _get_unity_test_env_var
 
 
 # ---------------------------------------------------------------------------
@@ -26,8 +24,8 @@ async def delegating_tool() -> AsyncToolUseLoopHandle:  # type: ignore[valid-typ
     """Return a nested async-tool loop *handle* that requests pass-through."""
     inner_client = unify.AsyncUnify(
         endpoint="o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
     # Start an inner loop that runs one sleeper tool.
     inner_handle = start_async_tool_use_loop(
@@ -58,8 +56,8 @@ async def test_outer_handle_delegates_to_inner_pause_resume(monkeypatch):
     # ── set up outer loop
     client = unify.AsyncUnify(
         endpoint="o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
     client.set_system_message(
         "Call `delegating_tool` once then wait for it to finish before replying DONE.",
@@ -138,8 +136,8 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
         """Return a nested handle marked for pass-through with patched interject."""
         inner_client = unify.AsyncUnify(
             endpoint="o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            cache=_get_unity_test_env_var("UNIFY_CACHE"),
+            traced=_get_unity_test_env_var("UNIFY_TRACED"),
         )
 
         inner_handle = start_async_tool_use_loop(
@@ -176,8 +174,8 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
     # ---- start outer loop -------------------------------------------------
     client = unify.AsyncUnify(
         endpoint="o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
     client.set_system_message(
         "Call `delegating_tool_interject` once then wait for it to finish before replying DONE.",

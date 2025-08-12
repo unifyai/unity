@@ -18,7 +18,6 @@ import json
 import re
 from datetime import datetime, timezone
 from typing import List
-import os
 import pytest
 
 import pytest
@@ -28,7 +27,7 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, _get_unity_test_env_var
 
 
 # --------------------------------------------------------------------------- #
@@ -173,8 +172,8 @@ def _llm_assert_correct(
     """LLM-based validation with stricter or fuzzier rubric per question."""
     judge = unify.Unify(
         "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
 
     if _is_summary_q(question):
@@ -443,8 +442,8 @@ async def test_ask_requests_clarification_when_context_missing(
 
     judge = unify.Unify(
         "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
     judge.set_system_message(
         'Answer strictly with JSON: {"correct": true|false} – '

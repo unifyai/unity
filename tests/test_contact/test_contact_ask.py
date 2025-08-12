@@ -4,13 +4,12 @@ import asyncio
 import pytest
 import json
 from typing import List, Dict, Any, Optional
-import os
 
 import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
 from tests.assertion_helpers import assertion_failed
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, _get_unity_test_env_var
 
 
 def _llm_judge_contact_retrieval(
@@ -26,8 +25,8 @@ def _llm_judge_contact_retrieval(
     """
     judge = unify.Unify(
         "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
     system_prompt = (
         "You are a meticulous but fair unit-test judge for contact information retrieval. "

@@ -2,20 +2,18 @@ import pytest
 import asyncio
 import functools
 import unify
-import os
-import json
 
 from unity.common.llm_helpers import start_async_tool_use_loop
 from unity.planner.simulated import SimulatedPlanner, SimulatedActiveTask
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, _get_unity_test_env_var
 
 
 # Fixtures to create a real LLM client for each test
 def make_client(system_message: str):
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
     client.set_system_message(system_message)
     return client

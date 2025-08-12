@@ -15,7 +15,6 @@ Global pytest configuration.
 from __future__ import annotations
 
 import logging
-import json
 import os
 import sys
 import types
@@ -30,14 +29,15 @@ import random
 import string
 import unify
 
+from tests.helpers import _get_unity_test_env_var, TESTS_DEFAULT_ENV_VARS
+
 
 def pytest_report_header(config):
-    overwrite = json.loads(os.getenv("UNIFY_OVERWRITE_PROJECT", "false"))
+    keys = TESTS_DEFAULT_ENV_VARS.keys()
     return [
         f"unify_base_url={os.environ.get('UNIFY_BASE_URL')}",
         f"unify_project={unify.active_project()}",
-        f"unify_overwrite_project={overwrite}",
-    ]
+    ] + [f"{key}={_get_unity_test_env_var(key)}" for key in keys]
 
 
 # --------------------------------------------------------------------------- #
@@ -274,13 +274,13 @@ def pytest_sessionstart(session):
     #  Activate the UnityTests project
     # ------------------------------------------------------------------
 
-    randomize_project_name = json.loads(os.getenv("UNIFY_TESTS_RAND_PROJ", "false"))
+    randomize_project_name = _get_unity_test_env_var("UNIFY_TESTS_RAND_PROJ")
     project_name = (
         _generate_random_project_name() if randomize_project_name else "UnityTests"
     )
     unify.activate(
         project_name,
-        overwrite=json.loads(os.getenv("UNIFY_OVERWRITE_PROJECT", "false")),
+        overwrite=_get_unity_test_env_var("UNIFY_OVERWRITE_PROJECT"),
     )
     unify.set_user_logging(False)
 
@@ -298,7 +298,7 @@ def pytest_sessionstart(session):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    if json.loads(os.environ.get("UNIFY_TESTS_DELETE_PROJ_ON_EXIT", "false")):
+    if _get_unity_test_env_var("UNIFY_TESTS_DELETE_PROJ_ON_EXIT"):
         unify.delete_project(unify.active_project())
 
 
