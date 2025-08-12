@@ -66,9 +66,6 @@ npm start &
 NODE_PID=$!
 cd /app
 
-# Virtual devices and remote browser setup
-xdg-desktop-portal &
-xdg-desktop-portal-gtk &  # or -gtk, depending on your compositor
 
 # Set up for virtual audio
 export XDG_RUNTIME_DIR=/tmp/runtime-root
@@ -97,6 +94,7 @@ pactl load-module module-remap-source master=agent_sink.monitor source_name=agen
 pactl set-default-source meet_mic
 pactl set-default-sink agent_sink
 
+# Set up for remote browser/os
 bash device.sh &
 BROWSER_PID=$!
 

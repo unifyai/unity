@@ -2,9 +2,14 @@
 Xvfb :99 -screen 0 1920x1080x16 &
 sleep 2
 
+# Provide minimal Fluxbox init to suppress missing-key warnings
+mkdir -p ~/.fluxbox
+printf "# Minimal Fluxbox init\n" > ~/.fluxbox/init
+
 # Start window manager, VNC server and noVNC proxy
 fluxbox &
-x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900
+x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900 \
+       -rfbportv6 0 -noxdamage -nowf -noxfixes -nodpms
 websockify --web=/opt/novnc 6080 localhost:5900
 
 ## Set up for virtual camera (host.sh)
