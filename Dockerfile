@@ -88,7 +88,7 @@ RUN mkdir -p /opt/novnc && \
     rm -rf master.zip noVNC-master
 
 # Install Node.js & npm for agent-service
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
 
 # Copy requirements file
