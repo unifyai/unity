@@ -10,7 +10,6 @@ from datetime import timedelta
 from typing import List, Dict, Any
 import pytest
 import os
-import pytest_asyncio
 import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -77,32 +76,32 @@ class ScenarioBuilder:
         # Mapping will be filled during contact creation (_seed_contacts)
 
     @classmethod
-    async def create(cls) -> "ScenarioBuilder":
+    def create(cls) -> "ScenarioBuilder":
         """Build an instance and run all async seeding steps."""
         self = cls()
 
-        await self._seed_contacts()
-        await self._seed_key_exchanges()
-        await self._seed_filler()
+        self._seed_contacts()
+        self._seed_key_exchanges()
+        self._seed_filler()
 
         return self
 
     # --------------------------------------------------------------------- #
-    async def _seed_contacts(self) -> None:
-        for idx, c in enumerate(_CONTACTS):
+    def _seed_contacts(self) -> None:
+        for c in _CONTACTS:
             outcome = self.cm._create_contact(**c)
             assigned_id = outcome["details"]["contact_id"]
             _ID_BY_NAME[c["first_name"].lower()] = assigned_id
 
     # --------------------------------------------------------------------- #
-    async def _seed_key_exchanges(self) -> None:
+    def _seed_key_exchanges(self) -> None:
         now = datetime(2025, 4, 20, 15, 0, tzinfo=timezone.utc)
 
         # E0: first Dan–Julia phone call
         dan_id = _ID_BY_NAME["dan"]
         julia_id = _ID_BY_NAME["julia"]
 
-        await self._log(
+        self._log(
             0,
             "phone_call",
             [
@@ -123,7 +122,7 @@ class ScenarioBuilder:
 
         # E1: *last* Dan–Julia phone call (later date)
         later = datetime(2025, 4, 26, 9, 30, tzinfo=timezone.utc)
-        await self._log(
+        self._log(
             1,
             "phone_call",
             [
@@ -145,7 +144,7 @@ class ScenarioBuilder:
         # E2: Carlos interest e-mail
         carlos_id = _ID_BY_NAME["carlos"]
         t_email = datetime(2025, 4, 21, 12, 0, tzinfo=timezone.utc)
-        await self._log(
+        self._log(
             2,
             "email",
             [
@@ -169,7 +168,7 @@ class ScenarioBuilder:
         # E3: Jimmy holiday WhatsApp
         jimmy_id = _ID_BY_NAME["jimmy"]
         t_holiday = datetime(2025, 4, 22, 18, 10, tzinfo=timezone.utc)
-        await self._log(
+        self._log(
             3,
             "whatsapp_message",
             [
@@ -186,7 +185,7 @@ class ScenarioBuilder:
         # E4: Anne passport excuse (WhatsApp)
         anne_id = _ID_BY_NAME["anne"]
         t_excuse = datetime(2025, 4, 23, 9, 0, tzinfo=timezone.utc)
-        await self._log(
+        self._log(
             4,
             "whatsapp_message",
             [
@@ -201,7 +200,7 @@ class ScenarioBuilder:
         )
 
     # --------------------------------------------------------------------- #
-    async def _seed_filler(self, exchanges: int = 20, msgs_per: int = 15) -> None:
+    def _seed_filler(self, exchanges: int = 20, msgs_per: int = 15) -> None:
         """Adds irrelevant chatter so filtering matters."""
         random.seed(12345)
         media = ["email", "phone_call", "sms_message", "whatsapp_message"]
@@ -235,10 +234,10 @@ class ScenarioBuilder:
                         ),
                     ),
                 )
-            await self._log(ex_id, mtype, batch)
+            self._log(ex_id, mtype, batch)
 
     # --------------------------------------------------------------------- #
-    async def _log(
+    def _log(
         self,
         ex_id: int,
         medium: str,
@@ -263,8 +262,8 @@ class ScenarioBuilder:
 # --------------------------------------------------------------------------- #
 #  VERSIONED SCENARIO FIXTURE
 # --------------------------------------------------------------------------- #
-@pytest_asyncio.fixture(scope="session")
-async def tm_scenario(request: pytest.FixtureRequest):
+@pytest.fixture(scope="session")
+def tm_scenario(request: pytest.FixtureRequest):
     """
     Create (and later clean up) a versioned context so that *all* tests share the
     same seeded data.
@@ -313,7 +312,7 @@ async def tm_scenario(request: pytest.FixtureRequest):
     # --- One-time setup (per session) ---
     if not SCENARIO_COMMIT_HASHES:
         print("Seeding transcript manager scenario...")
-        await sb.create()
+        sb.create()
 
         def commit_context_and_store(ctx):
             commit_info = unify.commit_context(
@@ -328,4 +327,21 @@ async def tm_scenario(request: pytest.FixtureRequest):
             mode="asyncio",
         )
 
+    unify.unset_context()
     yield sb.tm, _ID_BY_NAME
+
+
+@pytest.fixture(scope="function")
+def tm_manager_scenario(tm_scenario):
+    tm, _ID_BY_NAME = tm_scenario
+
+    def rollback_context(ctx):
+        unify.rollback_context(
+            name=ctx,
+            commit_hash=SCENARIO_COMMIT_HASHES[ctx],
+        )
+
+    # Rollback to clean state before test
+    unify.map(rollback_context, list(SCENARIO_COMMIT_HASHES.keys()), mode="asyncio")
+
+    yield tm, _ID_BY_NAME

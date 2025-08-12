@@ -247,13 +247,13 @@ def _llm_assert_correct(
 @pytest.mark.parametrize("question", QUESTIONS)
 async def test_ask_semantic_with_llm_judgement(
     question: str,
-    tm_scenario: tuple[TranscriptManager, dict[str, int]],
+    tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ) -> None:
     """
     Calls the real `.ask()` (which itself may call the LLM multiple
     times), then asks a _separate_ LLM whether the answer is acceptable.
     """
-    tm, _ID_BY_NAME = tm_scenario
+    tm, _ID_BY_NAME = tm_manager_scenario
     handle = await tm.ask(question, _return_reasoning_steps=True)
     candidate, steps = await handle.result()
     expected = _answer_semantic(tm, question, _ID_BY_NAME)
@@ -263,10 +263,10 @@ async def test_ask_semantic_with_llm_judgement(
 @pytest.mark.asyncio
 @pytest.mark.eval
 async def test_ask_allows_interjection(
-    tm_scenario: tuple[TranscriptManager, dict[str, int]],
+    tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ):
     """Ask one semantic question, then interject with a second, and verify both answers appear."""
-    tm, _ID_BY_NAME = tm_scenario
+    tm, _ID_BY_NAME = tm_manager_scenario
     # 1) Initial semantic query – last Dan ⇢ Julia phone call date
     q_initial = QUESTIONS[1]  # "When did Dan last speak with Julia on the phone?"
     handle = await tm.ask(q_initial, _return_reasoning_steps=True)
@@ -307,10 +307,10 @@ async def test_ask_honors_stop():
 @pytest.mark.asyncio
 @pytest.mark.eval
 async def test_ask_respects_parent_context(
-    tm_scenario: tuple[TranscriptManager, dict[str, int]],
+    tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ):
     # ── 1.  Seed a “basketball” exchange dated 2025-05-20 ───────────────
-    tm, _ID_BY_NAME = tm_scenario
+    tm, _ID_BY_NAME = tm_manager_scenario
     cid = _ID_BY_NAME
     t = datetime(2025, 5, 20, 15, 0, tzinfo=timezone.utc)
 
@@ -357,7 +357,7 @@ async def test_ask_respects_parent_context(
 
 @pytest.mark.asyncio
 async def test_ask_requests_clarification_when_context_missing(
-    tm_scenario: tuple[TranscriptManager, dict[str, int]],
+    tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ) -> None:
     """
     Without a *parent_chat_context* the assistant should realise it does not
@@ -367,7 +367,7 @@ async def test_ask_requests_clarification_when_context_missing(
     tool use continues to completion.
     """
 
-    tm, _ID_BY_NAME = tm_scenario
+    tm, _ID_BY_NAME = tm_manager_scenario
 
     # ── 1.  Seed a short "basketball" conversation on 2025-05-20 ───────────
     t_conv_basketball = datetime(2025, 5, 20, 18, 0, tzinfo=timezone.utc)
