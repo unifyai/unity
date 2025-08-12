@@ -1,11 +1,11 @@
 import os
-import json
 import asyncio
 import pytest
 import unify
 from typing import Dict, Callable
 
 from unity.common.llm_helpers import start_async_tool_use_loop
+from tests.helpers import _get_unity_test_env_var
 
 
 class DummyAsyncUnify:
@@ -163,8 +163,8 @@ def new_client() -> unify.AsyncUnify:
     """
     return unify.AsyncUnify(
         MODEL_NAME,
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
 
 

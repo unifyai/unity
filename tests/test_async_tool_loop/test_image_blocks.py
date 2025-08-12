@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import base64
 from pathlib import Path
@@ -14,7 +13,7 @@ from pathlib import Path
 import pytest
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, _get_unity_test_env_var
 
 # --------------------------------------------------------------------------- #
 #  CONSTANTS                                                                  #
@@ -31,8 +30,8 @@ def new_client() -> unify.AsyncUnify:
     """Utility to get a fresh client with env-controlled caching / tracing."""
     return unify.AsyncUnify(
         MODEL_NAME,
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
 
 
