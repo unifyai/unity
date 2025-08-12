@@ -41,14 +41,14 @@ def test_contact_embedding_and_search():
     # 3️⃣  Nearest-neighbour search (k=1) – should pick Bob's entry      #
     # ------------------------------------------------------------------ #
     query = "favorite means of communication"
-    nearest_k1 = cm._search_contacts(column="bio", text=query, k=1)
+    nearest_k1 = cm._search_contacts(columns="bio", text=query, k=1)
     assert len(nearest_k1) == 1
     assert nearest_k1[0].bio == entries[1][1]  # Bob is best match
 
     # ------------------------------------------------------------------ #
     # 4️⃣  Nearest-neighbour search (k=2) – ordering + limit respected   #
     # ------------------------------------------------------------------ #
-    nearest_k2 = cm._search_contacts(column="bio", text=query, k=2)
+    nearest_k2 = cm._search_contacts(columns="bio", text=query, k=2)
     assert len(nearest_k2) == 2
     assert nearest_k2[0].bio == nearest_k1[0].bio
     remaining_descriptions = [e[1] for e in entries if e[1] != nearest_k1[0].bio]
