@@ -5,94 +5,154 @@ import inspect
 from typing import Any, Dict, List, Tuple
 
 
-def _parse_methods_to_tool_dict_calls_from_annassign(
-    src: str,
-    target_attr: str,
-) -> List[str]:
-    """Return method attribute names passed to methods_to_tool_dict for target attr.
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
-    Scans annotated assignments like:
-        self._ask_tools: Dict[...] = { **methods_to_tool_dict(self._foo, ...) }
-    and extracts the right-most attribute names from positional args.
+
+def _extract_owner_method_pairs(
+    cls: Any,
+    target_attr: str,
+    self_external_map: Dict[str, Any] | None = None,
+    extra_class_names: Dict[str, Any] | None = None,
+) -> List[Tuple[Any, str]]:
+    """Extract (owner_class, method_name) pairs from cls.__init__ for target_attr.
+
+    Finds assignments to self.<target_attr> that are built via methods_to_tool_dict(...)
+    and returns each referenced method as (owner_class, method_name).
     """
+    try:
+        src = inspect.getsource(cls.__init__)
+    except Exception:
+        return []
+
     try:
         tree = ast.parse(src)
     except SyntaxError:
         return []
 
-    collected: List[str] = []
+    results: List[Tuple[Any, str]] = []
+
+    def _process_value(value: ast.AST) -> None:
+        for node in ast.walk(value):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (
+                (isinstance(func, ast.Name) and func.id == "methods_to_tool_dict")
+                or (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "methods_to_tool_dict"
+                )
+            ):
+                continue
+            for arg in node.args:
+                if not isinstance(arg, ast.Attribute):
+                    continue
+                name = arg.attr
+                owner: Any | None = None
+                root = arg.value
+                # self.<attr> → current class
+                if isinstance(root, ast.Name) and root.id == "self":
+                    owner = cls
+                # ContactManager.<method> or other explicitly named class
+                elif (
+                    isinstance(root, ast.Name)
+                    and extra_class_names
+                    and root.id in extra_class_names
+                ):
+                    owner = extra_class_names[root.id]
+                # self._contact_manager.<method> (or other mapped external refs)
+                elif (
+                    isinstance(root, ast.Attribute)
+                    and isinstance(root.value, ast.Name)
+                    and root.value.id == "self"
+                    and self_external_map
+                    and root.attr in self_external_map
+                ):
+                    owner = self_external_map[root.attr]
+                if owner and name:
+                    results.append((owner, name))
 
     class _Visitor(ast.NodeVisitor):
-        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # type: ignore[override]
-            target = node.target
-            if not (
+        def _matches_target(self, target: ast.AST) -> bool:
+            return (
                 isinstance(target, ast.Attribute)
                 and isinstance(target.value, ast.Name)
                 and target.value.id == "self"
                 and target.attr == target_attr
-            ):
+            )
+
+        def visit_Assign(self, node: ast.Assign) -> None:  # type: ignore[override]
+            if not node.targets:
                 return
-            value = node.value
-            if value is None:
+            if self._matches_target(node.targets[0]):
+                _process_value(node.value)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # type: ignore[override]
+            if node.value is None:
                 return
-            calls = [
-                n
-                for n in ast.walk(value)
-                if isinstance(n, ast.Call)
-                and (
-                    (
-                        isinstance(n.func, ast.Name)
-                        and n.func.id == "methods_to_tool_dict"
-                    )
-                    or (
-                        isinstance(n.func, ast.Attribute)
-                        and n.func.attr == "methods_to_tool_dict"
-                    )
-                )
-            ]
-            if not calls:
-                return
-            call = calls[0]
-            for arg in call.args:
-                if isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Name):
-                    if arg.value.id in {"self", "ContactManager"}:
-                        collected.append(arg.attr)
+            if self._matches_target(node.target):
+                _process_value(node.value)
 
     _Visitor().visit(tree)
-    return collected
+    return results
+
+
+def _build_tool_dict(
+    pairs: List[Tuple[Any, str]],
+    include_class_name_for: set[Any] | None = None,
+) -> Dict[str, Any]:
+    from unity.common.llm_helpers import methods_to_tool_dict
+
+    include_class_name_for = include_class_name_for or set()
+    by_owner: Dict[Any, List[Any]] = {}
+    for owner_cls, method_name in pairs:
+        try:
+            by_owner.setdefault(owner_cls, []).append(getattr(owner_cls, method_name))
+        except Exception:
+            # Skip if attribute lookup fails; fallback logic will handle empties
+            pass
+
+    tools: Dict[str, Any] = {}
+    for owner_cls, methods in by_owner.items():
+        if methods:
+            tools.update(
+                methods_to_tool_dict(
+                    *methods,
+                    include_class_name=(owner_cls in include_class_name_for),
+                ),
+            )
+    return tools
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ContactManager mirroring
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def mirror_contact_manager_tools(kind: str) -> Dict[str, Any]:
     """Build a tool-dict mirroring the real ContactManager's tool lists.
 
-    kind: "ask" or "update".
-    Uses AST reflection on ContactManager.__init__ with a static fallback.
+    kind: "ask" or "update". Uses AST reflection with a static fallback.
     """
-    # Local imports to avoid import-time cycles
     from unity.contact_manager.contact_manager import ContactManager
     from unity.common.llm_helpers import methods_to_tool_dict
 
-    try:
-        src = inspect.getsource(ContactManager.__init__)
-    except Exception:
-        src = ""
-
-    ask_attrs: List[str] = _parse_methods_to_tool_dict_calls_from_annassign(
-        src,
-        "_ask_tools",
-    )
-    upd_attrs: List[str] = _parse_methods_to_tool_dict_calls_from_annassign(
-        src,
-        "_update_tools",
-    )
+    target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
 
     try:
-        if kind == "ask" and ask_attrs:
-            methods = [getattr(ContactManager, name) for name in ask_attrs]
-            return methods_to_tool_dict(*methods, include_class_name=False)
-        if kind == "update" and upd_attrs:
-            methods = [getattr(ContactManager, name) for name in upd_attrs]
-            return methods_to_tool_dict(*methods, include_class_name=False)
+        pairs = _extract_owner_method_pairs(
+            ContactManager,
+            target_attr,
+            self_external_map=None,
+            extra_class_names={"ContactManager": ContactManager},
+        )
+        if pairs:
+            # All ContactManager-owned methods; never include class name
+            tools = _build_tool_dict(pairs)
+            if tools:
+                return tools
     except Exception:
         pass
 
@@ -117,71 +177,9 @@ def mirror_contact_manager_tools(kind: str) -> Dict[str, Any]:
         )
 
 
-def _extract_tm_tool_attrs_from_real() -> List[Tuple[str, str]]:
-    """Return (owner, method_name) from TranscriptManager.__init__ tools.
-
-    Owner is one of {"TranscriptManager", "ContactManager"}.
-    """
-    from unity.transcript_manager.transcript_manager import TranscriptManager
-
-    try:
-        src = inspect.getsource(TranscriptManager.__init__)
-    except Exception:
-        return []
-
-    try:
-        tree = ast.parse(src)
-    except SyntaxError:
-        return []
-
-    results: List[Tuple[str, str]] = []
-
-    class _InitVisitor(ast.NodeVisitor):
-        def visit_Assign(self, node: ast.Assign) -> None:  # type: ignore[override]
-            if not node.targets:
-                return
-            target = node.targets[0]
-            if not (
-                isinstance(target, ast.Attribute)
-                and isinstance(target.value, ast.Name)
-                and target.value.id == "self"
-                and target.attr == "_tools"
-            ):
-                return
-            value = node.value
-            if not isinstance(value, ast.Call):
-                return
-            func = value.func
-            if not (
-                (isinstance(func, ast.Name) and func.id == "methods_to_tool_dict")
-                or (
-                    isinstance(func, ast.Attribute)
-                    and func.attr == "methods_to_tool_dict"
-                )
-            ):
-                return
-            for arg in value.args:
-                owner = None
-                name = None
-                cur = arg
-                if isinstance(cur, ast.Attribute):
-                    tail = cur.attr
-                    root = cur.value
-                    if isinstance(root, ast.Attribute) and isinstance(
-                        root.value,
-                        ast.Name,
-                    ):
-                        if root.value.id == "self" and root.attr == "_contact_manager":
-                            owner = "ContactManager"
-                            name = tail
-                    elif isinstance(root, ast.Name) and root.id == "self":
-                        owner = "TranscriptManager"
-                        name = tail
-                if owner and name:
-                    results.append((owner, name))
-
-    _InitVisitor().visit(tree)
-    return results
+# ─────────────────────────────────────────────────────────────────────────────
+# TranscriptManager mirroring
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def mirror_transcript_manager_tools() -> Dict[str, Any]:
@@ -193,20 +191,18 @@ def mirror_transcript_manager_tools() -> Dict[str, Any]:
     from unity.transcript_manager.transcript_manager import TranscriptManager
     from unity.contact_manager.contact_manager import ContactManager
 
-    mapping = _extract_tm_tool_attrs_from_real()
-    methods: List[Any] = []
-    if mapping:
-        try:
-            for owner, name in mapping:
-                if owner == "ContactManager":
-                    methods.append(getattr(ContactManager, name))
-                elif owner == "TranscriptManager":
-                    methods.append(getattr(TranscriptManager, name))
-        except Exception:
-            methods = []  # trigger fallback
-
-    if methods:
-        return methods_to_tool_dict(*methods, include_class_name=False)
+    try:
+        pairs = _extract_owner_method_pairs(
+            TranscriptManager,
+            "_tools",
+            self_external_map={"_contact_manager": ContactManager},
+        )
+        if pairs:
+            tools = _build_tool_dict(pairs)
+            if tools:
+                return tools
+    except Exception:
+        pass
 
     # Fallback – current canonical tool set
     return methods_to_tool_dict(
@@ -222,120 +218,31 @@ def mirror_transcript_manager_tools() -> Dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _extract_ts_tool_attrs_from_real(kind: str) -> List[Tuple[str, str]]:
-    """Return (owner, method_name) pairs from TaskScheduler.__init__ tool dicts.
-
-    kind: "ask" or "update". Owner is one of {"TaskScheduler", "ContactManager"}.
-    """
-    from unity.task_scheduler.task_scheduler import TaskScheduler
-
-    try:
-        src = inspect.getsource(TaskScheduler.__init__)
-    except Exception:
-        return []
-
-    try:
-        tree = ast.parse(src)
-    except SyntaxError:
-        return []
-
-    results: List[Tuple[str, str]] = []
-    target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
-
-    class _InitVisitor(ast.NodeVisitor):
-        def visit_Assign(self, node: ast.Assign) -> None:  # type: ignore[override]
-            if not node.targets:
-                return
-            target = node.targets[0]
-            if not (
-                isinstance(target, ast.Attribute)
-                and isinstance(target.value, ast.Name)
-                and target.value.id == "self"
-                and target.attr == target_attr
-            ):
-                return
-            value = node.value
-            # The value is typically a dict literal with unpacked calls
-            for call in ast.walk(value):
-                if not isinstance(call, ast.Call):
-                    continue
-                func = call.func
-                if not (
-                    (isinstance(func, ast.Name) and func.id == "methods_to_tool_dict")
-                    or (
-                        isinstance(func, ast.Attribute)
-                        and func.attr == "methods_to_tool_dict"
-                    )
-                ):
-                    continue
-                for arg in call.args:
-                    owner = None
-                    name = None
-                    cur = arg
-                    if isinstance(cur, ast.Attribute):
-                        tail = cur.attr
-                        root = cur.value
-                        # self._contact_manager.ask → (ContactManager, 'ask')
-                        if isinstance(root, ast.Attribute) and isinstance(
-                            root.value,
-                            ast.Name,
-                        ):
-                            if (
-                                root.value.id == "self"
-                                and root.attr == "_contact_manager"
-                            ):
-                                owner = "ContactManager"
-                                name = tail
-                        # self._foo → (TaskScheduler, 'foo')
-                        elif isinstance(root, ast.Name) and root.id == "self":
-                            owner = "TaskScheduler"
-                            name = tail
-                    if owner and name:
-                        results.append((owner, name))
-
-    _InitVisitor().visit(tree)
-    return results
-
-
 def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
     """Build a tool-dict mirroring the real TaskScheduler's tool exposure.
 
     Uses AST reflection of TaskScheduler.__init__ with a static fallback. Ensures
-    that external tools like ContactManager.ask retain their class-qualified
-    naming by applying include_class_name=True for those only.
+    that external tools like ContactManager.ask retain their class-qualified naming
+    by applying include_class_name=True for those only.
     """
     from unity.common.llm_helpers import methods_to_tool_dict
     from unity.task_scheduler.task_scheduler import TaskScheduler
     from unity.contact_manager.contact_manager import ContactManager
 
-    mapping = _extract_ts_tool_attrs_from_real(kind)
+    target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
 
-    # When mapping is available, build two buckets so we can preserve
-    # the ContactManager.ask class-name in tool keys.
-    if mapping:
-        ts_methods: List[Any] = []
-        cm_methods: List[Any] = []
-        try:
-            for owner, name in mapping:
-                if owner == "TaskScheduler":
-                    ts_methods.append(getattr(TaskScheduler, name))
-                elif owner == "ContactManager":
-                    cm_methods.append(getattr(ContactManager, name))
-        except Exception:
-            ts_methods, cm_methods = [], []  # trigger fallback
-
-        if ts_methods or cm_methods:
-            tools: Dict[str, Any] = {}
-            if ts_methods:
-                tools.update(
-                    methods_to_tool_dict(*ts_methods, include_class_name=False),
-                )
-            if cm_methods:
-                tools.update(
-                    methods_to_tool_dict(*cm_methods, include_class_name=True),
-                )
+    try:
+        pairs = _extract_owner_method_pairs(
+            TaskScheduler,
+            target_attr,
+            self_external_map={"_contact_manager": ContactManager},
+        )
+        if pairs:
+            tools = _build_tool_dict(pairs, include_class_name_for={ContactManager})
             if tools:
                 return tools
+    except Exception:
+        pass
 
     # Fallback – current canonical tool sets (kept in sync with TaskScheduler)
     if kind == "ask":
