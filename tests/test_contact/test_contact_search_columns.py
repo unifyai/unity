@@ -129,3 +129,55 @@ def test_search_contacts_sum_of_cosine_ranking():
     cols = cm._list_columns()
     assert "_bio_emb" in cols
     assert "_rolling_summary_emb" in cols
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@_handle_project
+def test_search_contacts_custom_column_in_sum_of_cosine_ranking():
+    cm = ContactManager()
+
+    # Ensure custom column exists
+    from unity.knowledge_manager.types import ColumnType
+
+    cm._create_custom_column(column_name="occupation", column_type=ColumnType.str)
+
+    # A: matches both references
+    cm._create_contact(
+        first_name="Alex",
+        rolling_summary="We had a phone call last week about training",
+        custom_fields={"occupation": "Professional footballer playing striker"},
+    )
+    # B: matches only the occupation reference
+    cm._create_contact(
+        first_name="Blake",
+        rolling_summary="Haven't spoken yet",
+        custom_fields={"occupation": "Retired footballer and youth coach"},
+    )
+    # C: matches only the rolling_summary reference
+    cm._create_contact(
+        first_name="Casey",
+        rolling_summary="Had a phone call last week regarding taxes",
+        custom_fields={"occupation": "Senior accountant focused on audits"},
+    )
+
+    # Provide multiple references including the custom column and the composite expr
+    refs = {
+        "occupation": "footballer",
+        "rolling_summary": "phone call last week",
+    }
+    results = cm._search_contacts(references=refs, k=3)
+    assert len(results) == 3
+    names = [c.first_name for c in results]
+
+    # Ensure Alex (matches both) is ranked above the others
+    assert names[0] == "Alex"
+    assert names.index("Alex") < names.index("Blake")
+    assert names.index("Alex") < names.index("Casey")
+
+    # Ensure columns and vectors were created
+    cols = cm._list_columns()
+    assert "occupation" in cols
+    assert "_occupation_emb" in cols
+    assert "_rolling_summary_emb" in cols
+    assert any(k.startswith("_sum_cos_") for k in cols.keys())
