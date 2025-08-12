@@ -35,6 +35,7 @@ from ..planner.base import BasePlanner
 from ..planner.simulated import SimulatedPlanner
 from .active_task import ActiveTask
 import json
+import hashlib
 
 from ..events.manager_event_logging import (
     new_call_id,
@@ -1805,43 +1806,72 @@ class TaskScheduler(BaseTaskScheduler):
     def _search_tasks(
         self,
         *,
-        text: str,
+        references: Dict[str, str],
         k: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[Task]:
         """
-        Search the tasks based on a general text description for the overall task.
-        Specifically, return the **k** tasks whose *name + description* embeddings are
-        *closest* (cosine distance) to the supplied *text*.
+        Search tasks by minimising the sum of cosine distances to multiple reference texts.
 
-        Always best to use *this tool* when searching for a task with a similar
-        name or description. Semantic similarity based on embeddings are *much*
-        more robust and accurate than trying to get an exact match on multi-word
-        substrings.
+        The keys of `references` are Unify source expressions (either plain column
+        names like "description" or full expressions like
+        "str({name}) + ' ' + str({description})"). For each expression an embedding
+        vector is ensured/created and compared against the corresponding reference text.
 
-        Parameters
-        ----------
-        text : str
-            Query text from which to derive the embedding vector.
-        k : int, default ``5``
-            Number of neighbours to return.
-
-        Returns
-        -------
-        list[dict]
-            Log-entry dictionaries of the closest tasks (ascending distance).
+        When a single reference is provided the results are ranked directly by that
+        cosine distance. For multiple references, a derived column that sums the
+        cosine distances is created and used for ranking.
         """
-        self._bootstrap_embeddings()
-        return [
-            log.entries
-            for log in unify.get_logs(
+        from ..common.semantic_search import (
+            ensure_vector_for_source,
+            ensure_sum_cosine_column,
+        )
+
+        assert (
+            isinstance(references, dict) and len(references) > 0
+        ), "references must be a non-empty dict"
+
+        # Ensure vectors for each source expression
+        terms: list[tuple[str, str]] = []
+        for source_expr, ref_text in references.items():
+            embed_col = ensure_vector_for_source(self._ctx, source_expr)
+            terms.append((embed_col, ref_text))
+
+        # Fast path: single term → sort directly by cosine
+        if len(terms) == 1:
+            embed_col, ref_text = terms[0]
+            escaped_ref = ref_text.replace("'", "\\'")
+            logs = unify.get_logs(
                 context=self._ctx,
                 sorting={
-                    f"cosine({self._VEC_TASK}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                    f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
                 },
                 limit=k,
-                exclude_fields=[self._VEC_TASK],
+                exclude_fields=[
+                    fld
+                    for fld in unify.get_fields(context=self._ctx).keys()
+                    if fld.endswith("_emb")
+                ],
             )
-        ]
+            return [Task(**lg.entries) for lg in logs]
+
+        # Sum-of-cosine path for multiple references
+        canonical = "|".join(
+            f"{key}=>{references[key]}" for key in sorted(references.keys())
+        )
+        sum_hash = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+        sum_key = ensure_sum_cosine_column(self._ctx, terms, sum_hash)
+
+        logs = unify.get_logs(
+            context=self._ctx,
+            sorting={sum_key: "ascending"},
+            limit=k,
+            exclude_fields=[
+                fld
+                for fld in unify.get_fields(context=self._ctx).keys()
+                if fld.endswith("_emb")
+            ],
+        )
+        return [Task(**lg.entries) for lg in logs]
 
     def _filter_tasks(
         self,
