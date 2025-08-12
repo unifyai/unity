@@ -24,6 +24,30 @@ def _now() -> str:  # UTC timestamp helper
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
+    """
+    Best-effort lookup utility: find the first tool whose name contains
+    the given needle (case-insensitive). Returns None if not found.
+    """
+    needle = needle.lower()
+    return next((name for name in tools if needle in name.lower()), None)
+
+
+def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> None:
+    """Raise a clear error if any required tool lookup failed.
+
+    pairs maps a human-readable expected substring → resolved tool name (or None).
+    """
+    missing = [substr for substr, resolved in pairs.items() if resolved is None]
+    if missing:
+        available = ", ".join(sorted(tools.keys())) or "<none>"
+        expected = ", ".join(missing)
+        raise ValueError(
+            f"Missing required tools: expected to find tool names containing: {expected}. "
+            f"Available tools: {available}.",
+        )
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Shared historic activity snippet
 # ────────────────────────────────────────────────────────────────────────────
@@ -75,22 +99,34 @@ def build_refactor_prompt(
     3. Two worked examples illustrate the expected reasoning and tool use.
     """
 
-    tools_section = "\n".join(
-        f"- **{name}**{sig}"
-        for name, sig in ((t.__name__, str(t.__annotations__)) for t in tools.values())
+    sig_json = json.dumps(_sig_dict(tools), indent=4)
+
+    # Resolve a handful of canonical tool names dynamically for examples
+    delete_column_fname = _tool_name(tools, "delete_column")
+    create_empty_column_fname = _tool_name(tools, "create_empty_column")
+    rename_column_fname = _tool_name(tools, "rename_column")
+
+    _require_tools(
+        {
+            "delete_column": delete_column_fname,
+            "create_empty_column": create_empty_column_fname,
+            "rename_column": rename_column_fname,
+        },
+        tools,
     )
 
-    examples = textwrap.dedent(
-        """
+    examples = (
+        textwrap.dedent(
+            """
         ### EXAMPLE 1 — simple column move
         *Before*
         ┌─ Companies(name, revenue, opening_hours)
         └─ Contacts(first_name, surname, email_address, **opening_hours**)
 
         *Action*
-        1. `delete_column(table="Contacts", column_name="opening_hours")`
-        2. `create_empty_column(table="Companies", column_name="company_id", column_type="int")`
-        3. `rename_column(table="Companies", old_name="name", new_name="company_name")`
+        1. `{delete_column}(table="Contacts", column_name="opening_hours")`
+        2. `{create_empty_column}(table="Companies", column_name="company_id", column_type="int")`
+        3. `{rename_column}(table="Companies", old_name="name", new_name="company_name")`
         4. Update rows so every contact references `company_id`.
 
         ### EXAMPLE 2 — splitting a mixed-type column
@@ -98,7 +134,14 @@ def build_refactor_prompt(
         • Create two new columns (`purchase_details` *dict*, `purchase_note` *str*)
         • Migrate the correct rows with tool calls (`create_derived_column`, `delete_column`, etc.).
         """,
-    ).strip()
+        )
+        .strip()
+        .format(
+            delete_column=delete_column_fname,
+            create_empty_column=create_empty_column_fname,
+            rename_column=rename_column_fname,
+        )
+    )
 
     base_prompt = textwrap.dedent(
         f"""
@@ -114,8 +157,8 @@ def build_refactor_prompt(
         {table_schemas_json}
 
         --------------------------------------------------------------------
-        ## Available tools
-        {tools_section}
+        ## Tools (name → argspec)
+        {sig_json}
 
         --------------------------------------------------------------------
         ## How to work
@@ -135,7 +178,17 @@ def build_refactor_prompt(
     ).strip()
 
     activity_block = "{broader_context}" if include_activity else ""
-    return activity_block + "\n\n" + base_prompt
+    clar_section = clarification_guidance(tools)
+    return "\n".join(
+        [
+            activity_block,
+            base_prompt,
+            "",
+            f"Current UTC time: {_now()}.",
+            clar_section,
+            "",
+        ],
+    )
 
 
 def build_update_prompt(
@@ -158,8 +211,23 @@ def build_update_prompt(
 
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    core_instructions = textwrap.dedent(
-        """
+    # Resolve canonical names dynamically (required)
+    add_rows_fname = _tool_name(tools, "add_rows")
+    update_rows_fname = _tool_name(tools, "update_rows")
+    # Optional clarification helper
+    request_clar_fname = _tool_name(tools, "request_clarification")
+
+    _require_tools(
+        {
+            "add_rows": add_rows_fname,
+            "update_rows": update_rows_fname,
+        },
+        tools,
+    )
+
+    core_instructions = (
+        textwrap.dedent(
+            """
         Your task is to **store** new knowledge or **update** existing knowledge provided by the user.
         Keep the schema clean and future-proof – feel free to create,
         rename or delete tables / columns before inserting data.
@@ -176,38 +244,58 @@ def build_update_prompt(
         2. Search the tables to see if there are any logs already associated with the data, which should be updated.
         3. Use this info to decide whether each fact updates an *existing* row / column or inserts a *new* row / column.
         4. Add missing columns with the correct data-type if necessary (should be quite rare)
-        5. Use `_add_rows` to insert and `_update_rows` to modify existing rows.
+        5. Use `{add_rows}` to insert and `{update_rows}` to modify existing rows.
         6. Search again to verify everything was stored or updated correctly.
         7. Reply with a short natural-language confirmation of what was stored.
 
         Do **not** hallucinate data.
         """,
-    ).strip()
+        )
+        .strip()
+        .format(add_rows=add_rows_fname, update_rows=update_rows_fname)
+    )
+
+    clarification_block = (
+        textwrap.dedent(
+            f"""
+            Clarification
+            -------------
+            • If any request is ambiguous, ask the user to disambiguate before changing data
+              `{request_clar_fname}(question="There are several possible matches. Which item did you mean?")`
+            """,
+        ).strip()
+        if request_clar_fname
+        else ""
+    )
 
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
-    return "\n".join(
-        [
-            activity_block,
-            core_instructions,
-            clar_section,
-            "",
-            "Tools (name → argspec)",
-            "---------------------",
-            sig_json,
-            "",
-            "ColumnType Schema",
-            "-----------------",
-            json.dumps(column_type_schema, indent=4),
-            "",
-            "Current table schemas",
-            "---------------------",
-            table_schemas_json,
-            "",
-            f"Current UTC time: {_now()}.",
-        ],
-    )
+    parts: list[str] = [
+        activity_block,
+        core_instructions,
+        clar_section,
+        "",
+        "Tools (name → argspec):",
+        sig_json,
+        "",
+        "ColumnType Schema",
+        "-----------------",
+        json.dumps(column_type_schema, indent=4),
+        "",
+        "Current table schemas",
+        "---------------------",
+        table_schemas_json,
+        "",
+        f"Current UTC time: {_now()}.",
+    ]
+
+    if clarification_block:
+        parts.extend(["", clarification_block])
+
+    parts.append("")
+
+    return "\n".join(parts)
 
 
 def build_ask_prompt(
@@ -222,8 +310,25 @@ def build_ask_prompt(
 
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    core_instructions = textwrap.dedent(
-        """
+    # Resolve canonical tool names dynamically
+    filter_fname = _tool_name(tools, "filter")
+    search_fname = _tool_name(
+        tools,
+        "search",
+    )  # picks the basic semantic search, not joins
+    request_clar_fname = _tool_name(tools, "request_clarification")
+
+    _require_tools(
+        {
+            "filter": filter_fname,
+            "search": search_fname,
+        },
+        tools,
+    )
+
+    core_instructions = (
+        textwrap.dedent(
+            """
         Your task is to **retrieve** information requested by the user.
         Use the provided tools to search, transform or even refactor the
         schema so that every requested fact can be answered precisely.
@@ -234,39 +339,59 @@ def build_ask_prompt(
         Mandatory steps:
         1. List each distinct piece of information the question asks for.
         2. Identify which tables / columns can hold that info.
-        3. Fetch *all* relevant rows (use `_search` if useful).
+        3. Fetch *all* relevant rows (use `{search}` if useful; use `{filter}` for precise filters).
         4. If the schema is awkward, refactor it before continuing.
         5. Aggregate results into a concise answer covering every fact.
         6. Double-check nothing is missing; if so, repeat the search/refactor.
 
         Do **not** hallucinate data.
         """,
-    ).strip()
+        )
+        .strip()
+        .format(search=search_fname, filter=filter_fname)
+    )
 
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
-    return "\n".join(
-        [
-            activity_block,
-            core_instructions,
-            clar_section,
-            "",
-            "Tools (name → argspec)",
-            "---------------------",
-            sig_json,
-            "",
-            "ColumnType Schema",
-            "-----------------",
-            json.dumps(column_type_schema, indent=4),
-            "",
-            "Current table schemas",
-            "---------------------",
-            table_schemas_json,
-            "",
-            f"Current UTC time: {_now()}.",
-        ],
+    clarification_block = (
+        textwrap.dedent(
+            f"""
+            Clarification
+            -------------
+            • Ask for clarification when the user's request is underspecified
+              `{request_clar_fname}(question="Which specific records are you referring to?")`
+            """,
+        ).strip()
+        if request_clar_fname
+        else ""
     )
+
+    parts: list[str] = [
+        activity_block,
+        core_instructions,
+        clar_section,
+        "",
+        "Tools (name → argspec):",
+        sig_json,
+        "",
+        "ColumnType Schema",
+        "-----------------",
+        json.dumps(column_type_schema, indent=4),
+        "",
+        "Current table schemas",
+        "---------------------",
+        table_schemas_json,
+        "",
+        f"Current UTC time: {_now()}.",
+    ]
+
+    if clarification_block:
+        parts.extend(["", clarification_block])
+
+    parts.append("")
+
+    return "\n".join(parts)
 
 
 # ────────────────────────────────────────────────────────────────────────────
