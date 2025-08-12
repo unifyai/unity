@@ -90,7 +90,7 @@ class CommsManager:
                             assistant_email=event["assistant_email"],
                             user_name=event["user_name"],
                             user_number=event["user_number"],
-                            user_phone_number=event["user_phone_number"],
+                            user_whatsapp_number=event["user_whatsapp_number"],
                             user_email=event["user_email"],
                             tts_provider=event["tts_provider"],
                             voice_id=event["voice_id"],

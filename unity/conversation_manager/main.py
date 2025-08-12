@@ -78,7 +78,7 @@ class EventManager:
                         self.topic_to_subs["tool_use"]
                     )
                     self.topic_to_subs[
-                        event["event"]["payload"]["user_phone_number"]
+                        event["event"]["payload"]["user_whatsapp_number"]
                     ] = self.topic_to_subs["tool_use"]
                 for client in self.topic_to_subs[event["topic"]]:
                     client.handle_event(event)
@@ -215,7 +215,7 @@ async def main(
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("ASSISTANT_EMAIL", ""),
         os.getenv("USER_NUMBER", ""),
-        os.getenv("USER_PHONE_NUMBER", ""),
+        os.getenv("USER_WHATSAPP_NUMBER", ""),
         os.getenv("USER_EMAIL", ""),
         os.getenv("TTS_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
@@ -228,7 +228,7 @@ async def main(
     user_agent.subscribe(
         [
             os.getenv("USER_NUMBER", ""),
-            os.getenv("USER_PHONE_NUMBER", ""),
+            os.getenv("USER_WHATSAPP_NUMBER", ""),
             "tool_use",
             "startup",
         ]

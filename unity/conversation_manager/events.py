@@ -139,7 +139,7 @@ class StartupEvent(Event):
         self.assistant_email = kwargs.pop("assistant_email", None)
         self.user_name = kwargs.pop("user_name", None)
         self.user_number = kwargs.pop("user_number", None)
-        self.user_phone_number = kwargs.pop("user_phone_number", None)
+        self.user_whatsapp_number = kwargs.pop("user_whatsapp_number", None)
         self.user_email = kwargs.pop("user_email", None)
         self.tts_provider = kwargs.pop("tts_provider", None)
         self.voice_id = kwargs.pop("voice_id", None)
@@ -161,7 +161,7 @@ class StartupEvent(Event):
                 "assistant_email": self.assistant_email,
                 "user_name": self.user_name,
                 "user_number": self.user_number,
-                "user_phone_number": self.user_phone_number,
+                "user_whatsapp_number": self.user_whatsapp_number,
                 "user_email": self.user_email,
                 "tts_provider": self.tts_provider,
                 "voice_id": self.voice_id,
