@@ -19,7 +19,6 @@ from typing import Callable, Dict
 # Schemas used in the prompt -------------------------------------------------
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
-from ..memory_manager.broader_context import get_broader_context
 from ..common.prompt_helpers import clarification_guidance
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -39,33 +38,33 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
+    """
+    Best-effort lookup utility: find the first tool whose name contains
+    the given needle (case-insensitive). Returns None if not found.
+    """
+    needle = needle.lower()
+    return next((name for name in tools if needle in name.lower()), None)
+
+
+def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> None:
+    """Raise a clear error if any required tool lookup failed.
+
+    pairs maps a human-readable expected substring → resolved tool name (or None).
+    """
+    missing = [substr for substr, resolved in pairs.items() if resolved is None]
+    if missing:
+        available = ", ".join(sorted(tools.keys())) or "<none>"
+        expected = ", ".join(missing)
+        raise ValueError(
+            f"Missing required tools: expected to find tool names containing: {expected}. "
+            f"Available tools: {available}.",
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared historic activity snippet
 # ─────────────────────────────────────────────────────────────────────────────
-
-
-def _rolling_activity_section() -> str:
-    """Return a human-readable summary of historic agent activity using cache."""
-
-    try:
-        overview = get_broader_context()
-    except Exception:  # pragma: no cover – safe fallback
-        return ""
-
-    if not overview:
-        return ""
-
-    return "\n".join(
-        [
-            "Historic Activity Overview",
-            "---------------------------",
-            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
-            "Some parts may be useful context for the current task while others might not – use your judgement.",
-            "",
-            overview,
-            "",
-        ],
-    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -91,36 +90,45 @@ def build_ask_prompt(
 
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    # Heuristically infer canonical names — fall back to placeholders if absent
-    filter_messages_name = next(
-        (n for n in tools if "filter" in n.lower() and "message" in n.lower()),
-        "filter_messages",
-    )
-    search_messages_name = next(
-        (n for n in tools if "search" in n.lower()),
-        "search_messages",
-    )
-    clar_name = next(
-        (n for n in tools if "clarification" in n.lower()),
-        "request_clarification",
+    # Resolve canonical tool names dynamically
+    filter_messages_fname = _tool_name(tools, "filter_messages")
+    search_messages_fname = _tool_name(tools, "search_messages")
+    request_clar_fname = _tool_name(tools, "request_clarification")
+
+    # Validate required tools (clarification is optional)
+    _require_tools(
+        {
+            "filter_messages": filter_messages_fname,
+            "search_messages": search_messages_fname,
+        },
+        tools,
     )
 
-    usage_examples = textwrap.dedent(
-        f"""
+    clarification_block = (
+        textwrap.dedent(
+            f"""
+            • Ask for clarification when the user's request is underspecified
+              `{request_clar_fname}(question="Which conversation are you referring to?")`
+            """,
+        ).strip()
+        if request_clar_fname
+        else ""
+    )
+
+    usage_examples_base = f"""
         Examples
         --------
         • **Semantic search** – top-3 messages about *banking and budgeting*
-          `{search_messages_name}(text="banking and budgeting", k=3)`
-
-        • **Ask for clarification** when the user's request is underspecified
-          `{clar_name}(question="Which conversation are you referring to?")`
+          `{search_messages_fname}(text="banking and budgeting", k=3)`
 
         • **Filter search** – most recent WhatsApp from *contact 7*
-          `{filter_messages_name}(filter="contact_id == 7 and medium == 'whatsapp_message'", limit=1, offset=0)`
+          `{filter_messages_fname}(filter="contact_id == 7 and medium == 'whatsapp_message'", limit=1, offset=0)`
 
-        Important: if the question, refers to message *content* (topic etc.) rather than meta-data (datetime, medium etc.) then you should *almost always* use {search_messages_name} before trying exact string matching via {filter_messages_name}. You're much more likely to get a match on your first attempt.
-    """,
-    ).strip()
+        Important: if the question refers to message *content* (topic etc.) rather than meta-data (datetime, medium etc.) then you should almost always use {search_messages_fname} before trying exact string matching via {filter_messages_fname}. You're much more likely to get a match on your first attempt.
+    """
+    usage_examples = textwrap.dedent(usage_examples_base).strip()
+    if clarification_block:
+        usage_examples = f"{usage_examples}\n{clarification_block}"
 
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
