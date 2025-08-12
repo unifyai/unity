@@ -6,6 +6,8 @@ import json
 import os
 import functools
 import threading
+import inspect
+import ast
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 import unify
@@ -23,6 +25,120 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers to mirror the real ContactManager's tool lists programmatically
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _extract_tool_attrs_from_real_manager() -> tuple[list[str], list[str]]:
+    """
+    Parse the source of ContactManager.__init__ to recover the method names
+    used to build the _ask_tools and _update_tools dictionaries.
+
+    This avoids instantiating ContactManager (which performs I/O) and keeps
+    the simulated tool exposure automatically aligned with the real one.
+    """
+
+    try:
+        src = inspect.getsource(ContactManager.__init__)
+    except Exception:
+        return [], []
+
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return [], []
+
+    ask_attrs: list[str] = []
+    upd_attrs: list[str] = []
+
+    class _InitVisitor(ast.NodeVisitor):
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # type: ignore[override]
+            # Look for: self._ask_tools: ... = { **methods_to_tool_dict(...)}
+            target = node.target
+            if not isinstance(target, ast.Attribute):
+                return
+            if not isinstance(target.value, ast.Name) or target.value.id != "self":
+                return
+            target_name = target.attr
+            value = node.value
+            if value is None:
+                return
+            # Search for calls to methods_to_tool_dict inside the assigned value
+            calls = [
+                n
+                for n in ast.walk(value)
+                if isinstance(n, ast.Call)
+                and (
+                    (
+                        isinstance(n.func, ast.Name)
+                        and n.func.id == "methods_to_tool_dict"
+                    )
+                    or (
+                        isinstance(n.func, ast.Attribute)
+                        and n.func.attr == "methods_to_tool_dict"
+                    )
+                )
+            ]
+            if not calls:
+                return
+            # Take the first call (expected one per assignment)
+            call = calls[0]
+            method_names: list[str] = []
+            for arg in call.args:
+                # Accept self.<name> or ContactManager.<name>
+                if isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Name):
+                    if arg.value.id in {"self", "ContactManager"}:
+                        method_names.append(arg.attr)
+            if target_name == "_ask_tools":
+                ask_attrs.extend(method_names)
+            elif target_name == "_update_tools":
+                upd_attrs.extend(method_names)
+
+    _InitVisitor().visit(tree)
+    return ask_attrs, upd_attrs
+
+
+def _build_tools_from_real_manager(kind: str) -> Dict[str, Any]:
+    """Return a tool dict for 'ask' or 'update' by mirroring the real manager.
+
+    Falls back to a static list if reflection fails, so the simulated manager
+    remains functional in constrained environments.
+    """
+
+    ask_attrs, upd_attrs = _extract_tool_attrs_from_real_manager()
+    try:
+        if kind == "ask" and ask_attrs:
+            methods = [getattr(ContactManager, name) for name in ask_attrs]
+            return methods_to_tool_dict(*methods, include_class_name=False)
+        if kind == "update" and upd_attrs:
+            methods = [getattr(ContactManager, name) for name in upd_attrs]
+            return methods_to_tool_dict(*methods, include_class_name=False)
+    except Exception:
+        # Fall through to static fallback below
+        pass
+
+    # Fallback – keep in sync with current real manager as a safety net
+    if kind == "ask":
+        return methods_to_tool_dict(
+            ContactManager._list_columns,
+            ContactManager._filter_contacts,
+            ContactManager._search_contacts,
+            include_class_name=False,
+        )
+    else:
+        return methods_to_tool_dict(
+            ContactManager.ask,
+            ContactManager._create_contact,
+            ContactManager._update_contact,
+            ContactManager._delete_contact,
+            ContactManager._create_custom_column,
+            ContactManager._delete_custom_column,
+            ContactManager._merge_contacts,
+            include_class_name=False,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -190,24 +306,10 @@ class SimulatedContactManager(BaseContactManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
-        # Re-create the same tool-dicts the real manager uses, then
-        # build the *exact* same prompts via the shared builders.
-        ask_tools = methods_to_tool_dict(
-            ContactManager._list_columns,
-            ContactManager._filter_contacts,
-            ContactManager._search_contacts,
-            include_class_name=False,
-        )
-        upd_tools = methods_to_tool_dict(
-            ContactManager.ask,
-            ContactManager._create_contact,
-            ContactManager._update_contact,
-            ContactManager._delete_contact,
-            ContactManager._create_custom_column,
-            ContactManager._delete_custom_column,
-            ContactManager._merge_contacts,
-            include_class_name=False,
-        )
+        # Mirror the real manager's tool exposure programmatically
+        # and build the *exact* same prompts via the shared builders.
+        ask_tools = _build_tools_from_real_manager("ask")
+        upd_tools = _build_tools_from_real_manager("update")
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         ask_msg = build_ask_prompt(
