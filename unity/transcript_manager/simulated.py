@@ -6,12 +6,16 @@ import json
 import os
 import threading
 import functools
+import inspect
+import ast
 from typing import List, Optional, Dict, Any
 
 import unify
 
 from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTranscriptManager
+from .transcript_manager import TranscriptManager  # real implementation
+from ..contact_manager.contact_manager import ContactManager as _RealContactManager
 from .prompt_builders import (
     build_ask_prompt,
     build_simulated_method_prompt,
@@ -21,6 +25,119 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers to mirror the real TranscriptManager's tool list programmatically
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _extract_tm_tool_attrs_from_real() -> list[tuple[str, str]]:
+    """
+    Parse TranscriptManager.__init__ to recover the methods passed into
+    methods_to_tool_dict for self._tools.
+
+    Returns a list of (owner, attr_name) where owner ∈ {"TranscriptManager", "ContactManager"}.
+    """
+    try:
+        src = inspect.getsource(TranscriptManager.__init__)
+    except Exception:
+        return []
+
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+
+    results: list[tuple[str, str]] = []
+
+    class _InitVisitor(ast.NodeVisitor):
+        def visit_Assign(self, node: ast.Assign) -> None:  # type: ignore[override]
+            # Look for: self._tools = methods_to_tool_dict(...)
+            # Ensure target is self._tools
+            if not node.targets:
+                return
+            target = node.targets[0]
+            if not (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+                and target.attr == "_tools"
+            ):
+                return
+            value = node.value
+            if not isinstance(value, ast.Call):
+                return
+            func = value.func
+            if not (
+                (isinstance(func, ast.Name) and func.id == "methods_to_tool_dict")
+                or (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "methods_to_tool_dict"
+                )
+            ):
+                return
+            # Extract arguments – they are attribute nodes like self._contact_manager._filter_contacts
+            for arg in value.args:
+                owner = None
+                name = None
+                cur = arg
+                # Walk down attribute chain to find the right-most attribute name
+                # and identify whether it came from self._contact_manager or self
+                if isinstance(cur, ast.Attribute):
+                    # Capture the tail name
+                    tail = cur.attr
+                    # Ascend to see the root
+                    root = cur.value
+                    if isinstance(root, ast.Attribute) and isinstance(
+                        root.value,
+                        ast.Name,
+                    ):
+                        if root.value.id == "self" and root.attr == "_contact_manager":
+                            owner = "ContactManager"
+                            name = tail
+                    elif isinstance(root, ast.Name) and root.id == "self":
+                        owner = "TranscriptManager"
+                        name = tail
+                if owner and name:
+                    results.append((owner, name))
+
+    _InitVisitor().visit(tree)
+    return results
+
+
+def _build_tools_from_real_tm() -> Dict[str, Any]:
+    """
+    Build a tools-dict mirroring the real TranscriptManager's tools for prompt construction.
+    Uses a static fallback mirroring current real tools if reflection fails.
+    """
+    mapping = _extract_tm_tool_attrs_from_real()
+    methods: list[Any] = []
+    if mapping:
+        for owner, name in mapping:
+            try:
+                if owner == "ContactManager":
+                    methods.append(getattr(_RealContactManager, name))
+                elif owner == "TranscriptManager":
+                    methods.append(getattr(TranscriptManager, name))
+            except Exception:
+                # Ignore missing attrs and fall back below
+                methods = []
+                break
+    if methods:
+        from ..common.llm_helpers import methods_to_tool_dict as _m2t
+
+        return _m2t(*methods, include_class_name=False)
+
+    # Fallback – keep aligned with current implementation
+    from ..common.llm_helpers import methods_to_tool_dict as _m2t
+
+    return _m2t(
+        _RealContactManager._filter_contacts,
+        TranscriptManager._filter_messages,
+        TranscriptManager._search_messages,
+        include_class_name=False,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,8 +305,9 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
+        tools_for_prompt = _build_tools_from_real_tm()
         ask_sys = build_ask_prompt(
-            {},
+            tools_for_prompt,
             include_activity=self._rolling_summary_in_prompts,
         )
 
