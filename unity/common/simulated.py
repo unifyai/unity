@@ -116,11 +116,29 @@ def _build_tool_dict(
 
     tools: Dict[str, Any] = {}
     for owner_cls, methods in by_owner.items():
-        if methods:
+        if not methods:
+            continue
+
+        # When class-qualified naming is requested, bind methods to an instance
+        # so methods_to_tool_dict can derive `ClassName_method` keys.
+        if owner_cls in include_class_name_for:
+            try:
+                instance = owner_cls()
+                bound_methods = [getattr(instance, m.__name__) for m in methods]
+            except Exception:
+                # Fall back to unbound methods if instantiation fails
+                bound_methods = methods
+            tools.update(
+                methods_to_tool_dict(
+                    *bound_methods,
+                    include_class_name=True,
+                ),
+            )
+        else:
             tools.update(
                 methods_to_tool_dict(
                     *methods,
-                    include_class_name=(owner_cls in include_class_name_for),
+                    include_class_name=False,
                 ),
             )
     return tools
@@ -257,7 +275,7 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
         )
         tools.update(
             methods_to_tool_dict(
-                ContactManager.ask,
+                ContactManager().ask,
                 include_class_name=True,
             ),
         )

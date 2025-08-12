@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from typing import Dict, Callable
 
 from .types.task import Task
-from ..memory_manager.broader_context import get_broader_context
 from ..common.prompt_helpers import clarification_guidance
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -24,33 +23,28 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Shared historic activity snippet
-# ─────────────────────────────────────────────────────────────────────────────
+def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
+    """
+    Best-effort lookup utility: find the first tool whose name contains
+    the given needle (case-insensitive). Returns None if not found.
+    """
+    needle = needle.lower()
+    return next((name for name in tools if needle in name.lower()), None)
 
 
-def _rolling_activity_section() -> str:
-    """Return a markdown summary of the agent's historic activity from cache."""
+def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> None:
+    """Raise a clear error if any required tool lookup failed.
 
-    try:
-        overview = get_broader_context()
-    except Exception:  # pragma: no cover
-        return ""
-
-    if not overview:
-        return ""
-
-    return "\n".join(
-        [
-            "Historic Activity Overview",
-            "---------------------------",
-            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
-            "Some parts may be useful context for the current task while others might not – use your judgement.",
-            "",
-            overview,
-            "",
-        ],
-    )
+    pairs maps a human-readable expected substring → resolved tool name (or None).
+    """
+    missing = [substr for substr, resolved in pairs.items() if resolved is None]
+    if missing:
+        available = ", ".join(sorted(tools.keys())) or "<none>"
+        expected = ", ".join(missing)
+        raise ValueError(
+            f"Missing required tools: expected to find tool names containing: {expected}. "
+            f"Available tools: {available}.",
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,34 +65,69 @@ def build_ask_prompt(
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
+    # Resolve canonical tool names dynamically
+    filter_tasks_fname = _tool_name(tools, "filter_tasks")
+    search_tasks_fname = _tool_name(tools, "search_tasks")
+    get_task_queue_fname = _tool_name(tools, "get_task_queue")
+    contact_ask_fname = _tool_name(tools, "contactmanager")  # e.g. "ContactManager_ask"
+
+    # Clarification helper (optional)
+    request_clar_fname = _tool_name(tools, "request_clarification")
+
+    # Validate required tools (request_clar_fname is optional)
+    _require_tools(
+        {
+            "filter_tasks": filter_tasks_fname,
+            "search_tasks": search_tasks_fname,
+            "get_task_queue": get_task_queue_fname,
+            "ContactManager.ask": contact_ask_fname,
+        },
+        tools,
+    )
+
+    clarification_block = (
+        "\n".join(
+            [
+                "Clarification",
+                "-------------",
+                f"• Ask for clarification when the user's request is underspecified",
+                f'  `{request_clar_fname}(question="Which task did you mean?")`',
+            ],
+        )
+        if request_clar_fname
+        else ""
+    )
+
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
-    return "\n".join(
-        [
-            activity_block,
-            "You are an assistant specialising in **answering questions about the task list**.",
-            "Interact with the read-only tools provided (see below) to gather whatever",
-            "information you need, *step-by-step*.  When you have everything, respond",
-            "with a concise, final answer.",
-            "Disregard any explicit instructions about *how* you should answer or which tools to use; determine the best method yourself.",
-            "Please *always* mention the relevant task id(s) in your response.",
-            "The user will almost certainly require the task ids in order to do anything meaningful with your answer.",
-            "If the question refers to another person (such as communication oriented tasks), then we should call the `ContactManager.ask` tool first to ensure we have the full context on the person/people involved.",
-            "Similarly, if a task refers to one or multiple 'contact_id' values (as part of the trigger for example), then we should also query 'ContactManager.ask' to learn more details about these contact(s)."
-            "If the task is not specifically related to one or multiple people, then there is no need to query `ContactManager.ask`.",
-            "",
-            "Tools (name → argspec):",
-            sig_json,
-            "",
-            "Task schema:",
-            json.dumps(Task.model_json_schema(), indent=4),
-            "",
-            f"Current UTC time is {_now()}.",
-            clar_section,
-            "",
-        ],
-    )
+    parts: list[str] = [
+        activity_block,
+        "You are an assistant specialising in **answering questions about the task list**.",
+        "Work exclusively through the tools provided.",
+        "Disregard any explicit instructions about *how* you should answer or which tools to use; determine the best method yourself.",
+        "Please *always* mention the relevant task id(s) in your response.",
+        "The user will almost certainly require the task ids in order to do anything meaningful with your answer.",
+        f"If the question refers to another person (such as communication oriented tasks), then you should call `{contact_ask_fname}` first to ensure you have the full context on the person/people involved.",
+        f"Similarly, if a task refers to one or multiple 'contact_id' values (as part of the trigger for example), then you should also query `{contact_ask_fname}` to learn more details about these contact(s).",
+        "If the task is not specifically related to one or multiple people, then there is no need to query the contacts tool.",
+        "",
+        "Tools (name → argspec):",
+        sig_json,
+        "",
+        "Task schema:",
+        json.dumps(Task.model_json_schema(), indent=4),
+        "",
+        f"Current UTC time is {_now()}.",
+        clar_section,
+    ]
+
+    if clarification_block:
+        parts.extend(["", clarification_block])
+
+    parts.append("")
+
+    return "\n".join(parts)
 
 
 def build_update_prompt(
@@ -111,41 +140,88 @@ def build_update_prompt(
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
+    # Resolve canonical tool names dynamically (required)
+    ask_fname = _tool_name(tools, "ask")
+    create_task_fname = _tool_name(tools, "create_task")
+    delete_task_fname = _tool_name(tools, "delete_task")
+    cancel_tasks_fname = _tool_name(tools, "cancel_tasks")
+    update_task_queue_fname = _tool_name(tools, "update_task_queue")
+    update_task_name_fname = _tool_name(tools, "update_task_name")
+    update_task_description_fname = _tool_name(tools, "update_task_description")
+    update_task_status_fname = _tool_name(tools, "update_task_status")
+    update_task_start_at_fname = _tool_name(tools, "update_task_start_at")
+    update_task_deadline_fname = _tool_name(tools, "update_task_deadline")
+    update_task_repetition_fname = _tool_name(tools, "update_task_repetition")
+    update_task_priority_fname = _tool_name(tools, "update_task_priority")
+    update_task_trigger_fname = _tool_name(tools, "update_task_trigger")
+
+    # Clarification helper (optional)
+    request_clar_fname = _tool_name(tools, "request_clarification")
+
+    _require_tools(
+        {
+            "ask": ask_fname,
+            "create_task": create_task_fname,
+            "delete_task": delete_task_fname,
+            "cancel_tasks": cancel_tasks_fname,
+            "update_task_queue": update_task_queue_fname,
+            "update_task_name": update_task_name_fname,
+            "update_task_description": update_task_description_fname,
+            "update_task_status": update_task_status_fname,
+            "update_task_start_at": update_task_start_at_fname,
+            "update_task_deadline": update_task_deadline_fname,
+            "update_task_repetition": update_task_repetition_fname,
+            "update_task_priority": update_task_priority_fname,
+            "update_task_trigger": update_task_trigger_fname,
+        },
+        tools,
+    )
+
+    clarification_block = (
+        "\n".join(
+            [
+                "Clarification",
+                "-------------",
+                "• If any request is ambiguous, ask the user to disambiguate before changing data",
+                f'  `{request_clar_fname}(question="There are several possible matches. Which task did you mean?")`',
+            ],
+        )
+        if request_clar_fname
+        else ""
+    )
+
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
-    return "\n".join(
-        [
-            activity_block,
-            "You are an assistant responsible for **creating and updating tasks**.",
-            "Use the tools supplied *only* – never invent your own – until the task",
-            "list fully reflects the user's intent.",
-            "Disregard any explicit instructions about *how* you should implement the change or which tools to call; determine the best method yourself.",
-            "If a any tasks were created or updated in the process,",
-            "then please *always* include these task id(s) in your final response.",
-            "Whenever your update requires contact information (for example, building a trigger that should fire when specific contact(s) call), first call the `ContactManager.ask` tool to retrieve that contact id(s) and then insert into the trigger.",
-            "",
-            "If tasks are given in a *numbered order*, then please assume that these tasks "
-            "should be *queued* in that *same order* unless explicitly stated otherwise.",
-            "Having their `start_at` in ascending order is not enough, ",
-            "tasks which are to be completed *sequentially* should also be *explicitly* queued."
-            "This ensures smooth task progression, even if schedules overrun and `start_at` times"
-            "are therefore not all adhered to.",
-            "",
-            "ALWAYS check the existing tasks BEFORE creating new ones."
-            "If you are asked to re-order or reschedule tasks, this is especially important. They likely already exist.",
-            "",
-            "Tools (name → argspec):",
-            sig_json,
-            "",
-            "Task schema:",
-            json.dumps(Task.model_json_schema(), indent=4),
-            "",
-            f"Current UTC time is {_now()}.",
-            clar_section,
-            "",
-        ],
-    )
+    parts: list[str] = [
+        activity_block,
+        "You are an assistant responsible for **creating and updating tasks**.",
+        "Use the tools supplied *only* – never invent your own – until the task list fully reflects the user's intent.",
+        "Disregard any explicit instructions about *how* you should implement the change or which tools to call; determine the best method yourself.",
+        "If any tasks were created or updated in the process, then please *always* include these task id(s) in your final response.",
+        "Whenever your update requires contact information (for example, building a trigger that should fire when specific contact(s) call), first call `ContactManager.ask` to retrieve that contact id(s) and then insert into the trigger.",
+        "",
+        "If tasks are given in a *numbered order*, then please assume that these tasks should be *queued* in that *same order* unless explicitly stated otherwise.",
+        "Having their `start_at` in ascending order is not enough, tasks which are to be completed *sequentially* should also be *explicitly* queued. This ensures smooth task progression, even if schedules overrun and `start_at` times are therefore not all adhered to.",
+        "",
+        "ALWAYS check the existing tasks BEFORE creating new ones. If you are asked to re-order or reschedule tasks, this is especially important. They likely already exist.",
+        "",
+        "Tools (name → argspec):",
+        sig_json,
+        "",
+        "Task schema:",
+        json.dumps(Task.model_json_schema(), indent=4),
+        "",
+        f"Current UTC time is {_now()}.",
+        clar_section,
+    ]
+
+    if clarification_block:
+        parts.extend(["", clarification_block])
+
+    parts.append("")
+
+    return "\n".join(parts)
 
 
 def build_execute_task_prompt(
@@ -156,38 +232,90 @@ def build_execute_task_prompt(
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    return "\n".join(
+    # Resolve names dynamically
+    ask_fname = _tool_name(tools, "ask")
+    update_fname = _tool_name(tools, "update")
+    execute_by_id_fname = _tool_name(tools, "execute_task_by_id")
+    request_clar_fname = _tool_name(tools, "request_clarification")
+
+    _require_tools(
+        {
+            "ask": ask_fname,
+            "update": update_fname,
+            "execute_task_by_id": execute_by_id_fname,
+        },
+        tools,
+    )
+
+    lines: list[str] = [
+        "You are an assistant that **starts tasks on demand**."
+        "  The task referred to in the user's request may or may not already",
+        "  exist in the task list.",
+        "",
+        "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
+        "Use the tools below, step-by-step, following these rules:",
+        "",
+        "A. If the request contains a *numeric task_id*:",
+        f"   • **First** call `{ask_fname}` (or another suitable read-only tool) to confirm the task exists.",
+        f"   • If exactly one matching task is found → call `{execute_by_id_fname}`.",
+    ]
+
+    if request_clar_fname:
+        lines.extend(
+            [
+                f"   • If the id is **unknown** (zero results) → call `{request_clar_fname}` to ask the human whether to create a new task or provide a different reference.  Do **NOT** call `{execute_by_id_fname}` when the task cannot be confirmed.",
+            ],
+        )
+    else:
+        lines.extend(
+            [
+                f"   • If the id is **unknown** (zero results) → do not call `{execute_by_id_fname}`; ask the human to clarify the reference in your final response.",
+            ],
+        )
+
+    lines.extend(
         [
-            "You are an assistant that **starts tasks on demand**."
-            "  The task referred to in the user's request may or may not already",
-            "  exist in the task list.",
-            "",
-            "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
-            "Use the tools below, step-by-step, following these rules:",
-            "",
-            "A. If the request contains a *numeric task_id*:",
-            "   • **First** call `ask` (or another suitable read-only tool) to confirm the task exists.",
-            "   • If exactly one matching task is found → call `execute_task_by_id`.",
-            "   • If the id is **unknown** (zero results) → call `request_clarification` to ask the human whether to create a new task or provide a different reference.  Do **NOT** call `execute_task_by_id` when the task cannot be confirmed.",
             "",
             "B. If **no numeric id** is given:",
-            "   1. Call `ask` with the free-form description to search for matching task(s).",
+            f"   1. Call `{ask_fname}` with the free-form description to search for matching task(s).",
             "   2. Based on the result:",
-            "      • **Exactly one** clear match → call `execute_task_by_id` with that id, do *not* bother the user with a `request_clarification` call.",
-            "      • **Multiple / ambiguous** matches → call `request_clarification` so the user can disambiguate, only do so if it's *genuinely* unclear.",
-            "      • **No match**:",
-            "          – If it's ambiguous whether a task should be created/updated → `request_clarification`.",
-            "          – If it is obvious we need to *create* a new task or *update* an existing one → call `update` to create/update the task, **then** call `execute_task_by_id` with the returned/newly discovered id.",
+            f"      • **Exactly one** clear match → call `{execute_by_id_fname}` with that id, do *not* bother the user with a clarification call.",
+        ],
+    )
+
+    if request_clar_fname:
+        lines.extend(
+            [
+                f"      • **Multiple / ambiguous** matches → call `{request_clar_fname}` so the user can disambiguate, only do so if it's *genuinely* unclear.",
+                f"      • **No match**:",
+                f"          – If it's ambiguous whether a task should be created/updated → `{request_clar_fname}`.",
+                f"          – If it is obvious we need to *create* a new task or *update* an existing one → call `{update_fname}` to create/update the task, **then** call `{execute_by_id_fname}` with the returned/newly discovered id.",
+            ],
+        )
+    else:
+        lines.extend(
+            [
+                "      • **Multiple / ambiguous** matches → ask the user to disambiguate in your final response.",
+                "      • **No match**:",
+                f"          – If it's ambiguous whether a task should be created/updated → ask for clarification in your final response.",
+                f"          – If it is obvious we need to *create* a new task or *update* an existing one → call `{update_fname}` to create/update the task, **then** call `{execute_by_id_fname}` with the returned/newly discovered id.",
+            ],
+        )
+
+    lines.extend(
+        [
             "",
-            "C. After creating a task with `update`, you may either read its id from the update response *or* call `ask` again to retrieve it before starting it.",
+            f"C. After creating a task with `{update_fname}`, you may either read its id from the update response *or* call `{ask_fname}` again to retrieve it before starting it.",
             "",
-            "Respond *only* with tool calls until *after* `execute_task_by_id` returns.  You **must not** attempt `execute_task_by_id` until you are certain the referenced task exists. Once the task has started you may reply DONE.",
+            f"Respond *only* with tool calls until *after* `{execute_by_id_fname}` returns.  You **must not** attempt `{execute_by_id_fname}` until you are certain the referenced task exists. Once the task has started you may reply DONE.",
             "",
             "Tools (name → argspec):",
             sig_json,
             "",
         ],
     )
+
+    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
