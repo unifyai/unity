@@ -33,7 +33,7 @@ ENV DISPLAY=:99
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl wget unzip gnupg2 \
-    xvfb x11vnc fluxbox \
+    xvfb x11vnc fluxbox xdotool wmctrl imagemagick \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
     libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
@@ -88,6 +88,9 @@ RUN mkdir -p /opt/novnc && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
 
+    # Install Node.js & npm for agent-service
+    RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+        && apt-get install -y nodejs
 
 # Copy requirements file
 COPY requirements.txt .
@@ -97,6 +100,12 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy and build agent-service
+COPY agent-service/ /app/agent-service/
+WORKDIR /app/agent-service
+RUN npm ci
+WORKDIR /app
 
 # Copy all application files
 COPY . .
@@ -120,6 +129,7 @@ ENV TOKENIZERS_PARALLELISM=false
 
 # Expose the ports that the applications use
 EXPOSE 8000 6379
+EXPOSE 3000
 
 # Use Tini as init system to handle signals properly
 ENTRYPOINT ["/usr/bin/tini", "--"]

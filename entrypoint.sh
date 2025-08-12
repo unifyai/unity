@@ -33,6 +33,12 @@ cleanup() {
         kill -TERM $BROWSER_PID 2>/dev/null || true
         wait $BROWSER_PID 2>/dev/null || true
     fi
+    # Stop the BrowserAgent (Node) service
+    if [ ! -z "$NODE_PID" ]; then
+        echo "Stopping BrowserAgent service (PID: $NODE_PID)..."
+        kill -TERM $NODE_PID 2>/dev/null || true
+        wait $NODE_PID 2>/dev/null || true
+    fi
 
     echo "Cleanup complete"
     exit 0
@@ -53,6 +59,12 @@ redis-server --save "" --appendonly no &
 REDIS_PID=$!
 echo "Redis started with PID: $REDIS_PID"
 
+# Start the BrowserAgent (Node) service
+echo "Starting BrowserAgent service..."
+cd /app/agent-service
+npm start &
+NODE_PID=$!
+cd /app
 
 # Virtual devices and remote browser setup
 xdg-desktop-portal &
