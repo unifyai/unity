@@ -110,9 +110,7 @@ class CommsAgent:
         self.user_name = user_name
         self.user_number = user_number
         self.user_email = user_email
-        self.user_whatsapp_number = (
-            user_whatsapp_number if user_whatsapp_number else user_number
-        )
+        self.user_whatsapp_number = user_whatsapp_number
 
         # events (history)
         self.conv_context_length = conv_context_length
