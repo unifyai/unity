@@ -1312,18 +1312,25 @@ class ContactManager(BaseContactManager):
         selected_columns: Optional[List[str]] = None
         # Prefer string-typed, public, non-embedding columns for the default (all-columns) case
         cols_with_types = self._get_columns()
-        # Curated built-in text-like fields to include by default
-        builtin_text_defaults = [
-            "first_name",
-            "surname",
-            "email_address",
-            "phone_number",
-            "whatsapp_number",
-            "bio",
-            "rolling_summary",
-            "response_policy",
+        # Derive built-in text-like fields to include by default from the Contact model
+        from typing import get_origin, get_args
+
+        def _is_optional_str(annotation: Any) -> bool:
+            if annotation is str:
+                return True
+            origin = get_origin(annotation)
+            if origin is Union:
+                args = get_args(annotation)
+                return str in args and all(arg in (str, type(None)) for arg in args)
+            return False
+
+        derived_builtin_text_fields = [
+            name
+            for name, model_field in Contact.model_fields.items()
+            if name in cols_with_types
+            and name != "contact_id"
+            and _is_optional_str(model_field.annotation)
         ]
-        existing_builtins = [c for c in builtin_text_defaults if c in cols_with_types]
         string_like = {"str", "string", "text"}
         custom_text_cols = [
             name
@@ -1333,7 +1340,7 @@ class ContactManager(BaseContactManager):
             and not name.startswith("_")
             and (typ in string_like)
         ]
-        default_candidates = existing_builtins + custom_text_cols
+        default_candidates = derived_builtin_text_fields + custom_text_cols
 
         if columns is None:
             selected_columns = sorted(default_candidates)
