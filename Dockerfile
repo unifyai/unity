@@ -104,9 +104,20 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all application files
 COPY . /app
 
+# After the other apt-get installs in Dockerfile
+RUN apt-get update && apt-get install -y \
+    libgtk-4-1 \
+    libharfbuzz-icu0 \
+    libenchant-2-2 \
+    libsecret-1-0 \
+    libhyphen0 \
+    libmanette-0.2-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Build agent-service
 WORKDIR /app/agent-service
 RUN npm ci
+RUN npx playwright@1.52 install --with-deps
 WORKDIR /app
 
 
@@ -119,7 +130,6 @@ ENV UNIFY_KEY=${UNIFY_KEY}
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 RUN python unity/conversation_manager/call.py download-files
-RUN playwright install
 
 # Set runtime environment variables for memory optimization
 ENV PYTHONUNBUFFERED=1

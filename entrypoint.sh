@@ -62,7 +62,6 @@ echo "Redis started with PID: $REDIS_PID"
 # Start the BrowserAgent (Node) service via ts-node
 echo "Starting BrowserAgent service via ts-node..."
 cd /app/agent-service
-npm install
 npx ts-node src/index.ts &
 NODE_PID=$!
 cd /app
