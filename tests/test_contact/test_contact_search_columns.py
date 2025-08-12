@@ -88,3 +88,44 @@ def test_search_contacts_all_columns_default_derivation():
     # Ensure a derived embedding column exists for the composite expression
     cols = cm._list_columns()
     assert any(k.startswith("_expr_") and k.endswith("_emb") for k in cols.keys())
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@_handle_project
+def test_search_contacts_sum_of_cosine_ranking():
+    cm = ContactManager()
+
+    # A: matches both references
+    cm._create_contact(
+        first_name="Alex",
+        bio="Professional footballer playing striker",
+        rolling_summary="We had a phone call last week about training",
+    )
+    # B: matches only the bio reference
+    cm._create_contact(
+        first_name="Blake",
+        bio="Retired footballer and youth coach",
+        rolling_summary="Haven't spoken yet",
+    )
+    # C: matches only the rolling_summary reference
+    cm._create_contact(
+        first_name="Casey",
+        bio="Senior accountant focused on audits",
+        rolling_summary="Had a phone call last week regarding taxes",
+    )
+
+    refs = {"bio": "footballer", "rolling_summary": "phone call last week"}
+    results = cm._search_contacts(references=refs, k=3)
+
+    assert len(results) == 3
+    # Ensure Alex (matches both) is ranked above the others
+    names = [c.first_name for c in results]
+    assert names[0] == "Alex"
+    assert names.index("Alex") < names.index("Blake")
+    assert names.index("Alex") < names.index("Casey")
+
+    # Ensure vector columns for each reference were created
+    cols = cm._list_columns()
+    assert "_bio_emb" in cols
+    assert "_rolling_summary_emb" in cols
