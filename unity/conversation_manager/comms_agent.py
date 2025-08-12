@@ -1,9 +1,9 @@
 import asyncio
 import json
+import threading
 import openai
 import os
 import redis
-import time
 import traceback
 from typing import Callable
 from pathlib import Path
@@ -151,6 +151,7 @@ class CommsAgent:
         self.redis = None
         self.broader_context = ""
         self.project_name = project_name
+        self.logging_lock = threading.Lock()
 
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
@@ -918,108 +919,110 @@ class CommsAgent:
         self.cleanup_call_proc()
 
     def handle_logging(self, event: dict):
-        import unity
-        from unity.transcript_manager.transcript_manager import TranscriptManager
-        from unity.transcript_manager.types.message import Message
-        from unity.events.event_bus import EVENT_BUS
+        with self.logging_lock:
+            import unity
+            from unity.transcript_manager.transcript_manager import TranscriptManager
+            from unity.transcript_manager.types.message import Message
+            from unity.events.event_bus import EVENT_BUS
 
-        try:
-            if not unity.ASSISTANT:
-                assistant_id = os.environ.get("ASSISTANT_ID", "0")
-                unity.init(
-                    project_name=self.project_name,
-                    assistant_id=int(assistant_id.replace("default-assistant-", "")),
-                    default_assistant={
-                        **DEFAULT_ASSISTANT_PAYLOAD,
-                        "agent_id": assistant_id,
-                        "first_name": self.assistant_name,
-                        "age": self.assistant_age,
-                        "region": self.assistant_region,
-                        "about": self.assistant_about,
-                        "phone": self.assistant_number,
-                        "email": self.assistant_email,
-                        "user_phone": self.user_number,
-                        "user_whatsapp_number": self.user_phone_call_number,
-                        "assistant_whatsapp_number": self.assistant_number,
-                        "api_key": os.environ.get("UNIFY_KEY"),
-                    },
-                )
-                EVENT_BUS._get_logger().session.headers[
+            try:
+                # initialize unity if not already initialised
+                if not unity.ASSISTANT:
+                    assistant_id = os.environ.get("ASSISTANT_ID", "0")
+                    unity.init(
+                        project_name=self.project_name,
+                        assistant_id=int(assistant_id.replace("default-assistant-", "")),
+                        default_assistant={
+                            **DEFAULT_ASSISTANT_PAYLOAD,
+                            "agent_id": assistant_id,
+                            "first_name": self.assistant_name,
+                            "age": self.assistant_age,
+                            "region": self.assistant_region,
+                            "about": self.assistant_about,
+                            "phone": self.assistant_number,
+                            "email": self.assistant_email,
+                            "user_phone": self.user_number,
+                            "user_whatsapp_number": self.user_phone_call_number,
+                            "assistant_whatsapp_number": self.assistant_number,
+                            "api_key": os.environ.get("UNIFY_KEY"),
+                        },
+                    )
+                    EVENT_BUS._get_logger().session.headers[
+                        "Authorization"
+                    ] = f"Bearer {os.environ['UNIFY_KEY']}"
+
+                    # event_bus auto-pinning registration
+                    EVENT_BUS.set_window("Comms", self.conv_context_length)
+                    EVENT_BUS.register_auto_pin(
+                        event_type="Comms",
+                        open_predicate=lambda e: e.payload.get("role", "")
+                        == "tool_use start",
+                        close_predicate=lambda e: e.payload.get("role", "")
+                        == "tool_use end",
+                        key_fn=lambda e: e.payload.get("handle_id", ""),
+                    )
+
+                    # poll past events
+                    self.loop.create_task(self.handle_past_events())
+
+            except Exception as e:
+                print(f"Error initializing unity: {e}")
+                traceback.print_exc()
+                return
+
+            if self.transcript_manager is None:
+                self.transcript_manager = TranscriptManager()
+                self.transcript_manager._get_logger().session.headers[
                     "Authorization"
                 ] = f"Bearer {os.environ['UNIFY_KEY']}"
 
-                # event_bus auto-pinning registration
-                EVENT_BUS.set_window("Comms", self.conv_context_length)
-                EVENT_BUS.register_auto_pin(
-                    event_type="Comms",
-                    open_predicate=lambda e: e.payload.get("role", "")
-                    == "tool_use start",
-                    close_predicate=lambda e: e.payload.get("role", "")
-                    == "tool_use end",
-                    key_fn=lambda e: e.payload.get("handle_id", ""),
-                )
-
-                # poll past events
-                self.loop.create_task(self.handle_past_events())
-
-        except Exception as e:
-            print(f"Error initializing unity: {e}")
-            traceback.print_exc()
-            return
-
-        if self.transcript_manager is None:
-            self.transcript_manager = TranscriptManager()
-            self.transcript_manager._get_logger().session.headers[
-                "Authorization"
-            ] = f"Bearer {os.environ['UNIFY_KEY']}"
-
-        try:
-            bus_event = Event.from_dict(event["event"]).to_bus_event()
-            bus_event.payload.pop("api_key", None)
-            self.loop.create_task(EVENT_BUS.publish(bus_event))
-            if event["event"]["event_name"] in [
-                "PhoneUtteranceEvent",
-                "WhatsappMessageSentEvent",
-                "SMSMessageSentEvent",
-                "WhatsappMessageRecievedEvent",
-                "SMSMessageRecievedEvent",
-            ]:
-                event_name = event["event"]["event_name"].lower()
-                role = event["event"]["payload"]["role"]
-                content = event["event"]["payload"]["content"]
-                timestamp = event["event"]["payload"]["timestamp"]
-                medium = (
-                    "phone_call"
-                    if "phone" in event_name
-                    else "sms_message" if "sms" in event_name else "whatsapp_message"
-                )
-                sender_id, receiver_ids = "", [""]
-                if medium == "phone_call":
-                    if role == "Assistant":
-                        sender_id = self.assistant_number
-                        receiver_ids = [self.user_phone_call_number]
+            try:
+                bus_event = Event.from_dict(event["event"]).to_bus_event()
+                bus_event.payload.pop("api_key", None)
+                self.loop.create_task(EVENT_BUS.publish(bus_event))
+                if event["event"]["event_name"] in [
+                    "PhoneUtteranceEvent",
+                    "WhatsappMessageSentEvent",
+                    "SMSMessageSentEvent",
+                    "WhatsappMessageRecievedEvent",
+                    "SMSMessageRecievedEvent",
+                ]:
+                    event_name = event["event"]["event_name"].lower()
+                    role = event["event"]["payload"]["role"]
+                    content = event["event"]["payload"]["content"]
+                    timestamp = event["event"]["payload"]["timestamp"]
+                    medium = (
+                        "phone_call"
+                        if "phone" in event_name
+                        else "sms_message" if "sms" in event_name else "whatsapp_message"
+                    )
+                    sender_id, receiver_ids = "", [""]
+                    if medium == "phone_call":
+                        if role == "Assistant":
+                            sender_id = self.assistant_number
+                            receiver_ids = [self.user_phone_call_number]
+                        else:
+                            sender_id = self.user_phone_call_number
+                            receiver_ids = [self.assistant_number]
                     else:
-                        sender_id = self.user_phone_call_number
-                        receiver_ids = [self.assistant_number]
-                else:
-                    if "recieved" in event_name:
-                        sender_id = self.user_number
-                        receiver_ids = [self.assistant_number]
-                    else:
-                        sender_id = self.assistant_number
-                        receiver_ids = [self.user_number]
-                self.transcript_manager.log_messages(
-                    Message(
-                        medium=medium,
-                        sender_id=sender_id,
-                        receiver_ids=receiver_ids,
-                        timestamp=timestamp,
-                        content=content,
-                    ),
-                )
-        except Exception as e:
-            print(f"Error handling logging: {e}")
-            traceback.print_exc()
+                        if "recieved" in event_name:
+                            sender_id = self.user_number
+                            receiver_ids = [self.assistant_number]
+                        else:
+                            sender_id = self.assistant_number
+                            receiver_ids = [self.user_number]
+                    self.transcript_manager.log_messages(
+                        Message(
+                            medium=medium,
+                            sender_id=sender_id,
+                            receiver_ids=receiver_ids,
+                            timestamp=timestamp,
+                            content=content,
+                        ),
+                    )
+            except Exception as e:
+                print(f"Error handling logging: {e}")
+                traceback.print_exc()
 
     async def handle_past_events(self):
         """
