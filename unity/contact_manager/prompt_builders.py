@@ -49,6 +49,21 @@ def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
     return next((n for n in tools if needle in n.lower()), None)
 
 
+def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> None:
+    """Raise a clear error if any required tool lookup failed.
+
+    pairs maps a human-readable expected substring → resolved tool name (or None).
+    """
+    missing = [substr for substr, resolved in pairs.items() if resolved is None]
+    if missing:
+        available = ", ".join(sorted(tools.keys())) or "<none>"
+        expected = ", ".join(missing)
+        raise ValueError(
+            f"Missing required tools: expected to find tool names containing: {expected}. "
+            f"Available tools: {available}.",
+        )
+
+
 def build_ask_prompt(
     tools: Dict[str, Callable],
     num_contacts: int,
@@ -62,66 +77,81 @@ def build_ask_prompt(
     # ------------------------------------------------------------------ #
     #  Dynamic helpers for custom-column tools
     # ------------------------------------------------------------------ #
-    filter_contacts = _tool_name(tools, "filter_contacts")
-    search_contacts = _tool_name(tools, "search_contacts")
-    create_custom = _tool_name(tools, "create_custom_column")
-    delete_custom = _tool_name(tools, "delete_custom_column")
-    list_columns = _tool_name(tools, "list_columns")
+    filter_contacts_fname = _tool_name(tools, "filter_contacts")
+    search_contacts_fname = _tool_name(tools, "search_contacts")
+    list_columns_fname = _tool_name(tools, "list_columns")
 
     # Clarification helper (only present when the caller provided queues)
-    request_clar = _tool_name(tools, "request_clarification")
+    request_clar_fname = _tool_name(tools, "request_clarification")
+
+    # Validate required tools (request_clar_fname is optional)
+    _require_tools(
+        {
+            "filter_contacts": filter_contacts_fname,
+            "search_contacts": search_contacts_fname,
+            "list_columns": list_columns_fname,
+        },
+        tools,
+    )
 
     # ------------------------------------------------------------------ #
     #  Usage snippets (standard search + custom-column examples)
     # ------------------------------------------------------------------ #
+    clarification_block = (
+        textwrap.dedent(
+            f"""
+            ─ Clarification ─
+            • Ambiguous request for "Alice" when multiple Alices exist – ask the user which one they mean
+              `{request_clar_fname}(question="There are several contacts named Alice. Which one did you mean?")`
+            """,
+        ).strip()
+        if request_clar_fname
+        else ""
+    )
+
     usage_examples = textwrap.dedent(
         f"""
         Examples
         --------
-        • Find contacts with first name **John**
-          `{filter_contacts}(filter="first_name == 'John'")`
-        • Find surname **Doe**
-          `{filter_contacts}(filter="surname == 'Doe'")`
-        • Specific email **john.doe@example.com**
-          `{filter_contacts}(filter="email_address == 'john.doe@example.com'")`
-        • Phone containing **555**
-          `{filter_contacts}(filter="'555' in phone_number")`
-        • Exact phone **+14445556666**
-          `{filter_contacts}(filter="phone_number == '+14445556666'")`
-        • Name **Alice Smith**
-          `{filter_contacts}(filter="surname == 'Smith' and first_name == 'Alice'")`
-        • Email **a@b.com** *or* phone **123-456-7890**
-          `{filter_contacts}(filter="email_address == 'a@b.com' or phone_number == '123-456-7890'")`
-        • Missing phone number
-          `{filter_contacts}(filter="phone_number is None")`
-        • Has any email (not None)
-          `{filter_contacts}(filter="email_address is not None")`
 
-        ─ Clarification ─
-        • Ambiguous request for "Alice" when multiple Alices exist – ask the user which one they mean
-          `{request_clar}(question="There are several contacts named Alice. Which one did you mean?")`
+        ─ Columns ─
+        • Inspect schema
+          `{list_columns_fname}()`
 
         ─ Semantic search ─
         • Find contacts *similar* to "machine-learning expert" in the *bio* field
-          `{search_contacts}(source='bio', text='machine-learning expert')`
+          `{search_contacts_fname}(source='bio', text='machine-learning expert')`
 
-        ─ Custom columns ─
-        • Inspect schema
-          `{list_columns}()`
-        • Add a "linkedin" field
-          `{create_custom}(column_name='linkedin', column_type='str')`
-        • Delete it again
-          `{delete_custom}(column_name='linkedin')`
+        ─ Filtering ─
+        • Find contacts with first name **John**
+          `{filter_contacts_fname}(filter="first_name == 'John'")`
+        • Find surname **Doe**
+          `{filter_contacts_fname}(filter="surname == 'Doe'")`
+        • Specific email **john.doe@example.com**
+          `{filter_contacts_fname}(filter="email_address == 'john.doe@example.com'")`
+        • Phone containing **555**
+          `{filter_contacts_fname}(filter="'555' in phone_number")`
+        • Exact phone **+14445556666**
+          `{filter_contacts_fname}(filter="phone_number == '+14445556666'")`
+        • Name **Alice Smith**
+          `{filter_contacts_fname}(filter="surname == 'Smith' and first_name == 'Alice'")`
+        • Email **a@b.com** *or* phone **123-456-7890**
+          `{filter_contacts_fname}(filter="email_address == 'a@b.com' or phone_number == '123-456-7890'")`
+        • Missing phone number
+          `{filter_contacts_fname}(filter="phone_number is None")`
+        • Has any email (not None)
+          `{filter_contacts_fname}(filter="email_address is not None")`
+        {('\n' + clarification_block) if clarification_block else ''}
     """,
     ).strip()
 
     if num_contacts < 50:
-        guidance = f"given that the number of contacts is so small, you should simply use {filter_contacts} with *no filter arguments* for now, so you can unpack the *full* contact list and answer the question directly."
+        guidance = f"given that the number of contacts is so small, you should simply use {filter_contacts_fname} with *no filter arguments* for now, so you can unpack the *full* contact list and answer the question directly."
     else:
         guidance = "\n".join(
             [
                 "If the question is open-ended or doesn't clearly match any of the column names,",
-                f"then try {search_contacts} on the most relevant column(s) and see if you can find any semantic match.",
+                f"then try {search_contacts_fname} on the most relevant column(s) and see if you can find any semantic match.",
             ],
         )
 
@@ -164,44 +194,70 @@ def build_update_prompt(
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     # Pick out canonical names heuristically (all dynamic)
-    create_name = _tool_name(tools, "create_contact")
-    update_name = _tool_name(tools, "update_contact")
-    filter_contacts = _tool_name(tools, "filter_contacts")
+    create_fname = _tool_name(tools, "create_contact")
+    update_fname = _tool_name(tools, "update_contact")
+    ask_fname = _tool_name(tools, "ask")
 
     # Custom-column helpers (dynamic)
-    create_custom = _tool_name(tools, "create_custom_column")
-    delete_custom = _tool_name(tools, "delete_custom_column")
-    list_columns = _tool_name(tools, "list_columns")
-    search_contacts = _tool_name(tools, "search_contacts")
+    create_custom_fname = _tool_name(tools, "create_custom_column")
+    delete_custom_fname = _tool_name(tools, "delete_custom_column")
+    # Note: list/search/filter tools are not required on the update path and
+    # may not be present in the toolset. We therefore avoid referencing them.
+
+    # Clarification helper (optional)
+    request_clar_fname = _tool_name(tools, "request_clarification")
+
+    # Validate required tools (request_clar_fname is optional)
+    _require_tools(
+        {
+            "create_contact": create_fname,
+            "update_contact": update_fname,
+            "create_custom_column": create_custom_fname,
+            "delete_custom_column": delete_custom_fname,
+            "ask": ask_fname,
+        },
+        tools,
+    )
+
+    clarification_block = (
+        textwrap.dedent(
+            f"""
+            ─ Clarification ─
+            • If any request is ambiguous, ask the user to disambiguate before changing data
+              `{request_clar_fname}(question="There are several possible matches. Which contact did you mean?")`
+            """,
+        ).strip()
+        if request_clar_fname
+        else ""
+    )
 
     usage_examples = textwrap.dedent(
         f"""
         Examples
         --------
         • **Create** a new contact
-          `{create_name}(first_name='Jane', surname='Roe', email_address='jane.roe@example.com')`
+          `{create_fname}(first_name='Jane', surname='Roe', email_address='jane.roe@example.com')`
 
         • **Update** John Doe's phone '+1 55512-345-67' when you already know the ID is *42*
-          `{update_name}(contact_id=42, phone_number='+15551234567')` (note spaces and dashes removed)
+          `{update_fname}(contact_id=42, phone_number='+15551234567')` (note spaces and dashes removed)
 
         • **Update** a contact referred to only by name
-          1 Find ID → `{filter_contacts}(filter="first_name == 'John' and surname == 'Doe'")`
-          2 Then update → `{update_name}(contact_id=<returned_id>, email_address='john.new@example.com')`
+          1 Find ID → `{ask_fname}(text="What is the contact_id for John Doe?")`
+          2 Then update → `{update_fname}(contact_id=<returned_id>, email_address='john.new@example.com')`
 
         • **Parse** a full name on create
-          `"Frank P. Castle"` → `{create_name}(first_name='Frank P.', surname='Castle')`
+          `"Frank P. Castle"` → `{create_fname}(first_name='Frank P.', surname='Castle')`
 
         ─ Custom columns ─
         • New column "department"
-          `{create_custom}(column_name='department', column_type='str')`
+          `{create_custom_fname}(column_name='department', column_type='str')`
         • Update a contact's department
-          `{update_name}(contact_id=42, department='Engineering')`
+          `{update_fname}(contact_id=42, department='Engineering')`
         • Remove the column later
-          `{delete_custom}(column_name='department')`
+          `{delete_custom_fname}(column_name='department')`
 
-        ─ Semantic search example ─
-        • Retrieve top 3 contacts whose *department* is semantically close to "data science"
-          `{search_contacts}(source='department', text='data science', k=3)`
+        (If you need to locate contacts by fuzzy criteria, first use `{ask_fname}` to retrieve candidate contact_id(s) and then perform the update.)
+        {('\n' + clarification_block) if clarification_block else ''}
     """,
     ).strip()
 
@@ -220,8 +276,7 @@ def build_update_prompt(
             "Custom columns:",
             "---------------",
             f"• Required columns ({_permanent_columns()}) **cannot** be deleted.",
-            f"• Add a new column with `{create_custom}(…)`, remove with `{delete_custom}(…)`,",
-            f"  and list columns with `{list_columns}()`.",
+            f"• Add a new column with `{create_custom_fname}(…)`, remove with `{delete_custom_fname}(…)`.",
             "",
             "Tools (name → argspec):",
             sig_json,
