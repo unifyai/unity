@@ -15,14 +15,13 @@ from .prompt_builders import (
     build_update_prompt,
     build_simulated_method_prompt,
 )
-from ..common.llm_helpers import methods_to_tool_dict
-from .task_scheduler import TaskScheduler
 from ..planner.simulated import SimulatedPlanner
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
+from ..common.simulated import mirror_task_scheduler_tools
 
 
 class _SimulatedTaskScheduleHandle(SteerableToolHandle):
@@ -195,31 +194,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
-        # Re-create the real TaskScheduler prompts *dynamically* so the
-        # simulated assistant can use them for grounding.
-        ask_tools = methods_to_tool_dict(
-            TaskScheduler._filter_tasks,
-            TaskScheduler._search_tasks,
-            TaskScheduler._get_task_queue,
-            include_class_name=False,
-        )
-        update_tools = methods_to_tool_dict(
-            TaskScheduler._create_task,
-            TaskScheduler._delete_task,
-            TaskScheduler._cancel_tasks,
-            TaskScheduler._update_task_queue,
-            TaskScheduler._update_task_name,
-            TaskScheduler._update_task_description,
-            TaskScheduler._update_task_status,
-            TaskScheduler._update_task_start_at,
-            TaskScheduler._update_task_deadline,
-            TaskScheduler._update_task_repetition,
-            TaskScheduler._update_task_priority,
-            TaskScheduler._filter_tasks,
-            TaskScheduler._search_tasks,
-            TaskScheduler._get_task_queue,
-            include_class_name=False,
-        )
+        # Mirror the real TaskScheduler tool exposure programmatically
+        # so prompts always reflect the current surface.
+        ask_tools = mirror_task_scheduler_tools("ask")
+        update_tools = mirror_task_scheduler_tools("update")
         ask_msg = build_ask_prompt(
             ask_tools,
             include_activity=self._rolling_summary_in_prompts,

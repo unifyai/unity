@@ -215,3 +215,164 @@ def mirror_transcript_manager_tools() -> Dict[str, Any]:
         TranscriptManager._search_messages,
         include_class_name=False,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TaskScheduler mirroring
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _extract_ts_tool_attrs_from_real(kind: str) -> List[Tuple[str, str]]:
+    """Return (owner, method_name) pairs from TaskScheduler.__init__ tool dicts.
+
+    kind: "ask" or "update". Owner is one of {"TaskScheduler", "ContactManager"}.
+    """
+    from unity.task_scheduler.task_scheduler import TaskScheduler
+
+    try:
+        src = inspect.getsource(TaskScheduler.__init__)
+    except Exception:
+        return []
+
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+
+    results: List[Tuple[str, str]] = []
+    target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
+
+    class _InitVisitor(ast.NodeVisitor):
+        def visit_Assign(self, node: ast.Assign) -> None:  # type: ignore[override]
+            if not node.targets:
+                return
+            target = node.targets[0]
+            if not (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+                and target.attr == target_attr
+            ):
+                return
+            value = node.value
+            # The value is typically a dict literal with unpacked calls
+            for call in ast.walk(value):
+                if not isinstance(call, ast.Call):
+                    continue
+                func = call.func
+                if not (
+                    (isinstance(func, ast.Name) and func.id == "methods_to_tool_dict")
+                    or (
+                        isinstance(func, ast.Attribute)
+                        and func.attr == "methods_to_tool_dict"
+                    )
+                ):
+                    continue
+                for arg in call.args:
+                    owner = None
+                    name = None
+                    cur = arg
+                    if isinstance(cur, ast.Attribute):
+                        tail = cur.attr
+                        root = cur.value
+                        # self._contact_manager.ask → (ContactManager, 'ask')
+                        if isinstance(root, ast.Attribute) and isinstance(
+                            root.value,
+                            ast.Name,
+                        ):
+                            if (
+                                root.value.id == "self"
+                                and root.attr == "_contact_manager"
+                            ):
+                                owner = "ContactManager"
+                                name = tail
+                        # self._foo → (TaskScheduler, 'foo')
+                        elif isinstance(root, ast.Name) and root.id == "self":
+                            owner = "TaskScheduler"
+                            name = tail
+                    if owner and name:
+                        results.append((owner, name))
+
+    _InitVisitor().visit(tree)
+    return results
+
+
+def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
+    """Build a tool-dict mirroring the real TaskScheduler's tool exposure.
+
+    Uses AST reflection of TaskScheduler.__init__ with a static fallback. Ensures
+    that external tools like ContactManager.ask retain their class-qualified
+    naming by applying include_class_name=True for those only.
+    """
+    from unity.common.llm_helpers import methods_to_tool_dict
+    from unity.task_scheduler.task_scheduler import TaskScheduler
+    from unity.contact_manager.contact_manager import ContactManager
+
+    mapping = _extract_ts_tool_attrs_from_real(kind)
+
+    # When mapping is available, build two buckets so we can preserve
+    # the ContactManager.ask class-name in tool keys.
+    if mapping:
+        ts_methods: List[Any] = []
+        cm_methods: List[Any] = []
+        try:
+            for owner, name in mapping:
+                if owner == "TaskScheduler":
+                    ts_methods.append(getattr(TaskScheduler, name))
+                elif owner == "ContactManager":
+                    cm_methods.append(getattr(ContactManager, name))
+        except Exception:
+            ts_methods, cm_methods = [], []  # trigger fallback
+
+        if ts_methods or cm_methods:
+            tools: Dict[str, Any] = {}
+            if ts_methods:
+                tools.update(
+                    methods_to_tool_dict(*ts_methods, include_class_name=False),
+                )
+            if cm_methods:
+                tools.update(
+                    methods_to_tool_dict(*cm_methods, include_class_name=True),
+                )
+            if tools:
+                return tools
+
+    # Fallback – current canonical tool sets (kept in sync with TaskScheduler)
+    if kind == "ask":
+        tools: Dict[str, Any] = {}
+        tools.update(
+            methods_to_tool_dict(
+                TaskScheduler._filter_tasks,
+                TaskScheduler._search_tasks,
+                TaskScheduler._get_task_queue,
+                include_class_name=False,
+            ),
+        )
+        tools.update(
+            methods_to_tool_dict(
+                ContactManager.ask,
+                include_class_name=True,
+            ),
+        )
+        return tools
+    else:
+        return methods_to_tool_dict(
+            # Ask entry point is exposed on update side
+            TaskScheduler.ask,
+            # Creation / deletion / cancellation
+            TaskScheduler._create_task,
+            TaskScheduler._delete_task,
+            TaskScheduler._cancel_tasks,
+            # Queue manipulation
+            TaskScheduler._update_task_queue,
+            # Attribute mutations
+            TaskScheduler._update_task_name,
+            TaskScheduler._update_task_description,
+            TaskScheduler._update_task_status,
+            TaskScheduler._update_task_start_at,
+            TaskScheduler._update_task_deadline,
+            TaskScheduler._update_task_repetition,
+            TaskScheduler._update_task_priority,
+            TaskScheduler._update_task_trigger,
+            include_class_name=False,
+        )
