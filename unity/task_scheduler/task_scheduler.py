@@ -2031,13 +2031,39 @@ class TaskScheduler(BaseTaskScheduler):
         Returns
         -------
         list[Task]
-            Up to ``k`` matching tasks sorted by ascending cosine distance.
+            Up to ``k`` matching tasks sorted by ascending cosine distance. If the
+            similarity search yields fewer than ``k`` results and there are more
+            than ``k`` tasks overall, the remainder is backfilled from
+            ``unify.get_logs(limit=k)`` in returned order, skipping duplicates.
         """
         assert (
             isinstance(references, dict) and len(references) > 0
         ), "references must be a non-empty dict"
+
+        # 1) Primary: semantic similarity results (ordered)
         rows = fetch_top_k_by_references(self._ctx, references, k=k)
-        return [Task(**lg) for lg in rows]
+        results: List[Task] = [Task(**lg) for lg in rows]
+
+        # 2) Backfill if we have fewer than k
+        if len(results) < k:
+            seen_ids = {t.task_id for t in results}
+
+            # Fetch latest logs (e.g. newest-first) and append missing items
+            fallback_logs = unify.get_logs(
+                context=self._ctx,
+                limit=k,
+                exclude_fields=[self._VEC_TASK],
+            )
+            for lg in fallback_logs:
+                entries = getattr(lg, "entries", lg)
+                tid = entries.get("task_id") if isinstance(entries, dict) else None
+                if tid is not None and tid not in seen_ids:
+                    results.append(Task(**entries))
+                    seen_ids.add(tid)
+                    if len(results) == k:
+                        break
+
+        return results
 
     def _filter_tasks(
         self,
