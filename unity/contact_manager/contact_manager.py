@@ -28,6 +28,7 @@ from ..events.manager_event_logging import (
 import asyncio
 from ..common.semantic_search import (
     fetch_top_k_by_references,
+    backfill_rows,
 )
 
 
@@ -1470,43 +1471,14 @@ class ContactManager(BaseContactManager):
             k=k,
             row_filter=row_filter,
         )
-
-        # Start with similarity-ranked results
-        results: List[Contact] = [Contact(**r) for r in rows]
-
-        # If fewer than k results, backfill with earliest logs (excluding system contacts),
-        # skipping duplicates while preserving creation order.
-        if len(results) < k:
-            seen_ids = {int(r.get("contact_id")) for r in rows if "contact_id" in r}
-            exclude_fields = [
-                col
-                for col in unify.get_fields(context=self._ctx).keys()
-                if col.endswith("_emb")
-            ]
-            offset = 0
-            needed = k - len(results)
-            while needed > 0:
-                fallback_logs = unify.get_logs(
-                    context=self._ctx,
-                    filter=row_filter,
-                    offset=offset,
-                    limit=k,
-                    exclude_fields=exclude_fields,
-                )
-                if not fallback_logs:
-                    break
-                for lg in fallback_logs:
-                    cid = lg.entries.get("contact_id")
-                    if cid in seen_ids:
-                        continue
-                    results.append(Contact(**lg.entries))
-                    seen_ids.add(cid)
-                    needed -= 1
-                    if needed == 0:
-                        break
-                offset += k
-
-        return results
+        filled = backfill_rows(
+            self._ctx,
+            rows,
+            k,
+            row_filter=row_filter,
+            unique_id_field="contact_id",
+        )
+        return [Contact(**r) for r in filled]
 
     def _filter_contacts(
         self,

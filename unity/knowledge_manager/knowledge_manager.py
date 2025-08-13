@@ -29,6 +29,7 @@ from ..events.manager_event_logging import (
 )
 from ..common.semantic_search import (
     fetch_top_k_by_references,
+    backfill_rows,
 )
 
 
@@ -1255,74 +1256,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         context = self._ctx_for_table(table)
 
-        # Primary similarity-ranked results
         rows: List[Dict[str, Any]] = fetch_top_k_by_references(context, references, k=k)
-        results: List[Dict[str, Any]] = list(rows)
-
-        # Backfill if fewer than k results
-        if len(results) < k:
-            # Determine the unique id column name for this table
-            ctx_info = unify.get_context(context)
-            unique_id_field = ctx_info.get("unique_column_ids")
-            if isinstance(unique_id_field, list):
-                unique_id_field = unique_id_field[0] if unique_id_field else None
-
-            # Track seen ids to avoid duplicates
-            seen_ids = set()
-            if unique_id_field:
-                for r in rows:
-                    if unique_id_field in r and r.get(unique_id_field) is not None:
-                        try:
-                            seen_ids.add(int(r.get(unique_id_field)))
-                        except Exception:
-                            seen_ids.add(r.get(unique_id_field))
-
-            # Exclude embedding/vector columns from payload
-            exclude_fields = [
-                fld
-                for fld in unify.get_fields(context=context).keys()
-                if fld.endswith("_emb")
-            ]
-
-            needed = k - len(results)
-            offset = 0
-            while needed > 0:
-                fallback_logs = unify.get_logs(
-                    context=context,
-                    offset=offset,
-                    limit=k,
-                    exclude_fields=exclude_fields,
-                )
-                if not fallback_logs:
-                    break
-
-                for lg in fallback_logs:
-                    entries = getattr(lg, "entries", lg)
-                    if not isinstance(entries, dict):
-                        continue
-                    uid_val = entries.get(unique_id_field) if unique_id_field else None
-                    if unique_id_field is not None:
-                        # Skip if we've already included this unique id
-                        try:
-                            comp_val = int(uid_val) if uid_val is not None else None
-                        except Exception:
-                            comp_val = uid_val
-                        if comp_val is not None and comp_val in seen_ids:
-                            continue
-                    # Append and update seen set
-                    results.append(entries)
-                    if unique_id_field is not None and uid_val is not None:
-                        try:
-                            seen_ids.add(int(uid_val))
-                        except Exception:
-                            seen_ids.add(uid_val)
-                    needed -= 1
-                    if needed == 0:
-                        break
-
-                offset += k
-
-        return results
+        return backfill_rows(context, rows, k)
 
     def _search_join(
         self,
@@ -1401,70 +1336,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 references,
                 k=k,
             )
-            results: List[Dict[str, Any]] = list(rows)
-
-            # 3️⃣  Backfill if fewer than k
-            if len(results) < k:
-                # Determine unique id column to deduplicate
-                ctx_info = unify.get_context(dest_ctx)
-                unique_id_field = ctx_info.get("unique_column_ids")
-                if isinstance(unique_id_field, list):
-                    unique_id_field = unique_id_field[0] if unique_id_field else None
-
-                seen_ids = set()
-                if unique_id_field:
-                    for r in rows:
-                        if unique_id_field in r and r.get(unique_id_field) is not None:
-                            try:
-                                seen_ids.add(int(r.get(unique_id_field)))
-                            except Exception:
-                                seen_ids.add(r.get(unique_id_field))
-
-                exclude_fields = [
-                    fld
-                    for fld in unify.get_fields(context=dest_ctx).keys()
-                    if fld.endswith("_emb")
-                ]
-
-                needed = k - len(results)
-                offset = 0
-                while needed > 0:
-                    fallback_logs = unify.get_logs(
-                        context=dest_ctx,
-                        offset=offset,
-                        limit=k,
-                        exclude_fields=exclude_fields,
-                    )
-                    if not fallback_logs:
-                        break
-
-                    for lg in fallback_logs:
-                        entries = getattr(lg, "entries", lg)
-                        if not isinstance(entries, dict):
-                            continue
-                        uid_val = (
-                            entries.get(unique_id_field) if unique_id_field else None
-                        )
-                        if unique_id_field is not None:
-                            try:
-                                comp_val = int(uid_val) if uid_val is not None else None
-                            except Exception:
-                                comp_val = uid_val
-                            if comp_val is not None and comp_val in seen_ids:
-                                continue
-                        results.append(entries)
-                        if unique_id_field is not None and uid_val is not None:
-                            try:
-                                seen_ids.add(int(uid_val))
-                            except Exception:
-                                seen_ids.add(uid_val)
-                        needed -= 1
-                        if needed == 0:
-                            break
-
-                    offset += k
-
-            return results
+            return backfill_rows(dest_ctx, rows, k)
         finally:
             # 4️⃣  Clean up the temporary context best-effort
             try:
@@ -1599,70 +1471,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 references,
                 k=k,
             )
-            results: List[Dict[str, Any]] = list(rows)
-
-            # 2) Backfill if fewer than k
-            if len(results) < k:
-                # Determine unique id field to deduplicate
-                ctx_info = unify.get_context(final_ctx)
-                unique_id_field = ctx_info.get("unique_column_ids")
-                if isinstance(unique_id_field, list):
-                    unique_id_field = unique_id_field[0] if unique_id_field else None
-
-                seen_ids = set()
-                if unique_id_field:
-                    for r in rows:
-                        if unique_id_field in r and r.get(unique_id_field) is not None:
-                            try:
-                                seen_ids.add(int(r.get(unique_id_field)))
-                            except Exception:
-                                seen_ids.add(r.get(unique_id_field))
-
-                exclude_fields = [
-                    fld
-                    for fld in unify.get_fields(context=final_ctx).keys()
-                    if fld.endswith("_emb")
-                ]
-
-                needed = k - len(results)
-                offset = 0
-                while needed > 0:
-                    fallback_logs = unify.get_logs(
-                        context=final_ctx,
-                        offset=offset,
-                        limit=k,
-                        exclude_fields=exclude_fields,
-                    )
-                    if not fallback_logs:
-                        break
-
-                    for lg in fallback_logs:
-                        entries = getattr(lg, "entries", lg)
-                        if not isinstance(entries, dict):
-                            continue
-                        uid_val = (
-                            entries.get(unique_id_field) if unique_id_field else None
-                        )
-                        if unique_id_field is not None:
-                            try:
-                                comp_val = int(uid_val) if uid_val is not None else None
-                            except Exception:
-                                comp_val = uid_val
-                            if comp_val is not None and comp_val in seen_ids:
-                                continue
-                        results.append(entries)
-                        if unique_id_field is not None and uid_val is not None:
-                            try:
-                                seen_ids.add(int(uid_val))
-                            except Exception:
-                                seen_ids.add(uid_val)
-                        needed -= 1
-                        if needed == 0:
-                            break
-
-                    offset += k
-
-            return results
+            return backfill_rows(final_ctx, rows, k)
         finally:
             # Clean up temporary contexts (best-effort)
             try:
