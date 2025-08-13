@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Union, Any
 
 import unify
 import requests
-from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
+from ..common.embed_utils import ensure_vector_column
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
@@ -31,9 +31,8 @@ from .base import BaseTranscriptManager
 from ..helpers import _handle_exceptions
 from ..common.semantic_search import (
     is_plain_identifier,
-    escape_single_quotes,
     ensure_vector_for_source,
-    ensure_sum_cosine_column,
+    fetch_top_k_by_terms,
 )
 
 
@@ -544,9 +543,8 @@ class TranscriptManager(BaseTranscriptManager):
             return _re.findall(r"\{\s*([a-zA-Z_][\w]*)\s*\}", expr)
 
         # Ensure/embed columns and gather terms
-        msg_embed_columns: list[str] = []
-        contact_embed_columns: list[str] = []
-        eq_terms: list[str] = []
+        msg_embed_columns: list[tuple[str, str]] = []
+        contact_embed_columns: list[tuple[str, str]] = []
 
         # For deterministic naming of derived columns and the join context
         import hashlib
@@ -604,61 +602,17 @@ class TranscriptManager(BaseTranscriptManager):
 
         # 3) If there are no contact-side terms, we can compute directly in transcripts context (no join)
         if not contact_embed_columns:
-            # Build sum of message-side terms (fallback to legacy single-term behaviour)
             # Ensure at least one message-side term exists; otherwise default to content
             if not msg_embed_columns:
                 ensure_vector_column(self._transcripts_ctx, self._MSG_EMB, "content")
                 msg_embed_columns = [(self._MSG_EMB, next(iter(references.values())))]
 
-            # Fast path: single message-side term → sort directly by the expression
-            if len(msg_embed_columns) == 1:
-                embed_col, ref_text = msg_embed_columns[0]
-                escaped_ref = escape_single_quotes(ref_text)
-                logs = unify.get_logs(
-                    context=self._transcripts_ctx,
-                    sorting={
-                        f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
-                    },
-                    limit=k,
-                    exclude_fields=[
-                        fld
-                        for fld in unify.get_fields(
-                            context=self._transcripts_ctx,
-                        ).keys()
-                        if fld.endswith("_emb")
-                    ],
-                )
-                return [Message(**lg.entries) for lg in logs]
-
-            eq_terms_local: list[str] = []
-            for embed_col, ref_text in msg_embed_columns:
-                escaped_ref = escape_single_quotes(ref_text)
-                eq_terms_local.append(
-                    f"cosine({{lg:{embed_col}}}, embed('{escaped_ref}', model='{EMBED_MODEL}'))",
-                )
-
-            sum_key = f"_sum_cos_{query_hash}"
-            sum_equation = " + ".join(eq_terms_local) if eq_terms_local else "0"
-
-            existing_fields = unify.get_fields(context=self._transcripts_ctx)
-            if sum_key not in existing_fields:
-                ensure_sum_cosine_column(
-                    self._transcripts_ctx,
-                    msg_embed_columns,
-                    query_hash,
-                )
-
-            logs = unify.get_logs(
-                context=self._transcripts_ctx,
-                sorting={sum_key: "ascending"},
-                limit=k,
-                exclude_fields=[
-                    fld
-                    for fld in unify.get_fields(context=self._transcripts_ctx).keys()
-                    if fld.endswith("_emb")
-                ],
+            rows = fetch_top_k_by_terms(
+                self._transcripts_ctx,
+                msg_embed_columns,
+                k=k,
             )
-            return [Message(**lg.entries) for lg in logs]
+            return [Message(**lg) for lg in rows]
 
         # 4) Otherwise, create a temporary joined context between transcripts and contacts
         left_ctx = self._transcripts_ctx
@@ -696,34 +650,17 @@ class TranscriptManager(BaseTranscriptManager):
         resp = requests.request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
 
-        # Build the summed cosine equation across all included embed columns
-        for embed_col, ref_text in msg_embed_columns + contact_embed_columns:
-            escaped_ref = escape_single_quotes(ref_text)
-            eq_terms.append(
-                f"cosine({{lg:{embed_col}}}, embed('{escaped_ref}', model='{EMBED_MODEL}'))",
-            )
-
-        sum_key = f"_sum_cos_{query_hash}"
-        sum_equation = " + ".join(eq_terms) if eq_terms else "0"
-
-        existing_fields = unify.get_fields(context=join_ctx)
-        if sum_key not in existing_fields:
-            ensure_sum_cosine_column(
-                join_ctx,
-                msg_embed_columns + contact_embed_columns,
-                query_hash,
-            )
-
-        # Query top-k joined rows by the summed cosine, then fetch corresponding Messages
-        joined_logs = unify.get_logs(
-            context=join_ctx,
-            sorting={sum_key: "ascending"},
-            limit=k,
+        # Rank by summed cosine across all included embed columns
+        joined_rows = fetch_top_k_by_terms(
+            join_ctx,
+            msg_embed_columns + contact_embed_columns,
+            k=k,
         )
 
+        # Query top-k original Messages by message_id
         results: List[Message] = []
-        for lg in joined_logs:
-            mid = lg.entries.get("message_id")
+        for row in joined_rows:
+            mid = row.get("message_id")
             if mid is None:
                 continue
             rows = unify.get_logs(
