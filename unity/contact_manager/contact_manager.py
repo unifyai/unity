@@ -443,17 +443,32 @@ class ContactManager(BaseContactManager):
 
     def _list_columns(self, *, include_types: bool = True) -> Dict[str, Any]:
         """
-        List current columns; with types if include_types.
+        Return the list of available columns in the contacts table, optionally with types.
 
         Parameters
         ----------
         include_types : bool, default True
-            Whether to include column types in output.
+            Controls the shape of the returned value:
+            - When True: returns a mapping ``{column_name: column_type}`` where
+              ``column_type`` is a string label used by Unify (e.g. ``"str"``,
+              ``"int"``, ``"bool"``, ``"list"``, ``"dict"``, ``"datetime"``).
+            - When False: returns a ``set`` of column names (types omitted). This is
+              useful to check for presence/absence without caring about data types.
 
         Returns
         -------
-        Dict[str, Any]
-            Dictionary of columns, with types if requested.
+        Dict[str, Any] | set[str]
+            - If ``include_types=True``: ``dict`` mapping column names to their types.
+            - If ``include_types=False``: ``set`` of column names.
+
+        Notes
+        -----
+        - Columns that store embeddings (those whose names end with ``"_emb"``)
+          may exist in the backend but are not filtered out here; consumers that
+          don't want to see private vector columns should filter them out
+          themselves (other tools in this class exclude them where appropriate).
+        - Column names follow snake_case. Built‑in columns are derived directly from
+          the Pydantic ``Contact`` model and are immutable.
         """
         cols = self._get_columns()
         return cols if include_types else set(cols)
@@ -466,28 +481,43 @@ class ContactManager(BaseContactManager):
         column_description: Optional[str] = None,
     ) -> Dict[str, str]:
         """
-        Add a new optional column to the contacts table.
+        Create a new optional (mutable) column on the contacts table.
 
         Parameters
         ----------
         column_name : str
-            The name of the column to create (which MUST be snake case).
+            The exact column key to create. Requirements:
+            - Must be snake_case (letters, digits, and underscores; starts with a letter).
+            - Must not collide with any built‑in (required) columns of the ``Contact`` schema.
+            - Must not already exist in the table.
         column_type : ColumnType | str
-            The type of the column to create.
+            Logical type for the column. Accepts either the enum ``ColumnType`` or one of
+            its string values. Common values include: ``"str"``, ``"int"``, ``"float"``,
+            ``"bool"``, ``"list"``, ``"dict"``, ``"datetime"``, ``"date"``, ``"time"``.
+            Choose the type that best matches the data you intend to store.
         column_description : Optional[str], default None
-            Optional description of the column's purpose.
+            Optional human‑readable description to help other users understand the column.
 
         Returns
         -------
         Dict[str, str]
-            Dictionary containing the response from the Unify API.
+            The Unify API response payload acknowledging column creation.
 
         Raises
         ------
         AssertionError
-            If column_name is a required column.
+            If ``column_name`` is one of the built‑in/required columns and therefore
+            cannot be (re)created.
         ValueError
-            If column already exists.
+            If a column with the same name already exists.
+
+        Usage Guidance
+        --------------
+        - Prefer concise names that describe the field's purpose (e.g. ``"linkedin_url"``).
+        - If you need to store vectors/embeddings, use the dedicated vector helpers instead;
+          this method creates standard mutable columns.
+        - After creating the column you can write values via ``_create_contact`` or
+          ``_update_contact`` using the same key in ``custom_fields``.
         """
         assert (
             column_name not in self._REQUIRED_COLUMNS
@@ -518,22 +548,31 @@ class ContactManager(BaseContactManager):
 
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
         """
-        Remove a custom column. Built-in columns are protected.
+        Delete a previously created custom column from the contacts table.
 
         Parameters
         ----------
         column_name : str
-            The name of the column to delete (which MUST be snake case).
+            The exact name of the column to remove. Must be a non‑required (custom)
+            column that currently exists. Snake_case is expected.
 
         Returns
         -------
         Dict[str, str]
-            Dictionary containing the response from the Unify API.
+            The Unify API response payload acknowledging deletion.
 
         Raises
         ------
         ValueError
-            If column_name is a required column or does not exist.
+            - If ``column_name`` is a built‑in/required column (protected against deletion).
+            - If the column does not exist.
+
+        Notes
+        -----
+        - Deletion is performed with ``delete_empty_logs=True`` to clean up empty records
+          if applicable.
+        - Removing a column permanently drops its values from all contacts. This action
+          cannot be undone.
         """
         if column_name in self._REQUIRED_COLUMNS:
             raise ValueError(f"Cannot delete required column '{column_name}'.")
@@ -880,43 +919,59 @@ class ContactManager(BaseContactManager):
         custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> ToolOutcome:
         """
-        Persist a new contact record.
+        Create and persist a new contact.
 
         Parameters
         ----------
         first_name : str | None
-            Contact's first name. Must start with a capital letter and can only contain
-            letters, spaces, periods and hyphens. May be None.
+            Given name. Validation guidance: should start with a capital letter; allowed
+            characters are letters, spaces, periods, and hyphens. Optional.
         surname : str | None
-            Contact's surname/family name. Must start with a capital letter and can only
-            contain letters, spaces, periods and hyphens. May be None.
+            Family name (stored in the ``surname`` column). Same validation guidance as
+            ``first_name``. Optional.
         email_address : str | None
-            Contact's email address. Must contain exactly one @ symbol with characters
-            on either side. Must not clash with an existing record.
+            Email address. Must contain exactly one ``@`` with characters on both sides
+            (basic validation). Must be unique across all contacts.
         phone_number : str | None
-            Contact's phone number. Can optionally start with '+' (only if explicitly
-            mentioned by the user), but must otherwise contain only digits. Must be unique.
+            Phone number. May start with ``+`` (only if explicitly provided by the user),
+            otherwise digits only. Must be unique.
         whatsapp_number : str | None
-            Contact's WhatsApp number. Can optionally start with '+' (only if explicitly
-            mentioned by the user), but must otherwise contain only digits. Must be unique.
+            WhatsApp number. Same formatting guidance as ``phone_number``. Must be unique.
         bio : str | None
-            A free-form text description of the contact. Can contain any additional notes
-            or information about the contact. May be None.
+            Free‑form notes or description about the contact. Optional.
+        rolling_summary : str | None
+            Internal running summary of recent activity for this contact. Optional.
+        respond_to : bool, default False
+            Whether the assistant should reply to this contact by default when
+            communicating in user‑facing experiences.
+        response_policy : str | None
+            Optional policy text that qualifies how the assistant should respond to this
+            contact. When omitted, a safe default policy is automatically applied.
         custom_fields : Dict[str, ColumnType] | None
-            Additional contact information as key-value pairs, where keys are string column
-            names and values are of type ColumnType. Can include any other relevant
-            information about the contact. May be None.
+            Extra fields to set at creation time. Keys must be valid column names
+            (snake_case). Values are the data to store. Any referenced columns that do not
+            exist should be created beforehand using ``_create_custom_column``.
 
         Returns
         -------
         ToolOutcome
-            Tool outcome with any extra relevant details.
+            A standard outcome dict: ``{"outcome": "contact created successfully", "details": {"contact_id": <int>}}``.
 
         Raises
         ------
         AssertionError
-            If all fields are None or if any uniqueness constraint
-            (email / phone / WhatsApp) is violated.
+            - If all provided fields are ``None`` (at least one field is required).
+            - If any uniqueness constraint is violated (duplicate ``email_address``,
+              ``phone_number``, or ``whatsapp_number``).
+
+        Behaviour and Edge Cases
+        ------------------------
+        - If this is the very first contact in the table, the record is inserted immediately
+          and Unify will assign ``contact_id == 0`` (reserved for the assistant account).
+          Subsequent creations will receive the next available id.
+        - ``response_policy`` defaults to a conservative policy that avoids sharing sensitive
+          information when not explicitly provided.
+        - Unspecified fields remain ``None`` and can be populated later via ``_update_contact``.
         """
 
         # Build the contact dictionary directly from the arguments
@@ -1005,44 +1060,57 @@ class ContactManager(BaseContactManager):
         custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> ToolOutcome:
         """
-        Modify selected (not None) fields of an existing contact.
+        Update one or more fields of an existing contact.
 
         Parameters
         ----------
         contact_id : int
-            Target record's unique identifier.
+            The numeric identifier of the contact to modify. Must refer to exactly one
+            existing contact.
         first_name : str | None
-            Contact's first name - must start with a capital letter and can only contain
-            letters, spaces, periods and hyphens.
+            New given name. Same validation guidance as in ``_create_contact``. Omit (leave
+            as ``None``) to keep unchanged.
         surname : str | None
-            Contact's surname/family name - must start with a capital letter and can only
-            contain letters, spaces, periods and hyphens.
+            New family name (stored as ``surname``). Same guidance as ``first_name``. Omit
+            to keep unchanged.
         email_address : str | None
-            Contact's email address - must contain exactly one @ symbol with characters
-            on either side.
+            New email address. Must be unique across all contacts and contain one ``@``.
         phone_number : str | None
-            Contact's phone number - can optionally start with '+' (only if explicitly
-            mentioned by the user), but must otherwise contain only digits.
+            New phone number. Digits only unless explicitly provided with leading ``+``.
+            Must be unique.
         whatsapp_number : str | None
-            Contact's WhatsApp number - can optionally start with '+' (only if explicitly
-            mentioned by the user), but must otherwise contain only digits.
+            New WhatsApp number. Same formatting and uniqueness rules as ``phone_number``.
         bio : str | None
-            A free-form text description or notes about the contact.
+            Free‑form notes/description.
+        rolling_summary : str | None
+            Updated rolling activity summary (internal).
+        respond_to : bool | None
+            Whether the assistant should reply to this contact by default. Omit to leave
+            unchanged.
+        response_policy : str | None
+            Override the contact‑specific response policy. Omit to leave unchanged.
         custom_fields : Dict[str, ColumnType] | None
-            Additional contact information as key-value pairs, where keys are string column
-            names (which MUST be snake case) and values are of type ColumnType.
-            Can include any other relevant information about the contact. May be None.
+            Additional key/value updates for custom columns. Keys must be existing column
+            names (snake_case). Any key with a ``None`` value is ignored.
 
         Returns
         -------
         ToolOutcome
-            Tool outcome with any extra relevant details.
+            A standard outcome dict: ``{"outcome": "contact updated", "details": {"contact_id": <int>}}``.
 
         Raises
         ------
         ValueError
-            When no updatable field is provided, when contact_id does not exist,
-            or when the new email/phone/WhatsApp value duplicates another record.
+            - If no updatable field is provided (all parameters ``None`` except ``contact_id``).
+            - If ``contact_id`` does not exist or resolves to multiple records (data integrity issue).
+            - If updating to a value that violates uniqueness constraints (duplicate email/phone/WhatsApp).
+
+        Notes
+        -----
+        - Fields not supplied remain unchanged.
+        - This operation overwrites the stored values for the selected fields.
+        - ``contact_id`` itself cannot be changed here; use ``_merge_contacts`` if you need
+          to consolidate records and choose which id to keep.
         """
         contact_details = {
             "first_name": first_name,
@@ -1115,17 +1183,30 @@ class ContactManager(BaseContactManager):
         contact_id: int,
     ) -> ToolOutcome:
         """
-        Permanently **remove** a contact from storage.
+        Permanently delete a contact.
 
         Parameters
         ----------
         contact_id : int
-            Identifier of the contact to delete.
+            The identifier of the contact to remove. Must refer to a non‑system contact.
 
         Returns
         -------
         ToolOutcome
-            Confirmation of deletion with the contact_id.
+            ``{"outcome": "contact deleted", "details": {"contact_id": <int>}}``.
+
+        Raises
+        ------
+        RuntimeError
+            If attempting to delete reserved system contacts: ``0`` (assistant) or ``1`` (default user).
+        ValueError
+            If the contact does not exist, or if multiple records share the same ``contact_id``
+            (indicates data integrity issues).
+
+        Notes
+        -----
+        - This operation cannot be undone. Consider ``_merge_contacts`` to consolidate records
+          without losing history.
         """
         # Protect special contacts (assistant/user) from accidental deletion
         if contact_id in (0, 1):
@@ -1162,33 +1243,52 @@ class ContactManager(BaseContactManager):
         overrides: Dict[str, int],
     ) -> ToolOutcome:
         """
-        Merge exactly two existing contacts into **one** consolidated record.
+        Merge two contacts into a single consolidated record.
 
-        The caller must provide a per-column *overrides* map indicating which of
-        the two source contacts wins for that column.  The map values **must**
-        be either ``1`` (take the value from *contact_id_1*) or ``2`` (take the
-        value from *contact_id_2*).  Any column absent from *overrides* keeps
-        the first non-``None`` value when scanned in the order
-        ``contact_id_1`` → ``contact_id_2``.
-
-        The *contact_id* itself can be overridden.  The resulting record keeps
-        whichever id is chosen while the *other* contact is permanently
-        deleted.  System contacts with ids 0 and 1 are **protected** and cannot
-        be deleted.
+        Overview
+        --------
+        This operation reads both source contacts, computes a per‑column winner, updates
+        the kept record with the consolidated values, deletes the other record, and then
+        rewrites transcript references so message histories remain consistent.
 
         Parameters
         ----------
         contact_id_1 : int
-            Identifier of the **first** source contact.
+            Identifier of the first source contact.
         contact_id_2 : int
-            Identifier of the **second** source contact.
+            Identifier of the second source contact. Must be different from ``contact_id_1``.
         overrides : Dict[str, int]
-            Mapping ``column_name → 1 | 2`` picking the winner for that field.
+            A map indicating which source wins for each column. Keys are column names
+            (built‑in or custom). Values must be either ``1`` or ``2`` where:
+            - ``1`` → take the value from ``contact_id_1``
+            - ``2`` → take the value from ``contact_id_2``
+
+            Columns not present in ``overrides`` use the first non‑``None`` value in the
+            order ``contact_id_1`` → ``contact_id_2``. The special key ``"contact_id"`` can
+            be provided to explicitly choose which id to keep; the other contact will be
+            deleted.
 
         Returns
         -------
         ToolOutcome
-            Confirmation payload indicating the kept/deleted contact ids.
+            ``{"outcome": "contacts merged successfully", "details": {"kept_contact_id": <int>, "deleted_contact_id": <int>}}``.
+
+        Raises
+        ------
+        ValueError
+            - If the two ids are identical.
+            - If either contact cannot be found.
+            - If any value in ``overrides`` is not ``1`` or ``2``.
+        RuntimeError
+            If the merge would delete a protected system contact (ids ``0`` or ``1``).
+
+        Notes
+        -----
+        - Private vector columns (names ending with ``"_emb"``) are ignored during merge.
+        - After the merge, transcript messages that referenced the deleted contact will have
+          their ``contact_id`` updated to the kept id for consistency.
+        - Custom fields are applied via ``_update_contact``; built‑in fields are applied
+          directly as arguments.
         """
 
         if contact_id_1 == contact_id_2:
@@ -1307,7 +1407,34 @@ class ContactManager(BaseContactManager):
         k: int = 10,
     ) -> List[Contact]:
         """
-        Search contacts by minimising the sum of cosine distances to multiple reference texts.
+        Semantic search over contacts using one or more reference texts.
+
+        Parameters
+        ----------
+        references : Dict[str, str]
+            Mapping of ``source_expr → reference_text`` terms that define the search space.
+            - ``source_expr`` can be either a simple column name (e.g. ``"bio"``,
+              ``"first_name"``) or a full Unify derived‑expression (e.g.
+              ``"str({first_name}) + ' ' + str({surname})"``). For expressions, a stable
+              derived source column is created automatically if needed.
+            - ``reference_text`` is free‑form text which will be embedded using the
+              configured embedding model.
+        k : int, default 10
+            Maximum number of most similar contacts to return. Must be a positive integer.
+
+        Returns
+        -------
+        List[Contact]
+            Up to ``k`` Pydantic ``Contact`` models sorted by ascending cosine distance
+            (i.e. best matches first). System contacts (ids ``0`` and ``1``) are excluded.
+
+        Notes
+        -----
+        - When a single term is provided, results are ranked by ``cosine(column_emb, ref)``.
+        - When multiple terms are provided, results are ranked by the sum of cosines across
+          all terms to favour contacts similar across several fields.
+        - Embedding columns (``*_emb``) are excluded from the returned models to keep payloads
+          compact.
         """
 
         assert (
@@ -1331,29 +1458,37 @@ class ContactManager(BaseContactManager):
         limit: int = 100,
     ) -> List[Contact]:
         """
-        Run a **column-wise Python expression** (`filter`) against every contact
-        and return the matching rows.
+        Filter contacts using a boolean Python expression evaluated per row.
 
-        Do *not* use this tool when searching for a contact with a similar description.
-        Trying to get an exact match on substrings (especially with multiple words)
-        is very brittle, and likely to return no matches. The `search_contacts` tool is
-        *much* more robust and accurate when searching over any text-based columns.
+        Prefer this for exact, column‑wise filtering (e.g. id or equality checks). For
+        fuzzy or semantic matches across free‑text columns, use ``_search_contacts``.
 
         Parameters
         ----------
         filter : str | None, default None
-            A boolean Python expression evaluated against each contact
-            (e.g. "first_name == 'John' and surname == 'Doe'"). None
-            returns all records.
+            A Python boolean expression evaluated with column names in scope. Examples:
+            - ``"first_name == 'John' and surname == 'Doe'"``
+            - ``"contact_id != 0 and contact_id != 1"``
+            - ``"email_address.endswith('@company.com')"``
+            When ``None``, returns all contacts. String comparisons are case‑sensitive unless
+            your expression applies a case‑normalisation.
         offset : int, default 0
-            Index of the first result to return (0-based).
+            Zero‑based index of the first result to include.
         limit : int, default 100
             Maximum number of records to return.
 
         Returns
         -------
         List[Contact]
-            A list of Pydantic Contact models in creation order.
+            Matching contacts as Pydantic ``Contact`` models in creation order. Embedding
+            columns (``*_emb``) are excluded from the payload to keep responses small.
+
+        Notes
+        -----
+        - Be careful with quoting inside the expression. Use single quotes to delimit string
+          literals inside the filter string.
+        - This tool is brittle for substring searches across text; prefer ``_search_contacts``
+          for that purpose.
         """
         logs = unify.get_logs(
             context=self._ctx,
