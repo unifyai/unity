@@ -82,6 +82,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._search,
                 self._filter_join,
                 self._filter_multi_join,
+                self._search_join,
             ),
         }
 
@@ -154,6 +155,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._filter,
                 self._search,
                 self._filter_join,
+                self._search_join,
                 include_class_name=False,
             )
         return "auto", tls
@@ -1079,6 +1081,115 @@ class KnowledgeManager(BaseKnowledgeManager):
             ],
         )
         return [lg.entries for lg in logs]
+
+    def _search_join(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        references: Dict[str, str],
+        k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        Semantic search on the result of joining two tables, using the same
+        mechanism as `_search` but operating within a temporary joined context.
+
+        Parameters
+        ----------
+        .tables : str | list[str]
+            Exactly two tables to join.
+        .join_expr : str
+            Expression linking aliases in the two tables.
+        .select : dict[str, str]
+            Projection mapping of fully-qualified input columns to output column
+            names present in the joined table.
+        .mode : str
+            Join kind understood by Unify ("inner", "left", "right", "outer").
+        .left_where / right_where : str | None
+            Optional pre-join predicates applied to the left/right tables.
+        .references : dict[str, str]
+            Mapping from a source expression (plain column or derived Unify
+            expression) to the reference text. Multiple entries will use a sum of
+            cosine distances for ranking.
+        .k : int
+            Maximum number of rows to return from the joined table.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Rows from the joined context sorted by semantic similarity.
+        """
+
+        # 1️⃣  Materialize the join into a temporary context
+        dest_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
+        dest_ctx = self._create_join(
+            dest_table=dest_table,
+            tables=tables,
+            join_expr=join_expr,
+            select=select,
+            mode=mode,
+            left_where=left_where,
+            right_where=right_where,
+        )
+
+        try:
+            # 2️⃣  Ensure vectors for each source expression within the joined context
+            assert (
+                isinstance(references, dict) and len(references) > 0
+            ), "references must be a non-empty dict"
+            terms: List[tuple[str, str]] = []
+            for source_expr, ref_text in references.items():
+                embed_col = ensure_vector_for_source(dest_ctx, source_expr)
+                terms.append((embed_col, ref_text))
+
+            # 3️⃣  Rank and fetch like `_search`
+            if len(terms) == 1:
+                embed_col, ref_text = terms[0]
+                escaped_ref = ref_text.replace("'", "\\'")
+                logs = unify.get_logs(
+                    context=dest_ctx,
+                    sorting={
+                        f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
+                    },
+                    limit=k,
+                    exclude_fields=[
+                        fld
+                        for fld in unify.get_fields(context=dest_ctx).keys()
+                        if fld.endswith("_emb")
+                    ],
+                )
+                return [lg.entries for lg in logs]
+
+            # Multi-expression: sum of cosine distances
+            canonical = "|".join(
+                f"{key}=>{references[key]}" for key in sorted(references.keys())
+            )
+            import hashlib as _hashlib
+
+            sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+            sum_key = ensure_sum_cosine_column(dest_ctx, terms, sum_hash)
+
+            logs = unify.get_logs(
+                context=dest_ctx,
+                sorting={sum_key: "ascending"},
+                limit=k,
+                exclude_fields=[
+                    fld
+                    for fld in unify.get_fields(context=dest_ctx).keys()
+                    if fld.endswith("_emb")
+                ],
+            )
+            return [lg.entries for lg in logs]
+        finally:
+            # 4️⃣  Clean up the temporary context best-effort
+            try:
+                unify.delete_context(dest_ctx)
+            except Exception:
+                pass
 
     # Search
 
