@@ -40,8 +40,21 @@ class KnowledgeManager(BaseKnowledgeManager):
         include_contacts: bool = True,
     ) -> None:
         """
-        KnowledgeManager now **directly manipulates** the root-level
-        ``Contacts`` table instead of calling the public ContactManager API.
+        Initialise the KnowledgeManager.
+
+        This manager reads/writes directly to Unify contexts for knowledge
+        tables. When ``include_contacts`` is ``True`` it also exposes the
+        root‑level ``Contacts`` table for cross‑table queries/joins.
+
+        Parameters
+        ----------
+        rolling_summary_in_prompts : bool, default ``True``
+            When enabled, inject a short rolling activity summary (sourced
+            from ``MemoryManager``) into system prompts for LLM calls.
+        include_contacts : bool, default ``True``
+            When ``True``, link the root‑level ``Contacts`` table so that
+            tools such as joins and filters can reference it via the special
+            table name ``"Contacts"``.
         """
 
         self._refactor_tools = methods_to_tool_dict(
@@ -135,12 +148,30 @@ class KnowledgeManager(BaseKnowledgeManager):
     # --------#
 
     def _ctx_for_table(self, table: str) -> str:
-        """Return the correct Unify context for *table*.
+        """
+        Return the fully‑qualified Unify context name for ``table``.
 
         When this instance was created with ``include_contacts=False`` any
-        attempt to reference the *Contacts* table is considered an error to
-        avoid hidden cross-coupling between the knowledge store and the
-        contact book.
+        attempt to reference the ``Contacts`` table is rejected to avoid
+        hidden cross‑coupling.
+
+        Parameters
+        ----------
+        table : str
+            Logical table name as used by this manager (e.g. ``"Products"``).
+            The special name ``"Contacts"`` maps to the root‑level contacts
+            context when contacts linkage is enabled.
+
+        Returns
+        -------
+        str
+            The fully‑qualified Unify context.
+
+        Raises
+        ------
+        ValueError
+            If ``table == "Contacts"`` but this instance was initialised with
+            ``include_contacts=False``.
         """
 
         if table == "Contacts":
@@ -153,6 +184,22 @@ class KnowledgeManager(BaseKnowledgeManager):
         return f"{self._ctx}/{table}"
 
     def _look_first_tool_policy(self, step: int, tls: Dict[str, Callable]):
+        """
+        Prefer lookup/search tools on the first step of a tool loop.
+
+        Parameters
+        ----------
+        step : int
+            Zero‑based tool‑use step index.
+        tls : dict[str, Callable]
+            Full toolset available to the loop.
+
+        Returns
+        -------
+        tuple[str, dict[str, Callable]]
+            A pair ``(mode, tools)`` where ``mode`` is either ``"required"``
+            (first step) or ``"auto"`` (subsequent steps).
+        """
         if step < 1:
             return "required", methods_to_tool_dict(
                 self._filter,
@@ -179,6 +226,33 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
     ) -> "SteerableToolHandle":
+        """
+        English‑text command interface for schema/data refactoring.
+
+        Parameters
+        ----------
+        text : str
+            Natural‑language instruction (e.g. “create a table … then move column …”).
+        _return_reasoning_steps : bool, default ``False``
+            When ``True``, wrap ``handle.result()`` to also return internal
+            LLM messages for debugging.
+        parent_chat_context : list[dict] | None, default ``None``
+            Optional prior chat context to seed the conversation.
+        clarification_up_q : asyncio.Queue[str] | None, default ``None``
+            When provided together with ``clarification_down_q``, enables
+            interactive clarification requests.
+        clarification_down_q : asyncio.Queue[str] | None, default ``None``
+            Response queue paired with ``clarification_up_q``.
+        rolling_summary_in_prompts : bool | None, default ``None``
+            Overrides the instance‑level ``rolling_summary_in_prompts`` for
+            this call only when not ``None``.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A handle that allows interjection, pause/resume, and awaiting the
+            final result.
+        """
 
         # ── 0.  Emit *incoming* ManagerMethod event ──────────────────────
         call_id = new_call_id()
@@ -269,6 +343,33 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
     ) -> "SteerableToolHandle":
+        """
+        Modify tables/rows based on a natural‑language request.
+
+        Parameters
+        ----------
+        text : str
+            User request describing the desired update.
+        _return_reasoning_steps : bool, default ``False``
+            When ``True``, wrap ``handle.result()`` to also return internal
+            LLM messages for debugging.
+        parent_chat_context : list[dict] | None, default ``None``
+            Optional prior chat context to seed the conversation.
+        clarification_up_q : asyncio.Queue[str] | None, default ``None``
+            When provided together with ``clarification_down_q``, enables
+            interactive clarification requests.
+        clarification_down_q : asyncio.Queue[str] | None, default ``None``
+            Response queue paired with ``clarification_up_q``.
+        rolling_summary_in_prompts : bool | None, default ``None``
+            Overrides the instance‑level ``rolling_summary_in_prompts`` for
+            this call only when not ``None``.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A handle that allows interjection, pause/resume, and awaiting the
+            final result.
+        """
 
         call_id = new_call_id()
         await publish_manager_method_event(
@@ -360,6 +461,33 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
     ) -> "SteerableToolHandle":
+        """
+        Retrieve information from knowledge tables using natural language.
+
+        Parameters
+        ----------
+        text : str
+            User question or retrieval instruction.
+        _return_reasoning_steps : bool, default ``False``
+            When ``True``, wrap ``handle.result()`` to also return internal
+            LLM messages for debugging.
+        parent_chat_context : list[dict] | None, default ``None``
+            Optional prior chat context to seed the conversation.
+        clarification_up_q : asyncio.Queue[str] | None, default ``None``
+            When provided together with ``clarification_down_q``, enables
+            interactive clarification requests.
+        clarification_down_q : asyncio.Queue[str] | None, default ``None``
+            Response queue paired with ``clarification_up_q``.
+        rolling_summary_in_prompts : bool | None, default ``None``
+            Overrides the instance‑level ``rolling_summary_in_prompts`` for
+            this call only when not ``None``.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A handle that allows interjection, pause/resume, and awaiting the
+            final result.
+        """
         call_id = new_call_id()
         await publish_manager_method_event(
             call_id,
@@ -442,6 +570,20 @@ class KnowledgeManager(BaseKnowledgeManager):
     # --------#
 
     def _get_columns(self, *, table: str) -> Dict[str, str]:
+        """
+        Return ``{column_name: column_type}`` for the given table.
+
+        Parameters
+        ----------
+        table : str
+            Logical table name (e.g. ``"Products"`` or ``"Contacts"`` when
+            linkage is enabled).
+
+        Returns
+        -------
+        dict[str, str]
+            Mapping of column names to their Unify data types.
+        """
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
@@ -783,11 +925,26 @@ class KnowledgeManager(BaseKnowledgeManager):
         dest_table: str,
     ) -> Dict[str, str]:
         """
-        **Copy** *column_name* from *source_table* to *dest_table*.
+        Copy a column's values from one table to another.
 
-        Internally this attaches every log in *source_table* that contains
-        *column_name* to the destination context via
-        :pyfunc:`unify.add_logs_to_context`.
+        Parameters
+        ----------
+        source_table : str
+            Table to read values from.
+        column_name : str
+            Column to copy.
+        dest_table : str
+            Destination table that will receive rows containing ``column_name``.
+
+        Returns
+        -------
+        dict[str, str]
+            Summary of the copy operation including counts and source/dest info.
+
+        Notes
+        -----
+        Implemented by attaching the matching logs to the destination context
+        via ``unify.add_logs_to_context``.
         """
         src_ctx = self._ctx_for_table(source_table)
         dest_ctx = self._ctx_for_table(dest_table)
@@ -819,9 +976,26 @@ class KnowledgeManager(BaseKnowledgeManager):
         dest_table: str,
     ) -> Dict[str, str]:
         """
-        **Move** *column_name* from *source_table* to *dest_table*.
+        Move a column from one table to another.
 
-        Implemented as `_copy_column` + `_delete_column`.
+        Parameters
+        ----------
+        source_table : str
+            Source table.
+        column_name : str
+            Column to move.
+        dest_table : str
+            Destination table.
+
+        Returns
+        -------
+        dict[str, str]
+            Summary containing the copy and delete sub‑results.
+
+        Notes
+        -----
+        Implemented as ``_copy_column`` followed by ``_delete_column`` on the
+        source table.
         """
         copy_res = self._copy_column(
             source_table=source_table,
@@ -843,12 +1017,28 @@ class KnowledgeManager(BaseKnowledgeManager):
         equation: str,
     ) -> Dict[str, str]:
         """
-        **Transform** *column_name* in-place according to *equation*.
+        Transform a column in‑place according to a Python ``equation``.
 
-        Steps:
-        1. Create a temporary derived column from *equation*.
+        Parameters
+        ----------
+        table : str
+            Table to modify.
+        column_name : str
+            Column to transform.
+        equation : str
+            Per‑row Python expression where column names are variables.
+
+        Returns
+        -------
+        dict[str, str]
+            Summary of the create/delete/rename steps.
+
+        Notes
+        -----
+        The operation is implemented as:
+        1. Create a temporary derived column from ``equation``.
         2. Delete the original column.
-        3. Rename the temporary column back to the original name.
+        3. Rename the temporary column back to ``column_name``.
         """
         tmp_name = f"tmp_{column_name}_{uuid.uuid4().hex[:8]}"
 
@@ -881,9 +1071,25 @@ class KnowledgeManager(BaseKnowledgeManager):
         tables: Optional[List[str]] = None,
     ) -> Dict[str, str]:
         """
-        Delete every log **matching *filter*** across the chosen tables.
+        Delete every log matching ``filter`` across one or more tables.
 
-        Argspec mirrors `_search_knowledge`.
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            Row‑level predicate evaluated per table. ``None`` deletes nothing
+            (no predicate).
+        offset : int, default ``0``
+            Pagination offset into each table before applying deletion.
+        limit : int, default ``100``
+            Maximum number of rows considered per table.
+        tables : list[str] | None, default ``None``
+            Subset of tables to scan; ``None`` means all tables managed by this
+            instance (and optionally ``Contacts`` when linked).
+
+        Returns
+        -------
+        dict[str, str]
+            Mapping ``table_name → backend message / "no-op"``.
         """
         if tables is None:
             tables = list(self._tables_overview().keys())
@@ -953,17 +1159,20 @@ class KnowledgeManager(BaseKnowledgeManager):
         updates: Dict[int, Dict[str, Any]],
     ) -> Dict[str, str]:
         """
-        **Update** existing rows identified by their *unique_id*.
+        Update existing rows identified by their table‑specific unique id.
 
         Parameters
         ----------
         table : str
-                Target table.
+            Target table.
         updates : dict[int, dict[str, Any]]
-                Mapping of unique `row_id` rows to update (might be named `team_id`, `product_id` etc.)
-                to the dict of new field values mapping column names to the new overwriting values.
-        overwrite : bool, default ``False``
-                When *True*, fields **not** mentioned in *entries* are cleared.
+            Mapping of unique row ids (e.g. ``row_id``, ``team_id``) to a dict
+            of new field values. Unspecified fields are left unchanged.
+
+        Returns
+        -------
+        dict[str, str]
+            Backend response from ``unify.update_logs``.
         """
         ctx = self._ctx_for_table(table)
         ctx_info = unify.get_context(ctx)
@@ -993,13 +1202,20 @@ class KnowledgeManager(BaseKnowledgeManager):
         target_column_name: str,
     ) -> None:
         """
-        Ensure that a vector column exists in the given table. If it doesn't exist,
-        create it as a derived column from the source column.
+        Ensure a vector column exists, creating it if necessary.
 
-        Args:
-                table (str): The name of the table to ensure the vector column in.
-                source (str): The name of the column to derive the vector column from.
-                column (str): The name of the vector column to ensure, MUST be *snake case*.
+        Parameters
+        ----------
+        table : str
+            The table to ensure the vector column in.
+        source_column : str
+            The existing column whose text will be embedded.
+        target_column_name : str
+            Name of the embedding column to create/ensure (snake case).
+
+        Returns
+        -------
+        None
         """
         context = self._ctx_for_table(table)
         ensure_vector_column(
