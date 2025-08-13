@@ -14,7 +14,7 @@ const linux = express.Router();
 linux.get('/screenshot', async (_req: any, res: any) => {
   try {
     const { stdout } = await execAsync(
-      `xwd -silent -root -out - | convert png:- png:-`,
+      `import -window root png:-`,
       { encoding: 'buffer', maxBuffer: 10 * 1024 * 1024 }
     );
     res.json({ screenshot: (stdout as any).toString('base64') });
