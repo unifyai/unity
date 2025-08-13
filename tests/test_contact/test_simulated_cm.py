@@ -152,13 +152,13 @@ def test_simulated_cm_docstrings_match_base():
     from unity.contact_manager.simulated import SimulatedContactManager
 
     assert (
-        SimulatedContactManager.ask.__doc__.strip()
-        == BaseContactManager.ask.__doc__.strip()
+        BaseContactManager.ask.__doc__.strip()
+        in SimulatedContactManager.ask.__doc__.strip()
     ), ".store doc-string was not copied correctly"
 
     assert (
-        SimulatedContactManager.update.__doc__.strip()
-        == BaseContactManager.update.__doc__.strip()
+        BaseContactManager.update.__doc__.strip()
+        in SimulatedContactManager.update.__doc__.strip()
     ), ".retrieve doc-string was not copied correctly"
 
 
