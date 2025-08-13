@@ -1290,7 +1290,7 @@ class ContactManager(BaseContactManager):
         self,
         *,
         references: Dict[str, str],
-        k: int = 5,
+        k: int = 10,
     ) -> List[Contact]:
         """
         Search contacts by minimising the sum of cosine distances to multiple reference texts.

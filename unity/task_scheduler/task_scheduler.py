@@ -1807,7 +1807,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         references: Dict[str, str],
-        k: int = 5,
+        k: int = 10,
     ) -> List[Task]:
         """
         Search tasks by minimising the sum of cosine distances to multiple reference texts.

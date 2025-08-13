@@ -103,7 +103,7 @@ def fetch_top_k_by_terms(
     context: str,
     terms: List[Tuple[str, str]],
     *,
-    k: int = 5,
+    k: int = 10,
     row_filter: Optional[str] = None,
 ) -> List[dict]:
     """Return top-k rows ranked by semantic similarity given pre-embedded terms.
@@ -152,7 +152,7 @@ def fetch_top_k_by_references(
     context: str,
     references: Dict[str, str],
     *,
-    k: int = 5,
+    k: int = 10,
     row_filter: Optional[str] = None,
 ) -> List[dict]:
     """Return top-k rows from a context ranked by semantic similarity to reference text(s).
