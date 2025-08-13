@@ -148,3 +148,28 @@ def test_search_contacts_sum_of_cosine_ranking():
     assert "_occupation_emb" in cols
     assert "_rolling_summary_emb" in cols
     assert any(k.startswith("_sum_cos_") for k in cols.keys())
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@_handle_project
+def test_search_contacts_backfills_when_insufficient_similarity_results():
+    cm = ContactManager()
+
+    # Create several contacts with minimal bios so similarity on bio returns < k
+    cm._create_contact(first_name="Adam")
+    cm._create_contact(first_name="Beatrice")
+    cm._create_contact(first_name="Carla", bio="needle in haystack")  # single match
+    cm._create_contact(first_name="Darren")
+    cm._create_contact(first_name="Evelyn")
+    cm._create_contact(first_name="Frank")
+
+    k = 4
+    results = cm._search_contacts(references={"bio": "needle"}, k=k)
+
+    assert len(results) == k
+    names = [c.first_name for c in results]
+    # Carla should be the top semantic match
+    assert names[0] == "Carla"
+    # Remaining should be backfilled from latest creation order without duplicates
+    assert names[1:4] == ["Frank", "Evelyn", "Darren"]
