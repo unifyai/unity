@@ -199,7 +199,7 @@ async def test_update_interjection_modification(
 ):
     """Test interjecting to modify details during an update operation."""
     cm, _ = contact_manager_scenario
-    command = "Create a contact for Frank P. Castle, email frank@punisher.net."
+    command = "Create a contact for Frank Castle, email frank@punisher.net."
 
     handle = await cm.update(command)
     await asyncio.sleep(0.2)
@@ -210,7 +210,7 @@ async def test_update_interjection_modification(
         cm,
         "email_address",
         "frank@punisher.net",
-        {"first_name": "Frank P.", "surname": "Castle", "phone_number": "55554321"},
+        {"first_name": "Frank", "surname": "Castle", "phone_number": "55554321"},
     )
 
 
