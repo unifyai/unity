@@ -457,3 +457,286 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 except subprocess.TimeoutExpired:
                     MagnitudeBrowserBackend._process.kill()
                 MagnitudeBrowserBackend._process = None
+
+
+# ---------------------------------------------------------------------------
+#  Desktop backend (xdotool/x11 driven) via the same Magnitude service
+# ---------------------------------------------------------------------------
+
+
+class MagnitudeDesktopBackend(BrowserBackend):
+    """Thin wrapper that calls the `/linux/*` endpoints exposed by the Node
+    BrowserAgent service. It now manages its own service lifecycle instead of
+    piggy-backing on `MagnitudeBrowserBackend`.
+    """
+
+    _process = None
+    _agent_base_url = "http://localhost:3000"
+    _lock = threading.Lock()
+
+    @staticmethod
+    def _find_free_port() -> int:
+        """Find and return a free port on the system."""
+        with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+            s.bind(("", 0))
+            return s.getsockname()[1]
+
+    def __init__(self, **kwargs):
+        # Headless service is fine – we only need its Linux endpoints
+        with MagnitudeDesktopBackend._lock:
+            if MagnitudeDesktopBackend._process is None:
+                self.agent_base_url = MagnitudeDesktopBackend._agent_base_url
+                self._start_service(headless=True)
+            else:
+                print(
+                    "✅ Magnitude service already running. Attaching to existing process.",
+                )
+                self.agent_base_url = MagnitudeDesktopBackend._agent_base_url
+
+    def _start_service(self, headless: bool):
+        port = self._find_free_port()
+        MagnitudeDesktopBackend._agent_base_url = f"http://localhost:{port}"
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        service_path = os.path.abspath(
+            os.path.join(current_dir, "..", "..", "agent-service"),
+        )
+        script_path = os.path.join(service_path, "src", "index.ts")
+
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(
+                f"Could not find agent service script at expected path: {script_path}",
+            )
+
+        command = ["npx", "ts-node", script_path]
+        if headless:
+            command.append("--headless")
+
+        env = os.environ.copy()
+        env["PORT"] = str(port)
+
+        MagnitudeDesktopBackend._process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=service_path,
+            env=env,
+            preexec_fn=os.setsid if sys.platform != "win32" else None,
+        )
+
+        print(
+            f"🚀 Starting Magnitude BrowserAgent service (PID: {MagnitudeDesktopBackend._process.pid}) on port {port}...",
+        )
+
+        self._start_output_readers()
+        atexit.register(self.stop)
+
+        deadline = time.time() + 30
+        url = f"{MagnitudeDesktopBackend._agent_base_url}/screenshot"
+
+        while time.time() < deadline:
+            try:
+                r = requests.get(url, timeout=1)
+                if r.status_code < 500:
+                    print(f"✅ Magnitude service is ready on port {port}")
+                    break
+            except Exception:
+                time.sleep(0.5)
+        else:
+            self.stop()
+            raise RuntimeError(
+                f"Magnitude BrowserAgent failed to become ready within 30 seconds on port {port}",
+            )
+
+    def _start_output_readers(self):
+        """Start threads to read stdout/stderr to prevent buffer blocking."""
+
+        def read_output(pipe, prefix):
+            for line in iter(pipe.readline, ""):
+                if line:
+                    print(f"[{prefix}] {line.strip()}")
+                    if "listening on http://localhost:" in line:
+                        import re
+
+                        match = re.search(r"http://localhost:(\d+)", line)
+                        if match:
+                            MagnitudeDesktopBackend._agent_base_url = (
+                                f"http://localhost:{match.group(1)}"
+                            )
+                            print(
+                                f"✨ Detected service running on {MagnitudeDesktopBackend._agent_base_url}",
+                            )
+            pipe.close()
+
+        stdout_thread = threading.Thread(
+            target=read_output,
+            args=(MagnitudeDesktopBackend._process.stdout, "Magnitude"),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=read_output,
+            args=(MagnitudeDesktopBackend._process.stderr, "Magnitude-ERR"),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+    async def _request(
+        self,
+        method: str,
+        endpoint: str,
+        payload: dict | None = None,
+    ) -> Any:
+        url = f"{MagnitudeDesktopBackend._agent_base_url}{endpoint}"
+
+        retries = 3
+        for attempt in range(retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.request(
+                        method,
+                        url,
+                        json=payload,
+                        timeout=300,
+                    ) as resp:
+                        if resp.status >= 400:
+                            try:
+                                from ..planner.hierarchical_planner import (
+                                    ReplanFromParentException,
+                                )
+
+                                error_data = await resp.json()
+                                error_type = error_data.get(
+                                    "error",
+                                    "unknown_http_error",
+                                )
+                                message = error_data.get("message", "No error message.")
+                                if error_type == "misalignment":
+                                    raise ReplanFromParentException(message)
+                                raise BrowserAgentError(error_type, message)
+                            except Exception as e:
+                                raise BrowserAgentError(
+                                    "service_error",
+                                    f"Server error: {resp.status} - {await resp.text()}",
+                                ) from e
+                        return await resp.json()
+            except aiohttp.ClientConnectorError as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                raise
+
+    # ------------------------------------------------------------------
+    #  Core actions
+    # ------------------------------------------------------------------
+
+    async def act(self, instruction: str, expectation: str = "") -> str:
+        """`instruction` should be a JSON string specifying clicks / keys.
+
+        Example:
+            instruction = json.dumps({
+                "clicks": [{"x": 100, "y": 200, "button": 1}],
+                "keys": ["Hello", "Enter"]
+            })
+        """
+        import json
+
+        try:
+            payload = json.loads(instruction)
+        except json.JSONDecodeError:
+            raise ValueError(
+                "`instruction` must be a JSON string describing clicks/keys for the desktop backend.",
+            )
+
+        await self._request("POST", "/linux/act", payload=payload)
+        # No textual result from the service – return expectation or OK.
+        return expectation or "ok"
+
+    async def observe(self, query: str, response_format: Any = str) -> Any:
+        # Fetch a fresh screenshot and best-effort verify state against the query.
+        # If `query` is JSON with {"windowTitle": ...} or {"templatePath": ..., "threshold"?},
+        # delegate to /linux/exists to compute a boolean match and optional score.
+        import json
+        import inspect as _inspect
+
+        exists_result: dict | None = None
+        try:
+            parsed = json.loads(query)
+            if isinstance(parsed, dict):
+                if "windowTitle" in parsed and isinstance(parsed["windowTitle"], str):
+                    title = parsed["windowTitle"]
+                    endpoint = (
+                        f"/linux/exists?windowTitle={requests.utils.quote(title)}"
+                    )
+                    exists_result = await self._request("GET", endpoint)
+                elif "templatePath" in parsed and isinstance(
+                    parsed["templatePath"],
+                    str,
+                ):
+                    tpl = parsed["templatePath"]
+                    thr = parsed.get("threshold")
+                    qs = f"/linux/exists?templatePath={requests.utils.quote(tpl)}"
+                    if isinstance(thr, (int, float, str)):
+                        qs += f"&threshold={thr}"
+                    exists_result = await self._request("GET", qs)
+        except Exception:
+            # Non-JSON query; ignore and just provide screenshot below
+            pass
+
+        screenshot_b64 = await self.get_screenshot()
+
+        result: dict[str, Any] = {"screenshot": screenshot_b64}
+        if isinstance(exists_result, dict):
+            result["matches"] = bool(exists_result.get("exists", False))
+            if "score" in exists_result:
+                result["score"] = exists_result.get("score")
+        else:
+            result["matches"] = False
+
+        # If a Pydantic model is provided, mirror the browser observe behavior
+        if _inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            return response_format.model_validate(result)
+        return result
+
+    async def get_screenshot(self) -> str:
+        data = await self._request("GET", "/linux/screenshot")
+        return data.get("screenshot", "")
+
+    async def get_current_url(self) -> str:
+        # Desktop context has no concept of URL
+        return ""
+
+    async def navigate(self, url: str) -> str:
+        raise NotImplementedError("Desktop backend cannot navigate to URLs.")
+
+    def stop(self):
+        with MagnitudeDesktopBackend._lock:
+            if (
+                MagnitudeDesktopBackend._process
+                and MagnitudeDesktopBackend._process.poll() is None
+            ):
+                print(
+                    f"🐍 PYTHON: Explicitly calling stop() on MagnitudeDesktopBackend. PID: {MagnitudeDesktopBackend._process.pid}",
+                )
+                print(
+                    f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeDesktopBackend._process.pid})...",
+                )
+                if sys.platform != "win32":
+                    import signal
+
+                    try:
+                        os.killpg(
+                            os.getpgid(MagnitudeDesktopBackend._process.pid),
+                            signal.SIGTERM,
+                        )
+                    except ProcessLookupError:
+                        pass
+                else:
+                    MagnitudeDesktopBackend._process.terminate()
+
+                try:
+                    MagnitudeDesktopBackend._process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    MagnitudeDesktopBackend._process.kill()
+                MagnitudeDesktopBackend._process = None
