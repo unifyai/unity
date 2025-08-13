@@ -141,6 +141,11 @@ class ContactManager(BaseContactManager):
         containing the assistant records.  If the request fails, an
         exception is raised via ``_handle_exceptions`` so callers do not
         silently proceed with incomplete data.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            The list of assistants for the current account.
         """
         url = f"{os.environ['UNIFY_BASE_URL']}/assistant?"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
@@ -154,6 +159,11 @@ class ContactManager(BaseContactManager):
 
         Only simple string columns are created for now – if richer typing is
         required in future we can extend the heuristics.
+
+        Parameters
+        ----------
+        extra_fields : Dict[str, Any]
+            Extra fields that are not yet present.
         """
         existing_cols = self._get_columns()
         for col in extra_fields:
@@ -172,6 +182,8 @@ class ContactManager(BaseContactManager):
     def _sync_assistant_contact(self) -> None:
         """Ensure the *current* assistant (id == 0 in this context) exists and is correct.
 
+        Notes
+        -----
         The assistant record is selected using the following precedence:
 
         1. The globally initialised ``unity.ASSISTANT`` object – this is set
@@ -300,6 +312,11 @@ class ContactManager(BaseContactManager):
         unexpected payload, etc.) the function falls back to a dummy
         placeholder user so that offline test-suites continue to operate
         unchanged.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Basic user information mapping.
         """
 
         user_info: Dict[str, Any] = {}
@@ -891,6 +908,11 @@ class ContactManager(BaseContactManager):
     ) -> int:
         """
         Get the total number of contacts stored in the contacts table.
+
+        Returns
+        -------
+        int
+            The total number of contacts.
         """
         ret = unify.get_logs_metric(
             metric="count",
@@ -1511,6 +1533,16 @@ class ContactManager(BaseContactManager):
         ``preprocess_msgs`` parameter so that **every** LLM invocation sees a
         *fresh* broader-context snippet pulled from ``MemoryManager`` just
         before the request is dispatched.
+
+        Parameters
+        ----------
+        msgs : list[dict]
+            Messages to preprocess.
+
+        Returns
+        -------
+        list[dict]
+            Messages with the broader context injected into system prompts.
         """
 
         import copy
