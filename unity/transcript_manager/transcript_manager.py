@@ -401,7 +401,7 @@ class TranscriptManager(BaseTranscriptManager):
         *,
         contact_manager: Optional["ContactManager"] = None,
     ) -> str:
-        """Return a plain-text transcript (`Full Name: content`) for *messages*.
+        """Return a plain-text transcript (``Full Name: content``) for ``messages``.
 
         Accepts two input shapes:
 
@@ -413,9 +413,23 @@ class TranscriptManager(BaseTranscriptManager):
 
                {"sender": "Daniel Lenton", "content": "Hi"}
 
-        An optional *contact_manager* can be supplied; otherwise a fresh
-        `ContactManager` is constructed lazily.  Numeric sender_ids are
-        resolved to *full* names (first + surname when available).
+        An optional ``contact_manager`` can be supplied; otherwise a fresh
+        ``ContactManager`` is constructed lazily. Numeric ``sender_id`` values are
+        resolved to full names (first + surname when available).
+
+        Parameters
+        ----------
+        messages : list[dict]
+            The list of message-like dictionaries to convert.
+        contact_manager : ContactManager | None, optional
+            Manager used to resolve numeric ``sender_id`` values to names. If not
+            provided, a new ``ContactManager`` instance is constructed lazily.
+
+        Returns
+        -------
+        str
+            The plain-text transcript with one line per message in the format
+            ``Full Name: content``.
         """
 
         # Local import avoids widening module dependencies at import-time
@@ -473,8 +487,22 @@ class TranscriptManager(BaseTranscriptManager):
 
     @staticmethod
     def _inject_broader_context(msgs: list[dict]) -> list[dict]:
-        """Replace the `{broader_context}` placeholder inside *system* messages
-        with a fresh snapshot pulled from `MemoryManager` just before the LLM call."""
+        """Replace the ``{broader_context}`` placeholder inside system messages with a fresh snapshot.
+
+        The snapshot is pulled from ``MemoryManager`` just before the LLM call.
+
+        Parameters
+        ----------
+        msgs : list[dict]
+            The chat messages to preprocess.
+
+        Returns
+        -------
+        list[dict]
+            A deep-copied list of messages where system prompts have the
+            ``{broader_context}`` placeholder replaced with the current rolling
+            activity snapshot.
+        """
 
         import copy
 
