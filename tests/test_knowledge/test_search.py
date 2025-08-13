@@ -1,90 +1,174 @@
-from tests.helpers import _handle_project
-from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 import pytest
 
-
-@pytest.mark.unit
-@_handle_project
-def test_search_basic():
-    knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_rows(
-        table="MyTable",
-        rows=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
-    )
-    data = knowledge_manager._filter()
-    assert data == {
-        "MyTable": [
-            {"row_id": 1, "x": 2, "y": 3},
-            {"row_id": 0, "x": 0, "y": 1},
-        ],
-    }
+from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+from tests.helpers import _handle_project
 
 
 @pytest.mark.unit
+@pytest.mark.requires_real_unify
 @_handle_project
-def test_search_filter():
-    knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_rows(
-        table="MyTable",
-        rows=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
-    )
-    data = knowledge_manager._filter(filter="x > 0")
-    assert data == {
-        "MyTable": [
-            {"row_id": 1, "x": 2, "y": 3},
-        ],
-    }
+def test_knowledge_search_single_reference_basic():
+    km = KnowledgeManager()
+
+    table = "KB_Single"
+    km._create_table(name=table)
+
+    entries = [
+        {
+            "title": "Quick reference for Linux",
+            "content": "Short tips and cheatsheets for terminal usage",
+        },
+        {
+            "title": "Messaging protocols overview",
+            "content": "Long-form article about message queues and brokers",
+        },
+        {
+            "title": "Deep learning tutorial",
+            "content": "Comprehensive guide to neural networks and training",
+        },
+        {
+            "title": "Version control fundamentals",
+            "content": "Introductory material on branching and merging",
+        },
+    ]
+    km._add_rows(table=table, rows=entries)
+
+    query = "short tips cheatsheet terminal"
+    results = km._search(table=table, references={"content": query}, k=3)
+
+    assert results[0]["title"] == "Quick reference for Linux"
+
+    cols = km._get_columns(table=table)
+    assert "_content_emb" in cols
 
 
 @pytest.mark.unit
+@pytest.mark.requires_real_unify
 @_handle_project
-def test_search_specific_tables():
-    knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_rows(
-        table="MyTable",
-        rows=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
+def test_knowledge_search_multi_columns_json_and_vec_created():
+    km = KnowledgeManager()
+
+    table = "KB_MultiCols"
+    km._create_table(name=table)
+
+    km._add_rows(
+        table=table,
+        rows=[
+            {
+                "title": "Compose LaTeX quickly",
+                "content": "Short notes with snippets for equations and symbols",
+            },
+            {
+                "title": "Logging problems",
+                "content": "Comprehensive debugging guide with verbose traces",
+            },
+            {
+                "title": "Text processing toolkit",
+                "content": "Prefers regex for quick text processing in pipelines",
+            },
+        ],
     )
-    knowledge_manager._create_table(name="MyOtherTable")
-    knowledge_manager._add_rows(
-        table="MyOtherTable",
-        rows=[{"a": 9, "b": 10}],
-    )
-    # default
-    data = knowledge_manager._filter()
-    assert data == {
-        "MyTable": [
-            {"row_id": 1, "x": 2, "y": 3},
-            {"row_id": 0, "x": 0, "y": 1},
-        ],
-        "MyOtherTable": [
-            {"row_id": 0, "a": 9, "b": 10},
-        ],
-    }
-    # specific tables
-    data = knowledge_manager._filter(tables=["MyTable"])
-    assert data == {
-        "MyTable": [
-            {"row_id": 1, "x": 2, "y": 3},
-            {"row_id": 0, "x": 0, "y": 1},
-        ],
-    }
+
+    query = "quick text snippets"
+    refs = {"content": query, "title": "irrelevant"}
+    results = km._search(table=table, references=refs, k=2)
+
+    assert len(results) == 2
+    assert results[0]["title"] in {"Text processing toolkit", "Compose LaTeX quickly"}
+
+    cols = km._get_columns(table=table)
+    assert "_content_emb" in cols
+    assert "_title_emb" in cols
 
 
 @pytest.mark.unit
+@pytest.mark.requires_real_unify
 @_handle_project
-def test_search_w_filter():
-    knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_rows(
-        table="MyTable",
-        rows=[{"x": 0, "y": 1}, {"x": 1, "y": 2}, {"x": 2, "y": 3}, {"x": 3, "y": 4}],
-    )
-    data = knowledge_manager._filter(filter="x > 1 and y < 4")
-    assert data == {
-        "MyTable": [
-            {"row_id": 2, "x": 2, "y": 3},
+def test_knowledge_search_all_columns_default_derivation():
+    km = KnowledgeManager()
+
+    table = "KB_Expr"
+    km._create_table(name=table)
+
+    km._add_rows(
+        table=table,
+        rows=[
+            {
+                "title": "Reading list summary",
+                "content": "Prepare a summary of recent research papers",
+                "category": "Research",
+                "keywords": "summaries literature",
+            },
+            {
+                "title": "Email notifications config",
+                "content": "Best practices for email deliverability and setup",
+                "category": "Operations",
+                "keywords": "email smtp dkim",
+            },
+            {
+                "title": "SMS templates",
+                "content": "Create message templates for quick outreach",
+                "category": "Communications",
+                "keywords": "sms texting",
+            },
         ],
-    }
+    )
+
+    expr = "str({title}) + ' ' + str({content}) + ' ' + str({category}) + ' ' + str({keywords})"
+    query = "best practices for email"
+    results = km._search(table=table, references={expr: query}, k=2)
+
+    assert len(results) >= 1
+    assert results[0]["title"] == "Email notifications config"
+
+    cols = km._get_columns(table=table)
+    assert any(k.startswith("_expr_") and k.endswith("_emb") for k in cols.keys())
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@_handle_project
+def test_knowledge_search_sum_of_cosine_ranking():
+    km = KnowledgeManager()
+
+    table = "KB_SumCos"
+    km._create_table(name=table)
+
+    km._add_rows(
+        table=table,
+        rows=[
+            {
+                "title": "Neural network training guide",
+                "content": "Getting started guide for training deep networks",
+                "tags": "deep learning, tutorial",
+            },
+            {
+                "title": "Onboarding process",
+                "content": "Haven't started yet",
+                "tags": "tutorial",
+            },
+            {
+                "title": "Tax preparation tips",
+                "content": "Getting started with your taxes",
+                "tags": "finance, guide",
+            },
+        ],
+    )
+
+    refs = {"tags": "deep learning", "content": "getting started guide"}
+    results = km._search(table=table, references=refs, k=3)
+
+    assert len(results) == 3
+    titles = [r["title"] for r in results]
+    assert titles[0] == "Neural network training guide"
+    assert titles.index("Neural network training guide") < titles.index(
+        "Onboarding process",
+    )
+    assert titles.index("Neural network training guide") < titles.index(
+        "Tax preparation tips",
+    )
+
+    cols = km._get_columns(table=table)
+    assert "_tags_emb" in cols
+    assert "_content_emb" in cols
+    assert any(k.startswith("_sum_cos_") for k in cols.keys())

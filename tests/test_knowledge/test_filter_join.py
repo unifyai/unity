@@ -51,7 +51,7 @@ async def test_join_used_for_department_query(monkeypatch):
 
     # 1️⃣  Patch _search_join with a spy so we can detect invocation --------
     called = {"flag": False}
-    original_join = KnowledgeManager._search_join
+    original_join = KnowledgeManager._filter_join
 
     @functools.wraps(original_join)
     def _search_join_spy(self, *args, **kwargs):
