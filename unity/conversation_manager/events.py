@@ -143,6 +143,7 @@ class StartupEvent(Event):
         self.user_email = kwargs.pop("user_email", None)
         self.tts_provider = kwargs.pop("tts_provider", None)
         self.voice_id = kwargs.pop("voice_id", None)
+        kwargs.pop("user_phone_number", None)  # legacy field
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
