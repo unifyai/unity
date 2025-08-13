@@ -81,7 +81,7 @@ class CommsAgent:
         assistant_number: str,
         assistant_email: str,
         user_number: str,
-        user_phone_call_number: str = None,
+        user_whatsapp_number: str,
         user_email: str = None,
         tts_provider: str = "cartesia",
         voice_id: str = None,
@@ -110,9 +110,7 @@ class CommsAgent:
         self.user_name = user_name
         self.user_number = user_number
         self.user_email = user_email
-        self.user_phone_call_number = (
-            user_phone_call_number if user_phone_call_number else user_number
-        )
+        self.user_whatsapp_number = user_whatsapp_number
 
         # events (history)
         self.conv_context_length = conv_context_length
@@ -163,13 +161,13 @@ class CommsAgent:
             return
 
         if "conductor" in self.enabled_tools:
-            # if conductor is enabled, add its methods only as it has all other tools
-            from unity.conductor.conductor import Conductor
+            # # if conductor is enabled, add its methods only as it has all other tools
+            # from unity.conductor.conductor import Conductor
 
-            self.conductor = Conductor()
+            # self.conductor = Conductor()
             self.enabled_tools = methods_to_tool_dict(
-                self.conductor.ask,
-                self.conductor.request,
+                # self.conductor.ask,
+                # self.conductor.request,
                 self._start_screen_share,
                 self._stop_screen_share,
                 self._send_call,
@@ -272,7 +270,7 @@ class CommsAgent:
                 print("All participants left, shutting down agent...")
                 await self.publish(
                     {
-                        "topic": self.user_phone_call_number,
+                        "topic": self.user_number,
                         "event": PhoneCallStopEvent().to_dict(),
                     },
                 )
@@ -303,11 +301,7 @@ class CommsAgent:
                             self.call_proc = run_script(
                                 str(target_path),
                                 "dev",
-                                (
-                                    target_number
-                                    if target_number
-                                    else self.user_phone_call_number
-                                ),
+                                target_number if target_number else self.user_number,
                                 self.assistant_number,
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
@@ -318,7 +312,7 @@ class CommsAgent:
                             self.call_proc = run_script(
                                 str(target_path),
                                 "console",
-                                self.user_phone_call_number,
+                                self.user_number,
                                 self.assistant_number,
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
@@ -831,13 +825,13 @@ class CommsAgent:
         self.assistant_email = payload["assistant_email"]
         self.user_name = payload["user_name"]
         self.user_number = payload["user_number"]
-        self.user_phone_call_number = payload["user_phone_number"]
+        self.user_whatsapp_number = payload["user_whatsapp_number"]
         self.user_email = payload["user_email"]
         self.tts_provider = payload["tts_provider"]
         self.voice_id = payload["voice_id"]
         os.environ["UNIFY_KEY"] = payload.pop("api_key")
         os.environ["USER_NAME"] = self.user_name
-        os.environ["USER_PHONE_NUMBER"] = self.user_phone_call_number
+        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
         os.environ["USER_EMAIL"] = self.user_email
         os.environ["ASSISTANT_NAME"] = self.assistant_name
         os.environ["ASSISTANT_NUMBER"] = self.assistant_number
@@ -931,7 +925,9 @@ class CommsAgent:
                     assistant_id = os.environ.get("ASSISTANT_ID", "0")
                     unity.init(
                         project_name=self.project_name,
-                        assistant_id=int(assistant_id.replace("default-assistant-", "")),
+                        assistant_id=int(
+                            assistant_id.replace("default-assistant-", "")
+                        ),
                         default_assistant={
                             **DEFAULT_ASSISTANT_PAYLOAD,
                             "agent_id": assistant_id,
@@ -942,7 +938,7 @@ class CommsAgent:
                             "phone": self.assistant_number,
                             "email": self.assistant_email,
                             "user_phone": self.user_number,
-                            "user_whatsapp_number": self.user_phone_call_number,
+                            "user_whatsapp_number": self.user_whatsapp_number,
                             "assistant_whatsapp_number": self.assistant_number,
                             "api_key": os.environ.get("UNIFY_KEY"),
                         },
@@ -994,15 +990,17 @@ class CommsAgent:
                     medium = (
                         "phone_call"
                         if "phone" in event_name
-                        else "sms_message" if "sms" in event_name else "whatsapp_message"
+                        else (
+                            "sms_message" if "sms" in event_name else "whatsapp_message"
+                        )
                     )
                     sender_id, receiver_ids = "", [""]
-                    if medium == "phone_call":
+                    if medium == "whatsapp_message":
                         if role == "Assistant":
                             sender_id = self.assistant_number
-                            receiver_ids = [self.user_phone_call_number]
+                            receiver_ids = [self.user_whatsapp_number]
                         else:
-                            sender_id = self.user_phone_call_number
+                            sender_id = self.user_whatsapp_number
                             receiver_ids = [self.assistant_number]
                     else:
                         if "recieved" in event_name:
@@ -1058,7 +1056,7 @@ class CommsAgent:
                     user_name=self.user_name,
                     assistant_name=self.assistant_name,
                     user_number=self.user_number,
-                    user_phone_call_number=self.user_phone_call_number,
+                    user_whatsapp_number=self.user_whatsapp_number,
                     assistant_number=self.assistant_number,
                 ),
             )

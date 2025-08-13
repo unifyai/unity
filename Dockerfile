@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y \
 RUN apt update && apt install -y \
     pipewire pipewire-audio pipewire-bin pipewire-pulse wireplumber \
     libpipewire-0.3-modules libportaudio2 portaudio19-dev \
-    pulseaudio-utils alsa-utils alsa-oss alsa-tools \
+    pulseaudio-utils alsa-utils alsa-tools \
     dbus dbus-x11 python3-pip \
     xdg-desktop-portal xdg-desktop-portal-gtk \
     && rm -rf /var/lib/apt/lists/*
@@ -68,7 +68,6 @@ RUN apt-get update && apt-get install -y \
     cmake \
     v4l-utils \
     libspa-0.2-modules \
-    libcamera0.0.3 \
     libcamera-tools \
     gir1.2-gst-plugins-base-1.0 \
     gir1.2-gstreamer-1.0 \
