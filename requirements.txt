@@ -39,4 +39,4 @@ sounddevice
 soundfile
 numpy
 opencv-python
-pygobject==3.50.0
+# pygobject==3.50.0
