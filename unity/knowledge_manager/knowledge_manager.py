@@ -1376,7 +1376,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         -------
         list[dict[str, Any]]
             Up to `k` rows from the joined result, sorted by best semantic
-            match first.
+            match first. If the similarity search yields fewer than `k` rows and
+            there are more rows overall in the joined context, the remainder is
+            backfilled from `unify.get_logs(limit=k)` in returned order, skipping
+            duplicates based on the joined table's unique id.
         """
 
         # 1️⃣  Materialize the join into a temporary context
@@ -1392,7 +1395,76 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         try:
-            return fetch_top_k_by_references(dest_ctx, references, k=k)
+            # 2️⃣  Primary similarity-ranked results
+            rows: List[Dict[str, Any]] = fetch_top_k_by_references(
+                dest_ctx,
+                references,
+                k=k,
+            )
+            results: List[Dict[str, Any]] = list(rows)
+
+            # 3️⃣  Backfill if fewer than k
+            if len(results) < k:
+                # Determine unique id column to deduplicate
+                ctx_info = unify.get_context(dest_ctx)
+                unique_id_field = ctx_info.get("unique_column_ids")
+                if isinstance(unique_id_field, list):
+                    unique_id_field = unique_id_field[0] if unique_id_field else None
+
+                seen_ids = set()
+                if unique_id_field:
+                    for r in rows:
+                        if unique_id_field in r and r.get(unique_id_field) is not None:
+                            try:
+                                seen_ids.add(int(r.get(unique_id_field)))
+                            except Exception:
+                                seen_ids.add(r.get(unique_id_field))
+
+                exclude_fields = [
+                    fld
+                    for fld in unify.get_fields(context=dest_ctx).keys()
+                    if fld.endswith("_emb")
+                ]
+
+                needed = k - len(results)
+                offset = 0
+                while needed > 0:
+                    fallback_logs = unify.get_logs(
+                        context=dest_ctx,
+                        offset=offset,
+                        limit=k,
+                        exclude_fields=exclude_fields,
+                    )
+                    if not fallback_logs:
+                        break
+
+                    for lg in fallback_logs:
+                        entries = getattr(lg, "entries", lg)
+                        if not isinstance(entries, dict):
+                            continue
+                        uid_val = (
+                            entries.get(unique_id_field) if unique_id_field else None
+                        )
+                        if unique_id_field is not None:
+                            try:
+                                comp_val = int(uid_val) if uid_val is not None else None
+                            except Exception:
+                                comp_val = uid_val
+                            if comp_val is not None and comp_val in seen_ids:
+                                continue
+                        results.append(entries)
+                        if unique_id_field is not None and uid_val is not None:
+                            try:
+                                seen_ids.add(int(uid_val))
+                            except Exception:
+                                seen_ids.add(uid_val)
+                        needed -= 1
+                        if needed == 0:
+                            break
+
+                    offset += k
+
+            return results
         finally:
             # 4️⃣  Clean up the temporary context best-effort
             try:
