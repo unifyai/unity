@@ -2059,6 +2059,14 @@ async def _async_tool_use_loop_inner(
                 for fn in dynamic_tools.values()
             ]
 
+            # ── Force tool selection while any task is still pending ─────────
+            # If policy returned "auto" but we have pending tasks, prevent the
+            # LLM from choosing no tools by switching to "required". This nudges
+            # the model to either use a helper (clarify/stop/continue/…) or
+            # explicitly stop in‑flight work instead of ending the turn.
+            if pending and tool_choice_mode == "auto":
+                tool_choice_mode = "required"
+
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
                 LOGGER.info(f"🔄 [{loop_id}] LLM thinking…")
