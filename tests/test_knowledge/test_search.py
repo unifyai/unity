@@ -172,3 +172,36 @@ def test_knowledge_search_sum_of_cosine_ranking():
     assert "_tags_emb" in cols
     assert "_content_emb" in cols
     assert any(k.startswith("_sum_cos_") for k in cols.keys())
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@_handle_project
+def test_knowledge_search_backfills_when_insufficient_similarity_results():
+    km = KnowledgeManager()
+
+    table = "KB_Backfill"
+    km._create_table(name=table)
+
+    # Create several rows where only one has the target signal in 'content'
+    km._add_rows(
+        table=table,
+        rows=[
+            {"title": "Alpha"},
+            {"title": "Beta"},
+            {"title": "Gamma", "content": "needle in haystack"},  # single match
+            {"title": "Delta"},
+            {"title": "Epsilon"},
+            {"title": "Zeta"},
+        ],
+    )
+
+    k = 4
+    results = km._search(table=table, references={"content": "needle"}, k=k)
+
+    assert len(results) == k
+    titles = [r["title"] for r in results]
+    # Gamma should be the top semantic match
+    assert titles[0] == "Gamma"
+    # Remaining should be backfilled from latest creation order without duplicates
+    assert titles[1:4] == ["Zeta", "Epsilon", "Delta"]
