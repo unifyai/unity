@@ -147,7 +147,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         follow_up_prompt = "\n\n---\n\n".join(
             [q_msg]
             + [self._initial]
-            + self._extra_msgs
+            + self._extra_user_msgs
             + [f"Question to answer (as a reminder!): {question}"],
         )
 
@@ -257,3 +257,10 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             )
 
         return handle
+
+    # Append guidance for outer orchestrators via tool description
+    ask.__doc__ = (ask.__doc__ or "") + (
+        "\n\nOuter-orchestrator guidance: Avoid invoking this tool repeatedly with the same "
+        "arguments within the same conversation. Prefer reusing prior results and "
+        "compose the final answer once sufficient information has been gathered."
+    )
