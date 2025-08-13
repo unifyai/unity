@@ -5,7 +5,7 @@ import pytest
 
 @pytest.mark.unit
 @_handle_project
-def test_search_basic():
+def test_filter_no_expr():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_rows(
@@ -23,7 +23,7 @@ def test_search_basic():
 
 @pytest.mark.unit
 @_handle_project
-def test_search_filter():
+def test_filter_basic_expr():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_rows(
@@ -40,7 +40,7 @@ def test_search_filter():
 
 @pytest.mark.unit
 @_handle_project
-def test_search_specific_tables():
+def test_filter_specific_tables():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_rows(
@@ -75,7 +75,7 @@ def test_search_specific_tables():
 
 @pytest.mark.unit
 @_handle_project
-def test_search_w_filter():
+def test_filter_multi_expr():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_rows(

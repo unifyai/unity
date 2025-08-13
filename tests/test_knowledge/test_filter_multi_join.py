@@ -1,11 +1,11 @@
 """
-Unit-style test for `_search_multi_join`
+Unit-style test for `_filter_multi_join`
 =======================================
 
 We avoid the full LLM retrieval loop – instead we *directly* invoke the new
 helper and spy on:
 
-  • internal calls to `_search_join` (there must be one per join step);
+  • internal calls to `_filter_join` (there must be one per join step);
   • automatic clean-up of every temporary context.
 """
 
@@ -40,7 +40,7 @@ def _tmp_ctx_survivors(km: KnowledgeManager) -> list[str]:
 
 @pytest.mark.eval
 @_handle_project
-def test_search_multi_join(monkeypatch):
+def test_filter_multi_join(monkeypatch):
     """
     Scenario: *Authors → Books → Reviews*  (expect three reviews).
     """
@@ -121,7 +121,7 @@ def test_search_multi_join(monkeypatch):
     assert len(res) == 3, "Should return exactly three Rowling reviews."
 
     # ➋ internal two-table join used twice
-    assert len(join_calls) == 2, "_search_join should be called once per step."
+    assert len(join_calls) == 2, "_filter_join should be called once per step."
 
     # ➌ temp contexts cleaned up
     survivors = _tmp_ctx_survivors(km)
