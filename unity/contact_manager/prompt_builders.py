@@ -277,6 +277,16 @@ Basic create/update
 • Update a known contact id
   `{update_fname}(contact_id=42, phone_number='+15551234567')`
 
+Asking Questions
+----------------
+• It can often be very difficult to keep track of your own 'update' progress purely via tool call histories. If you're unsure, always just `ask`!
+  `{ask_fname}(text="I think I've now updated all of the contact 'occupation' columns to engineer, but I might have missed some. Could you list all engineers in the contact list so I can check my progress?")`
+
+Anti‑patterns to avoid
+---------------------
+• Repeating the exact same tool call with the same arguments as a means to 'make sure it has completed', just call `ask` to check the latest state of the contacts list
+• Making *any* assumptions about the current state of the contacts list, instead you should make liberal use of the `ask` tool
+
 (When locating a record by semantics, always do a quick `{ask_fname}` step to resolve `contact_id` before mutating. Prefer updating in place over recreating.)
     """
     usage_examples = textwrap.dedent(usage_examples_base).strip()
