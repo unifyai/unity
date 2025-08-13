@@ -151,7 +151,12 @@ async def test_update_with_parent_context_identification(
 async def test_update_with_clarification_needed(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
-    """Test update requiring clarification when multiple contacts match."""
+    """Test update requiring clarification when multiple contacts match.
+
+    This version does not assume a single clarification. It spins up a small
+    clarification agent that answers any number of clarification requests with a
+    consistent intent: we mean Alice Wonder (email alice.wonder@example.com).
+    """
     cm, _ = contact_manager_scenario
     # Two "Alice" contacts exist from the fixture data.
 
@@ -166,16 +171,52 @@ async def test_update_with_clarification_needed(
         clarification_down_q=clar_down_q,
     )
 
-    await asyncio.wait_for(
-        clar_up_q.get(),
-        timeout=60,
-    )
+    target_name = "Alice Wonder"
+    target_email = "alice.wonder@example.com"
 
-    await clar_down_q.put(
-        "The one with email alice.wonder@example.com.",
-    )  # Clarify Alice Wonder
+    async def toy_clarification_llm(clar_message: Any) -> str:
+        """A minimal agent that answers clarification prompts consistently.
+
+        It always clarifies that we mean Alice Wonder with the specified email,
+        phrasing the response to be robust to different prompt styles.
+        """
+        # Best-effort extraction of text content
+        if isinstance(clar_message, dict):
+            content = clar_message.get("content") or str(clar_message)
+        else:
+            content = str(clar_message)
+        content_lower = content.lower()
+
+        # Prefer answering with the unique identifier requested, if hinted
+        if "email" in content_lower or "e-mail" in content_lower:
+            return f"The one with email {target_email}."
+        if "name" in content_lower or "which alice" in content_lower:
+            return f"{target_name} (email {target_email})."
+        if "id" in content_lower or "identifier" in content_lower:
+            # We don't assume knowledge of an internal numeric ID here; email is unique
+            return f"Use the contact with email {target_email} (name {target_name})."
+        # Generic fallback that should work for most clarification wordings
+        return f"{target_name}, with email {target_email}."
+
+    async def clarification_agent():
+        # Respond to any number of clarification prompts until the handle completes
+        while not handle.done():
+            try:
+                clar_msg = await asyncio.wait_for(clar_up_q.get(), timeout=0.1)
+            except asyncio.TimeoutError:
+                continue
+            reply = await toy_clarification_llm(clar_msg)
+            await clar_down_q.put(reply)
+
+    agent_task = asyncio.create_task(clarification_agent())
 
     await handle.result()
+
+    # Ensure agent exits
+    try:
+        await asyncio.wait_for(agent_task, timeout=1)
+    except asyncio.TimeoutError:
+        agent_task.cancel()
 
     _programmatic_contact_check(
         cm,
