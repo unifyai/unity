@@ -54,6 +54,9 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
     _shared_require_tools(pairs, tools)
 
 
+# Replace build_ask_prompt with a space-indented version including improved guidance
+
+
 def build_ask_prompt(
     tools: Dict[str, Callable],
     num_contacts: int,
@@ -99,49 +102,74 @@ def build_ask_prompt(
         else ""
     )
 
+    # Strongly emphasize correct tool selection and realistic semantic-search usage
     usage_examples_base = f"""
-        Examples
-        --------
+Examples
+--------
 
-        ─ Columns ─
-        • Inspect schema
-          `{list_columns_fname}()`
+─ Columns ─
+• Inspect schema
+  `{list_columns_fname}()`
 
-        ─ Semantic search ─
-        • Find contacts *similar* to "machine-learning expert" in the *bio* field
-          `{search_contacts_fname}(source='bio', text='machine-learning expert')`
+─ Tool selection ─
+• If the question asks about a semantic property inside any text field (e.g., where someone lives, what they do, age, or recent activity), USE `{search_contacts_fname}`.
+• Use `{filter_contacts_fname}` only for exact/boolean logic over structured fields (e.g., exact email match, phone equals a number, missing/nonnull checks) or when you must enumerate precise rows.
 
-        ─ Filtering ─
-        • Find contacts with first name **John**
-          `{filter_contacts_fname}(filter="first_name == 'John'")`
-        • Find surname **Doe**
-          `{filter_contacts_fname}(filter="surname == 'Doe'")`
-        • Specific email **john.doe@example.com**
-          `{filter_contacts_fname}(filter="email_address == 'john.doe@example.com'")`
-        • Phone containing **555**
-          `{filter_contacts_fname}(filter="'555' in phone_number")`
-        • Exact phone **+14445556666**
-          `{filter_contacts_fname}(filter="phone_number == '+14445556666'")`
-        • Name **Alice Smith**
-          `{filter_contacts_fname}(filter="surname == 'Smith' and first_name == 'Alice'")`
-        • Email **a@b.com** *or* phone **123-456-7890**
-          `{filter_contacts_fname}(filter="email_address == 'a@b.com' or phone_number == '123-456-7890'")`
-        • Missing phone number
-          `{filter_contacts_fname}(filter="phone_number is None")`
-        • Has any email (not None)
-          `{filter_contacts_fname}(filter="email_address is not None")`
+─ Semantic search (realistic scenarios) ─
+• Find the contact who lives in Berlin and works as a product designer (signal usually lives in free‑text `bio`)
+  `{search_contacts_fname}(references={{'bio': 'lives in Berlin product designer'}}, k=3)`
+
+• Identify who recently moved to New York and is training for a marathon (biographical signal in `bio`)
+  `{search_contacts_fname}(references={{'bio': 'moved to New York training for a marathon'}}, k=2)`
+
+• Combine multiple signals from different columns – rank by the SUM of cosine distances
+  (e.g., someone whose `rolling_summary` mentions "wrapped up a kickoff call last week" and whose occupation mentions "footballer")
+  `{search_contacts_fname}(references={{'rolling_summary': 'wrapped up a kickoff call last week', 'occupation': 'footballer'}}, k=3)`
+
+• Search across freeform fields with a single derived expression when the clue may appear across `bio`, `rolling_summary`, or a custom field like `occupation`
+  First build an expression, then pass it as the reference key:
+  `expr = "str({{bio}}) + ' ' + str({{rolling_summary}}) + ' ' + str({{occupation}})"`
+  For a query like "based in London, 28 years old, software engineer" this will surface matching bios, recent activity, and occupations:
+  `{search_contacts_fname}(references={{expr: 'London 28 software engineer'}}, k=2)`
+
+• Prefer multiple smaller, targeted references over one generic catch‑all when you know where the signal likely lives
+  (e.g., split across `bio` and `rolling_summary` rather than concatenating everything) – this often improves ranking.
+
+─ Filtering (exact matching, not semantic) ─
+• First name is exactly John
+  `{filter_contacts_fname}(filter="first_name == 'John'")`
+• Surname is Doe
+  `{filter_contacts_fname}(filter="surname == 'Doe'")`
+• Specific email is john.doe@example.com
+  `{filter_contacts_fname}(filter="email_address == 'john.doe@example.com'")`
+• Phone contains 555 (substring logic; not semantic similarity)
+  `{filter_contacts_fname}(filter="'555' in phone_number")`
+• Exact phone equals +14445556666
+  `{filter_contacts_fname}(filter="phone_number == '+14445556666'")`
+• Missing phone number
+  `{filter_contacts_fname}(filter="phone_number is None")`
+• Has any email (not None)
+  `{filter_contacts_fname}(filter="email_address is not None")`
     """
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
 
+    # Decision guidance – emphasize semantic search even on small tables
     if num_contacts < 50:
-        guidance = f"given that the number of contacts is so small, you should simply use {filter_contacts_fname} with *no filter arguments* for now, so you can unpack the *full* contact list and answer the question directly."
+        guidance = "\n".join(
+            [
+                "The table is small, but still choose tools by intent:",
+                f"• If the user asks anything semantic about text (habits, preferences, summaries), call {search_contacts_fname}.",
+                f"• Only fetch all contacts via {filter_contacts_fname}(filter=None) if you truly need to list or scan everything explicitly.",
+            ],
+        )
     else:
         guidance = "\n".join(
             [
-                "If the question is open-ended or doesn't clearly match any of the column names,",
-                f"then try {search_contacts_fname} on the most relevant column(s) and see if you can find any semantic match.",
+                "When the question is open‑ended or refers to meaning rather than exact values,",
+                f"use {search_contacts_fname} on the most relevant text columns.",
+                "Split the query across multiple columns when signals live in different places; the ranking minimizes the sum of cosine distances.",
             ],
         )
 
@@ -165,7 +193,7 @@ def build_ask_prompt(
             "Tools (name → argspec):",
             sig_json,
             "",
-            usage_examples if num_contacts >= 50 else "",
+            usage_examples,
             "",
             guidance,
             clar_section,
@@ -186,13 +214,13 @@ def build_update_prompt(
     # Pick out canonical names heuristically (all dynamic)
     create_fname = _tool_name(tools, "create_contact")
     update_fname = _tool_name(tools, "update_contact")
+    delete_fname = _tool_name(tools, "delete_contact")
+    merge_fname = _tool_name(tools, "merge_contacts")
     ask_fname = _tool_name(tools, "ask")
 
     # Custom-column helpers (dynamic)
     create_custom_fname = _tool_name(tools, "create_custom_column")
     delete_custom_fname = _tool_name(tools, "delete_custom_column")
-    # Note: list/search/filter tools are not required on the update path and
-    # may not be present in the toolset. We therefore avoid referencing them.
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "request_clarification")
@@ -202,6 +230,8 @@ def build_update_prompt(
         {
             "create_contact": create_fname,
             "update_contact": update_fname,
+            "delete_contact": delete_fname,
+            "merge_contacts": merge_fname,
             "create_custom_column": create_custom_fname,
             "delete_custom_column": delete_custom_fname,
             "ask": ask_fname,
@@ -212,9 +242,10 @@ def build_update_prompt(
     clarification_block = (
         textwrap.dedent(
             f"""
-            ─ Clarification ─
-            • If any request is ambiguous, ask the user to disambiguate before changing data
-              `{request_clar_fname}(question="There are several possible matches. Which contact did you mean?")`
+Clarification
+-------------
+• If any request is ambiguous, ask the user to disambiguate before changing data
+  `{request_clar_fname}(question="There are several possible matches. Which contact did you mean?")`
             """,
         ).strip()
         if request_clar_fname
@@ -222,30 +253,58 @@ def build_update_prompt(
     )
 
     usage_examples_base = f"""
-        Examples
-        --------
-        • **Create** a new contact
-          `{create_fname}(first_name='Jane', surname='Roe', email_address='jane.roe@example.com')`
+Tool selection
+--------------
+• Prefer `{update_fname}` when you know the exact `contact_id` for a mutation.
+• When the user refers to a contact semantically (e.g., "the footballer who wrapped up a kickoff call last week"), first ask a freeform question with `{ask_fname}` to identify the correct `contact_id`, then call `{update_fname}`.
+• If the schema lacks a field the user wants to set, create it with `{create_custom_fname}` (typically `column_type='str'`) before updating.
+• Use `{merge_fname}` only when the user explicitly asks to combine two known contacts or when duplicates are clearly identified.
+• Use `{delete_fname}` only on explicit deletion requests. Never delete system contacts with id 0 or 1.
 
-        • **Update** John Doe's phone '+1 55512-345-67' when you already know the ID is *42*
-          `{update_fname}(contact_id=42, phone_number='+15551234567')` (note spaces and dashes removed)
+Realistic find-then-update flows
+--------------------------------
+• Set a policy for the contact living in Berlin working as a product designer
+  1 Ask a freeform question (no instructions about how to answer):
+    `{ask_fname}(text="Who is the contact living in Berlin working as a product designer?")`
+  2 Update the returned id:
+    `{update_fname}(contact_id=<id>, response_policy="Share design updates weekly")`
 
-        • **Update** a contact referred to only by name
-          1 Find ID → `{ask_fname}(text="What is the contact_id for John Doe?")`
-          2 Then update → `{update_fname}(contact_id=<returned_id>, email_address='john.new@example.com')`
+• Mark respond_to=True for the contact who is a footballer and recently wrapped up a kickoff call
+  1 Ask a freeform question (no instructions about how to answer):
+    `{ask_fname}(text="Which footballer wrapped up a kickoff call last week?")`
+  2 Update the returned id:
+    `{update_fname}(contact_id=<id>, respond_to=True)`
 
-        • **Parse** a full name on create
-          `"Frank P. Castle"` → `{create_fname}(first_name='Frank P.', surname='Castle')`
+• Query may span multiple freeform fields (derived expression)
+  1 Build a composite expression across `bio`, `rolling_summary`, and a custom field like `occupation`:
+    `expr = "str({{bio}}) + ' ' + str({{rolling_summary}}) + ' ' + str({{occupation}})"`
+  2 Ask a freeform question referring to the same clues:
+    `{ask_fname}(text="Who is the London-based 28-year-old software engineer?")`
+  3 Update the found record as requested.
 
-        ─ Custom columns ─
-        • New column "department"
-          `{create_custom_fname}(column_name='department', column_type='str')`
-        • Update a contact's department
-          `{update_fname}(contact_id=42, department='Engineering')`
-        • Remove the column later
-          `{delete_custom_fname}(column_name='department')`
+Schema evolution and custom columns
+----------------------------------
+• If the user asks to store a new attribute that does not map to built-ins, create a custom column first:
+  `{create_custom_fname}(column_name='occupation', column_type='str')`
+  Then apply the update:
+  `{update_fname}(contact_id=42, occupation='Designer')`
+• Required columns ({_permanent_columns()}) cannot be deleted. Remove optional columns with `{delete_custom_fname}(column_name=...)` only when explicitly asked.
 
-        (If you need to locate contacts by fuzzy criteria, first use `{ask_fname}` to retrieve candidate contact_id(s) and then perform the update.)
+Merge and delete
+----------------
+• Merge two contacts when instructed. Decide field winners via the `overrides` map and protect ids 0 and 1 from deletion:
+  `{merge_fname}(contact_id_1=12, contact_id_2=34, overrides={{'contact_id': 12, 'email_address': 2}})`
+• Delete a contact only when clearly requested (never ids 0 or 1):
+  `{delete_fname}(contact_id=77)`
+
+Basic create/update
+-------------------
+• Create a new contact
+  `{create_fname}(first_name='Jane', surname='Roe', email_address='jane.roe@example.com')`
+• Update a known contact id
+  `{update_fname}(contact_id=42, phone_number='+15551234567')`
+
+(When locating a record by semantics, always do a quick `{ask_fname}` step to resolve `contact_id` before mutating. Prefer updating in place over recreating.)
     """
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
@@ -258,15 +317,9 @@ def build_update_prompt(
         [
             activity_block,
             "You are an assistant in charge of **creating or editing contacts**.",
-            "Use the tools provided to create new entries or update existing ones.",
-            "Disregard any explicit instructions about *how* you should implement the change or which tools to use; decide the best method yourself.",
-            "You should attempt to perform *any* request as best you can, even if it seems out of scope.",
-            "use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
-            "",
-            "Custom columns:",
-            "---------------",
-            f"• Required columns ({_permanent_columns()}) **cannot** be deleted.",
-            f"• Add a new column with `{create_custom_fname}(…)`, remove with `{delete_custom_fname}(…)`.",
+            "Choose tools based on the user's intent and the specificity of the target record.",
+            "Prefer minimal, precise mutations to existing records identified by contact_id.",
+            "When the user describes a contact semantically, resolve the id first by calling the ask method and using semantic search, then perform the update.",
             "",
             "Tools (name → argspec):",
             sig_json,

@@ -54,7 +54,7 @@ async def test_update_cancel_email_tasks(basic_task_scenario):  # FIXME
     handle = await ts.update(text="Please cancel all tasks related to sending emails.")
     await handle.result()
 
-    tasks = ts._search_tasks()
+    tasks = ts._filter_tasks()
     for t in tasks:
         if "email" in t["description"].lower():
             assert t["status"] == "cancelled"
@@ -94,7 +94,7 @@ async def test_update_lower_priority_for_future_date(basic_task_scenario):
     )
     await handle.result()
 
-    task = ts._search_tasks(filter="'KPI report' in name")[0]
+    task = ts._filter_tasks(filter="'KPI report' in name")[0]
     assert task["priority"] == Priority.normal
 
 
@@ -123,5 +123,5 @@ async def test_update_bulk_description_replace(basic_task_scenario):
     )
     await handle.result()
 
-    for t in ts._search_tasks(filter="'Mr. Smith' in description"):
+    for t in ts._filter_tasks(filter="'Mr. Smith' in description"):
         assert re.search(r"Mr\.\s?Smith", t["description"]) is not None

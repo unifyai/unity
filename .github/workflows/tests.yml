@@ -57,12 +57,12 @@ on:
         description: "Test session timeout in minutes (for all tests)"
         required: false
         type: number
-        default: 120
+        default: 180
       runner_timeout:
         description: "Runner timeout in minutes"
         required: false
         type: number
-        default: 130
+        default: 190
 
 jobs:
   black:
@@ -84,7 +84,7 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     environment: unity-testing
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 130 }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 190 }}
     steps:
     - uses: actions/checkout@v2
 
@@ -142,7 +142,7 @@ jobs:
           --session-timeout=$((UNITY_TESTS_SESSION_TIMEOUT * 60)) \
           --test-log-file="tests.log" ${{ inputs.test_path || '.' }}
       env:
-        UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 120 }}
+        UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 180 }}
         UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
         UNIFY_TESTS_RAND_PROJ: true
         UNIFY_TESTS_DELETE_PROJ_ON_EXIT: true

@@ -4,6 +4,7 @@ import requests
 import json
 import functools
 import os
+import hashlib
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..knowledge_manager.types import ColumnType
@@ -26,6 +27,10 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 import asyncio
+from ..common.semantic_search import (
+    ensure_vector_for_source,
+    ensure_sum_cosine_column,
+)
 
 
 class ContactManager(BaseContactManager):
@@ -554,22 +559,61 @@ class ContactManager(BaseContactManager):
     #  Vector-search helpers                                             #
     # ------------------------------------------------------------------ #
 
-    def _ensure_table_vector(self, *, column: str, source: str) -> None:
+    def _ensure_table_vector(
+        self,
+        *,
+        column: str,
+        source_expr: str,
+    ) -> None:
         """
-        Ensure that column exists as a vector-embedding derived from source.
+        Ensure that an embedding column exists for the provided source expression.
 
         Parameters
         ----------
         column : str
-            The (private) vector column name (e.g. "_notes_emb").
-        source : str
-            The source column name (e.g. "notes").
+            The (private) vector column name (e.g. "_notes_emb"). Must end with
+            the suffix "_emb". The corresponding source column name will be
+            derived by stripping the suffix.
+        source_expr : str
+            A Unify expression string that produces the source text to embed.
+            This may be either:
+            - a plain column name like "bio" (treated as an existing column), or
+            - a full expression using Unify's expression language, e.g.
+              "str({first_name}) + ' ' + str({surname})".
+
+        Notes
+        -----
+        When a plain column name is provided, the function will reference that
+        column directly. When a full expression is provided, a derived source
+        column will be created (if needed) using the name obtained by removing
+        the trailing "_emb" from the provided embedding column key.
         """
-        ensure_vector_column(
-            self._ctx,  # contacts live in a single context
-            embed_column=column,
-            source_column=source,
+        # Derive a stable source column key from the embedding column name.
+        source_column_name = column[:-4] if column.endswith("_emb") else f"{column}_src"
+
+        # Heuristic: treat simple identifiers (no braces or ops) as direct columns
+        is_plain_identifier = (
+            "{" not in source_expr
+            and "}" not in source_expr
+            and any(c.isalpha() for c in source_expr)
         )
+
+        if is_plain_identifier:
+            # Use the provided identifier as the source column directly
+            ensure_vector_column(
+                self._ctx,
+                embed_column=column,
+                source_column=source_expr,
+                derived_expr=None,
+            )
+        else:
+            # Treat the input as a full expression that defines/derives the source
+            ensure_vector_column(
+                self._ctx,
+                embed_column=column,
+                source_column=source_column_name,
+                derived_expr=source_expr,
+            )
 
     # Public #
     # -------#
@@ -1247,46 +1291,56 @@ class ContactManager(BaseContactManager):
     def _search_contacts(
         self,
         *,
-        column: str,
-        text: str,
+        references: Dict[str, str],
         k: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[Contact]:
         """
-        Search the contacts based on a general text description for the column contents.
-        Specifically, return the **k** tasks whose text embeddings are *closest*
-        (cosine distance) to the supplied *text*
-
-        It's always best to use *this tool* when searching for a contact with a similar
-        description, role, or any other text-based column. Semantic similarity based
-        on embeddings are *much* more robust and accurate than trying to get an exact
-        match on multi-word substrings for any text-based columns.
-
-        Parameters
-        ----------
-        column : str
-            Name of the text column to embed (any default or custom column).
-        text : str
-            Query text.
-        k : int, default 5
-            Number of closest rows to return.
-
-        Returns
-        -------
-        List[Dict[str, Any]]
-            Rows sorted by ascending cosine distance.
+        Search contacts by minimising the sum of cosine distances to multiple reference texts.
         """
-        vec_col = f"_{column}_emb"
-        self._ensure_table_vector(column=vec_col, source=column)
+
+        assert (
+            isinstance(references, dict) and len(references) > 0
+        ), "references must be a non-empty dict"
+
+        # Ensure vectors for each source expression
+        terms: list[tuple[str, str]] = []
+        for source_expr, ref_text in references.items():
+            embed_col = ensure_vector_for_source(self._ctx, source_expr)
+            terms.append((embed_col, ref_text))
+
+        # Fast path: single term → sort directly by cosine
+        if len(terms) == 1:
+            embed_col, ref_text = terms[0]
+            escaped_ref = ref_text.replace("'", "\\'")
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter="contact_id != 0 and contact_id != 1",
+                sorting={
+                    f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
+                },
+                limit=k,
+                exclude_fields=[
+                    fld
+                    for fld in unify.get_fields(context=self._ctx).keys()
+                    if fld.endswith("_emb")
+                ],
+            )
+            return [Contact(**lg.entries) for lg in logs]
+
+        # Sum-of-cosine path
+        canonical = "|".join(f"{k}=>{references[k]}" for k in sorted(references.keys()))
+        sum_hash = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+        sum_key = ensure_sum_cosine_column(self._ctx, terms, sum_hash)
+
         logs = unify.get_logs(
             context=self._ctx,
-            sorting={
-                f"cosine({vec_col}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
-            },
+            filter="contact_id != 0 and contact_id != 1",
+            sorting={sum_key: "ascending"},
             limit=k,
             exclude_fields=[
-                k
-                for k in unify.get_fields(context=self._ctx).keys()
-                if k.endswith("_emb")
+                fld
+                for fld in unify.get_fields(context=self._ctx).keys()
+                if fld.endswith("_emb")
             ],
         )
         return [Contact(**lg.entries) for lg in logs]
