@@ -83,6 +83,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._filter_join,
                 self._filter_multi_join,
                 self._search_join,
+                self._search_multi_join,
             ),
         }
 
@@ -1188,6 +1189,163 @@ class KnowledgeManager(BaseKnowledgeManager):
             # 4️⃣  Clean up the temporary context best-effort
             try:
                 unify.delete_context(dest_ctx)
+            except Exception:
+                pass
+
+    def _search_multi_join(
+        self,
+        *,
+        joins: List[Dict[str, Any]],
+        references: Dict[str, str],
+        k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        Perform semantic search on the result of chaining multiple joins.
+
+        Parameters
+        ----------
+        joins : list[dict]
+            An ordered list where each element mirrors the kwargs of `_search_join`,
+            but chained tables may use the `$prev` placeholder to reference the
+            result of the previous join step. Each dict must include at least
+            `"tables"`, `"join_expr"`, and `"select"`. Optional keys: `mode`,
+            `left_where`, `right_where`.
+        references : dict[str, str]
+            Mapping from a source expression (plain column or derived Unify
+            expression such as concatenations using `str({col})`) to the reference
+            text. Multiple expressions will be ranked via the sum of cosine
+            distances, mirroring `_search` and `_search_join` semantics.
+        k : int, default 5
+            Maximum number of rows to return.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Rows from the final joined context sorted by semantic similarity.
+        """
+
+        if not joins:
+            raise ValueError("`joins` must contain at least one join step.")
+        if not isinstance(references, dict) or len(references) == 0:
+            raise AssertionError("references must be a non-empty dict")
+
+        tmp_prefix = f"_tmp_mjoin_{uuid.uuid4().hex[:6]}"
+        tmp_tables: List[str] = []
+        previous_table: Optional[str] = None
+
+        for idx, step in enumerate(joins):
+            local_step = step.copy()  # do not mutate caller's dict
+            raw_tables = local_step.get("tables")
+            raw_tables = [raw_tables] if isinstance(raw_tables, str) else raw_tables
+            if not isinstance(raw_tables, list) or len(raw_tables) != 2:
+                raise ValueError(
+                    f"Step {idx} must specify exactly TWO tables – got {raw_tables!r}",
+                )
+
+            # Substitute `$prev` placeholder
+            step_tables = [
+                (previous_table if t in {"$prev", "__prev__", "_"} else t)
+                for t in raw_tables
+            ]
+            if any(t is None for t in step_tables):
+                raise ValueError(
+                    "Misplaced `$prev` in first join – there is no previous result.",
+                )
+
+            # Fix-up join_expr & columns that reference `$prev`
+            def _replace_prev(
+                s: Optional[Union[str, List[str], Dict[str, str]]],
+            ) -> Optional[Union[str, List[str], Dict[str, str]]]:
+                if s is None or previous_table is None:
+                    return s
+
+                def repl(txt: str) -> str:
+                    return (
+                        txt.replace("$prev", previous_table)
+                        .replace("__prev__", previous_table)
+                        .replace("_.", f"{previous_table}.")
+                    )
+
+                if isinstance(s, str):
+                    return repl(s)
+                elif isinstance(s, dict):
+                    return {repl(k): v for k, v in s.items()}
+                return [repl(c) for c in s]
+
+            join_expr = _replace_prev(local_step.get("join_expr"))
+            select = _replace_prev(local_step.get("select"))
+
+            # Destination table for this hop
+            is_last = idx == len(joins) - 1
+            dest_table = f"{tmp_prefix}_final" if is_last else f"{tmp_prefix}_{idx}"
+            tmp_tables.append(dest_table)
+
+            # Materialise the join (no reads yet)
+            self._create_join(
+                dest_table=dest_table,
+                tables=step_tables,
+                join_expr=join_expr,  # type: ignore[arg-type]
+                select=select,  # type: ignore[arg-type]
+                mode=local_step.get("mode", "inner"),
+                left_where=local_step.get("left_where"),
+                right_where=local_step.get("right_where"),
+            )
+
+            previous_table = dest_table
+
+        assert previous_table is not None  # mypy guard
+
+        final_ctx = self._ctx_for_table(previous_table)
+
+        try:
+            # Ensure vectors for each source expression within the final joined context
+            terms: List[tuple[str, str]] = []
+            for source_expr, ref_text in references.items():
+                embed_col = ensure_vector_for_source(final_ctx, source_expr)
+                terms.append((embed_col, ref_text))
+
+            # Rank and fetch like `_search` / `_search_join`
+            if len(terms) == 1:
+                embed_col, ref_text = terms[0]
+                escaped_ref = ref_text.replace("'", "\\'")
+                logs = unify.get_logs(
+                    context=final_ctx,
+                    sorting={
+                        f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
+                    },
+                    limit=k,
+                    exclude_fields=[
+                        fld
+                        for fld in unify.get_fields(context=final_ctx).keys()
+                        if fld.endswith("_emb")
+                    ],
+                )
+                return [lg.entries for lg in logs]
+
+            # Multi-expression: sum of cosine distances
+            canonical = "|".join(
+                f"{key}=>{references[key]}" for key in sorted(references.keys())
+            )
+            import hashlib as _hashlib
+
+            sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+            sum_key = ensure_sum_cosine_column(final_ctx, terms, sum_hash)
+
+            logs = unify.get_logs(
+                context=final_ctx,
+                sorting={sum_key: "ascending"},
+                limit=k,
+                exclude_fields=[
+                    fld
+                    for fld in unify.get_fields(context=final_ctx).keys()
+                    if fld.endswith("_emb")
+                ],
+            )
+            return [lg.entries for lg in logs]
+        finally:
+            # Clean up temporary contexts (best-effort)
+            try:
+                self._delete_tables(tables=tmp_tables)
             except Exception:
                 pass
 
