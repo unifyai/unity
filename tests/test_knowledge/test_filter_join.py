@@ -10,9 +10,9 @@ Scenario
 * Query: *"How many people are in John Smith's department?"*
 
 Correct answering demands a join on ``department_id``.  We patch
-``KnowledgeManager._search_join`` with a spy so the test can assert that the
+``KnowledgeManager._filter_join`` with a spy so the test can assert that the
 LLM chose the dedicated join tool instead of piecing the answer together from
-two independent searches.
+two independent filters.
 """
 
 import re
@@ -46,22 +46,22 @@ def _contains(text: str, *needles: str) -> bool:
 async def test_join_used_for_department_query(monkeypatch):
     """
     The answer should be *3* and – crucially – come from a call to
-    ``_search_join``.
+    ``_filter_join``.
     """
 
-    # 1️⃣  Patch _search_join with a spy so we can detect invocation --------
+    # 1️⃣  Patch _filter_join with a spy so we can detect invocation --------
     called = {"flag": False}
     original_join = KnowledgeManager._filter_join
 
     @functools.wraps(original_join)
-    def _search_join_spy(self, *args, **kwargs):
+    def _filter_join_spy(self, *args, **kwargs):
         called["flag"] = True
         return original_join(self, *args, **kwargs)
 
     monkeypatch.setattr(
         KnowledgeManager,
-        "_search_join",
-        _search_join_spy,
+        "_filter_join",
+        _filter_join_spy,
         raising=True,
     )
 
@@ -104,7 +104,7 @@ async def test_join_used_for_department_query(monkeypatch):
     # 3️⃣  Ask the question ---------------------------------------------------
     handle = await km.ask(
         "How many people are in John Smith's department? "
-        "Please use the tool '_search_join' to answer the question.",
+        "Please use the tool '_filter_join' to answer the question.",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
@@ -119,6 +119,6 @@ async def test_join_used_for_department_query(monkeypatch):
     )
 
     assert called["flag"], (
-        "KnowledgeManager._search_join was NOT invoked – the LLM did not use "
+        "KnowledgeManager._filter_join was NOT invoked – the LLM did not use "
         "the dedicated join tool."
     )
