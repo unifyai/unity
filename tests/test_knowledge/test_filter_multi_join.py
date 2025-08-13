@@ -114,7 +114,7 @@ def test_search_multi_join(monkeypatch):
         },
     ]
 
-    res = km._search_multi_join(joins=pipeline)
+    res = km._filter_multi_join(joins=pipeline)
 
     # ---------- assertions -------------------------------------------------
     # ➊ correct row-count

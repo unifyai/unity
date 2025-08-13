@@ -27,6 +27,7 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
+from ..common.semantic_search import ensure_vector_for_source, ensure_sum_cosine_column
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -79,8 +80,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._tables_overview,
                 self._filter,
                 self._search,
-                self._search_join,
-                self._search_multi_join,
+                self._filter_join,
+                self._filter_multi_join,
             ),
         }
 
@@ -152,7 +153,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             return "required", methods_to_tool_dict(
                 self._filter,
                 self._search,
-                self._search_join,
+                self._filter_join,
                 include_class_name=False,
             )
         return "auto", tls
@@ -1005,58 +1006,79 @@ class KnowledgeManager(BaseKnowledgeManager):
     def _search(
         self,
         *,
-        tables: Optional[Union[str, List[str]]],
-        source: str,
-        text: str,
+        table: str,
+        references: Dict[str, str],
         k: int = 5,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
-        Perform a **semantic nearest-neighbour search** over one or more
-        tables using cosine similarity in embedding space.
+        Semantic search within a single knowledge table using one or more source expressions.
 
         Parameters
         ----------
-        tables : str | list[str]
-            Candidate tables (each must contain *source* column); ``None`` → all tables.
-        source : str
-            Text column to embed (an auxiliary ``_<source>_emb`` column is
-            auto-created if missing). MUST be *snake case*.
-        text : str
-            Query text to embed and compare against.
-        k : int, default ``5``
-            Number of nearest rows to return *per table*.
+        table : str
+            The table to search within.
+        references : Dict[str, str]
+            Mapping from a source expression (plain column or derived Unify expression) to the
+            reference text to compare against. Supports multiple expressions; when more than one
+            is provided the ranking uses a sum of cosine distances over all terms.
+        k : int, default 5
+            Maximum number of rows to return.
 
         Returns
         -------
-        dict[str, list[dict[str, Any]]]
-            Mapping ``table_name → [row, …]`` sorted by ascending distance.
+        list[dict[str, Any]]
+            Rows sorted by ascending semantic distance (best match first).
         """
-        # ToDo: convert to map function
-        if tables is None:
-            tables = self._tables_overview()
-        elif isinstance(tables, str):
-            tables = [tables]
-        results = dict()
-        for table in tables:
-            context = self._ctx_for_table(table)
-            column_emb = f"_{source}_emb"
-            self._vectorize_column(table, source, column_emb)
-            results[table] = [
-                log.entries
-                for log in unify.get_logs(
-                    context=context,
-                    sorting={
-                        f"cosine({column_emb}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
-                    },
-                    limit=k,
-                    exclude_fields=[
-                        k
-                        for k in unify.get_fields(context=context).keys()
-                        if k.endswith("_emb")
-                    ],
-                )
-            ]
-        return results
+        import hashlib as _hashlib
+
+        assert (
+            isinstance(references, dict) and len(references) > 0
+        ), "references must be a non-empty dict"
+
+        context = self._ctx_for_table(table)
+
+        # Ensure vectors for each source expression and collect (embed_col, ref_text)
+        terms: list[tuple[str, str]] = []
+        for source_expr, ref_text in references.items():
+            embed_col = ensure_vector_for_source(context, source_expr)
+            terms.append((embed_col, ref_text))
+
+        # Fast-path: single expression → rank directly by cosine
+        if len(terms) == 1:
+            embed_col, ref_text = terms[0]
+            escaped_ref = ref_text.replace("'", "\\'")
+            logs = unify.get_logs(
+                context=context,
+                sorting={
+                    f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
+                },
+                limit=k,
+                exclude_fields=[
+                    fld
+                    for fld in unify.get_fields(context=context).keys()
+                    if fld.endswith("_emb")
+                ],
+            )
+            return [lg.entries for lg in logs]
+
+        # Multi-expression path: rank by sum of cosine distances
+        canonical = "|".join(
+            f"{key}=>{references[key]}" for key in sorted(references.keys())
+        )
+        sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+        sum_key = ensure_sum_cosine_column(context, terms, sum_hash)
+
+        logs = unify.get_logs(
+            context=context,
+            sorting={sum_key: "ascending"},
+            limit=k,
+            exclude_fields=[
+                fld
+                for fld in unify.get_fields(context=context).keys()
+                if fld.endswith("_emb")
+            ],
+        )
+        return [lg.entries for lg in logs]
 
     # Search
 
@@ -1196,7 +1218,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ]
         return results
 
-    def _search_join(
+    def _filter_join(
         self,
         *,
         tables: Union[str, List[str]],
@@ -1302,7 +1324,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return rows
 
-    def _search_multi_join(
+    def _filter_multi_join(
         self,
         *,
         joins: List[Dict[str, Any]],
