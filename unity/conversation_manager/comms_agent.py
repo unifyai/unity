@@ -925,7 +925,9 @@ class CommsAgent:
                     assistant_id = os.environ.get("ASSISTANT_ID", "0")
                     unity.init(
                         project_name=self.project_name,
-                        assistant_id=int(assistant_id.replace("default-assistant-", "")),
+                        assistant_id=int(
+                            assistant_id.replace("default-assistant-", "")
+                        ),
                         default_assistant={
                             **DEFAULT_ASSISTANT_PAYLOAD,
                             "agent_id": assistant_id,
@@ -988,7 +990,9 @@ class CommsAgent:
                     medium = (
                         "phone_call"
                         if "phone" in event_name
-                        else "sms_message" if "sms" in event_name else "whatsapp_message"
+                        else (
+                            "sms_message" if "sms" in event_name else "whatsapp_message"
+                        )
                     )
                     sender_id, receiver_ids = "", [""]
                     if medium == "whatsapp_message":
