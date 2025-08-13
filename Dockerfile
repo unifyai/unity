@@ -68,7 +68,6 @@ RUN apt-get update && apt-get install -y \
     cmake \
     v4l-utils \
     libspa-0.2-modules \
-    libcamera0.0.3 \
     libcamera-tools \
     gir1.2-gst-plugins-base-1.0 \
     gir1.2-gstreamer-1.0 \
