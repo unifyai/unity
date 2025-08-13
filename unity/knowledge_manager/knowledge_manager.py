@@ -1013,7 +1013,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         *,
         table: str,
         references: Dict[str, str],
-        k: int = 5,
+        k: int = 10,
     ) -> List[Dict[str, Any]]:
         """
         Semantic search within a single knowledge table using one or more source expressions.
@@ -1047,7 +1047,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         left_where: Optional[str] = None,
         right_where: Optional[str] = None,
         references: Dict[str, str],
-        k: int = 5,
+        k: int = 10,
     ) -> List[Dict[str, Any]]:
         """
         Perform a semantic search over the result of joining two tables.
@@ -1118,7 +1118,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         *,
         joins: List[Dict[str, Any]],
         references: Dict[str, str],
-        k: int = 5,
+        k: int = 10,
     ) -> List[Dict[str, Any]]:
         """
         Perform a semantic search over the result of chaining multiple joins.
