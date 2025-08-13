@@ -815,7 +815,14 @@ class ContactManager(BaseContactManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=lambda i, _tools: (
+                (
+                    "required",
+                    {"ask": _tools["ask"]},
+                )
+                if i < 1 and "ask" in _tools
+                else ("auto", _tools)
+            ),
             preprocess_msgs=self._inject_broader_context,
         )
 
