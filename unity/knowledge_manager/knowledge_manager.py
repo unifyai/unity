@@ -1050,8 +1050,46 @@ class KnowledgeManager(BaseKnowledgeManager):
         k: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        Semantic search on the result of joining two tables, using the same
-        mechanism as `_search` but operating within a temporary joined context.
+        Perform a semantic search over the result of joining two tables.
+
+        Parameters
+        ----------
+        tables : list[str]
+            Exactly two table names, e.g. `["A", "B"]`.
+
+        join_expr : str
+            Boolean join condition using the same table identifiers given in
+            `tables`, e.g. `"A.user_id == B.user_id"`.
+
+        select : dict[str, str]
+            Mapping of source columns to output column names in the join
+            result, e.g. `{ "A.user_id": "user_identifier", "B.score":
+            "user_score" }`.
+
+        mode : str, default "inner"
+            Join mode. Typical values: "inner", "left", "right", "outer".
+
+        left_where : str | None, default None
+            Optional row-level predicate applied to the left table before the
+            join, e.g. `"user_id == 1"`.
+
+        right_where : str | None, default None
+            Optional row-level predicate applied to the right table before the
+            join.
+
+        references : dict[str, str]
+            Mapping of source expressions (columns or expressions in the join
+            result) to reference text for semantic similarity. When multiple
+            entries are provided, their scores are combined for ranking.
+
+        k : int, default 5
+            Maximum number of rows to return.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Up to `k` rows from the joined result, sorted by best semantic
+            match first.
         """
 
         # 1️⃣  Materialize the join into a temporary context
@@ -1083,7 +1121,40 @@ class KnowledgeManager(BaseKnowledgeManager):
         k: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        Perform semantic search on the result of chaining multiple joins.
+        Perform a semantic search over the result of chaining multiple joins.
+
+        Parameters
+        ----------
+        joins : list[dict]
+            Ordered list of join steps. Each step supports the keys:
+
+            - "tables" (list[str], required): Exactly two table names for this
+              step. The special placeholder values "$prev", "__prev__", or
+              "_" may be used to refer to the result of the previous step (not
+              allowed in the first step).
+            - "join_expr" (str, required): Join predicate for this step using
+              the table identifiers declared in "tables".
+            - "select" (dict[str, str], required): Mapping of source columns to
+              output names for this step's result.
+            - "mode" (str, optional): Join mode for this step (default:
+              "inner").
+            - "left_where" (str | None, optional): Row-level predicate applied
+              to the left table of this step before joining.
+            - "right_where" (str | None, optional): Row-level predicate applied
+              to the right table of this step before joining.
+
+        references : dict[str, str]
+            Mapping of expressions in the final result to reference text for
+            semantic similarity. Multiple entries are combined for ranking.
+
+        k : int, default 5
+            Maximum number of rows to return.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Up to `k` rows from the final joined result, best semantic match
+            first.
         """
 
         if not joins:
@@ -1184,13 +1255,41 @@ class KnowledgeManager(BaseKnowledgeManager):
         right_where: Optional[str] = None,
     ) -> str:
         """
-        Create **one** temporary joined table on the Unify backend and return
-        its fully-qualified context.
+        Create one derived table by joining two source tables.
 
-        This helper is intentionally *side-effect-only*: it **does not** read
-        from or delete the created context.  Those concerns are left to the
-        public APIs so they can enforce their own life-cycle semantics
-        (single-use for `_search_join`, multi-step for `_search_multi_join`).
+        Parameters
+        ----------
+        dest_table : str
+            Name for the derived table to create (e.g. a unique temporary name
+            such as `"_tmp_join_<id>"`).
+
+        tables : list[str]
+            Exactly two table names, e.g. `["A", "B"]`.
+
+        join_expr : str
+            Boolean join condition using the same table identifiers as in
+            `tables`, e.g. `"A.user_id == B.user_id"`.
+
+        select : dict[str, str]
+            Mapping of source columns to output column names in the derived
+            table, e.g. `{ "A.user_id": "user_identifier", "B.score":
+            "user_score" }`.
+
+        mode : str, default "inner"
+            Join mode. Typical values: "inner", "left", "right", "outer".
+
+        left_where : str | None, default None
+            Optional row-level predicate applied to the left table before the
+            join, e.g. `"user_id == 1"`.
+
+        right_where : str | None, default None
+            Optional row-level predicate applied to the right table before the
+            join.
+
+        Returns
+        -------
+        str
+            The name of the derived table that was created.
         """
         # 1️⃣  Resolve & validate the inputs
         if isinstance(tables, str):
@@ -1320,8 +1419,48 @@ class KnowledgeManager(BaseKnowledgeManager):
         result_offset: int = 0,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        **Join two tables** server-side and query the derived context.
-        Useful for querying data that transcends more than one table.
+        Join two tables and return rows from the joined result with optional filtering.
+
+        Parameters
+        ----------
+        tables : list[str]
+            Exactly two table names, e.g. `["A", "B"]`.
+
+        join_expr : str
+            Boolean join condition using the same table identifiers given in
+            `tables`, e.g. `"A.user_id == B.user_id"`.
+
+        select : dict[str, str]
+            Mapping of source columns to output column names in the joined
+            result, e.g. `{ "A.user_id": "user_identifier", "B.score":
+            "user_score" }`.
+
+        mode : str, default "inner"
+            Join mode. Typical values: "inner", "left", "right", "outer".
+
+        left_where : str | None, default None
+            Optional row-level predicate applied to the left table before the
+            join.
+
+        right_where : str | None, default None
+            Optional row-level predicate applied to the right table before the
+            join.
+
+        result_where : str | None, default None
+            Optional row-level predicate applied to the joined result when
+            returning rows. This predicate may only reference the output column
+            names created by `select`.
+
+        result_limit : int, default 100
+            Maximum number of rows to return.
+
+        result_offset : int, default 0
+            Pagination offset into the result set.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Rows from the joined result matching the provided filters.
         """
 
         # ── helper to catch mismatches early ────────────────────────────
@@ -1383,7 +1522,43 @@ class KnowledgeManager(BaseKnowledgeManager):
         result_offset: int = 0,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        **Chain together an arbitrary number of joins in one call**.
+        Chain together multiple joins, then return rows from the final joined result.
+
+        Parameters
+        ----------
+        joins : list[dict]
+            Ordered list of join steps. Each step supports the keys:
+
+            - "tables" (list[str], required): Exactly two table names for this
+              step. The placeholders "$prev", "__prev__", or "_" may be used
+              to refer to the result of the previous step (not valid in the
+              first step).
+            - "join_expr" (str, required): Join predicate for this step using
+              the table identifiers declared in "tables".
+            - "select" (dict[str, str], required): Mapping of source columns to
+              output names for this step's result.
+            - "mode" (str, optional): Join mode for this step (default:
+              "inner").
+            - "left_where" (str | None, optional): Row-level predicate applied
+              to the left table of this step before joining.
+            - "right_where" (str | None, optional): Row-level predicate applied
+              to the right table of this step before joining.
+
+        result_where : str | None, default None
+            Optional row-level predicate applied when returning rows from the
+            final joined result. This predicate may only reference the output
+            column names created by the final step's `select` mapping.
+
+        result_limit : int, default 100
+            Maximum number of rows to return.
+
+        result_offset : int, default 0
+            Pagination offset into the final result set.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Rows from the final joined result matching the provided filters.
         """
 
         if not joins:
