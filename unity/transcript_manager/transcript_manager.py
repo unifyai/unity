@@ -506,28 +506,67 @@ class TranscriptManager(BaseTranscriptManager):
         k: int = 10,
     ) -> List[Message]:
         """
-        Search transcript messages by minimising the sum of cosine distances to multiple reference texts.
+        Semantic search across transcript messages using one or more reference texts, ranked by the summed cosine similarity across all provided terms.
 
-        The references map allows mixing message-side expressions (e.g. "content") with
-        sender contact-side expressions (e.g. "bio"). Each key is either a plain column name
-        or a full expression using Unify's expression language, with field references in braces
-        (e.g. "str({first_name}) + ' ' + str({bio})").
+        Overview
+        --------
+        Provide a mapping of source expressions to reference texts. Each source expression can target either:
+        - Message-side fields (columns in the `Message` schema), e.g. `"content"` or a derived expression like `"lower(str({content}))"`.
+        - Sender contact-side fields (columns in the `Contact` schema), e.g. `"bio"` or a derived expression like `"str({first_name}) + ' ' + str({surname})"`.
 
-        Example:
-            references={"content": "let's meet up soon", "bio": "accountant"}
+        The function automatically ensures embedding columns exist for every source expression and then ranks messages by the sum of cosine similarities between each term's embedding and its reference text embedding. If at least one contact-side term is present, a temporary join between transcripts (messages) and contacts (senders) is performed on `sender_id == contact_id` to compute the combined ranking.
 
         Parameters
         ----------
         references : Dict[str, str]
-            Mapping from a source expression → reference text. Expressions may refer to
-            message fields (e.g. content) or contact fields of the sender (e.g. bio).
+            Mapping of `source_expr → reference_text` that defines the semantic query.
+            - source_expr: Either a plain identifier naming a field on `Message` (message-side) or `Contact` (contact-side), or a full Unify expression that can reference fields using `{field_name}` placeholders.
+              Examples:
+                - Message-side (plain): `"content"`
+                - Message-side (derived): `"lower(str({content}))"`
+                - Contact-side (plain): `"bio"`, `"first_name"`, `"surname"`
+                - Contact-side (derived): `"str({first_name}) + ' ' + str({bio})"`
+            - reference_text: The free-form text to embed and compare against each row’s source embedding for this term.
+            Notes:
+            - When an expression is not a plain identifier, any `{...}` placeholders must reference valid fields on the selected side (message vs contact). Mixed-side expressions are not allowed; if placeholders include any message fields, the term is treated as message-side; if placeholders include only contact fields, the term is treated as contact-side.
+            - If you supply only contact-side terms, a join with the contacts table is performed and the top-k messages are returned based on their senders' similarity to the provided references.
+            - The embeddings model and derived columns are managed automatically.
         k : int, default 10
-            Number of closest messages to return.
+            Maximum number of closest results to return. Must be a positive integer (k ≥ 1). Larger values may increase latency.
 
         Returns
         -------
         List[Message]
-            Messages sorted by ascending summed cosine distance (best match first).
+            Up to `k` messages sorted by best match first (highest summed cosine similarity / lowest summed distance). Each element is a validated `Message` model from the original transcripts context. Private embedding columns (those ending in `_emb`) are not included in the returned models.
+
+        Behaviour and Details
+        ---------------------
+        - Term classification:
+          • Plain identifiers are classified as message-side if they are valid `Message` fields, otherwise as contact-side if they are valid `Contact` fields.
+          • Derived expressions are classified by their placeholders: any placeholder that matches a `Message` field makes the term message-side; if placeholders exist and all match `Contact` fields (and none match message fields), the term is contact-side.
+        - Ranking:
+          • Single term: messages ranked by cosine similarity to that reference.
+          • Multiple terms: messages ranked by the sum of per-term cosine similarities, favouring rows that are jointly similar across all terms.
+        - Join semantics:
+          • When at least one contact-side term exists, the method creates a temporary joined context between transcripts and contacts on `sender_id == contact_id`. Only sender fields are considered; receiver fields are not used for ranking.
+        - Column management:
+          • For plain identifiers, the function embeds the referenced column directly.
+          • For derived expressions, a stable derived source column is created (if needed) and then embedded.
+
+        Examples
+        --------
+        - Message content only:
+            references = {"content": "let's meet up soon"}
+        - Combine message content with sender bio:
+            references = {"content": "contract renewal", "bio": "procurement manager"}
+        - Derived contact expression (full name) + message content:
+            references = {"str({first_name}) + ' ' + str({surname})": "Jane Doe", "content": "invoice"}
+
+        Notes
+        -----
+        - This tool considers the sender contact only. If you need to factor in receivers, perform a separate search and then filter/merge as needed.
+        - Avoid quoting issues in expressions; use single quotes inside expressions where necessary. The API will create any required derived columns automatically.
+        - For exact, column-wise filtering (e.g., by `medium` or `sender_id`), prefer `_filter_messages` instead of this semantic search.
         """
         assert (
             isinstance(references, dict) and len(references) > 0
@@ -681,29 +720,36 @@ class TranscriptManager(BaseTranscriptManager):
         limit: int = 100,
     ) -> List[Message]:
         """
-        Fetch **raw transcript messages** matching an arbitrary Python
-        boolean *filter*.
+        Filter transcript messages using an exact column-wise boolean expression evaluated per row.
 
-        Do *not* use this tool when searching for messages based on semantic content.
-        Trying to get an exact match on substrings (especially with multiple words)
-        is very brittle, and likely to return no matches. The `search_messages` tool is
-        *much* more robust and accurate when searching for semantic content in messages.
+        Use this tool for precise filters on structured fields (ids, mediums, equality checks, simple membership). For fuzzy substring or semantic matching across free-text columns, prefer `_search_messages`.
 
         Parameters
         ----------
-        filter : str | None, default ``None``
-            Expression evaluated against each :class:`Message`
-            (e.g. ``"medium == 'email' and 'urgent' in content"``).
-            ``None`` selects *all* messages.
-        offset : int, default ``0``
-            Zero-based index of the first result.
-        limit : int, default ``100``
-            Maximum number of messages to return.
+        filter : str | None, default None
+            A Python-like boolean expression evaluated with `Message` columns in scope for each row. Examples:
+            - "medium == 'email' and sender_id == 3"
+            - "'urgent' in content and medium != 'sms'"
+            - "timestamp >= '2024-01-01T00:00:00' and timestamp < '2024-02-01T00:00:00'" (if your backend supports datetime comparisons)
+            When `None`, all messages are returned (subject to `offset`/`limit`).
+            Notes:
+            - String comparisons are case-sensitive unless you explicitly normalize (e.g., `lower(content).contains('foo')` if supported by your Unify backend).
+            - Only `Message` fields are available here. Contact fields are not in scope; to filter by sender attributes, either precompute columns or combine with results from `_search_messages`.
+        offset : int, default 0
+            Zero-based index of the first row to include. Must be non-negative. Use for pagination together with `limit`.
+        limit : int, default 100
+            Maximum number of rows to return. Must be a positive integer. Larger values may increase latency.
 
         Returns
         -------
-        list[Message]
-            Matching messages in creation order.
+        List[Message]
+            Matching messages as validated `Message` models. Results are sorted by `timestamp` in descending order. Any private embedding columns (those ending with `_emb`) are excluded from the payload to keep responses compact.
+
+        Guidance
+        --------
+        - Prefer equality or explicit range filters for reliability. Substring checks on large free-text columns can be brittle; consider `_search_messages` for robust semantic queries.
+        - Quote strings with single quotes inside the filter expression to avoid escaping issues.
+        - If you need deterministic pagination, keep your filter stable and page using consistent `offset`/`limit` values.
         """
         logs = unify.get_logs(
             context=self._transcripts_ctx,
