@@ -111,67 +111,41 @@ Examples
 • Inspect schema
   `{list_columns_fname}()`
 
-─ Tool selection ─
-• If the question asks about a semantic property inside any text field (e.g., where someone lives, what they do, age, or recent activity), USE `{search_contacts_fname}`.
-• Use `{filter_contacts_fname}` only for exact/boolean logic over structured fields (e.g., exact email match, phone equals a number, missing/nonnull checks) or when you must enumerate precise rows.
+─ Tool selection (read carefully) ─
+• For ANY semantic question over free‑form text (bio, rolling_summary, custom text columns), ALWAYS use `{search_contacts_fname}`. Never try to approximate meaning with brittle substring filters.
+• Use `{filter_contacts_fname}` only for exact/boolean logic over structured fields (emails, phone numbers, null checks) or for narrow, constrained text where substring checks make sense (e.g., case‑insensitive contains on first_name).
 
-─ Semantic search (realistic scenarios) ─
-• Find the contact who lives in Berlin and works as a product designer (signal usually lives in free‑text `bio`)
-  `{search_contacts_fname}(references={{'bio': 'lives in Berlin product designer'}}, k=3)`
+─ Semantic search: targeted references across columns (ranked by SUM of cosine distances) ─
+• When the clue could appear across several free‑form fields, provide separate, surgical references instead of one catch‑all. This yields stronger ranking than concatenating everything into one giant string. For example, find the San Francisco software engineer we worked on onboarding with last week:
+  `{search_contacts_fname}(references={{'bio': 'San Francisco software engineer', 'rolling_summary': 'worked on onboarding last week'}}, k=2)`
 
-• Identify who recently moved to New York and is training for a marathon (biographical signal in `bio`)
-  `{search_contacts_fname}(references={{'bio': 'moved to New York training for a marathon'}}, k=2)`
+• Find someone based in Berlin working as a product designer (signal lives in `bio`)
+  `{search_contacts_fname}(references={{'bio': 'based in Berlin product designer'}}, k=3)`
 
-• Combine multiple signals from different columns – rank by the SUM of cosine distances
-  (e.g., someone whose `rolling_summary` mentions "wrapped up a kickoff call last week" and whose occupation mentions "footballer")
-  `{search_contacts_fname}(references={{'rolling_summary': 'wrapped up a kickoff call last week', 'occupation': 'footballer'}}, k=3)`
+• Find the accountant who we had a call with last week
+  `{search_contacts_fname}(references={{'occupation': 'accountant', 'rolling_summary': 'had a call last week'}}, k=3)`
 
-• Search across freeform fields with a single derived expression when the clue may appear across `bio`, `rolling_summary`, or a custom field like `occupation`
-  First build an expression, then pass it as the reference key:
-  `expr = "str({{bio}}) + ' ' + str({{rolling_summary}}) + ' ' + str({{occupation}})"`
-  For a query like "based in London, 28 years old, software engineer" this will surface matching bios, recent activity, and occupations:
-  `{search_contacts_fname}(references={{expr: 'London 28 software engineer'}}, k=2)`
+─ Derived expression (fallback, when you truly cannot target columns) ─
+• Build one composite expression spanning likely fields, then search it. Prefer multi‑column references when you know where the signal lives.
+  `expr = "str({{skills}}) + ' ' + str({{occupation}}) "`
+  `{search_contacts_fname}(references={{expr: 'Software engineering'}}, k=2)`
 
-• Prefer multiple smaller, targeted references over one generic catch‑all when you know where the signal likely lives
-  (e.g., split across `bio` and `rolling_summary` rather than concatenating everything) – this often improves ranking.
-
-─ Filtering (exact matching, not semantic) ─
-• First name is exactly John
-  `{filter_contacts_fname}(filter="first_name == 'John'")`
-• Surname is Doe
-  `{filter_contacts_fname}(filter="surname == 'Doe'")`
-• Specific email is john.doe@example.com
-  `{filter_contacts_fname}(filter="email_address == 'john.doe@example.com'")`
-• Phone contains 555 (substring logic; not semantic similarity)
-  `{filter_contacts_fname}(filter="'555' in phone_number")`
-• Exact phone equals +14445556666
-  `{filter_contacts_fname}(filter="phone_number == '+14445556666'")`
-• Missing phone number
+─ Filtering (exact/boolean or constrained text only; not semantic) ─
+• Exact email match
+  `{filter_contacts_fname}(filter="email_address == 'jane.roe@example.com'")`
+• Has no phone number
   `{filter_contacts_fname}(filter="phone_number is None")`
-• Has any email (not None)
-  `{filter_contacts_fname}(filter="email_address is not None")`
+• Case‑insensitive first‑name contains (acceptable because the field is short and constrained)
+  `{filter_contacts_fname}(filter="first_name is not None and 'dan' in first_name.lower()")`
+
+Anti‑patterns to avoid
+---------------------
+• Avoid the default search behaviour of concatenating every column into one long string and comparing a single embedding of the whole question. Instead, pass multiple, focused reference texts keyed by their specific columns. The ranking minimizes the sum of cosine distances and is more accurate and robust.
+• Avoid filtering for text-heavy columns, sub-string matching is *very* brittle
     """
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
-
-    # Decision guidance – emphasize semantic search even on small tables
-    if num_contacts < 50:
-        guidance = "\n".join(
-            [
-                "The table is small, but still choose tools by intent:",
-                f"• If the user asks anything semantic about text (habits, preferences, summaries), call {search_contacts_fname}.",
-                f"• Only fetch all contacts via {filter_contacts_fname}(filter=None) if you truly need to list or scan everything explicitly.",
-            ],
-        )
-    else:
-        guidance = "\n".join(
-            [
-                "When the question is open‑ended or refers to meaning rather than exact values,",
-                f"use {search_contacts_fname} on the most relevant text columns.",
-                "Split the query across multiple columns when signals live in different places; the ranking minimizes the sum of cosine distances.",
-            ],
-        )
 
     # ─ Clarification guidance ─
     clar_section = clarification_guidance(tools)
@@ -183,7 +157,7 @@ Examples
             activity_block,
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
-            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best method yourself.",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
             "use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
             "",
@@ -195,7 +169,6 @@ Examples
             "",
             usage_examples,
             "",
-            guidance,
             clar_section,
             "",
             f"Current UTC time is {_now()}.",
@@ -318,13 +291,17 @@ Basic create/update
             activity_block,
             "You are an assistant in charge of **creating or editing contacts**.",
             "Choose tools based on the user's intent and the specificity of the target record.",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.",
             "Prefer minimal, precise mutations to existing records identified by contact_id.",
-            "When the user describes a contact semantically, resolve the id first by calling the ask method and using semantic search, then perform the update.",
+            "When the user describes a contact semantically, resolve the id first by requesting the contact_id from the ask method, then perform the update via the contact_id.",
+            "use the ask method to see if you can find any missing context *before* asking the user for clarifications.",
             "",
             "Tools (name → argspec):",
             sig_json,
             "",
             usage_examples,
+            "",
+            clar_section,
             "",
             "Contact schema:",
             json.dumps(Contact.model_json_schema(), indent=4),
@@ -333,7 +310,6 @@ Basic create/update
             json.dumps(column_type_schema, indent=4),
             "",
             f"Current UTC time is {_now()}.",
-            clar_section,
             "",
         ],
     )
