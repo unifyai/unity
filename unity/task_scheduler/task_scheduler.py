@@ -41,7 +41,7 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from ..common.semantic_search import fetch_top_k_by_references
+from ..common.semantic_search import fetch_top_k_by_references, backfill_rows
 
 
 class TaskScheduler(BaseTaskScheduler):
@@ -2042,28 +2042,13 @@ class TaskScheduler(BaseTaskScheduler):
 
         # 1) Primary: semantic similarity results (ordered)
         rows = fetch_top_k_by_references(self._ctx, references, k=k)
-        results: List[Task] = [Task(**lg) for lg in rows]
-
-        # 2) Backfill if we have fewer than k
-        if len(results) < k:
-            seen_ids = {t.task_id for t in results}
-
-            # Fetch latest logs (e.g. newest-first) and append missing items
-            fallback_logs = unify.get_logs(
-                context=self._ctx,
-                limit=k,
-                exclude_fields=[self._VEC_TASK],
-            )
-            for lg in fallback_logs:
-                entries = getattr(lg, "entries", lg)
-                tid = entries.get("task_id") if isinstance(entries, dict) else None
-                if tid is not None and tid not in seen_ids:
-                    results.append(Task(**entries))
-                    seen_ids.add(tid)
-                    if len(results) == k:
-                        break
-
-        return results
+        filled = backfill_rows(
+            self._ctx,
+            rows,
+            k,
+            unique_id_field="task_id",
+        )
+        return [Task(**lg) for lg in filled]
 
     def _filter_tasks(
         self,

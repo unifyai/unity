@@ -174,3 +174,106 @@ def fetch_top_k_by_references(
         terms.append((embed_col, ref_text))
 
     return fetch_top_k_by_terms(context, terms, k=k, row_filter=row_filter)
+
+
+def backfill_rows(
+    context: str,
+    initial_rows: List[dict],
+    k: int,
+    *,
+    row_filter: Optional[str] = None,
+    unique_id_field: Optional[str] = None,
+) -> List[dict]:
+    """Backfill similarity results with additional rows to reach k.
+
+    Parameters
+    ----------
+    context : str
+        Unify context to read fallback rows from.
+    initial_rows : list[dict]
+        Rows already obtained from semantic similarity (ordered best-first).
+    k : int
+        Desired total number of rows.
+    row_filter : str | None, default None
+        Optional row-level predicate to apply while backfilling (e.g., exclude system rows).
+    unique_id_field : str | None, default None
+        Column used to deduplicate rows when backfilling. When ``None``, attempts to infer
+        from the context's ``unique_column_ids``.
+
+    Returns
+    -------
+    list[dict]
+        Up to ``k`` rows with original similarity results first, followed by backfilled rows.
+    """
+    results: List[dict] = list(initial_rows)
+    if len(results) >= k:
+        return results
+
+    # Determine unique id column if not supplied
+    if unique_id_field is None:
+        try:
+            ctx_info = unify.get_context(context)
+            unique_id_field = ctx_info.get("unique_column_ids")
+            if isinstance(unique_id_field, list):
+                unique_id_field = unique_id_field[0] if unique_id_field else None
+        except Exception:
+            unique_id_field = None
+
+    # Track already included ids to avoid duplicates
+    seen_ids: set = set()
+    if unique_id_field:
+        for r in results:
+            if unique_id_field in r and r.get(unique_id_field) is not None:
+                try:
+                    seen_ids.add(int(r.get(unique_id_field)))
+                except Exception:
+                    seen_ids.add(r.get(unique_id_field))
+
+    # Exclude embedding/vector columns in payloads
+    try:
+        exclude_fields = [
+            fld
+            for fld in unify.get_fields(context=context).keys()
+            if fld.endswith("_emb")
+        ]
+    except Exception:
+        exclude_fields = []
+
+    needed = k - len(results)
+    offset = 0
+    while needed > 0:
+        fallback_logs = unify.get_logs(
+            context=context,
+            filter=row_filter,
+            offset=offset,
+            limit=k,
+            exclude_fields=exclude_fields,
+        )
+        if not fallback_logs:
+            break
+
+        for lg in fallback_logs:
+            entries = getattr(lg, "entries", lg)
+            if not isinstance(entries, dict):
+                continue
+            uid_val = entries.get(unique_id_field) if unique_id_field else None
+            if unique_id_field is not None:
+                try:
+                    comp_val = int(uid_val) if uid_val is not None else None
+                except Exception:
+                    comp_val = uid_val
+                if comp_val is not None and comp_val in seen_ids:
+                    continue
+            results.append(entries)
+            if unique_id_field is not None and uid_val is not None:
+                try:
+                    seen_ids.add(int(uid_val))
+                except Exception:
+                    seen_ids.add(uid_val)
+            needed -= 1
+            if needed == 0:
+                break
+
+        offset += k
+
+    return results
