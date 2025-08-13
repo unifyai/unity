@@ -313,3 +313,62 @@ def test_knowledge_search_join_sum_of_cosine_ranking():
     assert titles.index("Neural network training guide") < titles.index(
         "Tax preparation tips",
     )
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@_handle_project
+def test_knowledge_search_join_backfills_when_insufficient_similarity_results():
+    km = KnowledgeManager()
+
+    left = "KBJ_Left"
+    right = "KBJ_Right"
+    km._create_table(name=left)
+    km._create_table(name=right)
+
+    # Create matching user_ids across left/right; only one left row contains the signal
+    km._add_rows(
+        table=left,
+        rows=[
+            {"user_id": 1, "title": "Alpha"},
+            {"user_id": 2, "title": "Beta"},
+            {"user_id": 3, "title": "Gamma", "content": "needle in haystack"},
+            {"user_id": 4, "title": "Delta"},
+            {"user_id": 5, "title": "Epsilon"},
+            {"user_id": 6, "title": "Zeta"},
+        ],
+    )
+
+    km._add_rows(
+        table=right,
+        rows=[
+            {"user_id": 1, "note": "n/a"},
+            {"user_id": 2, "note": "n/a"},
+            {"user_id": 3, "note": "n/a"},
+            {"user_id": 4, "note": "n/a"},
+            {"user_id": 5, "note": "n/a"},
+            {"user_id": 6, "note": "n/a"},
+        ],
+    )
+
+    # Perform join search: only one semantic match; ensure backfill to k
+    k = 4
+    results = km._search_join(
+        tables=[left, right],
+        join_expr=f"{left}.user_id == {right}.user_id",
+        select={
+            f"{left}.user_id": "user_id",
+            f"{left}.title": "title",
+            f"{left}.content": "content",
+            f"{right}.note": "note",
+        },
+        references={"content": "needle"},
+        k=k,
+    )
+
+    assert len(results) == k
+    titles = [r.get("title") for r in results]
+    # The joined row containing the semantic signal should be first
+    assert titles[0] == "Gamma"
+    # Remaining should be backfilled from latest creation order without duplicates
+    assert titles[1:4] == ["Zeta", "Epsilon", "Delta"]
