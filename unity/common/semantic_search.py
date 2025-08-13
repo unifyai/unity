@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Optional
 import hashlib
 import os
 
@@ -97,3 +97,80 @@ def ensure_sum_cosine_column(
         _handle_exceptions(resp)
 
     return sum_key
+
+
+def fetch_top_k_by_terms(
+    context: str,
+    terms: List[Tuple[str, str]],
+    *,
+    k: int = 5,
+    row_filter: Optional[str] = None,
+) -> List[dict]:
+    """Return top-k rows ranked by semantic similarity given pre-embedded terms.
+
+    terms is a list of (embed_column_name, reference_text) pairs that already exist
+    in the provided context.
+    """
+    exclude_fields = [
+        fld for fld in unify.get_fields(context=context).keys() if fld.endswith("_emb")
+    ]
+
+    if len(terms) == 0:
+        return []
+
+    if len(terms) == 1:
+        embed_col, ref_text = terms[0]
+        escaped_ref = ref_text.replace("'", "\\'")
+        logs = unify.get_logs(
+            context=context,
+            filter=row_filter,
+            sorting={
+                f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
+            },
+            limit=k,
+            exclude_fields=exclude_fields,
+        )
+        return [lg.entries for lg in logs]
+
+    canonical = "|".join(f"{i}:{col}=>{txt}" for i, (col, txt) in enumerate(terms))
+    import hashlib as _hashlib
+
+    sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+    sum_key = ensure_sum_cosine_column(context, terms, sum_hash)
+
+    logs = unify.get_logs(
+        context=context,
+        filter=row_filter,
+        sorting={sum_key: "ascending"},
+        limit=k,
+        exclude_fields=exclude_fields,
+    )
+    return [lg.entries for lg in logs]
+
+
+def fetch_top_k_by_references(
+    context: str,
+    references: Dict[str, str],
+    *,
+    k: int = 5,
+    row_filter: Optional[str] = None,
+) -> List[dict]:
+    """Return top-k rows from a context ranked by semantic similarity to reference text(s).
+
+    This helper abstracts the common flow used by KnowledgeManager's semantic search methods:
+    - Ensure an embedding column exists for each source expression (plain column or derived expr)
+    - Rank by cosine when a single source is provided
+    - Rank by the sum of cosine distances across multiple sources when more than one is provided
+    - Exclude embedding columns ("*_emb") from the result payloads
+    """
+    assert (
+        isinstance(references, dict) and len(references) > 0
+    ), "references must be a non-empty dict"
+
+    # Collect (embed_col, ref_text) pairs
+    terms: List[Tuple[str, str]] = []
+    for source_expr, ref_text in references.items():
+        embed_col = ensure_vector_for_source(context, source_expr)
+        terms.append((embed_col, ref_text))
+
+    return fetch_top_k_by_terms(context, terms, k=k, row_filter=row_filter)

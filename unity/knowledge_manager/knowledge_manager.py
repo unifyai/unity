@@ -7,7 +7,7 @@ import requests
 from typing import Any, Dict, List, Optional, Callable, Union
 
 import json
-from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
+from ..common.embed_utils import ensure_vector_column
 from ..helpers import _handle_exceptions
 from .types import ColumnType
 from ..common.llm_helpers import (
@@ -27,7 +27,9 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from ..common.semantic_search import ensure_vector_for_source, ensure_sum_cosine_column
+from ..common.semantic_search import (
+    fetch_top_k_by_references,
+)
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -81,8 +83,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._filter,
                 self._search,
                 self._filter_join,
-                self._filter_multi_join,
                 self._search_join,
+                self._filter_multi_join,
                 self._search_multi_join,
             ),
         }
@@ -468,26 +470,26 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         name : str
-            Canonical table name (must be unique within this manager).
+                Canonical table name (must be unique within this manager).
         description : str | None, default ``None``
-            Human-readable explanation of the table's purpose.
+                Human-readable explanation of the table's purpose.
         columns : dict[str, ColumnType] | None
-            Optional initial schema – mapping *column → type*.  If omitted an
-            empty table is created and columns can be added later with
-            :pyfunc:`_create_empty_column`. Colums names MUST be *snake case*.
-            The column name `id` is reserved for internals, do *not* use this name.
+                Optional initial schema – mapping *column → type*.  If omitted an
+                empty table is created and columns can be added later with
+                :pyfunc:`_create_empty_column`. Colums names MUST be *snake case*.
+                The column name `id` is reserved for internals, do *not* use this name.
         unique_column_name : str
-            Every table *must* have a unique integer column which auto-increments
-            upwards from 0. By default this is called `row_id`, but the name can
-            be customized to be more descriptive for the table. For example,
-            `team_id`, `company_id`, `product_id`, or anything else. This is
-            managed automatically, it should not be included in the `columns`
-            argument, and data is *never written* to this unique column.
+                Every table *must* have a unique integer column which auto-increments
+                upwards from 0. By default this is called `row_id`, but the name can
+                be customized to be more descriptive for the table. For example,
+                `team_id`, `company_id`, `product_id`, or anything else. This is
+                managed automatically, it should not be included in the `columns`
+                argument, and data is *never written* to this unique column.
 
         Returns
         -------
         dict[str, str]
-            Backend response describing success or failure (driver specific).
+                Backend response describing success or failure (driver specific).
         """
         proj = unify.active_project()
         ctx = f"{self._ctx}/{name}"
@@ -518,14 +520,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         include_column_info : bool, default ``True``
-            When *True* each table entry also contains a
-            ``"columns": {name: type}`` mapping.
+                When *True* each table entry also contains a
+                ``"columns": {name: type}`` mapping.
 
         Returns
         -------
         dict[str, dict]
-            Mapping ``table_name → {"description": str, "columns": {...}}``.
-            If *include_column_info* is *False* the ``"columns"`` key is omitted.
+                Mapping ``table_name → {"description": str, "columns": {...}}``.
+                If *include_column_info* is *False* the ``"columns"`` key is omitted.
         """
         tables = {
             k[len(f"{self._ctx}/") :]: {"description": v}
@@ -559,14 +561,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         old_name : str
-            Current table identifier.
+                Current table identifier.
         new_name : str
-            New identifier (must not clash with existing tables).
+                New identifier (must not clash with existing tables).
 
         Returns
         -------
         dict[str, str]
-            Backend acknowledgement / error message.
+                Backend acknowledgement / error message.
         """
         proj = unify.active_project()
         old_name = f"{self._ctx}/{old_name}"
@@ -590,14 +592,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         tables : str | list[str]
-            Target table name(s).
+                Target table name(s).
         startswith : str | None, default None
-            If provided, also delete all tables whose names start with this prefix.
+                If provided, also delete all tables whose names start with this prefix.
 
         Returns
         -------
         list[dict[str, str]]
-            Confirmations / errors from the backend.
+                Confirmations / errors from the backend.
         """
         if isinstance(tables, str):
             tables = [tables]
@@ -626,17 +628,17 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Target table.
+                Target table.
         column_name : str
-            New column identifier, MUST be *snake case*.
-            The column name `id` is reserved for internals, do *not* use this name.
+                New column identifier, MUST be *snake case*.
+                The column name `id` is reserved for internals, do *not* use this name.
         column_type : ColumnType | str
-            Logical type, e.g. ``"str"``, ``"float"``, ``"datetime"``.
+                Logical type, e.g. ``"str"``, ``"float"``, ``"datetime"``.
 
         Returns
         -------
         dict[str, str]
-            Backend response.
+                Backend response.
         """
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
@@ -665,18 +667,18 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Table to modify.
+                Table to modify.
         column_name : str
-            Name of the new derived column, MUST be *snake case*.
-            The column name `id` is reserved for internals, do *not* use this name.
+                Name of the new derived column, MUST be *snake case*.
+                The column name `id` is reserved for internals, do *not* use this name.
         equation : str
-            Python expression evaluated per-row (column names appear as
-            variables).  Example: ``(x**2 + y**2) ** 0.5``.
+                Python expression evaluated per-row (column names appear as
+                variables).  Example: ``(x**2 + y**2) ** 0.5``.
 
         Returns
         -------
         dict[str, str]
-            Backend acknowledgement.
+                Backend acknowledgement.
         """
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
@@ -703,14 +705,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Table name.
+                Table name.
         column_name : str
-            Column to drop, MUST be *snake case*.
+                Column to drop, MUST be *snake case*.
 
         Returns
         -------
         dict[str, str]
-            Backend confirmation or error.
+                Backend confirmation or error.
         """
         table_ctx = unify.get_context(self._ctx_for_table(table))
         unique_column_name = table_ctx["unique_column_ids"]
@@ -747,17 +749,17 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Table identifier.
+                Table identifier.
         old_name : str
-            Existing column name, MUST be *snake case*.
+                Existing column name, MUST be *snake case*.
         new_name : str
-            Desired new name, MUST be *snake case*.
-            The column name `id` is reserved for internals, do *not* use this name.
+                Desired new name, MUST be *snake case*.
+                The column name `id` is reserved for internals, do *not* use this name.
 
         Returns
         -------
         dict[str, str]
-            Backend response.
+                Backend response.
         """
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
@@ -929,14 +931,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Destination table.
+                Destination table.
         rows : list[dict[str, Any]]
-            Sequence of row dictionaries. Dictionary keys (column names) MUST be *snake case*.
+                Sequence of row dictionaries. Dictionary keys (column names) MUST be *snake case*.
 
         Returns
         -------
         dict[str, str]
-            Backend confirmation.
+                Backend confirmation.
         """
         return unify.create_logs(
             context=self._ctx_for_table(table),
@@ -956,12 +958,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Target table.
+                Target table.
         updates : dict[int, dict[str, Any]]
-            Mapping of unique `row_id` rows to update (might be named `team_id`, `product_id` etc.)
-            to the dict of new field values mapping column names to the new overwriting values.
+                Mapping of unique `row_id` rows to update (might be named `team_id`, `product_id` etc.)
+                to the dict of new field values mapping column names to the new overwriting values.
         overwrite : bool, default ``False``
-            When *True*, fields **not** mentioned in *entries* are cleared.
+                When *True*, fields **not** mentioned in *entries* are cleared.
         """
         ctx = self._ctx_for_table(table)
         ctx_info = unify.get_context(ctx)
@@ -995,9 +997,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         create it as a derived column from the source column.
 
         Args:
-            table (str): The name of the table to ensure the vector column in.
-            source (str): The name of the column to derive the vector column from.
-            column (str): The name of the vector column to ensure, MUST be *snake case*.
+                table (str): The name of the table to ensure the vector column in.
+                source (str): The name of the column to derive the vector column from.
+                column (str): The name of the vector column to ensure, MUST be *snake case*.
         """
         context = self._ctx_for_table(table)
         ensure_vector_column(
@@ -1019,69 +1021,21 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            The table to search within.
+                The table to search within.
         references : Dict[str, str]
-            Mapping from a source expression (plain column or derived Unify expression) to the
-            reference text to compare against. Supports multiple expressions; when more than one
-            is provided the ranking uses a sum of cosine distances over all terms.
+                Mapping from a source expression (plain column or derived Unify expression) to the
+                reference text to compare against. Supports multiple expressions; when more than one
+                is provided the ranking uses a sum of cosine distances over all terms.
         k : int, default 5
-            Maximum number of rows to return.
+                Maximum number of rows to return.
 
         Returns
         -------
         list[dict[str, Any]]
-            Rows sorted by ascending semantic distance (best match first).
+                Rows sorted by ascending semantic distance (best match first).
         """
-        import hashlib as _hashlib
-
-        assert (
-            isinstance(references, dict) and len(references) > 0
-        ), "references must be a non-empty dict"
-
         context = self._ctx_for_table(table)
-
-        # Ensure vectors for each source expression and collect (embed_col, ref_text)
-        terms: list[tuple[str, str]] = []
-        for source_expr, ref_text in references.items():
-            embed_col = ensure_vector_for_source(context, source_expr)
-            terms.append((embed_col, ref_text))
-
-        # Fast-path: single expression → rank directly by cosine
-        if len(terms) == 1:
-            embed_col, ref_text = terms[0]
-            escaped_ref = ref_text.replace("'", "\\'")
-            logs = unify.get_logs(
-                context=context,
-                sorting={
-                    f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
-                },
-                limit=k,
-                exclude_fields=[
-                    fld
-                    for fld in unify.get_fields(context=context).keys()
-                    if fld.endswith("_emb")
-                ],
-            )
-            return [lg.entries for lg in logs]
-
-        # Multi-expression path: rank by sum of cosine distances
-        canonical = "|".join(
-            f"{key}=>{references[key]}" for key in sorted(references.keys())
-        )
-        sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
-        sum_key = ensure_sum_cosine_column(context, terms, sum_hash)
-
-        logs = unify.get_logs(
-            context=context,
-            sorting={sum_key: "ascending"},
-            limit=k,
-            exclude_fields=[
-                fld
-                for fld in unify.get_fields(context=context).keys()
-                if fld.endswith("_emb")
-            ],
-        )
-        return [lg.entries for lg in logs]
+        return fetch_top_k_by_references(context, references, k=k)
 
     def _search_join(
         self,
@@ -1098,31 +1052,6 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         Semantic search on the result of joining two tables, using the same
         mechanism as `_search` but operating within a temporary joined context.
-
-        Parameters
-        ----------
-        .tables : str | list[str]
-            Exactly two tables to join.
-        .join_expr : str
-            Expression linking aliases in the two tables.
-        .select : dict[str, str]
-            Projection mapping of fully-qualified input columns to output column
-            names present in the joined table.
-        .mode : str
-            Join kind understood by Unify ("inner", "left", "right", "outer").
-        .left_where / right_where : str | None
-            Optional pre-join predicates applied to the left/right tables.
-        .references : dict[str, str]
-            Mapping from a source expression (plain column or derived Unify
-            expression) to the reference text. Multiple entries will use a sum of
-            cosine distances for ranking.
-        .k : int
-            Maximum number of rows to return from the joined table.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            Rows from the joined context sorted by semantic similarity.
         """
 
         # 1️⃣  Materialize the join into a temporary context
@@ -1138,53 +1067,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         try:
-            # 2️⃣  Ensure vectors for each source expression within the joined context
-            assert (
-                isinstance(references, dict) and len(references) > 0
-            ), "references must be a non-empty dict"
-            terms: List[tuple[str, str]] = []
-            for source_expr, ref_text in references.items():
-                embed_col = ensure_vector_for_source(dest_ctx, source_expr)
-                terms.append((embed_col, ref_text))
-
-            # 3️⃣  Rank and fetch like `_search`
-            if len(terms) == 1:
-                embed_col, ref_text = terms[0]
-                escaped_ref = ref_text.replace("'", "\\'")
-                logs = unify.get_logs(
-                    context=dest_ctx,
-                    sorting={
-                        f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
-                    },
-                    limit=k,
-                    exclude_fields=[
-                        fld
-                        for fld in unify.get_fields(context=dest_ctx).keys()
-                        if fld.endswith("_emb")
-                    ],
-                )
-                return [lg.entries for lg in logs]
-
-            # Multi-expression: sum of cosine distances
-            canonical = "|".join(
-                f"{key}=>{references[key]}" for key in sorted(references.keys())
-            )
-            import hashlib as _hashlib
-
-            sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
-            sum_key = ensure_sum_cosine_column(dest_ctx, terms, sum_hash)
-
-            logs = unify.get_logs(
-                context=dest_ctx,
-                sorting={sum_key: "ascending"},
-                limit=k,
-                exclude_fields=[
-                    fld
-                    for fld in unify.get_fields(context=dest_ctx).keys()
-                    if fld.endswith("_emb")
-                ],
-            )
-            return [lg.entries for lg in logs]
+            return fetch_top_k_by_references(dest_ctx, references, k=k)
         finally:
             # 4️⃣  Clean up the temporary context best-effort
             try:
@@ -1201,27 +1084,6 @@ class KnowledgeManager(BaseKnowledgeManager):
     ) -> List[Dict[str, Any]]:
         """
         Perform semantic search on the result of chaining multiple joins.
-
-        Parameters
-        ----------
-        joins : list[dict]
-            An ordered list where each element mirrors the kwargs of `_search_join`,
-            but chained tables may use the `$prev` placeholder to reference the
-            result of the previous join step. Each dict must include at least
-            `"tables"`, `"join_expr"`, and `"select"`. Optional keys: `mode`,
-            `left_where`, `right_where`.
-        references : dict[str, str]
-            Mapping from a source expression (plain column or derived Unify
-            expression such as concatenations using `str({col})`) to the reference
-            text. Multiple expressions will be ranked via the sum of cosine
-            distances, mirroring `_search` and `_search_join` semantics.
-        k : int, default 5
-            Maximum number of rows to return.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            Rows from the final joined context sorted by semantic similarity.
         """
 
         if not joins:
@@ -1298,50 +1160,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         final_ctx = self._ctx_for_table(previous_table)
 
         try:
-            # Ensure vectors for each source expression within the final joined context
-            terms: List[tuple[str, str]] = []
-            for source_expr, ref_text in references.items():
-                embed_col = ensure_vector_for_source(final_ctx, source_expr)
-                terms.append((embed_col, ref_text))
-
-            # Rank and fetch like `_search` / `_search_join`
-            if len(terms) == 1:
-                embed_col, ref_text = terms[0]
-                escaped_ref = ref_text.replace("'", "\\'")
-                logs = unify.get_logs(
-                    context=final_ctx,
-                    sorting={
-                        f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
-                    },
-                    limit=k,
-                    exclude_fields=[
-                        fld
-                        for fld in unify.get_fields(context=final_ctx).keys()
-                        if fld.endswith("_emb")
-                    ],
-                )
-                return [lg.entries for lg in logs]
-
-            # Multi-expression: sum of cosine distances
-            canonical = "|".join(
-                f"{key}=>{references[key]}" for key in sorted(references.keys())
-            )
-            import hashlib as _hashlib
-
-            sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
-            sum_key = ensure_sum_cosine_column(final_ctx, terms, sum_hash)
-
-            logs = unify.get_logs(
-                context=final_ctx,
-                sorting={sum_key: "ascending"},
-                limit=k,
-                exclude_fields=[
-                    fld
-                    for fld in unify.get_fields(context=final_ctx).keys()
-                    if fld.endswith("_emb")
-                ],
-            )
-            return [lg.entries for lg in logs]
+            return fetch_top_k_by_references(final_ctx, references, k=k)
         finally:
             # Clean up temporary contexts (best-effort)
             try:
@@ -1448,19 +1267,19 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         filter : str | None, default ``None``
-            Row-level predicate (evaluated with column names as variables).
-            *None* returns all rows.
+                Row-level predicate (evaluated with column names as variables).
+                *None* returns all rows.
         offset : int, default ``0``
-            Pagination offset (0-based).
+                Pagination offset (0-based).
         limit : int, default ``100``
-            Maximum rows per table.
+                Maximum rows per table.
         tables :  str | list[str]
-            Subset of tables to scan; ``None`` → all tables.
+                Subset of tables to scan; ``None`` → all tables.
 
         Returns
         -------
         dict[str, list[dict[str, Any]]]
-            Mapping ``table_name → [row_dict, …]``.
+                Mapping ``table_name → [row_dict, …]``.
         """
         if tables is None:
             tables = self._tables_overview()
@@ -1503,44 +1322,6 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         **Join two tables** server-side and query the derived context.
         Useful for querying data that transcends more than one table.
-
-        Parameters
-        ----------
-        tables : str | list[str]
-            Exactly **two** table names to join.
-        join_expr : str | None
-            Expression linking aliases in the two tables.
-            For example "Departments.id == Employees.derpartment_id",
-        select : dict[str, str]
-            Column names to include in the resultant joined table, keys being the originals and values being the new names.
-            For example: {'Students.id': 'student_id', 'Departments.id': 'department_id'}
-        mode : str
-            Join kind understood by Unify (``"inner"``, ``"left"``, ``"right"``, ``"outer"``).
-        left_filter / right_filter : str | None
-            Optional pre-join predicates on the left / right tables.
-        result_where : str | None
-            Predicate evaluated on the new table *after* the join.
-            Can *only* include columns specified as the *values* in the 'select' argument,
-            which dictates the columns that are present in the final joined table.
-        result_limit, result_offset : int
-            Pagination of the post-join rows.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            Rows from the *temporary* table following the join operation and
-            then the `result_where` filtering and `result_limit` and `result_offset` pagination.
-            The table is deleted immediately afterwards – this method is therefore **read-only**.
-
-        Notes
-        -----
-        • *left_where* / *right_where* are applied **before** the join, one
-          predicate per input table.
-        • *result_where* is evaluated **after** the join on the **columns that
-          survived projection** (``select``).
-        • If you provide ``select=[]`` make sure every column mentioned in
-          *result_where* is also listed there – otherwise you will receive a
-          ``ValueError`` telling you which column(s) you forgot to project.
         """
 
         # ── helper to catch mismatches early ────────────────────────────
@@ -1603,37 +1384,6 @@ class KnowledgeManager(BaseKnowledgeManager):
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         **Chain together an arbitrary number of joins in one call**.
-
-        Parameters
-        ----------
-        joins : list[dict]
-            An *ordered* list where **each element mirrors the kwargs of
-            `_search_join` except that chained tables use the '$prev' placeholder.
-            Every dict *requires* the three arguments: "tables", "join_expr" and "select" as a minimum.
-
-            Example::
-
-                joins = [
-                    {
-                        "tables": ["Authors", "Books"],
-                        "join_expr": "Authors.id == Books.author_id",
-                        "select": {"Authors.id": "author_id", "Books.title": "book_title", "Books.id": "book_id"},
-                        "mode": "inner",
-                    },
-                    {
-                        "tables": ["$prev", "Reviews"],   # $prev → last result
-                        "join_expr": "$prev.book_id == Reviews.book_id",
-                        "select": {"$prev.book_title": "book_title", "Reviews.content": "review"}
-                    },
-                ]
-
-        result_where, result_limit, result_offset
-            Standard projection / pagination applied *after* the final join.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            The resultant data following the search operation on the serial table joins ``[row, …]``.
         """
 
         if not joins:

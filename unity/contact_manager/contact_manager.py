@@ -4,9 +4,8 @@ import requests
 import json
 import functools
 import os
-import hashlib
 from .prompt_builders import build_ask_prompt, build_update_prompt
-from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
+from ..common.embed_utils import ensure_vector_column
 from ..knowledge_manager.types import ColumnType
 from ..helpers import _handle_exceptions
 from ..common.tool_outcome import ToolOutcome
@@ -28,8 +27,7 @@ from ..events.manager_event_logging import (
 )
 import asyncio
 from ..common.semantic_search import (
-    ensure_vector_for_source,
-    ensure_sum_cosine_column,
+    fetch_top_k_by_references,
 )
 
 
@@ -1302,48 +1300,14 @@ class ContactManager(BaseContactManager):
             isinstance(references, dict) and len(references) > 0
         ), "references must be a non-empty dict"
 
-        # Ensure vectors for each source expression
-        terms: list[tuple[str, str]] = []
-        for source_expr, ref_text in references.items():
-            embed_col = ensure_vector_for_source(self._ctx, source_expr)
-            terms.append((embed_col, ref_text))
-
-        # Fast path: single term → sort directly by cosine
-        if len(terms) == 1:
-            embed_col, ref_text = terms[0]
-            escaped_ref = ref_text.replace("'", "\\'")
-            logs = unify.get_logs(
-                context=self._ctx,
-                filter="contact_id != 0 and contact_id != 1",
-                sorting={
-                    f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
-                },
-                limit=k,
-                exclude_fields=[
-                    fld
-                    for fld in unify.get_fields(context=self._ctx).keys()
-                    if fld.endswith("_emb")
-                ],
-            )
-            return [Contact(**lg.entries) for lg in logs]
-
-        # Sum-of-cosine path
-        canonical = "|".join(f"{k}=>{references[k]}" for k in sorted(references.keys()))
-        sum_hash = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
-        sum_key = ensure_sum_cosine_column(self._ctx, terms, sum_hash)
-
-        logs = unify.get_logs(
-            context=self._ctx,
-            filter="contact_id != 0 and contact_id != 1",
-            sorting={sum_key: "ascending"},
-            limit=k,
-            exclude_fields=[
-                fld
-                for fld in unify.get_fields(context=self._ctx).keys()
-                if fld.endswith("_emb")
-            ],
+        row_filter = "contact_id != 0 and contact_id != 1"
+        rows = fetch_top_k_by_references(
+            self._ctx,
+            references,
+            k=k,
+            row_filter=row_filter,
         )
-        return [Contact(**lg.entries) for lg in logs]
+        return [Contact(**r) for r in rows]
 
     def _filter_contacts(
         self,
