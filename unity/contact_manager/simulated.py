@@ -270,6 +270,13 @@ class SimulatedContactManager(BaseContactManager):
 
         return handle
 
+    # Append guidance to influence outer orchestrators via tool descriptions
+    ask.__doc__ = (ask.__doc__ or "") + (
+        "\n\nOuter-orchestrator guidance: Avoid invoking this tool repeatedly with the same "
+        "arguments within the same conversation. Prefer reusing prior results and "
+        "compose the final answer once sufficient information has been gathered."
+    )
+
     # --------------------------------------------------------------------- #
     # update                                                                #
     # --------------------------------------------------------------------- #
@@ -321,6 +328,12 @@ class SimulatedContactManager(BaseContactManager):
             )
 
         return handle
+
+    # Provide guidance for outer orchestrators via tool description on mutation methods
+    update.__doc__ = (update.__doc__ or "") + (
+        "\n\nOuter-orchestrator guidance: Avoid invoking this mutation with the same arguments multiple times in the same "
+        "conversation. Treat this operation as idempotent; if confirmation is needed, perform a single read to verify the outcome."
+    )
 
     def _filter_contacts(
         self,
