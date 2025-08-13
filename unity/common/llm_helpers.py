@@ -2066,6 +2066,32 @@ async def _async_tool_use_loop_inner(
             # explicitly stop in‑flight work instead of ending the turn.
             if pending and tool_choice_mode == "auto":
                 tool_choice_mode = "required"
+                # Provide a lightweight, per-turn reminder to the LLM so it knows
+                # how to finish cleanly when tasks are still running. This does not
+                # force any particular helper choice – it only clarifies the exit rule.
+                try:
+                    pending_names = []
+                    for _t in list(pending):
+                        _inf = task_info.get(_t, {})
+                        _nm = _inf.get("name", "unknown")
+                        _arg = (
+                            _inf.get("call_dict", {})
+                            .get("function", {})
+                            .get("arguments", "{}")
+                        )
+                        pending_names.append(f"- {_nm}({_arg})")
+                    summary = ("\n".join(pending_names)) if pending_names else ""
+                    notice = {
+                        "role": "system",
+                        "content": (
+                            "One or more tool calls are still running. If you are ready to finish, you must first stop all pending tool calls using the available stop_* helper tools. "
+                            "Do not schedule duplicate tool calls with identical arguments.\n"
+                            + ("Pending calls:\n" + summary if summary else "")
+                        ),
+                    }
+                    await _append_msgs([notice])
+                except Exception:
+                    pass
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
