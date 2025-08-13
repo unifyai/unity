@@ -1248,10 +1248,81 @@ class KnowledgeManager(BaseKnowledgeManager):
         Returns
         -------
         list[dict[str, Any]]
-                Rows sorted by ascending semantic distance (best match first).
+                Up to ``k`` rows sorted by ascending semantic distance (best match first).
+                If similarity search yields fewer than ``k`` rows and there are more rows
+                overall, the remainder is backfilled from ``unify.get_logs(limit=k)`` in
+                returned order, skipping duplicates based on each table's unique id.
         """
         context = self._ctx_for_table(table)
-        return fetch_top_k_by_references(context, references, k=k)
+
+        # Primary similarity-ranked results
+        rows: List[Dict[str, Any]] = fetch_top_k_by_references(context, references, k=k)
+        results: List[Dict[str, Any]] = list(rows)
+
+        # Backfill if fewer than k results
+        if len(results) < k:
+            # Determine the unique id column name for this table
+            ctx_info = unify.get_context(context)
+            unique_id_field = ctx_info.get("unique_column_ids")
+            if isinstance(unique_id_field, list):
+                unique_id_field = unique_id_field[0] if unique_id_field else None
+
+            # Track seen ids to avoid duplicates
+            seen_ids = set()
+            if unique_id_field:
+                for r in rows:
+                    if unique_id_field in r and r.get(unique_id_field) is not None:
+                        try:
+                            seen_ids.add(int(r.get(unique_id_field)))
+                        except Exception:
+                            seen_ids.add(r.get(unique_id_field))
+
+            # Exclude embedding/vector columns from payload
+            exclude_fields = [
+                fld
+                for fld in unify.get_fields(context=context).keys()
+                if fld.endswith("_emb")
+            ]
+
+            needed = k - len(results)
+            offset = 0
+            while needed > 0:
+                fallback_logs = unify.get_logs(
+                    context=context,
+                    offset=offset,
+                    limit=k,
+                    exclude_fields=exclude_fields,
+                )
+                if not fallback_logs:
+                    break
+
+                for lg in fallback_logs:
+                    entries = getattr(lg, "entries", lg)
+                    if not isinstance(entries, dict):
+                        continue
+                    uid_val = entries.get(unique_id_field) if unique_id_field else None
+                    if unique_id_field is not None:
+                        # Skip if we've already included this unique id
+                        try:
+                            comp_val = int(uid_val) if uid_val is not None else None
+                        except Exception:
+                            comp_val = uid_val
+                        if comp_val is not None and comp_val in seen_ids:
+                            continue
+                    # Append and update seen set
+                    results.append(entries)
+                    if unique_id_field is not None and uid_val is not None:
+                        try:
+                            seen_ids.add(int(uid_val))
+                        except Exception:
+                            seen_ids.add(uid_val)
+                    needed -= 1
+                    if needed == 0:
+                        break
+
+                offset += k
+
+        return results
 
     def _search_join(
         self,
