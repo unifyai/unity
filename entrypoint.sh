@@ -33,12 +33,12 @@ cleanup() {
         kill -TERM $BROWSER_PID 2>/dev/null || true
         wait $BROWSER_PID 2>/dev/null || true
     fi
-    # Stop the BrowserAgent (Node) service
-    if [ ! -z "$NODE_PID" ]; then
-        echo "Stopping BrowserAgent service (PID: $NODE_PID)..."
-        kill -TERM $NODE_PID 2>/dev/null || true
-        wait $NODE_PID 2>/dev/null || true
-    fi
+    # # Stop the BrowserAgent (Node) service
+    # if [ ! -z "$NODE_PID" ]; then
+    #     echo "Stopping BrowserAgent service (PID: $NODE_PID)..."
+    #     kill -TERM $NODE_PID 2>/dev/null || true
+    #     wait $NODE_PID 2>/dev/null || true
+    # fi
 
     echo "Cleanup complete"
     exit 0
@@ -59,11 +59,11 @@ redis-server --save "" --appendonly no &
 REDIS_PID=$!
 echo "Redis started with PID: $REDIS_PID"
 
-# Start the BrowserAgent (Node) service via ts-node
-echo "Starting BrowserAgent service via ts-node..."
-cd /app/agent-service
-npx ts-node src/index.ts &
-NODE_PID=$!
+# # Start the BrowserAgent (Node) service via ts-node
+# echo "Starting BrowserAgent service via ts-node..."
+# cd /app/agent-service
+# npx ts-node src/index.ts &
+# NODE_PID=$!
 cd /app
 
 
@@ -114,6 +114,8 @@ pactl load-module module-remap-source master=agent_sink.monitor source_name=agen
 pactl set-default-source meet_mic
 pactl set-default-sink agent_sink
 
+# Start a terminal which the agent can use in the OS
+DISPLAY=:99 xterm -fa 'Monospace' -fs 10 &
 
 # Start the main application in parallel
 echo "Starting convo manager..."
