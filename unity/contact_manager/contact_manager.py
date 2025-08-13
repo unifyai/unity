@@ -705,7 +705,14 @@ class ContactManager(BaseContactManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=lambda i, _tools: (
+                (
+                    "required",
+                    {"search_contacts": _tools["search_contacts"]},
+                )
+                if i < 1 and "search_contacts" in _tools
+                else ("auto", _tools)
+            ),
             preprocess_msgs=self._inject_broader_context,
         )
 
