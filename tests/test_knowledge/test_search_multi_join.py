@@ -405,3 +405,90 @@ def test_knowledge_search_multi_join_sum_of_cosine_ranking():
     assert titles.index("Neural network training guide") < titles.index(
         "Tax preparation tips",
     )
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@_handle_project
+def test_knowledge_search_multi_join_backfills_when_insufficient_similarity_results():
+    km = KnowledgeManager()
+
+    left = "KBMJ_Left"
+    right = "KBMJ_Right"
+    third = "KBMJ_Third"
+    km._create_table(name=left)
+    km._create_table(name=right)
+    km._create_table(name=third)
+
+    # Left table: only one row has the semantic signal in 'content'
+    km._add_rows(
+        table=left,
+        rows=[
+            {"user_id": 1, "title": "Alpha"},
+            {"user_id": 2, "title": "Beta"},
+            {"user_id": 3, "title": "Gamma", "content": "needle in haystack"},
+            {"user_id": 4, "title": "Delta"},
+            {"user_id": 5, "title": "Epsilon"},
+            {"user_id": 6, "title": "Zeta"},
+        ],
+    )
+
+    # Right table: simple attributes to join on user_id
+    km._add_rows(
+        table=right,
+        rows=[
+            {"user_id": 1, "note": "r1"},
+            {"user_id": 2, "note": "r2"},
+            {"user_id": 3, "note": "r3"},
+            {"user_id": 4, "note": "r4"},
+            {"user_id": 5, "note": "r5"},
+            {"user_id": 6, "note": "r6"},
+        ],
+    )
+
+    # Third table: second hop join on user_id (acts as a pass-through)
+    km._add_rows(
+        table=third,
+        rows=[
+            {"user_id": 1, "tag": "t1"},
+            {"user_id": 2, "tag": "t2"},
+            {"user_id": 3, "tag": "t3"},
+            {"user_id": 4, "tag": "t4"},
+            {"user_id": 5, "tag": "t5"},
+            {"user_id": 6, "tag": "t6"},
+        ],
+    )
+
+    k = 4
+    joins = [
+        {
+            "tables": [left, right],
+            "join_expr": f"{left}.user_id == {right}.user_id",
+            "select": {
+                f"{left}.user_id": "user_id",
+                f"{left}.title": "title",
+                f"{left}.content": "content",
+                f"{right}.note": "note",
+            },
+        },
+        {
+            "tables": ["$prev", third],
+            "join_expr": f"_.user_id == {third}.user_id",
+            "select": {
+                f"_.user_id": "user_id",
+                f"_.title": "title",
+                f"_.content": "content",
+                f"_.note": "note",
+                f"{third}.tag": "tag",
+            },
+        },
+    ]
+
+    results = km._search_multi_join(joins=joins, references={"content": "needle"}, k=k)
+
+    assert len(results) == k
+    titles = [r.get("title") for r in results]
+    # The row containing the semantic signal should be first
+    assert titles[0] == "Gamma"
+    # Remaining should be backfilled from latest creation order without duplicates
+    assert titles[1:4] == ["Zeta", "Epsilon", "Delta"]
