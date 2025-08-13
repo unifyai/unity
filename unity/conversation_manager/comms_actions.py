@@ -380,12 +380,12 @@ async def _join_meet_call(
     """
     await publish_event(
         {
-            "topic": os.getenv("USER_PHONE_NUMBER"),
+            "topic": os.getenv("USER_NUMBER"),
             "event": {
                 **PhoneCallInitiatedEvent(
                     purpose=purpose,
                     task_context=task_context,
-                    target_number=os.getenv("USER_PHONE_NUMBER"),
+                    target_number=os.getenv("USER_NUMBER"),
                     meet_id=meet_id,
                     voice_id=os.getenv("VOICE_ID", None),
                     tts_provider=os.getenv("TTS_PROVIDER", "cartesia"),
@@ -402,7 +402,7 @@ async def _join_meet_call(
                 headers=headers,
                 json={
                     "from": os.getenv("ASSISTANT_NUMBER"),
-                    "to": os.getenv("USER_PHONE_NUMBER"),
+                    "to": os.getenv("USER_NUMBER"),
                     "meet_id": meet_id,
                 },
             ) as response:
@@ -730,7 +730,7 @@ class GoogleMeet(SteerableToolHandle):
         self.meet_id = meet_id
         self.purpose = purpose
         self.task_context = task_context
-        self.phone_number = os.getenv("USER_PHONE_NUMBER")
+        self.phone_number = os.getenv("USER_NUMBER")
 
         self.client = unify.AsyncUnify("o4-mini@openai")
         self.tools = methods_to_tool_dict(

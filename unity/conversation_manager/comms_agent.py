@@ -831,6 +831,7 @@ class CommsAgent:
         self.voice_id = payload["voice_id"]
         os.environ["UNIFY_KEY"] = payload.pop("api_key")
         os.environ["USER_NAME"] = self.user_name
+        os.environ["USER_NUMBER"] = self.user_number
         os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
         os.environ["USER_EMAIL"] = self.user_email
         os.environ["ASSISTANT_NAME"] = self.assistant_name
@@ -926,7 +927,7 @@ class CommsAgent:
                     unity.init(
                         project_name=self.project_name,
                         assistant_id=int(
-                            assistant_id.replace("default-assistant-", "")
+                            assistant_id.replace("default-assistant-", ""),
                         ),
                         default_assistant={
                             **DEFAULT_ASSISTANT_PAYLOAD,
