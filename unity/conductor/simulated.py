@@ -187,6 +187,8 @@ class SimulatedConductor:
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
+            # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         if should_log and call_id is not None:
@@ -274,6 +276,8 @@ class SimulatedConductor:
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
+            # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         if should_log and call_id is not None:
