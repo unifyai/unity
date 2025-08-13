@@ -156,3 +156,52 @@ def test_search_tasks_sum_of_cosine_ranking():
     assert "_response_policy_emb" in cols
     assert "_description_emb" in cols
     assert any(k.startswith("_sum_cos_") for k in cols.keys())
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@_handle_project
+def test_search_tasks_backfills_when_insufficient_similarity_results():
+    ts = TaskScheduler()
+
+    # Create tasks with realistic content; only Carla has a response_policy set
+    # so similarity on response_policy yields < k and triggers backfill.
+    ts._create_task(
+        name="Write summary for Adam's onboarding",
+        description="Summarize the first-week onboarding plan and materials",
+    )
+    ts._create_task(
+        name="Outline requirements for Beatrice's feature",
+        description="Draft initial requirements for the new reporting feature",
+    )
+    ts._create_task(
+        name="Coordinate contract with Carla",
+        description="Follow up on the latest contract revision and confirm terms",
+        response_policy="needle in haystack",  # single semantic match
+    )
+    ts._create_task(
+        name="Prepare follow-up for Darren",
+        description="Draft follow-up email regarding the deployment timeline",
+    )
+    ts._create_task(
+        name="Draft plan for Evelyn",
+        description="Create a lightweight execution plan for the marketing push",
+    )
+    ts._create_task(
+        name="Schedule sync with Frank",
+        description="Set up a 30-minute sync to review open action items",
+    )
+
+    k = 4
+    results = ts._search_tasks(references={"response_policy": "needle"}, k=k)
+
+    assert len(results) == k
+    names = [t.name for t in results]
+    # Carla should be the top semantic match
+    assert names[0] == "Coordinate contract with Carla"
+    # Remaining should be backfilled from latest creation order without duplicates
+    assert names[1:4] == [
+        "Schedule sync with Frank",
+        "Draft plan for Evelyn",
+        "Prepare follow-up for Darren",
+    ]
