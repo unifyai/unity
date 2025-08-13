@@ -2059,40 +2059,6 @@ async def _async_tool_use_loop_inner(
                 for fn in dynamic_tools.values()
             ]
 
-            # ── Force tool selection while any task is still pending ─────────
-            # If policy returned "auto" but we have pending tasks, prevent the
-            # LLM from choosing no tools by switching to "required". This nudges
-            # the model to either use a helper (clarify/stop/continue/…) or
-            # explicitly stop in‑flight work instead of ending the turn.
-            if pending and tool_choice_mode == "auto":
-                tool_choice_mode = "required"
-                # Provide a lightweight, per-turn reminder to the LLM so it knows
-                # how to finish cleanly when tasks are still running. This does not
-                # force any particular helper choice – it only clarifies the exit rule.
-                try:
-                    pending_names = []
-                    for _t in list(pending):
-                        _inf = task_info.get(_t, {})
-                        _nm = _inf.get("name", "unknown")
-                        _arg = (
-                            _inf.get("call_dict", {})
-                            .get("function", {})
-                            .get("arguments", "{}")
-                        )
-                        pending_names.append(f"- {_nm}({_arg})")
-                    summary = ("\n".join(pending_names)) if pending_names else ""
-                    notice = {
-                        "role": "system",
-                        "content": (
-                            "One or more tool calls are still running. If you are ready to finish, you must first stop all pending tool calls using the available stop_* helper tools. "
-                            "Do not schedule duplicate tool calls with identical arguments.\n"
-                            + ("Pending calls:\n" + summary if summary else "")
-                        ),
-                    }
-                    await _append_msgs([notice])
-                except Exception:
-                    pass
-
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
                 LOGGER.info(f"🔄 [{loop_id}] LLM thinking…")
@@ -2684,8 +2650,26 @@ async def _async_tool_use_loop_inner(
             #     flight; loop back to wait for them.
             #   • `pending` empty        → the model just produced a plain
             #     assistant message; nothing more to do – return it.
-            if pending:  # still waiting for others
-                continue
+            if pending:  # still running – stop them proactively, then finish
+                try:
+                    for t in list(pending):
+                        info_t = task_info.get(t, {})
+                        nested_handle = info_t.get("handle")
+                        try:
+                            if nested_handle is not None and hasattr(
+                                nested_handle,
+                                "stop",
+                            ):
+                                await _maybe_await(nested_handle.stop())
+                        except Exception:
+                            pass
+                        if not t.done():
+                            t.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                except Exception:
+                    pass
+                finally:
+                    pending.clear()
 
             # ── timeout guard (final turn) ──────────────────────────────────
             if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
