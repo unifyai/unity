@@ -61,10 +61,21 @@ class TaskScheduler(BaseTaskScheduler):
         rolling_summary_in_prompts: bool = True,
     ) -> None:
         """
-        Responsible for managing the list of tasks, updating the names, descriptions, schedules, repeating pattern and status of all tasks.
+        Create a scheduler responsible for creating, searching, updating and executing tasks in the current Unify context.
 
-        Args:
-            daemon (bool): Whether the thread should be a daemon thread.
+        Parameters
+        ----------
+        planner : BasePlanner | None, default ``None``
+            Planner used to execute the steps of an active task. When ``None``, a
+            ``SimulatedPlanner(timeout=20)`` is used.
+        rolling_summary_in_prompts : bool, default ``True``
+            Whether to inject the rolling activity summary into system prompts sent to the LLM.
+
+        Notes
+        -----
+        - Ensures a ``"<active_context>/Tasks"`` context exists with fields derived from the ``Task`` model.
+        - Exposes read/write tools and mirrors selected ``ContactManager`` tools for cross‑domain workflows.
+        - Maintains in‑memory pointers to the single primed task and the current active task handle (if any).
         """
 
         # Instantiate a ContactManager once so its bound methods can act as tools
@@ -189,6 +200,37 @@ class TaskScheduler(BaseTaskScheduler):
             None,
         ] = "default",
     ) -> SteerableToolHandle:
+        """
+        Answer a free‑form question about tasks using the available read‑only tools.
+
+        Parameters
+        ----------
+        text : str
+            Natural language question.
+        _return_reasoning_steps : bool, default ``False``
+            When ``True``, ``handle.result()`` returns a tuple ``(answer, messages)`` where
+            ``messages`` contains the full LLM trace.
+        _log_tool_steps : bool, default ``True``
+            Whether to include intermediate tool messages in the chat context shown to the caller.
+        parent_chat_context : list[dict] | None, default ``None``
+            Prior messages to seed the conversation.
+        clarification_up_q : asyncio.Queue[str] | None, default ``None``
+            Queue used to bubble clarification questions to the caller. Must be provided
+            together with ``clarification_down_q`` for interactive sessions.
+        clarification_down_q : asyncio.Queue[str] | None, default ``None``
+            Queue on which answers to clarification questions are received.
+        rolling_summary_in_prompts : bool | None, default ``None``
+            Override for this call only; when ``None`` the instance default is used.
+        tool_policy : {"default" | callable | None}, default "default"
+            Policy controlling when tools are offered to the model. ``"default"`` requires
+            a first tool step then switches to auto; a callable receives ``(step_idx, tools)``
+            and must return a tuple ``(mode, tools)``.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A live handle representing the interactive tool‑use session.
+        """
         call_id = new_call_id()
         await publish_manager_method_event(
             call_id,
@@ -288,6 +330,37 @@ class TaskScheduler(BaseTaskScheduler):
             None,
         ] = "default",
     ) -> SteerableToolHandle:
+        """
+        Apply updates to tasks from a natural‑language request using the scheduler's write tools.
+
+        Parameters
+        ----------
+        text : str
+            Free‑form update request.
+        _return_reasoning_steps : bool, default ``False``
+            When ``True``, ``handle.result()`` returns a tuple ``(answer, messages)`` where
+            ``messages`` contains the full LLM trace.
+        _log_tool_steps : bool, default ``True``
+            Whether to include intermediate tool messages in the chat context shown to the caller.
+        parent_chat_context : list[dict] | None, default ``None``
+            Prior messages to seed the conversation.
+        clarification_up_q : asyncio.Queue[str] | None, default ``None``
+            Queue used to bubble clarification questions to the caller. Must be provided
+            together with ``clarification_down_q`` for interactive sessions.
+        clarification_down_q : asyncio.Queue[str] | None, default ``None``
+            Queue on which answers to clarification questions are received.
+        rolling_summary_in_prompts : bool | None, default ``None``
+            Override for this call only; when ``None`` the instance default is used.
+        tool_policy : {"default" | callable | None}, default "default"
+            Policy controlling when tools are offered to the model. ``"default"`` requires
+            an initial ask step before writes; a callable receives ``(step_idx, tools)`` and
+            must return a tuple ``(mode, tools)``.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A live handle representing the interactive tool‑use session.
+        """
         call_id = new_call_id()
         await publish_manager_method_event(
             call_id,
@@ -384,16 +457,33 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        """Execute a task from **free-form** textual input.
+        """
+        Promote a runnable task to active execution from free‑form input.
 
-        The method launches a *private* async tool-use loop with two tools:
+        Parameters
+        ----------
+        text : str
+            Free‑form text. If it is a bare integer (e.g. ``"12"``), it is treated
+            as a direct ``task_id`` fast‑path. Otherwise an auxiliary loop is used to
+            identify the task and start it.
+        parent_chat_context : list[dict] | None, default ``None``
+            Prior messages to seed the conversation used for the reasoning flow.
+        clarification_up_q : asyncio.Queue[str] | None, default ``None``
+            Queue used to bubble clarification questions to the caller. Must be provided
+            together with ``clarification_down_q`` for interactive sessions.
+        clarification_down_q : asyncio.Queue[str] | None, default ``None``
+            Queue on which answers to clarification questions are received.
 
-        • ``ask`` – leverage the normal question-answer helper to identify the
-          numeric `task_id` (when not explicitly present).
-        • ``execute_task_by_id`` – thin wrapper around the internal
-          :py:meth:`_execute_task_internal` helper which returns the real
-          :class:`~unify.common.llm_helpers.SteerableToolHandle` **and sets the
-          pass-through flag** so the outer handle upgrades seamlessly.
+        Returns
+        -------
+        SteerableToolHandle
+            The live handle for the active task plan. When the fast‑path is taken,
+            the returned handle is the underlying plan's handle (pass‑through).
+
+        Notes
+        -----
+        Falls back to a reasoning loop if the direct ``task_id`` is invalid or the
+        task cannot be started immediately.
         """
 
         freeform_text: str = text
@@ -533,11 +623,34 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        """The original *execute_task* implementation (minus event logging).
+        """
+        Start the execution of a runnable task by its identifier.
 
-        Separated so that both the public ``execute_task`` method **and** the
-        internally exposed ``execute_task_by_id`` tool can delegate to the same
-        core logic **without** duplicating ManagerMethod events.
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the task to start. Must resolve to a single, non‑terminal,
+            non‑active instance.
+        parent_chat_context : list[dict] | None, default ``None``
+            Prior messages to seed the conversation used for the planner execution.
+        clarification_up_q : asyncio.Queue[str] | None, default ``None``
+            Queue used to bubble clarification questions to the caller. Must be provided
+            together with ``clarification_down_q`` for interactive sessions.
+        clarification_down_q : asyncio.Queue[str] | None, default ``None``
+            Queue on which answers to clarification questions are received.
+
+        Returns
+        -------
+        SteerableToolHandle
+            The handle for the active plan tied to ``task_id``.
+
+        Raises
+        ------
+        RuntimeError
+            If another task is already active.
+        ValueError
+            If ``task_id`` does not exist, refers to a non‑runnable instance, or the
+            task is already terminal/active.
         """
 
         # 0. sanity checks
@@ -608,8 +721,28 @@ class TaskScheduler(BaseTaskScheduler):
         new_status: str,
     ) -> Dict[str, str]:
         """
-        Same semantics as `_update_task_status` but scoped to a single
-        **(task_id, instance_id)** pair.
+        Update the lifecycle ``status`` for a single ``(task_id, instance_id)`` row.
+
+        Parameters
+        ----------
+        task_id : int
+            Task identifier.
+        instance_id : int
+            Instance identifier within the task.
+        new_status : str
+            New status value to apply.
+
+        Returns
+        -------
+        dict[str, str]
+            Confirmation payload from ``unify.update_logs``.
+
+        Raises
+        ------
+        ValueError
+            If the specified instance cannot be found.
+        AssertionError
+            If more than one row matches the composite key.
         """
         log_objs = unify.get_logs(
             context=self._ctx,
@@ -630,11 +763,14 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _clone_task_instance(self, task_row: Dict[str, Any]) -> None:
         """
-        Create a *fresh* row for the **next** instance of a triggerable or
-        recurring task.  We copy every user-facing field, keep the *same*
-        `task_id`, intentionally **omit** `instance_id` (so the backend
-        auto-increments it) and leave the status unchanged (*triggerable*
-        or *scheduled*).
+        Create a fresh row for the next instance of a triggerable or recurring task.
+
+        Parameters
+        ----------
+        task_row : dict
+            Existing task row used as the template. Copies user‑facing fields,
+            keeps the same ``task_id``, omits ``instance_id`` so the backend auto‑increments it,
+            and preserves the existing status (``triggerable`` or ``scheduled``).
         """
         allowed = set(Task.model_json_schema()["properties"].keys())
         clone_payload = {
@@ -659,21 +795,23 @@ class TaskScheduler(BaseTaskScheduler):
         err_prefix: str = "Invalid task state:",
     ) -> None:
         """
-        Enforce that **Status.scheduled** is *only* legal when the task is
-        (a) somewhere inside the runnable queue (`prev_task` ≠ None) **or**
-        (b) has an explicit `start_at` timestamp.
+        Validate invariants around the ``scheduled`` state.
 
-        Args
-        ----
-        status
-            The prospective status **after** the change.
-        schedule
-            The prospective schedule **after** the change (may be None).
+        Parameters
+        ----------
+        status : Status | str
+            The prospective status after the change.
+        schedule : Schedule | dict | None
+            The prospective schedule after the change.
+        trigger : Trigger | dict | None, default ``None``
+            When provided, schedule invariants do not apply.
+        err_prefix : str, default ``"Invalid task state:"``
+            Prefix used in raised error messages for context.
 
         Raises
         ------
         ValueError
-            If the rule is violated.
+            If any of the queue/scheduling invariants are violated.
         """
         # ── Trigger-based tasks are **not** subject to the schedule rules ──
         if trigger is not None:
@@ -720,9 +858,17 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _ensure_not_active_task(self, task_ids: Union[int, List[int]]) -> None:
         """
-        Raise **RuntimeError** if *task_ids* contains the current
-        ``self._active_task``.  When ``self._active_task`` is *None* the
-        check is a cheap no-op.
+        Guard against mutating the currently active task.
+
+        Parameters
+        ----------
+        task_ids : int | list[int]
+            Single id or list of ids that must not include the active task id.
+
+        Raises
+        ------
+        RuntimeError
+            If the active task id is among ``task_ids``.
         """
         if self._active_task is None:
             return
@@ -745,13 +891,19 @@ class TaskScheduler(BaseTaskScheduler):
         return_ids_only: bool = True,
     ) -> List[Union[int, unify.Log]]:
         """
-        Get the log for the specified task id.
+        Fetch the Unify log objects (or ids) corresponding to one or many task ids.
 
-        Args:
-            task_ids (Union[int, List[int]]): The id or ids of the tasks to get the logs for.
+        Parameters
+        ----------
+        task_ids : int | list[int]
+            Single id or list of ids to look up.
+        return_ids_only : bool, default ``True``
+            When ``True``, return underlying log ids instead of full log objects.
 
-        Returns:
-            List[unify.Log]: The logs for the specified task ids.
+        Returns
+        -------
+        list[int | unify.Log]
+            The matching log identifiers or objects.
         """
         singular = False
         if isinstance(task_ids, int):
@@ -1055,7 +1207,19 @@ class TaskScheduler(BaseTaskScheduler):
     # --------------------  small helpers  -------------------- #
     @staticmethod
     def _sched_prev(sched):
-        """Return *prev_task* from a Schedule *dict* / *model* / *None*."""
+        """
+        Return ``prev_task`` from a ``Schedule`` value.
+
+        Parameters
+        ----------
+        sched : Schedule | dict | None
+            Schedule model/dict or ``None``.
+
+        Returns
+        -------
+        int | None
+            The id of the previous task in the queue, or ``None``.
+        """
         if sched is None:
             return None
         if isinstance(sched, dict):
@@ -1065,7 +1229,19 @@ class TaskScheduler(BaseTaskScheduler):
 
     @staticmethod
     def _sched_next(sched):
-        """Return *next_task* (mirrors _sched_prev)."""
+        """
+        Return ``next_task`` from a ``Schedule`` value.
+
+        Parameters
+        ----------
+        sched : Schedule | dict | None
+            Schedule model/dict or ``None``.
+
+        Returns
+        -------
+        int | None
+            The id of the next task in the queue, or ``None``.
+        """
         if sched is None:
             return None
         if isinstance(sched, dict):
@@ -1079,10 +1255,19 @@ class TaskScheduler(BaseTaskScheduler):
         schedule: Optional[Union[Schedule, dict]],
     ) -> None:
         """
-        Guarantee **link symmetry**:
+        Guarantee link symmetry when (re)linking a task in the runnable queue.
 
-        * If *schedule.prev_task* → *P*, then *P.schedule.next_task* → *task_id*
-        * If *schedule.next_task* → *N*, then *N.schedule.prev_task* → *task_id*
+        Parameters
+        ----------
+        task_id : int
+            The id of the task whose neighbours should point back to it.
+        schedule : Schedule | dict | None
+            The schedule containing neighbour pointers (``prev_task`` / ``next_task``).
+
+        Raises
+        ------
+        ValueError
+            If a referenced neighbour id does not exist.
         """
         if schedule is None:
             return
@@ -1132,12 +1317,13 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _refresh_primed_cache(self, task_id: Optional[int] = None) -> None:
         """
-        Reload the *primed* task from storage so that the in-memory copy
-        always mirrors the authoritative log row.
+        Reload the primed task pointer from storage.
 
-        When *task_id* is *None*, the method refreshes the **currently
-        cached** primed task (if there is one).  Otherwise the referenced
-        row is fetched and promoted to ``self._primed_task``.
+        Parameters
+        ----------
+        task_id : int | None, default ``None``
+            When ``None``, refresh the currently cached primed task (if any).
+            Otherwise load the row for ``task_id`` and promote it to the cache.
         """
         if task_id is None and self._primed_task is not None:
             task_id = self._primed_task["task_id"]
@@ -1152,12 +1338,22 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: Optional[int] = None,
     ) -> List[Task]:
         """
-        Return the runnable task queue (head → tail).
+        Return the runnable task queue from head to tail.
 
-        • If *task_id* is *None* we begin with **the single active/primed task**
-        • Tasks whose status is completed / cancelled / failed are *ignored*.
-        • Only the nodes actually traversed are loaded from storage; we never
-        materialise the entire task table in memory.
+        Parameters
+        ----------
+        task_id : int | None, default ``None``
+            Optional starting node. When omitted the queue head is derived
+            (prefer primed task, else first runnable with no ``prev_task``).
+
+        Returns
+        -------
+        list[Task]
+            Ordered list of non‑terminal tasks from head to tail.
+
+        Notes
+        -----
+        Only rows actually traversed are loaded; the full table is not materialised.
         """
 
         # ----------------  helpers  ---------------- #
@@ -1425,12 +1621,24 @@ class TaskScheduler(BaseTaskScheduler):
         new_trigger: Optional[Union[Trigger, Dict[str, Any]]],
     ) -> ToolOutcome:
         """
-        Set, replace **or clear** a task's *trigger*.
+        Set, replace or clear a task's trigger.
 
-        • Disallowed when the task already has a *schedule*.<br>
-        • When a *trigger* is introduced the status becomes **triggerable**.<br>
-        • When a *trigger* is removed and the task was *triggerable* it falls
-        back to **queued** (idle, waiting for manual start or queue insert).
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the task to update.
+        new_trigger : Trigger | dict | None
+            Replacement trigger or ``None`` to remove it.
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome payload with the updated task id.
+
+        Raises
+        ------
+        ValueError
+            If a trigger is added while a schedule exists.
         """
 
         self._ensure_not_active_task(task_id)
@@ -1810,7 +2018,20 @@ class TaskScheduler(BaseTaskScheduler):
         k: int = 10,
     ) -> List[Task]:
         """
-        Search tasks by minimising the sum of cosine distances to multiple reference texts.
+        Semantic search across tasks using one or more reference texts.
+
+        Parameters
+        ----------
+        references : dict[str, str]
+            Mapping of ``source_expr → reference_text`` terms. Each source expression
+            can be a plain column (e.g. ``"name"``) or a derived expression.
+        k : int, default ``10``
+            Maximum number of results to return.
+
+        Returns
+        -------
+        list[Task]
+            Up to ``k`` matching tasks sorted by ascending cosine distance.
         """
         assert (
             isinstance(references, dict) and len(references) > 0
