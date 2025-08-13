@@ -25,11 +25,28 @@ linux.get('/screenshot', async (_req: any, res: any) => {
 
 // POST /linux/act
 linux.post('/act', async (req: any, res: any) => {
-  const { clicks = [], keys = [] } = req.body as {
+  const { clicks = [], keys = [], focusWindowTitle } = req.body as {
     clicks?: Array<{ x: number; y: number; button?: number }>;
     keys?: string[];
+    focusWindowTitle?: string;
   };
   try {
+    // Optionally bring a window to the foreground by title
+    if (focusWindowTitle && typeof focusWindowTitle === 'string' && focusWindowTitle.trim().length > 0) {
+      try {
+        await execFileAsync('wmctrl', ['-a', focusWindowTitle]);
+      } catch (e) {
+        // Fallback to xdotool if wmctrl fails
+        try {
+          await execFileAsync('xdotool', ['search', '--name', focusWindowTitle, 'windowactivate', '--sync']);
+        } catch (e2) {
+          return res.status(404).json({ error: 'focus_failed', message: `Could not focus window with title: ${focusWindowTitle}` });
+        }
+      }
+      // small settle delay
+      await new Promise(r => setTimeout(r, 100));
+    }
+
     for (const { x, y, button = 1 } of clicks) {
       await execFileAsync('xdotool', ['mousemove', `${x}`, `${y}`, 'click', `${button}`]);
     }

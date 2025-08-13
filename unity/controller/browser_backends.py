@@ -636,6 +636,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
         Example:
             instruction = json.dumps({
+                "focusWindowTitle": "xterm",  # optional: focus a window by title before typing/clicking
                 "clicks": [{"x": 100, "y": 200, "button": 1}],
                 "keys": ["Hello", "Enter"]
             })
