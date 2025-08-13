@@ -3,10 +3,7 @@ import express, { Request, Response } from 'express';
 import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserOptions } from 'magnitude-core';
 import { z } from 'zod';
 import dotenv from 'dotenv';
-import { execFile, exec } from 'child_process';
-import { promisify } from 'util';
-const execFileAsync = promisify(execFile);
-const execAsync = promisify(exec);
+import linux from './linux';
 dotenv.config();
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -147,66 +144,8 @@ function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new S
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
-// Linux desktop automation endpoints
-const linux = express.Router();
+
 app.use('/linux', linux);
-
-// GET /linux/screenshot
-linux.get('/screenshot', async (_req: any, res: any) => {
-  try {
-    const { stdout } = await execAsync(
-      `xwd -silent -root -out - | convert png:- png:-`,
-      { encoding: 'buffer', maxBuffer: 10 * 1024 * 1024 }
-    );
-    res.json({ screenshot: (stdout as any).toString('base64') });
-  } catch (err) {
-    res.status(500).json({ error: 'screenshot_failed', message: String(err) });
-  }
-});
-
-// POST /linux/act
-linux.post('/act', async (req: any, res: any) => {
-  const { clicks = [], keys = [] } = req.body as {
-    clicks?: Array<{ x: number; y: number; button?: number }>;
-    keys?: string[];
-  };
-  try {
-    for (const { x, y, button = 1 } of clicks) {
-      await execFileAsync('xdotool', ['mousemove', `${x}`, `${y}`, 'click', `${button}`]);
-    }
-    for (const k of keys) {
-      if (k === 'Enter') {
-        await execFileAsync('xdotool', ['key', 'Return']);
-      } else {
-        await execFileAsync('xdotool', ['type', k]);
-      }
-    }
-    res.json({ status: 'ok' });
-  } catch (err) {
-    res.status(500).json({ error: 'act_failed', message: String(err) });
-  }
-});
-
-// GET /linux/exists
-linux.get('/exists', async (req: any, res: any) => {
-  const { windowTitle, templatePath, threshold = '0.95' } = req.query as any;
-  try {
-    if (windowTitle) {
-      const { stdout } = await execAsync('wmctrl -l');
-      const exists = stdout.split('\n').some((line: string) => line.includes(windowTitle));
-      return res.json({ exists });
-    }
-    if (templatePath) {
-      const cmd = `import -window root png:- | compare -metric NCC -subimage-search - ${templatePath} null:`;
-      const { stderr } = await execAsync(cmd, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
-      const score = parseFloat(stderr.split(' ')[0]);
-      return res.json({ exists: score >= parseFloat(threshold), score });
-    }
-    res.status(400).json({ error: 'bad_request', message: 'windowTitle or templatePath required' });
-  } catch (err) {
-    res.status(500).json({ error: 'exists_failed', message: String(err) });
-  }
-});
 
 let browserAgent: BrowserAgent | null = null;
 const port = process.env.PORT || 3000;
