@@ -640,19 +640,161 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 "clicks": [{"x": 100, "y": 200, "button": 1}],
                 "keys": ["Hello", "Enter"]
             })
+
+        If a non-JSON natural-language instruction is provided, this method
+        will enter a simple tool-selection loop using the available /linux
+        endpoints (exists/focus/type/press/screenshot) to pursue the goal.
         """
         import json
 
+        # If the instruction is a JSON payload, preserve existing behavior
         try:
             payload = json.loads(instruction)
+            if isinstance(payload, dict):
+                await self._request("POST", "/linux/act", payload=payload)
+                return expectation or "ok"
         except json.JSONDecodeError:
-            raise ValueError(
-                "`instruction` must be a JSON string describing clicks/keys for the desktop backend.",
+            pass
+
+        # High-level NL instruction path: minimal LLM tool loop
+        try:
+            import unify  # type: ignore
+            from pydantic import BaseModel, Field
+        except Exception as e:  # pragma: no cover
+            raise RuntimeError(
+                "High-level desktop actions require the 'unify' client to be installed and configured.",
+            ) from e
+
+        class NextAction(BaseModel):
+            tool: str = Field(
+                ...,
+                description="One of: exists_window, focus_window, type_text, press_enter, done",
+            )
+            args: dict = Field(default_factory=dict)
+            reason: str | None = None
+
+        client = unify.Unify(endpoint="claude-4-sonnet@anthropic")
+        client.set_response_format(NextAction)
+        client.set_system_message(
+            "You are a desktop control assistant. Decide the next atomic tool to apply to achieve the user's goal.\n"
+            "Return ONLY JSON matching the response schema.\n"
+            "Available tools (tool field):\n"
+            "- exists_window: args {title} — check if a window with given title exists.\n"
+            "- focus_window: args {title} — bring the window to front.\n"
+            "- type_text: args {text} — type the given text into the active window.\n"
+            "- press_enter: args {} — press the Enter key.\n"
+            "- done: args {} — when the goal is achieved.\n"
+            "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n",
+        )
+
+        max_steps = 12
+        step = 0
+        last_exists: dict[str, bool] = {}
+
+        def _context_blob() -> dict:
+            return {
+                "known_windows": last_exists,
+            }
+
+        async def _must_get_screenshot(attempts: int = 5, delay_s: float = 0.3) -> str:
+            for _ in range(attempts):
+                try:
+                    shot = await self._request("GET", "/linux/screenshot")
+                    b64 = (shot or {}).get("screenshot", "") or ""
+                    if b64:
+                        return b64
+                except Exception:
+                    pass
+                await asyncio.sleep(delay_s)
+            raise BrowserAgentError(
+                "screenshot_unavailable",
+                "Could not capture desktop screenshot",
             )
 
-        await self._request("POST", "/linux/act", payload=payload)
-        # No textual result from the service – return expectation or OK.
-        return expectation or "ok"
+        while step < max_steps:
+            step += 1
+            # Mandatory screenshot for each step
+            screenshot_b64 = await _must_get_screenshot()
+
+            content = [
+                {
+                    "type": "text",
+                    "text": f"Goal: {instruction}\nContext: {json.dumps(_context_blob())}",
+                },
+            ]
+            if screenshot_b64:
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{screenshot_b64}"},
+                    },
+                )
+
+            result_json = client.generate(
+                messages=client.messages + [{"role": "user", "content": content}],
+            )
+            try:
+                next_action = NextAction.model_validate_json(result_json)
+            except Exception:
+                # fallback: treat as done to avoid infinite loop
+                break
+
+            tool = (next_action.tool or "").strip().lower()
+            args = next_action.args or {}
+
+            if tool in ("done", "finish", "stop"):
+                return expectation or "success"
+
+            if tool == "exists_window":
+                title = str(
+                    args.get("title")
+                    or args.get("windowTitle")
+                    or args.get("name")
+                    or "",
+                ).strip()
+                if not title:
+                    continue
+                try:
+                    res = await self._request(
+                        "GET",
+                        f"/linux/exists?windowTitle={requests.utils.quote(title)}",
+                    )
+                    last_exists[title] = bool(res.get("exists", False))
+                except Exception:
+                    last_exists[title] = False
+                continue
+
+            if tool == "focus_window":
+                title = str(
+                    args.get("title")
+                    or args.get("windowTitle")
+                    or args.get("name")
+                    or "",
+                ).strip()
+                if not title:
+                    continue
+                await self._request(
+                    "POST",
+                    "/linux/act",
+                    payload={"focusWindowTitle": title},
+                )
+                continue
+
+            if tool == "type_text":
+                text = str(args.get("text") or args.get("keys") or "")
+                if not text:
+                    continue
+                await self._request("POST", "/linux/act", payload={"keys": [text]})
+                continue
+
+            if tool == "press_enter":
+                await self._request("POST", "/linux/act", payload={"keys": ["Enter"]})
+                continue
+
+            # Unknown tool – no-op to avoid spinning
+            continue
+
+        return expectation or "incomplete"
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
         # Fetch a fresh screenshot and best-effort verify state against the query.
