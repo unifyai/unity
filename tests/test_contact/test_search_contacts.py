@@ -181,3 +181,16 @@ def test_search_contacts_backfills_when_insufficient_similarity_results():
     # Also verify empty dict behaves the same as None
     recent_only_empty = cm._search_contacts(references={}, k=3)
     assert [c.first_name for c in recent_only_empty] == ["Frank", "Evelyn", "Darren"]
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@_handle_project
+def test_search_contacts_defaults_two_terms_no_crash():
+    cm = ContactManager()
+    refs = {"bio": "footballer", "rolling_summary": "footballer"}
+
+    # Expect no exception and both the assistant and user to be returned
+    results = cm._search_contacts(references=refs, k=2)
+    assert isinstance(results, list)
+    assert len(results) == 2
