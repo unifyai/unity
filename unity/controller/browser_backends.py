@@ -492,6 +492,15 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     "✅ Magnitude service already running. Attaching to existing process.",
                 )
                 self.agent_base_url = MagnitudeDesktopBackend._agent_base_url
+        # Initialize per-act loop state
+        self._last_exists: dict[str, bool] = {}
+        self._last_windows: list[dict] = []
+        self._typed_history: list[str] = []
+        self._enter_after_last_type: bool = False
+        self._last_tool_name: str | None = None
+        self._last_focus_title: str | None = None
+        self._consecutive_repeat_count: int = 0
+        self._target_cmd: str | None = None
 
     def _start_service(self, headless: bool):
         port = self._find_free_port()
@@ -628,9 +637,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 raise
 
     # Private helper to execute a selected tool step and update context
-    async def _execute_tool(tool: str, args: dict, dims: tuple[int, int]) -> bool:
-        nonlocal last_exists, last_focus_title, consecutive_repeat_count
-        nonlocal typed_history, enter_after_last_type, last_windows
+    async def _execute_tool(self, tool: str, args: dict, dims: tuple[int, int]) -> bool:
         # done/finish
         if tool in ("done", "finish", "stop"):
             return True
@@ -645,9 +652,9 @@ class MagnitudeDesktopBackend(BrowserBackend):
                         "GET",
                         f"/linux/window/exist?windowTitle={requests.utils.quote(title)}",
                     )
-                    last_exists[title] = bool(res.get("exists", False))
+                    self._last_exists[title] = bool(res.get("exists", False))
                 except Exception:
-                    last_exists[title] = False
+                    self._last_exists[title] = False
             return False
 
         if tool == "focus_window":
@@ -656,22 +663,22 @@ class MagnitudeDesktopBackend(BrowserBackend):
             ).strip()
             if not title:
                 return False
-            if title == last_focus_title and consecutive_repeat_count >= 1:
+            if title == self._last_focus_title and self._consecutive_repeat_count >= 1:
                 # nudge progress if focusing repeats
                 await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
                 await asyncio.sleep(0.2)
                 return False
             await self._request("POST", "/linux/window/focus", payload={"title": title})
-            last_focus_title = title
-            enter_after_last_type = False
+            self._last_focus_title = title
+            self._enter_after_last_type = False
             return False
 
         if tool == "list_windows":
             try:
                 res = await self._request("GET", "/linux/window")
-                last_windows = res.get("windows", []) or []
+                self._last_windows = res.get("windows", []) or []
             except Exception:
-                last_windows = []
+                self._last_windows = []
             return False
 
         if tool == "move_window":
@@ -753,7 +760,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     return 0
 
             if _dist(mouse_after, mouse_before) < 2:
-                consecutive_repeat_count = max(consecutive_repeat_count, 1)
+                self._consecutive_repeat_count = max(self._consecutive_repeat_count, 1)
             return False
 
         if tool == "type_text":
@@ -764,17 +771,17 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 text = text[:-1]
                 await self._request("POST", "/linux/type", payload={"keys": [text]})
                 await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
-                typed_history.append(text)
-                enter_after_last_type = True
+                self._typed_history.append(text)
+                self._enter_after_last_type = True
                 await asyncio.sleep(0.4)
             else:
                 await self._request("POST", "/linux/type", payload={"keys": [text]})
-                typed_history.append(text)
-                enter_after_last_type = False
+                self._typed_history.append(text)
+                self._enter_after_last_type = False
             if (
-                target_cmd
-                and target_cmd in " ".join(typed_history)
-                and enter_after_last_type
+                self._target_cmd
+                and self._target_cmd in " ".join(self._typed_history)
+                and self._enter_after_last_type
             ):
                 return True
             return False
@@ -788,19 +795,21 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 "/linux/type",
                 payload={"keys": [text, "Enter"]},
             )
-            typed_history.append(text)
-            enter_after_last_type = True
+            self._typed_history.append(text)
+            self._enter_after_last_type = True
             await asyncio.sleep(0.4)
-            if target_cmd and target_cmd in " ".join(typed_history):
+            if self._target_cmd and self._target_cmd in " ".join(self._typed_history):
                 return True
             return False
 
         if tool == "press_enter":
             await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
-            if typed_history:
-                enter_after_last_type = True
+            if self._typed_history:
+                self._enter_after_last_type = True
                 await asyncio.sleep(0.4)
-                if target_cmd and target_cmd in " ".join(typed_history):
+                if self._target_cmd and self._target_cmd in " ".join(
+                    self._typed_history,
+                ):
                     return True
             return False
 
@@ -895,13 +904,19 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
         max_steps = 12
         step = 0
-        last_exists: dict[str, bool] = {}
-        last_windows: list[dict] = []
+        # Reset per-instruction state
+        self._last_exists = {}
+        self._last_windows = []
+        self._typed_history = []
+        self._enter_after_last_type = False
+        self._last_tool_name = None
+        self._last_focus_title = None
+        self._consecutive_repeat_count = 0
 
         def _context_blob() -> dict:
             return {
-                "known_windows": last_exists,
-                "windows": last_windows,
+                "known_windows": self._last_exists,
+                "windows": self._last_windows,
             }
 
         async def _must_get_screenshot(attempts: int = 5, delay_s: float = 0.3) -> str:
@@ -924,19 +939,15 @@ class MagnitudeDesktopBackend(BrowserBackend):
         import base64 as _b64
         import struct as _struct
 
-        typed_history: list[str] = []
-        enter_after_last_type: bool = False
+        # target command extracted from instruction
         # Try to extract a quoted command from the instruction (e.g., 'echo ready')
         target_cmd_match = _re.search(r"'([^']+)'|\"([^\"]+)\"", instruction)
-        target_cmd = None
+        self._target_cmd = None
         if target_cmd_match:
-            target_cmd = next(g for g in target_cmd_match.groups() if g)
+            self._target_cmd = next(g for g in target_cmd_match.groups() if g)
 
         # Track step history and discourage loops
         recent_steps: list[str] = []
-        last_tool_name: str | None = None
-        last_focus_title: str | None = None
-        consecutive_repeat_count: int = 0
 
         def _png_size_from_b64(b64: str) -> tuple[int, int] | None:
             try:
@@ -988,11 +999,11 @@ class MagnitudeDesktopBackend(BrowserBackend):
             args = next_action.args or {}
 
             # Loop-avoidance guard: detect consecutive repeats
-            if last_tool_name == tool:
-                consecutive_repeat_count += 1
+            if self._last_tool_name == tool:
+                self._consecutive_repeat_count += 1
             else:
-                consecutive_repeat_count = 0
-            last_tool_name = tool
+                self._consecutive_repeat_count = 0
+            self._last_tool_name = tool
 
             # Record step intent for the next iteration's guidance
             if tool in ("focus_window", "exists_window"):
@@ -1026,13 +1037,12 @@ class MagnitudeDesktopBackend(BrowserBackend):
             else:
                 recent_steps.append(tool)
 
-            # Execute selected tool via helper
             finished = await self._execute_tool(tool, args, dims)
             if finished:
                 return expectation or "success"
 
         # Final heuristic: if we typed something and pressed Enter at least once, consider success
-        if typed_history and enter_after_last_type:
+        if self._typed_history and self._enter_after_last_type:
             return expectation or "success"
 
         return expectation or "incomplete"
