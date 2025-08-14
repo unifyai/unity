@@ -530,7 +530,7 @@ class TranscriptManager(BaseTranscriptManager):
     def _search_messages(
         self,
         *,
-        references: Dict[str, str],
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Message]:
         """
@@ -546,7 +546,7 @@ class TranscriptManager(BaseTranscriptManager):
 
         Parameters
         ----------
-        references : Dict[str, str]
+        references : Dict[str, str] | None, default None
             Mapping of `source_expr → reference_text` that defines the semantic query.
             - source_expr: Either a plain identifier naming a field on `Message` (message-side) or `Contact` (contact-side), or a full Unify expression that can reference fields using `{field_name}` placeholders.
               Examples:
@@ -596,9 +596,11 @@ class TranscriptManager(BaseTranscriptManager):
         - Avoid quoting issues in expressions; use single quotes inside expressions where necessary. The API will create any required derived columns automatically.
         - For exact, column-wise filtering (e.g., by `medium` or `sender_id`), prefer `_filter_messages` instead of this semantic search.
         """
-        assert (
-            isinstance(references, dict) and len(references) > 0
-        ), "references must be a non-empty dict"
+        # Default behaviour: when references is None/empty, skip semantic search and
+        # return the most recent messages directly from transcripts context.
+        if not references:
+            logs = unify.get_logs(context=self._transcripts_ctx, limit=k)
+            return [Message(**lg.entries) for lg in logs]
 
         # Field name sets to classify expressions as message-side vs contact-side
         msg_fields = set(Message.model_fields.keys())

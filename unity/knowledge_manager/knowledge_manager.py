@@ -1229,7 +1229,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         *,
         table: str,
-        references: Dict[str, str],
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Dict[str, Any]]:
         """
@@ -1268,7 +1268,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         mode: str = "inner",
         left_where: Optional[str] = None,
         right_where: Optional[str] = None,
-        references: Dict[str, str],
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Dict[str, Any]]:
         """
@@ -1348,7 +1348,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         *,
         joins: List[Dict[str, Any]],
-        references: Dict[str, str],
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Dict[str, Any]]:
         """
@@ -1393,8 +1393,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         if not joins:
             raise ValueError("`joins` must contain at least one join step.")
-        if not isinstance(references, dict) or len(references) == 0:
-            raise AssertionError("references must be a non-empty dict")
+        # `references` may be None/empty; in that case semantic search returns [], and
+        # we rely entirely on backfill from the final joined context.
 
         tmp_prefix = f"_tmp_mjoin_{uuid.uuid4().hex[:6]}"
         tmp_tables: List[str] = []

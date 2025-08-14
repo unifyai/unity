@@ -1426,7 +1426,7 @@ class ContactManager(BaseContactManager):
     def _search_contacts(
         self,
         *,
-        references: Dict[str, str],
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Contact]:
         """
@@ -1434,7 +1434,7 @@ class ContactManager(BaseContactManager):
 
         Parameters
         ----------
-        references : Dict[str, str]
+        references : Dict[str, str] | None, default None
             Mapping of ``source_expr → reference_text`` terms that define the search space.
             - ``source_expr`` can be either a simple column name (e.g. ``"bio"``,
               ``"first_name"``) or a full Unify derived‑expression (e.g.
@@ -1442,14 +1442,18 @@ class ContactManager(BaseContactManager):
               derived source column is created automatically if needed.
             - ``reference_text`` is free‑form text which will be embedded using the
               configured embedding model.
+            When ``None`` or an empty dict, semantic search is skipped and the most recent
+            contacts are returned using backfill-only logic.
         k : int, default 10
-            Maximum number of most similar contacts to return. Must be a positive integer.
+            Maximum number of contacts to return. Must be a positive integer.
 
         Returns
         -------
         List[Contact]
-            Up to ``k`` Pydantic ``Contact`` models sorted by ascending cosine distance
-            (i.e. best matches first). System contacts (ids ``0`` and ``1``) are excluded.
+            Up to ``k`` Pydantic ``Contact`` models. When semantic references are provided,
+            results are sorted by similarity (ascending cosine distance). When references
+            are omitted/empty, returns the most recent contacts. System contacts (ids ``0``
+            and ``1``) are excluded.
 
         Notes
         -----
@@ -1459,11 +1463,6 @@ class ContactManager(BaseContactManager):
         - Embedding columns (``*_emb``) are excluded from the returned models to keep payloads
           compact.
         """
-
-        assert (
-            isinstance(references, dict) and len(references) > 0
-        ), "references must be a non-empty dict"
-
         rows = fetch_top_k_by_references(
             self._ctx,
             references,
