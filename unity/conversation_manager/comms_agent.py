@@ -652,7 +652,7 @@ class CommsAgent:
             async for event in stream:
                 if not ONGOING_CALL:
                     print("call ended, stopping stream")
-                    break
+                    return None
                 # print(event)
                 if event.type == "content.delta":
                     if event.delta:
