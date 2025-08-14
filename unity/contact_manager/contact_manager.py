@@ -1464,18 +1464,15 @@ class ContactManager(BaseContactManager):
             isinstance(references, dict) and len(references) > 0
         ), "references must be a non-empty dict"
 
-        row_filter = "contact_id != 0 and contact_id != 1"
         rows = fetch_top_k_by_references(
             self._ctx,
             references,
             k=k,
-            row_filter=row_filter,
         )
         filled = backfill_rows(
             self._ctx,
             rows,
             k,
-            row_filter=row_filter,
             unique_id_field="contact_id",
         )
         return [Contact(**r) for r in filled]
