@@ -70,9 +70,7 @@ class EventManager:
                 print("recieved call event")
                 # handle messages going to the call process
                 # like gen
-                self.writers["call"].write(
-                    (json.dumps(event) + "\n").encode("utf-8")
-                )
+                self.writers["call"].write((json.dumps(event) + "\n").encode("utf-8"))
                 await self.writers["call"].drain()
             else:
                 if event["topic"] == "startup":
