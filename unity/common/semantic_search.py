@@ -161,7 +161,7 @@ def fetch_top_k_by_terms(
 
 def fetch_top_k_by_references(
     context: str,
-    references: Dict[str, str],
+    references: Optional[Dict[str, str]],
     *,
     k: int = 10,
     row_filter: Optional[str] = None,
@@ -174,9 +174,10 @@ def fetch_top_k_by_references(
     - Rank by the sum of cosine distances across multiple sources when more than one is provided
     - Exclude embedding columns ("*_emb") from the result payloads
     """
-    assert (
-        isinstance(references, dict) and len(references) > 0
-    ), "references must be a non-empty dict"
+    # When no references are provided, skip semantic search entirely and
+    # let the caller's backfill logic drive the result set.
+    if not references:
+        return []
 
     # Collect (embed_col, ref_text) pairs
     terms: List[Tuple[str, str]] = []

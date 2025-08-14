@@ -2014,7 +2014,7 @@ class TaskScheduler(BaseTaskScheduler):
     def _search_tasks(
         self,
         *,
-        references: Dict[str, str],
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Task]:
         """
@@ -2036,11 +2036,8 @@ class TaskScheduler(BaseTaskScheduler):
             than ``k`` tasks overall, the remainder is backfilled from
             ``unify.get_logs(limit=k)`` in returned order, skipping duplicates.
         """
-        assert (
-            isinstance(references, dict) and len(references) > 0
-        ), "references must be a non-empty dict"
-
-        # 1) Primary: semantic similarity results (ordered)
+        # 1) Primary: semantic similarity results (ordered). When references is None/empty,
+        # the shared helper returns an empty list, and backfill-only logic applies.
         rows = fetch_top_k_by_references(self._ctx, references, k=k)
         filled = backfill_rows(
             self._ctx,
