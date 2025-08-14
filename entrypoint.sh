@@ -88,8 +88,9 @@ printf "# Minimal Fluxbox init\n" > ~/.fluxbox/init
 
 # Start window manager, VNC server and noVNC proxy
 fluxbox 2>/dev/null &
+DISPLAY=:99 xsetroot -cursor_name left_ptr
 x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900 \
-       -rfbportv6 0 -noxdamage -nowf -noxfixes -nodpms
+       -rfbportv6 0 -noxdamage -nowf -nocursorshape -cursor arrow -nodpms
 websockify --web=/opt/novnc 6080 localhost:5900 &
 BROWSER_PID=$!
 
