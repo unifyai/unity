@@ -40,6 +40,7 @@ from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
+    speak_and_wait as _speak_wait,
     await_with_interrupt as _await_with_interrupt,
     steering_controls_hint as _steer_hint,
     build_cli_parser,
@@ -279,11 +280,11 @@ async def _main_async() -> None:
 
                 print("[generate] Building synthetic tasks – this can take a moment…")
                 if args.voice:
-                    _speak("Sure thing, building your custom scenario now.")
+                    _speak_wait("Sure thing, building your custom scenario now.")
                 try:
                     await _build_scenario(description)
                     if args.voice:
-                        _speak(
+                        _speak_wait(
                             "All done, your custom scenario is built and ready to go.",
                         )
                 except Exception as exc:
@@ -306,10 +307,12 @@ async def _main_async() -> None:
                 print(f"▶️  {description}")
 
                 print("[generate] Building synthetic tasks – this can take a moment…")
+                if args.voice:
+                    _speak_wait("Sure thing, building your custom scenario now.")
                 try:
                     await _build_scenario(description)
                     if args.voice:
-                        _speak(
+                        _speak_wait(
                             "All done, your custom scenario is built and ready to go.",
                         )
                 except Exception as exc:

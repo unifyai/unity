@@ -132,6 +132,17 @@ def fetch_top_k_by_terms(
         )
         return [lg.entries for lg in logs]
 
+    # If multiple terms are provided but the filter excludes all rows, avoid
+    # creating a summed-cosine derived column which can fail on empty contexts.
+    try:
+        if row_filter is not None:
+            any_rows = unify.get_logs(context=context, filter=row_filter, limit=1)
+            if not any_rows:
+                return []
+    except Exception:
+        # If introspection fails, fall back to attempting the derived approach
+        pass
+
     canonical = "|".join(f"{i}:{col}=>{txt}" for i, (col, txt) in enumerate(terms))
     import hashlib as _hashlib
 
