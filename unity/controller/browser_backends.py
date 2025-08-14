@@ -627,6 +627,135 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     continue
                 raise
 
+    # Private helper to execute a selected tool step and update context
+    async def _execute_tool(tool: str, args: dict, dims: tuple[int, int]) -> bool:
+        nonlocal last_exists, last_focus_title, consecutive_repeat_count
+        nonlocal typed_history, enter_after_last_type
+        # done/finish
+        if tool in ("done", "finish", "stop"):
+            return True
+
+        if tool == "exists_window":
+            title = str(
+                args.get("title") or args.get("windowTitle") or args.get("name") or "",
+            ).strip()
+            if title:
+                try:
+                    res = await self._request(
+                        "GET",
+                        f"/linux/window/exist?windowTitle={requests.utils.quote(title)}",
+                    )
+                    last_exists[title] = bool(res.get("exists", False))
+                except Exception:
+                    last_exists[title] = False
+            return False
+
+        if tool == "focus_window":
+            title = str(
+                args.get("title") or args.get("windowTitle") or args.get("name") or "",
+            ).strip()
+            if not title:
+                return False
+            if title == last_focus_title and consecutive_repeat_count >= 1:
+                # nudge progress if focusing repeats
+                await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
+                await asyncio.sleep(0.2)
+                return False
+            await self._request("POST", "/linux/window/focus", payload={"title": title})
+            last_focus_title = title
+            enter_after_last_type = False
+            return False
+
+        if tool == "click_at":
+            try:
+                x_val = int(args.get("x"))
+                y_val = int(args.get("y"))
+            except Exception:
+                return False
+            button = int(args.get("button", 1) or 1)
+            if dims[0] > 0 and dims[1] > 0:
+                x_val = max(0, min(dims[0] - 1, x_val))
+                y_val = max(0, min(dims[1] - 1, y_val))
+            mouse_before = None
+            try:
+                mouse_before = await self._request("GET", "/linux/mouse")
+            except Exception:
+                mouse_before = None
+            await self._request(
+                "POST",
+                "/linux/click",
+                payload={"clicks": [{"x": x_val, "y": y_val, "button": button}]},
+            )
+            await asyncio.sleep(0.2)
+            mouse_after = None
+            try:
+                mouse_after = await self._request("GET", "/linux/mouse")
+            except Exception:
+                mouse_after = None
+
+            def _dist(a, b):
+                try:
+                    return abs((a or {}).get("x", -1) - (b or {}).get("x", -1)) + abs(
+                        (a or {}).get("y", -1) - (b or {}).get("y", -1),
+                    )
+                except Exception:
+                    return 0
+
+            if _dist(mouse_after, mouse_before) < 2:
+                consecutive_repeat_count = max(consecutive_repeat_count, 1)
+            return False
+
+        if tool == "type_text":
+            text = str(args.get("text") or args.get("keys") or "")
+            if not text:
+                return False
+            if text.endswith("\n"):
+                text = text[:-1]
+                await self._request("POST", "/linux/type", payload={"keys": [text]})
+                await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
+                typed_history.append(text)
+                enter_after_last_type = True
+                await asyncio.sleep(0.4)
+            else:
+                await self._request("POST", "/linux/type", payload={"keys": [text]})
+                typed_history.append(text)
+                enter_after_last_type = False
+            if (
+                target_cmd
+                and target_cmd in " ".join(typed_history)
+                and enter_after_last_type
+            ):
+                return True
+            return False
+
+        if tool == "type_and_enter":
+            text = str(args.get("text") or "")
+            if not text:
+                return False
+            await self._request(
+                "POST",
+                "/linux/type",
+                payload={"keys": [text, "Enter"]},
+            )
+            typed_history.append(text)
+            enter_after_last_type = True
+            await asyncio.sleep(0.4)
+            if target_cmd and target_cmd in " ".join(typed_history):
+                return True
+            return False
+
+        if tool == "press_enter":
+            await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
+            if typed_history:
+                enter_after_last_type = True
+                await asyncio.sleep(0.4)
+                if target_cmd and target_cmd in " ".join(typed_history):
+                    return True
+            return False
+
+        # Unknown tool
+        return False
+
     # ------------------------------------------------------------------
     #  Core actions
     # ------------------------------------------------------------------
@@ -642,8 +771,8 @@ class MagnitudeDesktopBackend(BrowserBackend):
             })
 
         If a non-JSON natural-language instruction is provided, this method
-        will enter a simple tool-selection loop using the available /linux
-        endpoints (exists/focus/type/press/screenshot) to pursue the goal.
+        will enter a tool-selection loop (LLM-guided) using the available /linux
+        endpoints (exists/focus/type/press/click/screenshot) to pursue the goal.
         """
         import json
 
@@ -673,7 +802,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
         except json.JSONDecodeError:
             pass
 
-        # High-level NL instruction path: minimal LLM tool loop
+        # High-level NL instruction path: LLM tool loop
         try:
             import unify  # type: ignore
             from pydantic import BaseModel, Field
@@ -698,7 +827,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "Available tools (tool field):\n"
             "- exists_window: args {title} — check if a window with given title exists.\n"
             "- focus_window: args {title} — bring the window to front.\n"
-            "- type_text: args {text} — type the given text into the active window.\n implies Enter.\n"
+            "- type_text: args {text} — type the given text into the active window.\n"
             "- type_and_enter: args {text} — type the given text and then press Enter.\n"
             "- click_at: args {x, y, button?} — click at pixel coordinates (0,0 top-left). Button defaults to 1.\n"
             "- press_enter: args {} — press the Enter key.\n"
@@ -757,9 +886,6 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 data = _b64.b64decode(b64)
                 if data[:8] != b"\x89PNG\r\n\x1a\n":
                     return None
-                # IHDR chunk starts at byte 8+4 (length) +4 (type) = 16, width/height next 8 bytes
-                # Actually after signature, the first 8 bytes are: length (4) + type 'IHDR' (4)
-                # Then 4 bytes width, 4 bytes height
                 width = _struct.unpack(">I", data[16:20])[0]
                 height = _struct.unpack(">I", data[20:24])[0]
                 return width, height
@@ -836,172 +962,10 @@ class MagnitudeDesktopBackend(BrowserBackend):
             else:
                 recent_steps.append(tool)
 
-            if tool in ("done", "finish", "stop"):
+            # Execute selected tool via helper
+            finished = await self._execute_tool(tool, args, dims)
+            if finished:
                 return expectation or "success"
-
-            if tool == "exists_window":
-                title = str(
-                    args.get("title")
-                    or args.get("windowTitle")
-                    or args.get("name")
-                    or "",
-                ).strip()
-                if not title:
-                    continue
-                try:
-                    res = await self._request(
-                        "GET",
-                        f"/linux/window/exist?windowTitle={requests.utils.quote(title)}",
-                    )
-                    last_exists[title] = bool(res.get("exists", False))
-                except Exception:
-                    last_exists[title] = False
-                continue
-
-            if tool == "focus_window":
-                title = str(
-                    args.get("title")
-                    or args.get("windowTitle")
-                    or args.get("name")
-                    or "",
-                ).strip()
-                if not title:
-                    continue
-
-                # If repeating focus on the same title, force progress by typing
-                if title == last_focus_title and consecutive_repeat_count >= 1:
-                    if target_cmd:
-                        await self._request(
-                            "POST",
-                            "/linux/type",
-                            payload={"keys": [target_cmd, "Enter"]},
-                        )
-                        typed_history.append(target_cmd)
-                        enter_after_last_type = True
-                        await asyncio.sleep(0.4)
-                        return expectation or "success"
-                    else:
-                        # At least press enter once to move the prompt
-                        await self._request(
-                            "POST",
-                            "/linux/type",
-                            payload={"keys": ["Enter"]},
-                        )
-                        await asyncio.sleep(0.2)
-                        continue
-
-                await self._request(
-                    "POST",
-                    "/linux/window/focus",
-                    payload={"title": title},
-                )
-                last_focus_title = title
-                # After focusing, encourage progress
-                enter_after_last_type = False
-                continue
-
-            if tool == "click_at":
-                try:
-                    x_val = int(args.get("x"))
-                    y_val = int(args.get("y"))
-                except Exception:
-                    continue
-                button = int(args.get("button", 1) or 1)
-                # Clamp within screen bounds if known
-                if dims[0] > 0 and dims[1] > 0:
-                    x_val = max(0, min(dims[0] - 1, x_val))
-                    y_val = max(0, min(dims[1] - 1, y_val))
-                # Capture mouse before
-                mouse_before = None
-                try:
-                    mouse_before = await self._request("GET", "/linux/mouse")
-                except Exception:
-                    mouse_before = None
-                await self._request(
-                    "POST",
-                    "/linux/click",
-                    payload={"clicks": [{"x": x_val, "y": y_val, "button": button}]},
-                )
-                await asyncio.sleep(0.2)
-                # Capture mouse after
-                mouse_after = None
-                try:
-                    mouse_after = await self._request("GET", "/linux/mouse")
-                except Exception:
-                    mouse_after = None
-
-                # Basic feedback heuristic: if distance moved is tiny, avoid re-clicking same spot
-                def _dist(a, b):
-                    try:
-                        return abs(
-                            (a or {}).get("x", -1) - (b or {}).get("x", -1),
-                        ) + abs((a or {}).get("y", -1) - (b or {}).get("y", -1))
-                    except Exception:
-                        return 0
-
-                moved_taxicab = _dist(mouse_after, mouse_before)
-                if moved_taxicab < 2:
-                    # Encourage next step to be different (type or different click)
-                    consecutive_repeat_count = max(consecutive_repeat_count, 1)
-                continue
-
-            if tool == "type_text":
-                text = str(args.get("text") or args.get("keys") or "")
-                if not text:
-                    continue
-                # Interpret trailing newline as Enter
-                if text.endswith("\n"):
-                    text = text[:-1]
-                    await self._request("POST", "/linux/type", payload={"keys": [text]})
-                    await self._request(
-                        "POST",
-                        "/linux/type",
-                        payload={"keys": ["Enter"]},
-                    )
-                    typed_history.append(text)
-                    enter_after_last_type = True
-                    await asyncio.sleep(0.4)
-                else:
-                    await self._request("POST", "/linux/type", payload={"keys": [text]})
-                    typed_history.append(text)
-                    enter_after_last_type = False
-                # Heuristic completion: if target command typed and enter pressed
-                if (
-                    target_cmd
-                    and target_cmd in " ".join(typed_history)
-                    and enter_after_last_type
-                ):
-                    return expectation or "success"
-                continue
-
-            if tool == "type_and_enter":
-                text = str(args.get("text") or "")
-                if not text:
-                    continue
-                await self._request(
-                    "POST",
-                    "/linux/type",
-                    payload={"keys": [text, "Enter"]},
-                )
-                typed_history.append(text)
-                enter_after_last_type = True
-                await asyncio.sleep(0.4)
-                if target_cmd and target_cmd in " ".join(typed_history):
-                    return expectation or "success"
-                continue
-
-            if tool == "press_enter":
-                await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
-                # Heuristic completion: press after a type likely completes a command
-                if typed_history:
-                    enter_after_last_type = True
-                    await asyncio.sleep(0.4)
-                    if target_cmd and target_cmd in " ".join(typed_history):
-                        return expectation or "success"
-                continue
-
-            # Unknown tool – no-op to avoid spinning
-            continue
 
         # Final heuristic: if we typed something and pressed Enter at least once, consider success
         if typed_history and enter_after_last_type:
@@ -1010,50 +974,50 @@ class MagnitudeDesktopBackend(BrowserBackend):
         return expectation or "incomplete"
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
-        # Fetch a fresh screenshot and best-effort verify state against the query.
-        # If `query` is JSON with {"windowTitle": ...} or {"templatePath": ..., "threshold"?},
-        # delegate to /linux/exists to compute a boolean match and optional score.
-        import json
-        import inspect as _inspect
-
-        exists_result: dict | None = None
+        # LLM verification loop: get screenshot, ask the model if query is true/false
         try:
-            parsed = json.loads(query)
-            if isinstance(parsed, dict):
-                if "windowTitle" in parsed and isinstance(parsed["windowTitle"], str):
-                    title = parsed["windowTitle"]
-                    endpoint = (
-                        f"/linux/window/exist?windowTitle={requests.utils.quote(title)}"
-                    )
-                    exists_result = await self._request("GET", endpoint)
-                elif "templatePath" in parsed and isinstance(
-                    parsed["templatePath"],
-                    str,
-                ):
-                    tpl = parsed["templatePath"]
-                    thr = parsed.get("threshold")
-                    qs = f"/linux/window/exist?templatePath={requests.utils.quote(tpl)}"
-                    if isinstance(thr, (int, float, str)):
-                        qs += f"&threshold={thr}"
-                    exists_result = await self._request("GET", qs)
-        except Exception:
-            # Non-JSON query; ignore and just provide screenshot below
-            pass
+            import unify  # type: ignore
+            from pydantic import BaseModel, Field
+        except Exception as e:
+            raise RuntimeError(
+                "Observation requires the 'unify' client to be installed and configured.",
+            ) from e
+
+        class Verify(BaseModel):
+            matches: bool = Field(
+                ...,
+                description="True if the statement matches the current desktop state",
+            )
+            reason: str | None = None
+
+        client = unify.Unify(endpoint="claude-4-sonnet@anthropic")
+        client.set_response_format(Verify)
+        client.set_system_message(
+            "You are a strict visual verifier. Determine if the user's statement is true for the current desktop screenshot.\n"
+            "Return only JSON with {matches: boolean, reason?: string}. Do not infer beyond visible evidence.\n",
+        )
 
         screenshot_b64 = await self.get_screenshot()
+        content = [
+            {"type": "text", "text": f"Statement: {query}"},
+        ]
+        if screenshot_b64:
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{screenshot_b64}"},
+                },
+            )
 
-        result: dict[str, Any] = {"screenshot": screenshot_b64}
-        if isinstance(exists_result, dict):
-            result["matches"] = bool(exists_result.get("exists", False))
-            if "score" in exists_result:
-                result["score"] = exists_result.get("score")
-        else:
-            result["matches"] = False
-
-        # If a Pydantic model is provided, mirror the browser observe behavior
-        if _inspect.isclass(response_format) and issubclass(response_format, BaseModel):
-            return response_format.model_validate(result)
-        return result
+        raw = client.generate(
+            messages=client.messages + [{"role": "user", "content": content}],
+        )
+        out = Verify.model_validate_json(raw)
+        return {
+            "matches": out.matches,
+            "screenshot": screenshot_b64,
+            "reason": out.reason,
+        }
 
     async def get_screenshot(self) -> str:
         data = await self._request("GET", "/linux/screenshot")
