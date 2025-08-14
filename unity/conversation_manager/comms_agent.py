@@ -612,6 +612,8 @@ class CommsAgent:
             return message.parsed
 
     async def phone_call_llm_run(self, add_filler: bool = False):
+        global ONGOING_CALL
+
         first_ev = {"topic": "call_process", "type": "start_gen"}
         self.publish(first_ev)
 
@@ -648,6 +650,9 @@ class CommsAgent:
             acc_text = ""
             last_response = ""
             async for event in stream:
+                if not ONGOING_CALL:
+                    print("call ended, stopping stream")
+                    return None
                 # print(event)
                 if event.type == "content.delta":
                     if event.delta:
