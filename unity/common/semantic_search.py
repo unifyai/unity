@@ -62,25 +62,40 @@ def ensure_vector_for_source(context: str, source_expr: str) -> str:
     return embed_column_name
 
 
-def ensure_sum_cosine_column(
+def ensure_mean_cosine_column(
     context: str,
     terms: List[Tuple[str, str]],
     seed: str,
 ) -> str:
-    """Create a summed cosine derived column over provided (embed_col, ref_text) terms.
+    """Create a mean-of-cosines derived column over provided (embed_col, ref_text) terms.
 
-    Returns the created (or existing) sum column key.
+    - Each term contributes its cosine distance when the embedding exists, otherwise 0.
+    - The final value is (sum of present cosines) / (count of present cosines).
+    - If no term is present for a row, the value is 2 (maximal distance).
+
+    Returns the created (or existing) column key.
     """
-    # Build terms with lg alias
-    eq_terms: list[str] = []
+    # Build numerator (sum of present cosines) and denominator (count of present terms)
+    num_terms: list[str] = []
+    den_terms: list[str] = []
     for embed_col, ref_text in terms:
         escaped_ref = escape_single_quotes(ref_text)
-        eq_terms.append(
-            f"cosine({{lg:{embed_col}}}, embed('{escaped_ref}', model='{EMBED_MODEL}'))",
+        num_terms.append(
+            (
+                "((cosine({lg:"
+                + embed_col
+                + "}, "
+                + f"embed('{escaped_ref}', model='{EMBED_MODEL}'))) "
+                + f"if exists({{lg:{embed_col}}}) else 0)"
+            ),
         )
+        den_terms.append(f"(1 if exists({{lg:{embed_col}}}) else 0)")
 
     sum_key = f"_sum_cos_{seed}"
-    sum_equation = " + ".join(eq_terms) if eq_terms else "0"
+    numerator = " + ".join(num_terms) if num_terms else "0"
+    denominator = " + ".join(den_terms) if den_terms else "0"
+    # mean if denom>0 else 2
+    sum_equation = f"(({numerator}) / ({denominator})) if (({denominator}) > 0) else 2"
 
     existing_fields = unify.get_fields(context=context)
     if sum_key not in existing_fields:
@@ -147,7 +162,7 @@ def fetch_top_k_by_terms(
     import hashlib as _hashlib
 
     sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
-    sum_key = ensure_sum_cosine_column(context, terms, sum_hash)
+    sum_key = ensure_mean_cosine_column(context, terms, sum_hash)
 
     logs = unify.get_logs(
         context=context,
