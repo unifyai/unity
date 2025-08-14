@@ -981,6 +981,100 @@ class MagnitudeDesktopBackend(BrowserBackend):
             await self._request("POST", "/linux/scroll", payload=payload)
             return False
 
+        if tool == "screenshot":
+            try:
+                out = await self._request("GET", "/linux/screenshot")
+                b64 = (out or {}).get("screenshot")
+                if b64:
+                    self._last_exists["_last_full_screenshot"] = True
+            except Exception:
+                pass
+            return False
+
+        if tool == "screenshot_region":
+            try:
+                x = int(args.get("x"))
+                y = int(args.get("y"))
+                w = int(args.get("w"))
+                h = int(args.get("h"))
+            except Exception:
+                return False
+            # clamp to dims
+            if dims[0] > 0 and dims[1] > 0:
+                x = max(0, min(dims[0] - 1, x))
+                y = max(0, min(dims[1] - 1, y))
+                w = max(1, min(dims[0] - x, w))
+                h = max(1, min(dims[1] - y, h))
+            out = await self._request(
+                "GET",
+                f"/linux/screenshot/region?x={x}&y={y}&w={w}&h={h}",
+            )
+            # store last region bytes for potential region_changed
+            try:
+                b64 = out.get("screenshot")
+                if b64:
+                    # store as before if empty; otherwise after
+                    if not self._last_region_before_b64:
+                        self._last_region_before_b64 = b64
+                    else:
+                        self._last_region_after_b64 = b64
+                    self._last_region_rect = {"x": x, "y": y, "w": w, "h": h}
+            except Exception:
+                pass
+            return False
+
+        if tool == "image_locate":
+            payload: dict = {}
+            if args.get("templatePath"):
+                payload["templatePath"] = str(args.get("templatePath"))
+            elif args.get("templateB64"):
+                payload["templateB64"] = str(args.get("templateB64"))
+            else:
+                return False
+            for k in ("x", "y", "w", "h"):
+                if args.get(k) is not None:
+                    try:
+                        payload[k] = int(args.get(k))
+                    except Exception:
+                        pass
+            if args.get("threshold") is not None:
+                try:
+                    payload["threshold"] = float(args.get("threshold"))
+                except Exception:
+                    pass
+            out = await self._request("POST", "/linux/image/locate", payload=payload)
+            try:
+                self._last_image_locate = out
+            except Exception:
+                pass
+            return False
+
+        if tool == "region_changed":
+            need = ("beforeB64", "afterB64", "x", "y", "w", "h")
+            if not all(k in args for k in need):
+                return False
+            payload = {
+                "beforeB64": str(args.get("beforeB64")),
+                "afterB64": str(args.get("afterB64")),
+                "x": int(args.get("x")),
+                "y": int(args.get("y")),
+                "w": int(args.get("w")),
+                "h": int(args.get("h")),
+            }
+            if args.get("metric"):
+                payload["metric"] = str(args.get("metric"))
+            if args.get("threshold") is not None:
+                try:
+                    payload["threshold"] = float(args.get("threshold"))
+                except Exception:
+                    pass
+            out = await self._request("POST", "/linux/region/changed", payload=payload)
+            try:
+                self._last_exists["_last_region_changed"] = bool(out.get("changed"))
+            except Exception:
+                pass
+            return False
+
         if tool == "type_and_enter":
             text = str(args.get("text") or "")
             if not text:
@@ -1064,7 +1158,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 description=(
                     "One of: exists_window, focus_window, list_windows, list_windows_extended, "
                     "move_window, resize_window, set_window_state, app_open, app_focus, app_close, "
-                    "type_text, type_and_enter, click_at, mouse_move, drag, scroll, press_enter, done"
+                    "type_text, type_and_enter, click_at, mouse_move, drag, scroll, screenshot, screenshot_region, image_locate, region_changed, press_enter, done"
                 ),
             )
             args: dict = Field(default_factory=dict)
@@ -1092,6 +1186,10 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "- mouse_move: args {x, y} — move/hover the pointer without clicking.\n"
             "- drag: args {fromX?, fromY?, toX, toY, button?, steps?, delayMs?} — click-drag between points.\n"
             "- scroll: args {direction:'up'|'down'|'left'|'right', amount?, delayMs?} — scroll wheel events.\n"
+            "- screenshot: args {} — capture the full desktop screenshot (base64).\n"
+            "- screenshot_region: args {x,y,w,h} — returns a cropped screenshot region (base64).\n"
+            "- image_locate: args {templatePath|templateB64, x?,y?,w?,h?, threshold?} — locate template on screen/region.\n"
+            "- region_changed: args {beforeB64, afterB64, x,y,w,h, metric?, threshold?} — compare before/after regions.\n"
             "- press_enter: args {} — press the Enter key.\n"
             "- done: args {} — when the goal is achieved.\n"
             "You can install apps/packages by running shell commands. If no terminal is open, prefer app_open with cmd='bash' and args=['-lc', '<install command>'] (e.g., 'sudo apt-get update && sudo apt-get install -y <pkg>'). If a terminal (e.g., xterm) is already open, focus_window it and use click_at/type_text/press_enter to run commands. Use non-interactive flags (-y, -q, --no-install-recommends) to avoid prompts.\n"
@@ -1292,7 +1390,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
         out = Verify.model_validate_json(raw)
         return {
             "matches": out.matches,
-            "screenshot": screenshot_b64,
+            # "screenshot": screenshot_b64,
             "reason": out.reason,
         }
 

@@ -1,6 +1,9 @@
 // @ts-nocheck
 import express from 'express';
 import { execFile, exec, spawn } from 'child_process';
+import { promises as fs } from 'fs';
+import os from 'os';
+import path from 'path';
 import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
@@ -136,6 +139,134 @@ linux.get('/screenshot', async (_req: any, res: any) => {
   }
 });
 
+// GET /linux/screenshot/region?x=&y=&w=&h=
+linux.get('/screenshot/region', async (req: any, res: any) => {
+  const { x, y, w, h } = req.query as any;
+  const xi = Number(x), yi = Number(y), wi = Number(w), hi = Number(h);
+  if (!Number.isFinite(xi) || !Number.isFinite(yi) || !Number.isFinite(wi) || !Number.isFinite(hi) || wi <= 0 || hi <= 0) {
+    return res.status(400).json({ error: 'bad_request', message: 'valid x,y,w,h required' });
+  }
+  try {
+    const { stdout } = await execAsync(
+      `import -window root png:- | convert png:- -crop ${wi}x${hi}+${xi}+${yi} png:-`,
+      { encoding: 'buffer', maxBuffer: 10 * 1024 * 1024 }
+    );
+    res.json({ screenshot: (stdout as any).toString('base64') });
+  } catch (err) {
+    res.status(500).json({ error: 'screenshot_region_failed', message: String(err) });
+  }
+});
+
+// Helper to write base64 PNG to a temp file
+async function writeTempPNGFromB64(b64: string, prefix = 'img'): Promise<string> {
+  const buf = Buffer.from(b64, 'base64');
+  const file = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+  await fs.writeFile(file, buf);
+  return file;
+}
+
+// POST /linux/image/locate { templatePath? | templateB64?, x?, y?, w?, h?, threshold? }
+linux.post('/image/locate', async (req: any, res: any) => {
+  const { templatePath, templateB64, x, y, w, h, threshold = 0.95 } = req.body || {};
+  if (!templatePath && !templateB64) {
+    return res.status(400).json({ error: 'bad_request', message: 'templatePath or templateB64 required' });
+  }
+  let tmpTemplate: string | null = null;
+  let tmpScreen: string | null = null;
+  try {
+    // Prepare template file
+    const templateFile = templatePath && String(templatePath).trim().length > 0
+      ? String(templatePath)
+      : (tmpTemplate = await writeTempPNGFromB64(String(templateB64 || ''), 'tpl'));
+
+    // Prepare screenshot or region file
+    const xi = x !== undefined ? Number(x) : null;
+    const yi = y !== undefined ? Number(y) : null;
+    const wi = w !== undefined ? Number(w) : null;
+    const hi = h !== undefined ? Number(h) : null;
+    if (xi !== null && yi !== null && wi !== null && hi !== null) {
+      tmpScreen = path.join(os.tmpdir(), `screen-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+      await execAsync(
+        `import -window root png:- | convert png:- -crop ${wi}x${hi}+${xi}+${yi} "${tmpScreen}"`,
+        { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }
+      );
+    } else {
+      tmpScreen = path.join(os.tmpdir(), `screen-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+      await execAsync(`import -window root "${tmpScreen}"`, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    }
+
+    // Identify template size
+    const { stdout: idOut } = await execAsync(`identify -format "%w %h" "${templateFile}"`, { encoding: 'utf8' });
+    const [twStr, thStr] = idOut.trim().split(/\s+/);
+    const tw = Number(twStr), th = Number(thStr);
+
+    // Run subimage search
+    const { stderr } = await execAsync(
+      `compare -metric NCC -subimage-search "${tmpScreen}" "${templateFile}" null:`,
+      { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }
+    );
+    // stderr typically: "0.987654 @ 123,456"
+    const m = stderr.match(/([0-9]*\.?[0-9]+)\s*@\s*(\d+),(\d+)/);
+    if (!m) {
+      return res.json({ found: false, score: 0 });
+    }
+    const score = parseFloat(m[1]);
+    const px = parseInt(m[2], 10);
+    const py = parseInt(m[3], 10);
+    const found = score >= Number(threshold);
+    return res.json({ found, score, x: px, y: py, w: tw, h: th });
+  } catch (err) {
+    return res.status(500).json({ error: 'image_locate_failed', message: String(err) });
+  } finally {
+    try { if (tmpTemplate) await fs.unlink(tmpTemplate); } catch {}
+    try { if (tmpScreen) await fs.unlink(tmpScreen); } catch {}
+  }
+});
+
+// POST /linux/region/changed { beforeB64, afterB64, x, y, w, h, metric?, threshold? }
+linux.post('/region/changed', async (req: any, res: any) => {
+  const { beforeB64, afterB64, x, y, w, h, metric = 'AE', threshold } = req.body || {};
+  if (!beforeB64 || !afterB64 || x === undefined || y === undefined || w === undefined || h === undefined) {
+    return res.status(400).json({ error: 'bad_request', message: 'beforeB64, afterB64, x, y, w, h required' });
+  }
+  const xi = Number(x), yi = Number(y), wi = Number(w), hi = Number(h);
+  if (!Number.isFinite(xi) || !Number.isFinite(yi) || !Number.isFinite(wi) || !Number.isFinite(hi) || wi <= 0 || hi <= 0) {
+    return res.status(400).json({ error: 'bad_request', message: 'valid x,y,w,h required' });
+  }
+  let fBefore: string | null = null;
+  let fAfter: string | null = null;
+  let cBefore: string | null = null;
+  let cAfter: string | null = null;
+  try {
+    fBefore = await writeTempPNGFromB64(String(beforeB64), 'before');
+    fAfter = await writeTempPNGFromB64(String(afterB64), 'after');
+    cBefore = path.join(os.tmpdir(), `cropb-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+    cAfter = path.join(os.tmpdir(), `cropa-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+    await execAsync(`convert "${fBefore}" -crop ${wi}x${hi}+${xi}+${yi} "${cBefore}"`);
+    await execAsync(`convert "${fAfter}" -crop ${wi}x${hi}+${xi}+${yi} "${cAfter}"`);
+    const met = String(metric || 'AE').toUpperCase();
+    if (met === 'AE') {
+      const { stderr } = await execAsync(`compare -metric AE "${cBefore}" "${cAfter}" null:`, { encoding: 'utf8' });
+      const delta = parseFloat((stderr.trim().split(/\s+/)[0]) || '0');
+      const thr = threshold !== undefined ? Number(threshold) : 0; // AE > 0 means any pixel changed
+      const changed = delta > thr;
+      return res.json({ changed, metric: 'AE', delta });
+    } else {
+      const { stderr } = await execAsync(`compare -metric NCC "${cBefore}" "${cAfter}" null:`, { encoding: 'utf8' });
+      const score = parseFloat((stderr.trim().split(/\s+/)[0]) || '0');
+      const thr = threshold !== undefined ? Number(threshold) : 0.995; // lower score = more change
+      const changed = score < thr;
+      return res.json({ changed, metric: 'NCC', score });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: 'region_changed_failed', message: String(err) });
+  } finally {
+    try { if (fBefore) await fs.unlink(fBefore); } catch {}
+    try { if (fAfter) await fs.unlink(fAfter); } catch {}
+    try { if (cBefore) await fs.unlink(cBefore); } catch {}
+    try { if (cAfter) await fs.unlink(cAfter); } catch {}
+  }
+});
 // GET /linux/mouse/position
 linux.get('/mouse/position', async (_req: any, res: any) => {
   try {
