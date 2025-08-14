@@ -630,7 +630,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
     # Private helper to execute a selected tool step and update context
     async def _execute_tool(tool: str, args: dict, dims: tuple[int, int]) -> bool:
         nonlocal last_exists, last_focus_title, consecutive_repeat_count
-        nonlocal typed_history, enter_after_last_type
+        nonlocal typed_history, enter_after_last_type, last_windows
         # done/finish
         if tool in ("done", "finish", "stop"):
             return True
@@ -664,6 +664,57 @@ class MagnitudeDesktopBackend(BrowserBackend):
             await self._request("POST", "/linux/window/focus", payload={"title": title})
             last_focus_title = title
             enter_after_last_type = False
+            return False
+
+        if tool == "list_windows":
+            try:
+                res = await self._request("GET", "/linux/window")
+                last_windows = res.get("windows", []) or []
+            except Exception:
+                last_windows = []
+            return False
+
+        if tool == "move_window":
+            id_val = args.get("id")
+            title_val = args.get("title")
+            try:
+                x_val = int(args.get("x"))
+                y_val = int(args.get("y"))
+            except Exception:
+                return False
+            await self._request(
+                "POST",
+                "/linux/window/move",
+                payload={"id": id_val, "title": title_val, "x": x_val, "y": y_val},
+            )
+            return False
+
+        if tool == "resize_window":
+            id_val = args.get("id")
+            title_val = args.get("title")
+            try:
+                w_val = int(args.get("w"))
+                h_val = int(args.get("h"))
+            except Exception:
+                return False
+            await self._request(
+                "POST",
+                "/linux/window/resize",
+                payload={"id": id_val, "title": title_val, "w": w_val, "h": h_val},
+            )
+            return False
+
+        if tool == "set_window_state":
+            id_val = args.get("id")
+            title_val = args.get("title")
+            action_val = str(args.get("action") or "").strip().lower()
+            if action_val not in {"minimize", "maximize", "restore", "close"}:
+                return False
+            await self._request(
+                "POST",
+                "/linux/window/state",
+                payload={"id": id_val, "title": title_val, "action": action_val},
+            )
             return False
 
         if tool == "click_at":
@@ -814,7 +865,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
         class NextAction(BaseModel):
             tool: str = Field(
                 ...,
-                description="One of: exists_window, focus_window, type_text, type_and_enter, click_at, press_enter, done",
+                description="One of: exists_window, focus_window, list_windows, move_window, resize_window, set_window_state, type_text, type_and_enter, click_at, press_enter, done",
             )
             args: dict = Field(default_factory=dict)
             reason: str | None = None
@@ -827,6 +878,10 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "Available tools (tool field):\n"
             "- exists_window: args {title} — check if a window with given title exists.\n"
             "- focus_window: args {title} — bring the window to front.\n"
+            "- list_windows: args {} — list all windows; you will receive their id, geometry and title.\n"
+            "- move_window: args {id|title, x, y} — move a window.\n"
+            "- resize_window: args {id|title, w, h} — resize a window.\n"
+            "- set_window_state: args {id|title, action} — action in {minimize|maximize|restore|close}.\n"
             "- type_text: args {text} — type the given text into the active window.\n"
             "- type_and_enter: args {text} — type the given text and then press Enter.\n"
             "- click_at: args {x, y, button?} — click at pixel coordinates (0,0 top-left). Button defaults to 1.\n"
@@ -841,10 +896,12 @@ class MagnitudeDesktopBackend(BrowserBackend):
         max_steps = 12
         step = 0
         last_exists: dict[str, bool] = {}
+        last_windows: list[dict] = []
 
         def _context_blob() -> dict:
             return {
                 "known_windows": last_exists,
+                "windows": last_windows,
             }
 
         async def _must_get_screenshot(attempts: int = 5, delay_s: float = 0.3) -> str:
@@ -959,6 +1016,13 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 x_dbg = args.get("x")
                 y_dbg = args.get("y")
                 recent_steps.append(f"click_at({x_dbg},{y_dbg})")
+            elif tool in (
+                "list_windows",
+                "move_window",
+                "resize_window",
+                "set_window_state",
+            ):
+                recent_steps.append(tool)
             else:
                 recent_steps.append(tool)
 
