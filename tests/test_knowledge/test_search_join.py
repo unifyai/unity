@@ -372,3 +372,32 @@ def test_knowledge_search_join_backfills_when_insufficient_similarity_results():
     assert titles[0] == "Gamma"
     # Remaining should be backfilled from latest creation order without duplicates
     assert titles[1:4] == ["Zeta", "Epsilon", "Delta"]
+
+    # When references is None/empty, skip semantic search and return most recent joined rows
+    recent_only = km._search_join(
+        tables=[left, right],
+        join_expr=f"{left}.user_id == {right}.user_id",
+        select={
+            f"{left}.user_id": "user_id",
+            f"{left}.title": "title",
+            f"{left}.content": "content",
+            f"{right}.note": "note",
+        },
+        references=None,
+        k=3,
+    )
+    assert [r.get("title") for r in recent_only] == ["Zeta", "Epsilon", "Delta"]
+
+    recent_only_empty = km._search_join(
+        tables=[left, right],
+        join_expr=f"{left}.user_id == {right}.user_id",
+        select={
+            f"{left}.user_id": "user_id",
+            f"{left}.title": "title",
+            f"{left}.content": "content",
+            f"{right}.note": "note",
+        },
+        references={},
+        k=3,
+    )
+    assert [r.get("title") for r in recent_only_empty] == ["Zeta", "Epsilon", "Delta"]

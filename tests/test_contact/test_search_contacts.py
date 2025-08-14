@@ -173,3 +173,11 @@ def test_search_contacts_backfills_when_insufficient_similarity_results():
     assert names[0] == "Carla"
     # Remaining should be backfilled from latest creation order without duplicates
     assert names[2:4] == ["Frank", "Evelyn"]
+
+    # When references is None, skip semantic search and return most recent contacts
+    recent_only = cm._search_contacts(references=None, k=3)
+    assert [c.first_name for c in recent_only] == ["Frank", "Evelyn", "Darren"]
+
+    # Also verify empty dict behaves the same as None
+    recent_only_empty = cm._search_contacts(references={}, k=3)
+    assert [c.first_name for c in recent_only_empty] == ["Frank", "Evelyn", "Darren"]
