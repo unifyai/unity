@@ -114,6 +114,104 @@ def ensure_mean_cosine_column(
     return sum_key
 
 
+def ensure_mean_cosine_column_piecewise(
+    context: str,
+    terms: List[Tuple[str, str]],
+    seed: str,
+) -> str:
+    """Create a mean-of-cosines derived column using piecewise terms.
+
+    This mirrors ``ensure_mean_cosine_column`` but, for debugging purposes, it
+    stores each item that would be part of the numerator and denominator in its
+    own derived column. The final mean column is then defined as the sum of
+    those per-term columns divided by the count sum, matching the original
+    semantics:
+
+    - Numerator term i: ``((cosine({lg:<embed_i>}, embed('<ref_i>', model=...))) if exists({lg:<embed_i>}) else 0)``
+    - Denominator term i: ``(1 if exists({lg:<embed_i>}) else 0)``
+    - Mean: ``(sum(num_i) / sum(den_i)) if sum(den_i) > 0 else 2``
+
+    Returns the created (or existing) mean column key.
+    """
+    # Prepare per-term equation strings
+    num_equations: list[str] = []
+    den_equations: list[str] = []
+    for embed_col, ref_text in terms:
+        escaped_ref = escape_single_quotes(ref_text)
+        num_equations.append(
+            (
+                "((cosine({lg:"
+                + embed_col
+                + "}, "
+                + f"embed('{escaped_ref}', model='{EMBED_MODEL}'))) "
+                + f"if exists({{lg:{embed_col}}}) else 0)"
+            ),
+        )
+        den_equations.append(f"(1 if exists({{lg:{embed_col}}}) else 0)")
+
+    # Derive keys for each term. We include an index and the provided seed to stay stable.
+    num_keys: list[str] = [f"_num_cos_{i}_{seed}" for i in range(len(num_equations))]
+    den_keys: list[str] = [f"_den_has_{i}_{seed}" for i in range(len(den_equations))]
+
+    # Mean key distinct from the non-piecewise variant for clarity/debugging
+    sum_key = f"_sum_cos_piecewise_{seed}"
+
+    # Fetch existing fields once for idempotency
+    existing_fields = unify.get_fields(context=context)
+
+    # Create per-term numerator columns
+    for key, equation in zip(num_keys, num_equations):
+        if key not in existing_fields:
+            url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+            headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+            json_input = {
+                "project": unify.active_project(),
+                "context": context,
+                "key": key,
+                "equation": equation,
+                "referenced_logs": {"lg": {"context": context}},
+            }
+            resp = requests.request("POST", url, json=json_input, headers=headers)
+            _handle_exceptions(resp)
+
+    # Create per-term denominator columns
+    for key, equation in zip(den_keys, den_equations):
+        if key not in existing_fields:
+            url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+            headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+            json_input = {
+                "project": unify.active_project(),
+                "context": context,
+                "key": key,
+                "equation": equation,
+                "referenced_logs": {"lg": {"context": context}},
+            }
+            resp = requests.request("POST", url, json=json_input, headers=headers)
+            _handle_exceptions(resp)
+
+    # Build the final mean equation from the per-term columns
+    numerator = " + ".join(num_keys) if num_keys else "0"
+    denominator = " + ".join(den_keys) if den_keys else "0"
+    sum_equation = f"(({numerator}) / ({denominator})) if (({denominator}) > 0) else 2"
+
+    # Create the piecewise mean column
+    existing_fields = unify.get_fields(context=context)
+    if sum_key not in existing_fields:
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        json_input = {
+            "project": unify.active_project(),
+            "context": context,
+            "key": sum_key,
+            "equation": sum_equation,
+            "referenced_logs": {"lg": {"context": context}},
+        }
+        resp = requests.request("POST", url, json=json_input, headers=headers)
+        _handle_exceptions(resp)
+
+    return sum_key
+
+
 def fetch_top_k_by_terms(
     context: str,
     terms: List[Tuple[str, str]],
@@ -162,7 +260,7 @@ def fetch_top_k_by_terms(
     import hashlib as _hashlib
 
     sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
-    sum_key = ensure_mean_cosine_column(context, terms, sum_hash)
+    sum_key = ensure_mean_cosine_column_piecewise(context, terms, sum_hash)
 
     logs = unify.get_logs(
         context=context,
