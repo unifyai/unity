@@ -70,8 +70,14 @@ class EventManager:
                 print("recieved call event")
                 # handle messages going to the call process
                 # like gen
-                self.writers["call"].write((json.dumps(event) + "\n").encode("utf-8"))
-                await self.writers["call"].drain()
+                try:
+                    self.writers["call"].write(
+                        (json.dumps(event) + "\n").encode("utf-8")
+                    )
+                    await self.writers["call"].drain()
+                except Exception as e:
+                    print(f"Error writing to call process: {e}")
+                    traceback.print_exc()
             else:
                 if event["topic"] == "startup":
                     self.topic_to_subs[event["event"]["payload"]["user_number"]] = (
