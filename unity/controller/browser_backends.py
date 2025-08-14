@@ -686,6 +686,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "- press_enter: args {} — press the Enter key.\n"
             "- done: args {} — when the goal is achieved.\n"
             "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n"
+            "Avoid repeating the same tool more than once in a row; after focusing a window, prefer typing next.\n"
             "For terminal commands, typically: focus_window → type_text (the exact command) → press_enter → done.\n",
         )
 
@@ -724,15 +725,26 @@ class MagnitudeDesktopBackend(BrowserBackend):
         if target_cmd_match:
             target_cmd = next(g for g in target_cmd_match.groups() if g)
 
+        # Track step history and discourage loops
+        recent_steps: list[str] = []
+        last_tool_name: str | None = None
+        last_focus_title: str | None = None
+        consecutive_repeat_count: int = 0
+
         while step < max_steps:
             step += 1
             # Mandatory screenshot for each step
             screenshot_b64 = await _must_get_screenshot()
 
+            history_txt = " | ".join(recent_steps[-5:]) if recent_steps else "(none)"
             content = [
                 {
                     "type": "text",
-                    "text": f"Goal: {instruction}\nContext: {json.dumps(_context_blob())}",
+                    "text": (
+                        f"Goal: {instruction}\n"
+                        f"Recent steps: {history_txt}\n"
+                        f"Context: {json.dumps(_context_blob())}"
+                    ),
                 },
             ]
             if screenshot_b64:
@@ -754,6 +766,34 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
             tool = (next_action.tool or "").strip().lower()
             args = next_action.args or {}
+
+            # Loop-avoidance guard: detect consecutive repeats
+            if last_tool_name == tool:
+                consecutive_repeat_count += 1
+            else:
+                consecutive_repeat_count = 0
+            last_tool_name = tool
+
+            # Record step intent for the next iteration's guidance
+            if tool in ("focus_window", "exists_window"):
+                t = str(
+                    args.get("title")
+                    or args.get("windowTitle")
+                    or args.get("name")
+                    or "",
+                ).strip()
+                recent_steps.append(f"{tool}('{t}')")
+            elif tool in ("type_text", "type_and_enter"):
+                shown = str(args.get("text") or args.get("keys") or "").strip()
+                recent_steps.append(
+                    (
+                        f"{tool}('{shown[:24]}…')"
+                        if len(shown) > 24
+                        else f"{tool}('{shown}')"
+                    ),
+                )
+            else:
+                recent_steps.append(tool)
 
             if tool in ("done", "finish", "stop"):
                 return expectation or "success"
@@ -786,12 +826,39 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 ).strip()
                 if not title:
                     continue
+
+                # If repeating focus on the same title, force progress by typing
+                if title == last_focus_title and consecutive_repeat_count >= 1:
+                    if target_cmd:
+                        await self._request(
+                            "POST",
+                            "/linux/act",
+                            payload={
+                                "focusWindowTitle": title,
+                                "keys": [target_cmd, "Enter"],
+                            },
+                        )
+                        typed_history.append(target_cmd)
+                        enter_after_last_type = True
+                        await asyncio.sleep(0.4)
+                        return expectation or "success"
+                    else:
+                        # At least press enter once to move the prompt
+                        await self._request(
+                            "POST",
+                            "/linux/act",
+                            payload={"focusWindowTitle": title, "keys": ["Enter"]},
+                        )
+                        await asyncio.sleep(0.2)
+                        continue
+
                 await self._request(
                     "POST",
                     "/linux/act",
                     payload={"focusWindowTitle": title},
                 )
-                # Reset command completion heuristic on focus change
+                last_focus_title = title
+                # After focusing, encourage progress
                 enter_after_last_type = False
                 continue
 
