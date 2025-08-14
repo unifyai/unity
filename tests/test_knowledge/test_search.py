@@ -205,3 +205,11 @@ def test_knowledge_search_backfills_when_insufficient_similarity_results():
     assert titles[0] == "Gamma"
     # Remaining should be backfilled from latest creation order without duplicates
     assert titles[1:4] == ["Zeta", "Epsilon", "Delta"]
+
+    # When references is None, skip semantic search and return most recent rows
+    recent_only = km._search(table=table, references=None, k=3)
+    assert [r["title"] for r in recent_only] == ["Zeta", "Epsilon", "Delta"]
+
+    # An empty dict behaves the same as None
+    recent_only_empty = km._search(table=table, references={}, k=3)
+    assert [r["title"] for r in recent_only_empty] == ["Zeta", "Epsilon", "Delta"]

@@ -205,3 +205,17 @@ def test_search_tasks_backfills_when_insufficient_similarity_results():
         "Draft plan for Evelyn",
         "Prepare follow-up for Darren",
     ]
+
+    # When references is None/empty, skip semantic search and return most recent tasks
+    recent_only = ts._search_tasks(references=None, k=3)
+    assert [t.name for t in recent_only] == [
+        "Schedule sync with Frank",
+        "Draft plan for Evelyn",
+        "Prepare follow-up for Darren",
+    ]
+    recent_only_empty = ts._search_tasks(references={}, k=3)
+    assert [t.name for t in recent_only_empty] == [
+        "Schedule sync with Frank",
+        "Draft plan for Evelyn",
+        "Prepare follow-up for Darren",
+    ]

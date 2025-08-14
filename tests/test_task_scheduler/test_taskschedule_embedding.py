@@ -45,4 +45,15 @@ def test_tasklist_embedding_search():
         k=1,
     )
     assert len(sim_results_k1) == 1
+    # New default: when references is None/empty, return recent tasks only
+    recent_only = manager._search_tasks(references=None, k=2)
+    assert [t.name for t in recent_only] == [
+        "Find product prices",
+        "connecting with industry professionals",
+    ]
+    recent_only_empty = manager._search_tasks(references={}, k=2)
+    assert [t.name for t in recent_only_empty] == [
+        "Find product prices",
+        "connecting with industry professionals",
+    ]
     assert sim_results_k1[0].name == "connecting with industry professionals"
