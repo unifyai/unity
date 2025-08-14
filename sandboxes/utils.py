@@ -539,6 +539,16 @@ def speak(text: str) -> None:
         threading.Thread(target=_run_in_thread, daemon=True).start()
 
 
+def speak_and_wait(text: str) -> None:
+    """Speak *text* and block until TTS playback has finished or was skipped.
+
+    Convenience wrapper for places that want an immediate audible affirmation
+    before continuing with a longer-running task.
+    """
+    speak(text)
+    _wait_for_tts_end()
+
+
 def stop_speaking() -> None:
     """Cancel any in-flight TTS playback immediately if active."""
     try:
