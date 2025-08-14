@@ -23,6 +23,30 @@ linux.get('/screenshot', async (_req: any, res: any) => {
   }
 });
 
+// GET /linux/mouse
+linux.get('/mouse', async (_req: any, res: any) => {
+  try {
+    const { stdout } = await execAsync('xdotool getmouselocation --shell', { encoding: 'utf8' });
+    const lines = stdout.trim().split('\n');
+    const map: Record<string, string> = {};
+    for (const line of lines) {
+      const idx = line.indexOf('=');
+      if (idx > 0) {
+        const key = line.slice(0, idx).trim();
+        const value = line.slice(idx + 1).trim();
+        map[key] = value;
+      }
+    }
+    const x = Number(map['X'] || 0);
+    const y = Number(map['Y'] || 0);
+    const screen = Number(map['SCREEN'] || 0);
+    const window = map['WINDOW'] || '';
+    res.json({ x, y, screen, window });
+  } catch (err) {
+    res.status(500).json({ error: 'mouse_failed', message: String(err) });
+  }
+});
+
 // POST /linux/act
 linux.post('/act', async (req: any, res: any) => {
   const { clicks = [], keys = [], focusWindowTitle } = req.body as {

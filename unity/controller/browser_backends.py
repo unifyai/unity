@@ -668,7 +668,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
         class NextAction(BaseModel):
             tool: str = Field(
                 ...,
-                description="One of: exists_window, focus_window, type_text, type_and_enter, press_enter, done",
+                description="One of: exists_window, focus_window, type_text, type_and_enter, click_at, press_enter, done",
             )
             args: dict = Field(default_factory=dict)
             reason: str | None = None
@@ -681,13 +681,15 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "Available tools (tool field):\n"
             "- exists_window: args {title} — check if a window with given title exists.\n"
             "- focus_window: args {title} — bring the window to front.\n"
-            "- type_text: args {text} — type the given text into the active window.\n"
+            "- type_text: args {text} — type the given text into the active window.\n implies Enter.\n"
             "- type_and_enter: args {text} — type the given text and then press Enter.\n"
+            "- click_at: args {x, y, button?} — click at pixel coordinates (0,0 top-left). Button defaults to 1.\n"
             "- press_enter: args {} — press the Enter key.\n"
             "- done: args {} — when the goal is achieved.\n"
             "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n"
-            "Avoid repeating the same tool more than once in a row; after focusing a window, prefer typing next.\n"
-            "For terminal commands, typically: focus_window → type_text (the exact command) → press_enter → done.\n",
+            "You will also receive screen width/height (pixels). Ensure coordinates are within bounds.\n"
+            "Avoid repeating the same tool more than once in a row; after focusing a window, prefer typing or clicking next.\n"
+            "For terminal commands, typically: focus_window → click_at (if needed) → type_text (the exact command) → press_enter → done.\n",
         )
 
         max_steps = 12
@@ -716,6 +718,8 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
         # --- Simple completion heuristic for command typing ---
         import re as _re
+        import base64 as _b64
+        import struct as _struct
 
         typed_history: list[str] = []
         enter_after_last_type: bool = False
@@ -731,10 +735,25 @@ class MagnitudeDesktopBackend(BrowserBackend):
         last_focus_title: str | None = None
         consecutive_repeat_count: int = 0
 
+        def _png_size_from_b64(b64: str) -> tuple[int, int] | None:
+            try:
+                data = _b64.b64decode(b64)
+                if data[:8] != b"\x89PNG\r\n\x1a\n":
+                    return None
+                # IHDR chunk starts at byte 8+4 (length) +4 (type) = 16, width/height next 8 bytes
+                # Actually after signature, the first 8 bytes are: length (4) + type 'IHDR' (4)
+                # Then 4 bytes width, 4 bytes height
+                width = _struct.unpack(">I", data[16:20])[0]
+                height = _struct.unpack(">I", data[20:24])[0]
+                return width, height
+            except Exception:
+                return None
+
         while step < max_steps:
             step += 1
             # Mandatory screenshot for each step
             screenshot_b64 = await _must_get_screenshot()
+            dims = _png_size_from_b64(screenshot_b64) or (0, 0)
 
             history_txt = " | ".join(recent_steps[-5:]) if recent_steps else "(none)"
             content = [
@@ -742,6 +761,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     "type": "text",
                     "text": (
                         f"Goal: {instruction}\n"
+                        f"Screen: width={dims[0]} height={dims[1]} (pixels)\n"
                         f"Recent steps: {history_txt}\n"
                         f"Context: {json.dumps(_context_blob())}"
                     ),
@@ -792,6 +812,10 @@ class MagnitudeDesktopBackend(BrowserBackend):
                         else f"{tool}('{shown}')"
                     ),
                 )
+            elif tool == "click_at":
+                x_dbg = args.get("x")
+                y_dbg = args.get("y")
+                recent_steps.append(f"click_at({x_dbg},{y_dbg})")
             else:
                 recent_steps.append(tool)
 
@@ -860,6 +884,51 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 last_focus_title = title
                 # After focusing, encourage progress
                 enter_after_last_type = False
+                continue
+
+            if tool == "click_at":
+                try:
+                    x_val = int(args.get("x"))
+                    y_val = int(args.get("y"))
+                except Exception:
+                    continue
+                button = int(args.get("button", 1) or 1)
+                # Clamp within screen bounds if known
+                if dims[0] > 0 and dims[1] > 0:
+                    x_val = max(0, min(dims[0] - 1, x_val))
+                    y_val = max(0, min(dims[1] - 1, y_val))
+                # Capture mouse before
+                mouse_before = None
+                try:
+                    mouse_before = await self._request("GET", "/linux/mouse")
+                except Exception:
+                    mouse_before = None
+                await self._request(
+                    "POST",
+                    "/linux/act",
+                    payload={"clicks": [{"x": x_val, "y": y_val, "button": button}]},
+                )
+                await asyncio.sleep(0.2)
+                # Capture mouse after
+                mouse_after = None
+                try:
+                    mouse_after = await self._request("GET", "/linux/mouse")
+                except Exception:
+                    mouse_after = None
+
+                # Basic feedback heuristic: if distance moved is tiny, avoid re-clicking same spot
+                def _dist(a, b):
+                    try:
+                        return abs(
+                            (a or {}).get("x", -1) - (b or {}).get("x", -1),
+                        ) + abs((a or {}).get("y", -1) - (b or {}).get("y", -1))
+                    except Exception:
+                        return 0
+
+                moved_taxicab = _dist(mouse_after, mouse_before)
+                if moved_taxicab < 2:
+                    # Encourage next step to be different (type or different click)
+                    consecutive_repeat_count = max(consecutive_repeat_count, 1)
                 continue
 
             if tool == "type_text":
