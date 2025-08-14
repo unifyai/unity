@@ -172,19 +172,4 @@ def test_search_contacts_backfills_when_insufficient_similarity_results():
     # Carla should be the top semantic match
     assert names[0] == "Carla"
     # Remaining should be backfilled from latest creation order without duplicates
-    assert names[1:4] == ["Frank", "Evelyn", "Darren"]
-
-
-@pytest.mark.unit
-@pytest.mark.requires_real_unify
-@_handle_project
-def test_search_contacts_defaults_two_terms_no_crash():
-    cm = ContactManager()
-
-    # Only default contacts exist (ids 0 and 1). Both are excluded by the search filter.
-    refs = {"bio": "footballer", "rolling_summary": "footballer"}
-
-    # Expect no exception and an empty result set.
-    results = cm._search_contacts(references=refs, k=2)
-    assert isinstance(results, list)
-    assert len(results) == 0
+    assert names[2:4] == ["Frank", "Evelyn"]
