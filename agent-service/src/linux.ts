@@ -31,19 +31,60 @@ async function focusWindowByClass(className: string): Promise<void> {
   await new Promise(r => setTimeout(r, 100));
 }
 
-async function performClicks(clicks: Array<{ x: number; y: number; button?: number }>): Promise<void> {
-  for (const { x, y, button = 1 } of clicks) {
-    await execFileAsync('xdotool', ['mousemove', `${x}`, `${y}`, 'click', `${button}`]);
+function normalizeModifier(mod: string): string | null {
+  const m = String(mod || '').toLowerCase().trim();
+  if (!m) return null;
+  if (['shift'].includes(m)) return 'shift';
+  if (['ctrl', 'control', 'ctl'].includes(m)) return 'ctrl';
+  if (['alt', 'option'].includes(m)) return 'alt';
+  if (['meta', 'super', 'cmd', 'command', 'win', 'windows'].includes(m)) return 'super';
+  return m; // let xdotool try
+}
+
+async function performClicks(clicks: Array<{ x: number; y: number; button?: number; repeat?: number; delayMs?: number; modifiers?: string[] }>): Promise<void> {
+  for (const { x, y, button = 1, repeat = 1, delayMs = 30, modifiers = [] } of clicks) {
+    // Move pointer
+    await execFileAsync('xdotool', ['mousemove', `${x}`, `${y}`]);
+    // Press modifiers (keydown)
+    const norm = modifiers.map(normalizeModifier).filter(Boolean) as string[];
+    for (const mod of norm) {
+      await execFileAsync('xdotool', ['keydown', mod]);
+    }
+    // Click with repeat/delay
+    const args = ['click', '--repeat', `${Math.max(1, repeat)}`, '--delay', `${Math.max(0, delayMs)}`, `${button}`];
+    await execFileAsync('xdotool', args);
+    // Release modifiers (keyup, reverse order)
+    for (const mod of norm.slice().reverse()) {
+      await execFileAsync('xdotool', ['keyup', mod]);
+    }
   }
 }
 
-async function performKeys(keys: string[] | string): Promise<void> {
-  const list = Array.isArray(keys) ? keys : [keys];
+async function performKeys(keys: string[] | string | Array<string | string[]>): Promise<void> {
+  const list: Array<string | string[]> = Array.isArray(keys) ? (keys as Array<string | string[]>) : [keys as string];
   for (const k of list) {
-    if (k === 'Enter') {
-      await execFileAsync('xdotool', ['key', 'Return']);
+    if (Array.isArray(k)) {
+      // key combo chord: hold all but last as modifiers, press last, release all
+      const combo = k.map((t) => String(t));
+      if (combo.length === 0) continue;
+      const mods = combo.slice(0, Math.max(0, combo.length - 1)).map(normalizeModifier).filter(Boolean) as string[];
+      const last = combo[combo.length - 1];
+      for (const m of mods) await execFileAsync('xdotool', ['keydown', m]);
+      // Treat some friendly names
+      const keyName = last === 'Enter' ? 'Return' : last;
+      await execFileAsync('xdotool', ['key', keyName]);
+      for (const m of mods.slice().reverse()) await execFileAsync('xdotool', ['keyup', m]);
     } else {
-      await execFileAsync('xdotool', ['type', k]);
+      // simple string key or text
+      const s = String(k);
+      if (s === 'Enter') {
+        await execFileAsync('xdotool', ['key', 'Return']);
+      } else if (s.length === 1 || /\s/.test(s)) {
+        // heuristically: short or contains spaces -> type as text
+        await execFileAsync('xdotool', ['type', s]);
+      } else {
+        await execFileAsync('xdotool', ['key', s]);
+      }
     }
   }
 }
@@ -95,8 +136,8 @@ linux.get('/screenshot', async (_req: any, res: any) => {
   }
 });
 
-// GET /linux/mouse
-linux.get('/mouse', async (_req: any, res: any) => {
+// GET /linux/mouse/position
+linux.get('/mouse/position', async (_req: any, res: any) => {
   try {
     const { stdout } = await execAsync('xdotool getmouselocation --shell', { encoding: 'utf8' });
     const lines = stdout.trim().split('\n');
@@ -116,6 +157,80 @@ linux.get('/mouse', async (_req: any, res: any) => {
     res.json({ x, y, screen, window });
   } catch (err) {
     res.status(500).json({ error: 'mouse_failed', message: String(err) });
+  }
+});
+
+// POST /linux/mouse/move { x, y }
+linux.post('/mouse/move', async (req: any, res: any) => {
+  const { x, y } = req.body as { x?: number; y?: number };
+  if (typeof x !== 'number' || typeof y !== 'number') {
+    return res.status(400).json({ error: 'bad_request', message: 'x and y are required numbers' });
+  }
+  try {
+    await execFileAsync('xdotool', ['mousemove', `${x}`, `${y}`]);
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: 'mouse_move_failed', message: String(err) });
+  }
+});
+
+// POST /linux/drag { fromX?, fromY?, toX, toY, button?, steps?, delayMs? }
+linux.post('/drag', async (req: any, res: any) => {
+  const { fromX, fromY, toX, toY, button = 1, steps = 1, delayMs = 0 } = req.body as {
+    fromX?: number; fromY?: number; toX?: number; toY?: number; button?: number; steps?: number; delayMs?: number;
+  };
+  if (typeof toX !== 'number' || typeof toY !== 'number') {
+    return res.status(400).json({ error: 'bad_request', message: 'toX and toY are required numbers' });
+  }
+  try {
+    let startX = fromX; let startY = fromY;
+    if (typeof startX !== 'number' || typeof startY !== 'number') {
+      // get current mouse position
+      const { stdout } = await execAsync('xdotool getmouselocation --shell', { encoding: 'utf8' });
+      const map: Record<string, string> = {};
+      for (const line of stdout.trim().split('\n')) {
+        const idx = line.indexOf('=');
+        if (idx > 0) map[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+      }
+      startX = Number(map['X'] || 0);
+      startY = Number(map['Y'] || 0);
+    }
+    // Move to start
+    await execFileAsync('xdotool', ['mousemove', `${startX}`, `${startY}`]);
+    // Mouse down
+    await execFileAsync('xdotool', ['mousedown', `${button}`]);
+    // Intermediate moves if steps > 1
+    const n = Math.max(1, Number(steps) || 1);
+    for (let i = 1; i <= n; i++) {
+      const ix = Math.round(startX + (i * (toX - startX)) / n);
+      const iy = Math.round(startY + (i * (toY - startY)) / n);
+      await execFileAsync('xdotool', ['mousemove', `${ix}`, `${iy}`]);
+      if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
+    }
+    // Mouse up
+    await execFileAsync('xdotool', ['mouseup', `${button}`]);
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: 'drag_failed', message: String(err) });
+  }
+});
+
+// POST /linux/scroll { direction: 'up'|'down'|'left'|'right', amount?: number, delayMs?: number }
+linux.post('/scroll', async (req: any, res: any) => {
+  const { direction, amount = 1, delayMs = 0 } = req.body as { direction?: string; amount?: number; delayMs?: number };
+  const dir = String(direction || '').toLowerCase();
+  const map: Record<string, number> = { up: 4, down: 5, left: 6, right: 7 };
+  if (!(dir in map)) {
+    return res.status(400).json({ error: 'bad_request', message: "direction must be one of 'up'|'down'|'left'|'right'" });
+  }
+  const btn = map[dir];
+  const n = Math.max(1, Number(amount) || 1);
+  const d = Math.max(0, Number(delayMs) || 0);
+  try {
+    await execFileAsync('xdotool', ['click', '--repeat', `${n}`, '--delay', `${d}`, `${btn}`]);
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: 'scroll_failed', message: String(err) });
   }
 });
 
@@ -153,12 +268,14 @@ linux.post('/app/open', async (req: any, res: any) => {
 
 // POST /linux/click
 linux.post('/click', async (req: any, res: any) => {
-  const { clicks = [], x, y, button } = req.body as {
-    clicks?: Array<{ x: number; y: number; button?: number }>;
-    x?: number; y?: number; button?: number;
+  const { clicks = [], x, y, button, repeat, delayMs, modifiers } = req.body as {
+    clicks?: Array<{ x: number; y: number; button?: number; repeat?: number; delayMs?: number; modifiers?: string[] }>;
+    x?: number; y?: number; button?: number; repeat?: number; delayMs?: number; modifiers?: string[];
   };
   try {
-    const list = Array.isArray(clicks) && clicks.length > 0 ? clicks : (typeof x === 'number' && typeof y === 'number' ? [{ x, y, button }] : []);
+    const list = Array.isArray(clicks) && clicks.length > 0
+      ? clicks
+      : (typeof x === 'number' && typeof y === 'number' ? [{ x, y, button, repeat, delayMs, modifiers }] : []);
     if (list.length === 0) return res.status(400).json({ error: 'bad_request', message: 'clicks or (x,y) required' });
     await performClicks(list);
     res.json({ status: 'ok' });
@@ -167,9 +284,9 @@ linux.post('/click', async (req: any, res: any) => {
   }
 });
 
-// POST /linux/type
+// POST /linux/type (supports key combos via nested arrays)
 linux.post('/type', async (req: any, res: any) => {
-  const { keys } = req.body as { keys?: string[] | string };
+  const { keys } = req.body as { keys?: string[] | string | Array<string | string[]> };
   if (keys === undefined) return res.status(400).json({ error: 'bad_request', message: 'keys required' });
   try {
     await performKeys(keys);

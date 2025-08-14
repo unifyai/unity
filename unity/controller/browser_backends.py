@@ -781,23 +781,59 @@ class MagnitudeDesktopBackend(BrowserBackend):
             except Exception:
                 return False
             button = int(args.get("button", 1) or 1)
+            # optional enhancements
+            repeat_val = None
+            delay_ms = None
+            modifiers_val = None
+            try:
+                if args.get("repeat") is not None:
+                    repeat_val = max(1, int(args.get("repeat")))
+            except Exception:
+                repeat_val = None
+            try:
+                if args.get("delayMs") is not None:
+                    delay_ms = max(0, int(args.get("delayMs")))
+            except Exception:
+                delay_ms = None
+            try:
+                if isinstance(args.get("modifiers"), list):
+                    modifiers_val = [str(m) for m in args.get("modifiers")]
+            except Exception:
+                modifiers_val = None
             if dims[0] > 0 and dims[1] > 0:
                 x_val = max(0, min(dims[0] - 1, x_val))
                 y_val = max(0, min(dims[1] - 1, y_val))
             mouse_before = None
             try:
-                mouse_before = await self._request("GET", "/linux/mouse")
+                mouse_before = await self._request("GET", "/linux/mouse/position")
             except Exception:
                 mouse_before = None
             await self._request(
                 "POST",
                 "/linux/click",
-                payload={"clicks": [{"x": x_val, "y": y_val, "button": button}]},
+                payload={
+                    "clicks": [
+                        {
+                            "x": x_val,
+                            "y": y_val,
+                            "button": button,
+                            **(
+                                {"repeat": repeat_val} if repeat_val is not None else {}
+                            ),
+                            **({"delayMs": delay_ms} if delay_ms is not None else {}),
+                            **(
+                                {"modifiers": modifiers_val}
+                                if modifiers_val is not None
+                                else {}
+                            ),
+                        },
+                    ],
+                },
             )
             await asyncio.sleep(0.2)
             mouse_after = None
             try:
-                mouse_after = await self._request("GET", "/linux/mouse")
+                mouse_after = await self._request("GET", "/linux/mouse/position")
             except Exception:
                 mouse_after = None
 
@@ -814,7 +850,36 @@ class MagnitudeDesktopBackend(BrowserBackend):
             return False
 
         if tool == "type_text":
-            text = str(args.get("text") or args.get("keys") or "")
+            # Support either plain text, or structured keys/combos
+            if args.get("keys") is not None:
+                keys_payload = args.get("keys")
+                try:
+                    await self._request(
+                        "POST",
+                        "/linux/type",
+                        payload={"keys": keys_payload},
+                    )
+                except Exception:
+                    return False
+                # best-effort typed history update
+                try:
+                    if isinstance(keys_payload, list):
+                        flat_parts: list[str] = []
+                        for item in keys_payload:
+                            if isinstance(item, list):
+                                if item:
+                                    flat_parts.append("+".join([str(x) for x in item]))
+                            else:
+                                flat_parts.append(str(item))
+                        if flat_parts:
+                            self._typed_history.append(" ".join(flat_parts))
+                    else:
+                        self._typed_history.append(str(keys_payload))
+                except Exception:
+                    pass
+                self._enter_after_last_type = False
+                return False
+            text = str(args.get("text") or "")
             if not text:
                 return False
             if text.endswith("\n"):
@@ -834,6 +899,86 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 and self._enter_after_last_type
             ):
                 return True
+            return False
+
+        if tool == "mouse_move":
+            try:
+                x_val = int(args.get("x"))
+                y_val = int(args.get("y"))
+            except Exception:
+                return False
+            if dims[0] > 0 and dims[1] > 0:
+                x_val = max(0, min(dims[0] - 1, x_val))
+                y_val = max(0, min(dims[1] - 1, y_val))
+            await self._request(
+                "POST",
+                "/linux/mouse/move",
+                payload={"x": x_val, "y": y_val},
+            )
+            return False
+
+        if tool == "drag":
+            # fromX/fromY optional; if absent service uses current pointer
+            def _opt(name: str):
+                try:
+                    val = args.get(name)
+                    return int(val) if val is not None else None
+                except Exception:
+                    return None
+
+            from_x = _opt("fromX")
+            from_y = _opt("fromY")
+            to_x = _opt("toX")
+            to_y = _opt("toY")
+            if to_x is None or to_y is None:
+                return False
+            if dims[0] > 0 and dims[1] > 0:
+                if from_x is not None:
+                    from_x = max(0, min(dims[0] - 1, from_x))
+                if from_y is not None:
+                    from_y = max(0, min(dims[1] - 1, from_y))
+                to_x = max(0, min(dims[0] - 1, to_x))
+                to_y = max(0, min(dims[1] - 1, to_y))
+            payload = {
+                **({"fromX": from_x} if from_x is not None else {}),
+                **({"fromY": from_y} if from_y is not None else {}),
+                "toX": to_x,
+                "toY": to_y,
+            }
+            try:
+                if args.get("button") is not None:
+                    payload["button"] = int(args.get("button"))
+            except Exception:
+                pass
+            try:
+                if args.get("steps") is not None:
+                    payload["steps"] = max(1, int(args.get("steps")))
+            except Exception:
+                pass
+            try:
+                if args.get("delayMs") is not None:
+                    payload["delayMs"] = max(0, int(args.get("delayMs")))
+            except Exception:
+                pass
+            await self._request("POST", "/linux/drag", payload=payload)
+            return False
+
+        if tool == "scroll":
+            direction = str(args.get("direction") or "").lower().strip()
+            if direction not in {"up", "down", "left", "right"}:
+                return False
+            payload = {"direction": direction}
+            try:
+                if args.get("amount") is not None:
+                    payload["amount"] = max(1, int(args.get("amount")))
+            except Exception:
+                pass
+            try:
+                if args.get("delayMs") is not None:
+                    payload["delayMs"] = max(0, int(args.get("delayMs")))
+            except Exception:
+                pass
+            await self._request("POST", "/linux/scroll", payload=payload)
             return False
 
         if tool == "type_and_enter":
@@ -871,46 +1016,38 @@ class MagnitudeDesktopBackend(BrowserBackend):
     # ------------------------------------------------------------------
 
     async def act(self, instruction: str, expectation: str = "") -> str:
-        """`instruction` should be a JSON string specifying clicks / keys.
+        """
+        Execute a high‑level, natural‑language desktop command via an LLM‑guided
+        tool loop that invokes modular `/linux/*` endpoints.
 
-        Example:
-            instruction = json.dumps({
-                "focusWindowTitle": "xterm",  # optional: focus a window by title before typing/clicking
-                "clicks": [{"x": 100, "y": 200, "button": 1}],
-                "keys": ["Hello", "Enter"]
-            })
+        The loop always reasons from a fresh desktop screenshot at each step and
+        selects the next atomic tool until the goal is achieved or a step limit
+        is reached.
 
-        If a non-JSON natural-language instruction is provided, this method
-        will enter a tool-selection loop (LLM-guided) using the available /linux
-        endpoints (exists/focus/type/press/click/screenshot) to pursue the goal.
+        Notes:
+        - Coordinates are clamped to the screenshot bounds.
+        - Modifiers: one or more of Shift, Ctrl, Alt, Super (Command/Win).
+        - App install is supported (e.g. via app_open with bash -lc or by typing
+          into a focused terminal). Prefer non‑interactive flags (e.g. -y).
+
+        Good instruction examples (high‑level, goal‑oriented):
+        - "Focus the 'xterm' window, type 'echo ready' and press Enter. Finish when 'ready' appears."
+        - "Install the 'cowsay' package and verify by running 'cowsay READY'."
+        - "Maximize the window titled 'xterm'."
+        - "Open the file manager and drag the window to the right half of the screen."
+
+        Bad instruction examples (overly low‑level or ambiguous):
+        - "Move to (250,400), click, then move to (300,420) and click again" (prefer a goal like
+          "Click the 'OK' button" or describe the visible target).
+        - "Press the key with code 38" (use human‑readable key names or plain text typing).
+        - "Close the hidden window with PID 1234" (decide from visible state; use title/class).
+
+        Returns:
+        - "success" (or the provided expectation string) when the loop decides the goal is met,
+          possibly after typing and pressing Enter.
+        - "incomplete" if no completion signal is detected before the step budget expires.
         """
         import json
-
-        # If the instruction is a JSON payload, preserve existing behavior
-        try:
-            payload = json.loads(instruction)
-            if isinstance(payload, dict):
-                # Back-compat: map legacy fields to new modular endpoints
-                focus_title = payload.get("focusWindowTitle")
-                if isinstance(focus_title, str) and focus_title.strip():
-                    await self._request(
-                        "POST",
-                        "/linux/window/focus",
-                        payload={"title": focus_title},
-                    )
-                clicks = payload.get("clicks") or []
-                if isinstance(clicks, list) and clicks:
-                    await self._request(
-                        "POST",
-                        "/linux/click",
-                        payload={"clicks": clicks},
-                    )
-                keys = payload.get("keys") or []
-                if isinstance(keys, list) and keys:
-                    await self._request("POST", "/linux/type", payload={"keys": keys})
-                return expectation or "ok"
-        except json.JSONDecodeError:
-            pass
 
         # High-level NL instruction path: LLM tool loop
         try:
@@ -924,7 +1061,11 @@ class MagnitudeDesktopBackend(BrowserBackend):
         class NextAction(BaseModel):
             tool: str = Field(
                 ...,
-                description="One of: exists_window, focus_window, list_windows, list_windows_extended, move_window, resize_window, set_window_state, app_open, app_focus, app_close, type_text, type_and_enter, click_at, press_enter, done",
+                description=(
+                    "One of: exists_window, focus_window, list_windows, list_windows_extended, "
+                    "move_window, resize_window, set_window_state, app_open, app_focus, app_close, "
+                    "type_text, type_and_enter, click_at, mouse_move, drag, scroll, press_enter, done"
+                ),
             )
             args: dict = Field(default_factory=dict)
             reason: str | None = None
@@ -945,9 +1086,12 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "- app_open: args {cmd, args?, cwd?, wait?} — launch an application/command.\n"
             "- app_focus: args {title|class} — focus a running app window (alias of focus_window).\n"
             "- app_close: args {title|class} — close a running app by its window(s).\n"
-            "- type_text: args {text} — type the given text into the active window.\n"
+            "- type_text: args {text | keys} — either plain text, or keys (supports combos as nested arrays, e.g., ['ctrl','c'] or ['ctrl','shift','t']).\n"
             "- type_and_enter: args {text} — type the given text and then press Enter.\n"
-            "- click_at: args {x, y, button?} — click at pixel coordinates (0,0 top-left). Button defaults to 1.\n"
+            "- click_at: args {x, y, button?, repeat?, delayMs?, modifiers?[]} — click at pixel coordinates.\n"
+            "- mouse_move: args {x, y} — move/hover the pointer without clicking.\n"
+            "- drag: args {fromX?, fromY?, toX, toY, button?, steps?, delayMs?} — click-drag between points.\n"
+            "- scroll: args {direction:'up'|'down'|'left'|'right', amount?, delayMs?} — scroll wheel events.\n"
             "- press_enter: args {} — press the Enter key.\n"
             "- done: args {} — when the goal is achieved.\n"
             "You can install apps/packages by running shell commands. If no terminal is open, prefer app_open with cmd='bash' and args=['-lc', '<install command>'] (e.g., 'sudo apt-get update && sudo apt-get install -y <pkg>'). If a terminal (e.g., xterm) is already open, focus_window it and use click_at/type_text/press_enter to run commands. Use non-interactive flags (-y, -q, --no-install-recommends) to avoid prompts.\n"
