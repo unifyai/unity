@@ -984,6 +984,22 @@ async def _async_tool_use_loop_inner(
                     f"❌ [{loop_id}] Error: {name} failed "
                     f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
                 )
+                # Additional debug context: show the exact tool schema and arguments
+                # that were presented to the LLM for this failed call. This helps
+                # diagnose docstrings/argspec mismatches that cause tool misuse.
+                try:
+                    debug_payload = {
+                        "tool_name": name,
+                        "call_id": call_id,
+                        "llm_function_schema": info.get("tool_schema"),
+                        "llm_arguments": info.get("llm_arguments"),
+                        "raw_arguments_json": info.get("raw_arguments_json"),
+                    }
+                    LOGGER.error(
+                        f"🧩 [{loop_id}] FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
+                    )
+                except Exception:
+                    pass
 
         # 3️⃣  remember so later `_continue_*` helpers can answer instantly
         completed_results[call_id] = result
@@ -1260,6 +1276,10 @@ async def _async_tool_use_loop_inner(
             "clar_up_q": clar_up_q,
             "clar_down_q": clar_down_q,
             "pause_event": pause_ev,
+            # Debug helpers for failure logging
+            "tool_schema": method_to_schema(fn, name),
+            "llm_arguments": allowed_call_args,
+            "raw_arguments_json": args_json,
         }
 
         if clar_up_q is not None:
@@ -2610,6 +2630,13 @@ async def _async_tool_use_loop_inner(
                             "clar_up_q": None,
                             "clar_down_q": None,
                             "pause_event": None,
+                            # Debug helpers for failure logging
+                            "tool_schema": method_to_schema(
+                                fn,
+                                include_class_name=include_class_in_dynamic_tool_names,
+                            ),
+                            "llm_arguments": allowed_call_args,
+                            "raw_arguments_json": call["function"]["arguments"],
                         }
                     else:
                         # ⇢ counts only "real" (base) tool invocations
