@@ -150,6 +150,16 @@ Anti‑patterns to avoid
     # ─ Clarification guidance ─
     clar_section = clarification_guidance(tools)
 
+    # ─ Special contacts guidance ─
+    special_contacts_block = textwrap.dedent(
+        """
+        Special contacts
+        ----------------
+        • contact_id==0 is the assistant (this agent). Do not include the assistant in suggestions, rankings, or comparisons unless it makes sense from the broader context.
+        • contact_id==1 is the central user (the assistant's supervisor). Many requests originate from this user; do not propose the central user as a candidate unless it makes sense from the broader context.
+        """,
+    ).strip()
+
     activity_block = "{broader_context}" if include_activity else ""
 
     return "\n".join(
@@ -166,6 +176,8 @@ Anti‑patterns to avoid
             "",
             "Tools (name → argspec):",
             sig_json,
+            "",
+            special_contacts_block,
             "",
             usage_examples,
             "",
@@ -296,6 +308,16 @@ Anti‑patterns to avoid
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
+    # ─ Special contacts guidance ─
+    special_contacts_block = textwrap.dedent(
+        """
+        Special contacts
+        ----------------
+        • contact_id==0 is the assistant (this agent). Do not include the assistant in suggestions, rankings, or comparisons unless it makes sense from the broader context.
+        • contact_id==1 is the central user (the assistant's supervisor). Many requests originate from this user; do not propose the central user as a candidate unless it makes sense from the broader context.
+        """,
+    ).strip()
+
     return "\n".join(
         [
             activity_block,
@@ -308,6 +330,8 @@ Anti‑patterns to avoid
             "",
             "Tools (name → argspec):",
             sig_json,
+            "",
+            special_contacts_block,
             "",
             usage_examples,
             "",
