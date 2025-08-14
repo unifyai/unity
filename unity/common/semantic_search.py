@@ -170,6 +170,7 @@ def ensure_mean_cosine_column_piecewise(
                 "key": key,
                 "equation": equation,
                 "referenced_logs": {"lg": {"context": context}},
+                "derived": False,
             }
             resp = requests.request("POST", url, json=json_input, headers=headers)
             _handle_exceptions(resp)
@@ -185,13 +186,14 @@ def ensure_mean_cosine_column_piecewise(
                 "key": key,
                 "equation": equation,
                 "referenced_logs": {"lg": {"context": context}},
+                "derived": False,
             }
             resp = requests.request("POST", url, json=json_input, headers=headers)
             _handle_exceptions(resp)
 
     # Build the final mean equation from the per-term columns
-    numerator = " + ".join(num_keys) if num_keys else "0"
-    denominator = " + ".join(den_keys) if den_keys else "0"
+    numerator = " + ".join(["{lg:" + k + "}" for k in num_keys]) if num_keys else "0"
+    denominator = " + ".join(["{lg:" + k + "}" for k in den_keys]) if den_keys else "0"
     sum_equation = f"(({numerator}) / ({denominator})) if (({denominator}) > 0) else 2"
 
     # Create the piecewise mean column
@@ -205,10 +207,16 @@ def ensure_mean_cosine_column_piecewise(
             "key": sum_key,
             "equation": sum_equation,
             "referenced_logs": {"lg": {"context": context}},
+            "derived": False,
         }
         resp = requests.request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(resp)
 
+    # Uncomment once this bug (https://app.clickup.com/t/86c50z6hg) is fixed
+    # unify.delete_fields(
+    #     num_keys + den_keys,
+    #     context=context,
+    # )
     return sum_key
 
 
