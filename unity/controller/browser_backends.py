@@ -651,7 +651,24 @@ class MagnitudeDesktopBackend(BrowserBackend):
         try:
             payload = json.loads(instruction)
             if isinstance(payload, dict):
-                await self._request("POST", "/linux/act", payload=payload)
+                # Back-compat: map legacy fields to new modular endpoints
+                focus_title = payload.get("focusWindowTitle")
+                if isinstance(focus_title, str) and focus_title.strip():
+                    await self._request(
+                        "POST",
+                        "/linux/window/focus",
+                        payload={"title": focus_title},
+                    )
+                clicks = payload.get("clicks") or []
+                if isinstance(clicks, list) and clicks:
+                    await self._request(
+                        "POST",
+                        "/linux/click",
+                        payload={"clicks": clicks},
+                    )
+                keys = payload.get("keys") or []
+                if isinstance(keys, list) and keys:
+                    await self._request("POST", "/linux/type", payload={"keys": keys})
                 return expectation or "ok"
         except json.JSONDecodeError:
             pass
@@ -834,7 +851,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 try:
                     res = await self._request(
                         "GET",
-                        f"/linux/exists?windowTitle={requests.utils.quote(title)}",
+                        f"/linux/window/exist?windowTitle={requests.utils.quote(title)}",
                     )
                     last_exists[title] = bool(res.get("exists", False))
                 except Exception:
@@ -856,11 +873,8 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     if target_cmd:
                         await self._request(
                             "POST",
-                            "/linux/act",
-                            payload={
-                                "focusWindowTitle": title,
-                                "keys": [target_cmd, "Enter"],
-                            },
+                            "/linux/type",
+                            payload={"keys": [target_cmd, "Enter"]},
                         )
                         typed_history.append(target_cmd)
                         enter_after_last_type = True
@@ -870,16 +884,16 @@ class MagnitudeDesktopBackend(BrowserBackend):
                         # At least press enter once to move the prompt
                         await self._request(
                             "POST",
-                            "/linux/act",
-                            payload={"focusWindowTitle": title, "keys": ["Enter"]},
+                            "/linux/type",
+                            payload={"keys": ["Enter"]},
                         )
                         await asyncio.sleep(0.2)
                         continue
 
                 await self._request(
                     "POST",
-                    "/linux/act",
-                    payload={"focusWindowTitle": title},
+                    "/linux/window/focus",
+                    payload={"title": title},
                 )
                 last_focus_title = title
                 # After focusing, encourage progress
@@ -905,7 +919,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     mouse_before = None
                 await self._request(
                     "POST",
-                    "/linux/act",
+                    "/linux/click",
                     payload={"clicks": [{"x": x_val, "y": y_val, "button": button}]},
                 )
                 await asyncio.sleep(0.2)
@@ -938,17 +952,17 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 # Interpret trailing newline as Enter
                 if text.endswith("\n"):
                     text = text[:-1]
-                    await self._request("POST", "/linux/act", payload={"keys": [text]})
+                    await self._request("POST", "/linux/type", payload={"keys": [text]})
                     await self._request(
                         "POST",
-                        "/linux/act",
+                        "/linux/type",
                         payload={"keys": ["Enter"]},
                     )
                     typed_history.append(text)
                     enter_after_last_type = True
                     await asyncio.sleep(0.4)
                 else:
-                    await self._request("POST", "/linux/act", payload={"keys": [text]})
+                    await self._request("POST", "/linux/type", payload={"keys": [text]})
                     typed_history.append(text)
                     enter_after_last_type = False
                 # Heuristic completion: if target command typed and enter pressed
@@ -966,7 +980,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     continue
                 await self._request(
                     "POST",
-                    "/linux/act",
+                    "/linux/type",
                     payload={"keys": [text, "Enter"]},
                 )
                 typed_history.append(text)
@@ -977,7 +991,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 continue
 
             if tool == "press_enter":
-                await self._request("POST", "/linux/act", payload={"keys": ["Enter"]})
+                await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
                 # Heuristic completion: press after a type likely completes a command
                 if typed_history:
                     enter_after_last_type = True
@@ -1009,7 +1023,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 if "windowTitle" in parsed and isinstance(parsed["windowTitle"], str):
                     title = parsed["windowTitle"]
                     endpoint = (
-                        f"/linux/exists?windowTitle={requests.utils.quote(title)}"
+                        f"/linux/window/exist?windowTitle={requests.utils.quote(title)}"
                     )
                     exists_result = await self._request("GET", endpoint)
                 elif "templatePath" in parsed and isinstance(
@@ -1018,7 +1032,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 ):
                     tpl = parsed["templatePath"]
                     thr = parsed.get("threshold")
-                    qs = f"/linux/exists?templatePath={requests.utils.quote(tpl)}"
+                    qs = f"/linux/window/exist?templatePath={requests.utils.quote(tpl)}"
                     if isinstance(thr, (int, float, str)):
                         qs += f"&threshold={thr}"
                     exists_result = await self._request("GET", qs)

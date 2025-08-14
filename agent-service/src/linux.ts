@@ -10,6 +10,45 @@ const linux = express.Router();
 
 // Linux desktop automation endpoints
 
+// Helpers
+async function focusWindowByTitle(title: string): Promise<void> {
+  try {
+    await execFileAsync('wmctrl', ['-a', title]);
+  } catch (_e) {
+    await execFileAsync('xdotool', ['search', '--name', title, 'windowactivate', '--sync']);
+  }
+  await new Promise(r => setTimeout(r, 100));
+}
+
+async function performClicks(clicks: Array<{ x: number; y: number; button?: number }>): Promise<void> {
+  for (const { x, y, button = 1 } of clicks) {
+    await execFileAsync('xdotool', ['mousemove', `${x}`, `${y}`, 'click', `${button}`]);
+  }
+}
+
+async function performKeys(keys: string[] | string): Promise<void> {
+  const list = Array.isArray(keys) ? keys : [keys];
+  for (const k of list) {
+    if (k === 'Enter') {
+      await execFileAsync('xdotool', ['key', 'Return']);
+    } else {
+      await execFileAsync('xdotool', ['type', k]);
+    }
+  }
+}
+
+async function windowExistsByTitle(windowTitle: string): Promise<boolean> {
+  const { stdout } = await execAsync('wmctrl -l');
+  return stdout.split('\n').some((line: string) => line.includes(windowTitle));
+}
+
+async function templateExists(templatePath: string, threshold = '0.95'): Promise<{ exists: boolean; score: number }> {
+  const cmd = `import -window root png:- | compare -metric NCC -subimage-search - ${templatePath} null:`;
+  const { stderr } = await execAsync(cmd, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  const score = parseFloat(stderr.split(' ')[0]);
+  return { exists: score >= parseFloat(threshold), score };
+}
+
 // GET /linux/screenshot
 linux.get('/screenshot', async (_req: any, res: any) => {
   try {
@@ -47,64 +86,63 @@ linux.get('/mouse', async (_req: any, res: any) => {
   }
 });
 
-// POST /linux/act
-linux.post('/act', async (req: any, res: any) => {
-  const { clicks = [], keys = [], focusWindowTitle } = req.body as {
-    clicks?: Array<{ x: number; y: number; button?: number }>;
-    keys?: string[];
-    focusWindowTitle?: string;
-  };
+// POST /linux/window/focus
+linux.post('/window/focus', async (req: any, res: any) => {
+  const { title } = req.body as { title?: string };
+  if (!title || typeof title !== 'string' || !title.trim()) {
+    return res.status(400).json({ error: 'bad_request', message: 'title is required' });
+  }
   try {
-    // Optionally bring a window to the foreground by title
-    if (focusWindowTitle && typeof focusWindowTitle === 'string' && focusWindowTitle.trim().length > 0) {
-      try {
-        await execFileAsync('wmctrl', ['-a', focusWindowTitle]);
-      } catch (e) {
-        // Fallback to xdotool if wmctrl fails
-        try {
-          await execFileAsync('xdotool', ['search', '--name', focusWindowTitle, 'windowactivate', '--sync']);
-        } catch (e2) {
-          return res.status(404).json({ error: 'focus_failed', message: `Could not focus window with title: ${focusWindowTitle}` });
-        }
-      }
-      // small settle delay
-      await new Promise(r => setTimeout(r, 100));
-    }
-
-    for (const { x, y, button = 1 } of clicks) {
-      await execFileAsync('xdotool', ['mousemove', `${x}`, `${y}`, 'click', `${button}`]);
-    }
-    for (const k of keys) {
-      if (k === 'Enter') {
-        await execFileAsync('xdotool', ['key', 'Return']);
-      } else {
-        await execFileAsync('xdotool', ['type', k]);
-      }
-    }
+    await focusWindowByTitle(title);
     res.json({ status: 'ok' });
   } catch (err) {
-    res.status(500).json({ error: 'act_failed', message: String(err) });
+    res.status(404).json({ error: 'focus_failed', message: String(err) });
   }
 });
 
-// GET /linux/exists
-linux.get('/exists', async (req: any, res: any) => {
+// GET /linux/window/exist  (migrated from /linux/exists)
+linux.get('/window/exist', async (req: any, res: any) => {
   const { windowTitle, templatePath, threshold = '0.95' } = req.query as any;
   try {
     if (windowTitle) {
-      const { stdout } = await execAsync('wmctrl -l');
-      const exists = stdout.split('\n').some((line: string) => line.includes(windowTitle));
+      const exists = await windowExistsByTitle(windowTitle);
       return res.json({ exists });
     }
     if (templatePath) {
-      const cmd = `import -window root png:- | compare -metric NCC -subimage-search - ${templatePath} null:`;
-      const { stderr } = await execAsync(cmd, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
-      const score = parseFloat(stderr.split(' ')[0]);
-      return res.json({ exists: score >= parseFloat(threshold), score });
+      const { exists, score } = await templateExists(templatePath, threshold);
+      return res.json({ exists, score });
     }
     res.status(400).json({ error: 'bad_request', message: 'windowTitle or templatePath required' });
   } catch (err) {
     res.status(500).json({ error: 'exists_failed', message: String(err) });
+  }
+});
+
+// POST /linux/click
+linux.post('/click', async (req: any, res: any) => {
+  const { clicks = [], x, y, button } = req.body as {
+    clicks?: Array<{ x: number; y: number; button?: number }>;
+    x?: number; y?: number; button?: number;
+  };
+  try {
+    const list = Array.isArray(clicks) && clicks.length > 0 ? clicks : (typeof x === 'number' && typeof y === 'number' ? [{ x, y, button }] : []);
+    if (list.length === 0) return res.status(400).json({ error: 'bad_request', message: 'clicks or (x,y) required' });
+    await performClicks(list);
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: 'click_failed', message: String(err) });
+  }
+});
+
+// POST /linux/type
+linux.post('/type', async (req: any, res: any) => {
+  const { keys } = req.body as { keys?: string[] | string };
+  if (keys === undefined) return res.status(400).json({ error: 'bad_request', message: 'keys required' });
+  try {
+    await performKeys(keys);
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: 'type_failed', message: String(err) });
   }
 });
 
