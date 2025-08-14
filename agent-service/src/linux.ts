@@ -1,6 +1,6 @@
 // @ts-nocheck
 import express from 'express';
-import { execFile, exec } from 'child_process';
+import { execFile, exec, spawn } from 'child_process';
 import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
@@ -16,6 +16,17 @@ async function focusWindowByTitle(title: string): Promise<void> {
     await execFileAsync('wmctrl', ['-a', title]);
   } catch (_e) {
     await execFileAsync('xdotool', ['search', '--name', title, 'windowactivate', '--sync']);
+  }
+  await new Promise(r => setTimeout(r, 100));
+}
+
+async function focusWindowByClass(className: string): Promise<void> {
+  try {
+    // wmctrl -x matches WM_CLASS; try to activate by class
+    await execFileAsync('wmctrl', ['-x', '-a', className]);
+  } catch (_e) {
+    // fallback to xdotool search by class
+    await execFileAsync('xdotool', ['search', '--class', className, 'windowactivate', '--sync']);
   }
   await new Promise(r => setTimeout(r, 100));
 }
@@ -59,6 +70,18 @@ async function resolveWindowId(id?: string, title?: string): Promise<string> {
   return token;
 }
 
+async function resolveWindowIdsByClass(className: string): Promise<string[]> {
+  try {
+    const { stdout } = await execAsync(`xdotool search --class ${className}`, { encoding: 'utf8' });
+    return stdout
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+  } catch {
+    return [];
+  }
+}
+
 // GET /linux/screenshot
 linux.get('/screenshot', async (_req: any, res: any) => {
   try {
@@ -96,6 +119,38 @@ linux.get('/mouse', async (_req: any, res: any) => {
   }
 });
 
+// POST /linux/app/open  { cmd, args?, cwd?, env?, wait? }
+linux.post('/app/open', async (req: any, res: any) => {
+  const { cmd, args = [], cwd, env = {}, wait = false } = req.body as {
+    cmd?: string; args?: string[]; cwd?: string; env?: Record<string, string>; wait?: boolean;
+  };
+  if (!cmd || typeof cmd !== 'string' || !cmd.trim()) {
+    return res.status(400).json({ error: 'bad_request', message: 'cmd is required' });
+  }
+  try {
+    const child = spawn(cmd, Array.isArray(args) ? args : [], {
+      cwd: cwd || process.cwd(),
+      env: { ...process.env, ...(env || {}) },
+      detached: true,
+      stdio: 'ignore',
+    });
+    const pid = child.pid;
+    if (wait) {
+      child.on('error', (e) => {});
+      child.unref();
+      child.on('exit', (code) => {
+        // no-op
+      });
+      return res.json({ pid, status: 'started' });
+    } else {
+      child.unref();
+      return res.json({ pid, status: 'started' });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: 'app_open_failed', message: String(err) });
+  }
+});
+
 // POST /linux/click
 linux.post('/click', async (req: any, res: any) => {
   const { clicks = [], x, y, button } = req.body as {
@@ -125,9 +180,29 @@ linux.post('/type', async (req: any, res: any) => {
 });
 
 // GET /linux/window (list)
-linux.get('/window', async (_req: any, res: any) => {
+linux.get('/window', async (req: any, res: any) => {
+  const { extended } = req.query as any;
   try {
-    // -lG: id, desktop, x, y, w, h, host, title
+    if (extended) {
+      // -lx -p: id, desktop, pid, class, host, title
+      const { stdout } = await execAsync('wmctrl -lx -p', { encoding: 'utf8' });
+      const windows = stdout
+        .split('\n')
+        .map((line: string) => line.trim())
+        .filter((line: string) => line.length > 0)
+        .map((line: string) => {
+          const parts = line.split(/\s+/);
+          const id = parts[0];
+          const desktop = Number(parts[1]);
+          const pid = Number(parts[2]);
+          const classRaw = parts[3]; // e.g. Xterm.XTerm
+          const host = parts[4];
+          const title = parts.slice(5).join(' ');
+          return { id, desktop, pid, class: classRaw, host, title };
+        });
+      return res.json({ windows });
+    }
+    // default: geometry if available
     const { stdout } = await execAsync('wmctrl -lG', { encoding: 'utf8' });
     const windows = stdout
       .split('\n')
@@ -148,7 +223,6 @@ linux.get('/window', async (_req: any, res: any) => {
     res.json({ windows });
   } catch (err) {
     try {
-      // Fallback to wmctrl -l (no geometry)
       const { stdout: alt } = await execAsync('wmctrl -l', { encoding: 'utf8' });
       const windows = alt
         .split('\n')
@@ -168,12 +242,16 @@ linux.get('/window', async (_req: any, res: any) => {
 
 // POST /linux/window/focus
 linux.post('/window/focus', async (req: any, res: any) => {
-  const { title } = req.body as { title?: string };
-  if (!title || typeof title !== 'string' || !title.trim()) {
-    return res.status(400).json({ error: 'bad_request', message: 'title is required' });
+  const { title, class: klass } = req.body as { title?: string; class?: string };
+  if ((!title || !title.trim()) && (!klass || !klass.trim())) {
+    return res.status(400).json({ error: 'bad_request', message: 'title or class is required' });
   }
   try {
-    await focusWindowByTitle(title);
+    if (klass && klass.trim()) {
+      await focusWindowByClass(klass.trim());
+    } else if (title && title.trim()) {
+      await focusWindowByTitle(title.trim());
+    }
     res.json({ status: 'ok' });
   } catch (err) {
     res.status(404).json({ error: 'focus_failed', message: String(err) });
@@ -228,26 +306,38 @@ linux.post('/window/resize', async (req: any, res: any) => {
   }
 });
 
-// POST /linux/window/state  { id|title, action: minimize|maximize|restore|close }
+// POST /linux/window/state  { id|title|class, action: minimize|maximize|restore|close }
 linux.post('/window/state', async (req: any, res: any) => {
-  const { id, title, action } = req.body as { id?: string; title?: string; action?: string };
+  const { id, title, class: klass, action } = req.body as { id?: string; title?: string; class?: string; action?: string };
   const valid = new Set(['minimize', 'maximize', 'restore', 'close']);
   if (!action || !valid.has(action)) {
     return res.status(400).json({ error: 'bad_request', message: 'action must be one of minimize|maximize|restore|close' });
   }
   try {
-    const win = await resolveWindowId(id, title);
-    if (action === 'minimize') {
-      await execFileAsync('xdotool', ['windowminimize', win]);
-    } else if (action === 'maximize') {
-      await execFileAsync('wmctrl', ['-ir', win, '-b', 'add,maximized_vert,maximized_horz']);
-    } else if (action === 'restore') {
-      await execFileAsync('wmctrl', ['-ir', win, '-b', 'remove,maximized_vert,maximized_horz']);
-      await execFileAsync('xdotool', ['windowmap', win]);
-    } else if (action === 'close') {
-      await execFileAsync('xdotool', ['windowclose', win]);
+    const doForId = async (winId: string) => {
+      if (action === 'minimize') {
+        await execFileAsync('xdotool', ['windowminimize', winId]);
+      } else if (action === 'maximize') {
+        await execFileAsync('wmctrl', ['-ir', winId, '-b', 'add,maximized_vert,maximized_horz']);
+      } else if (action === 'restore') {
+        await execFileAsync('wmctrl', ['-ir', winId, '-b', 'remove,maximized_vert,maximized_horz']);
+        await execFileAsync('xdotool', ['windowmap', winId]);
+      } else if (action === 'close') {
+        await execFileAsync('xdotool', ['windowclose', winId]);
+      }
+    };
+
+    if (klass && klass.trim()) {
+      const ids = await resolveWindowIdsByClass(klass.trim());
+      for (const wid of ids) {
+        await doForId(wid);
+      }
+      return res.json({ status: 'ok', affected: ids.length });
     }
-    res.json({ status: 'ok' });
+
+    const win = await resolveWindowId(id, title);
+    await doForId(win);
+    res.json({ status: 'ok', affected: 1 });
   } catch (err) {
     res.status(500).json({ error: 'state_failed', message: String(err) });
   }

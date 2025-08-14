@@ -681,6 +681,14 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 self._last_windows = []
             return False
 
+        if tool == "list_windows_extended":
+            try:
+                res = await self._request("GET", "/linux/window?extended=1")
+                self._last_windows = res.get("windows", []) or []
+            except Exception:
+                self._last_windows = []
+            return False
+
         if tool == "move_window":
             id_val = args.get("id")
             title_val = args.get("title")
@@ -721,6 +729,48 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 "POST",
                 "/linux/window/state",
                 payload={"id": id_val, "title": title_val, "action": action_val},
+            )
+            return False
+
+        if tool == "app_open":
+            cmd = args.get("cmd")
+            if not cmd:
+                return False
+            payload = {
+                "cmd": cmd,
+                "args": args.get("args") or [],
+                "cwd": args.get("cwd"),
+                "wait": bool(args.get("wait", False)),
+            }
+            # Optional env omitted for safety unless explicitly passed
+            if isinstance(args.get("env"), dict):
+                payload["env"] = args.get("env")
+            await self._request("POST", "/linux/app/open", payload=payload)
+            return False
+
+        if tool == "app_focus":
+            title_val = args.get("title")
+            class_val = args.get("class")
+            if not (title_val or class_val):
+                return False
+            await self._request(
+                "POST",
+                "/linux/window/focus",
+                payload={"title": title_val, "class": class_val},
+            )
+            self._last_focus_title = str(title_val or self._last_focus_title or "")
+            self._enter_after_last_type = False
+            return False
+
+        if tool == "app_close":
+            title_val = args.get("title")
+            class_val = args.get("class")
+            if not (title_val or class_val):
+                return False
+            await self._request(
+                "POST",
+                "/linux/window/state",
+                payload={"title": title_val, "class": class_val, "action": "close"},
             )
             return False
 
@@ -874,7 +924,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
         class NextAction(BaseModel):
             tool: str = Field(
                 ...,
-                description="One of: exists_window, focus_window, list_windows, move_window, resize_window, set_window_state, type_text, type_and_enter, click_at, press_enter, done",
+                description="One of: exists_window, focus_window, list_windows, list_windows_extended, move_window, resize_window, set_window_state, app_open, app_focus, app_close, type_text, type_and_enter, click_at, press_enter, done",
             )
             args: dict = Field(default_factory=dict)
             reason: str | None = None
@@ -886,16 +936,21 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "Return ONLY JSON matching the response schema.\n"
             "Available tools (tool field):\n"
             "- exists_window: args {title} — check if a window with given title exists.\n"
-            "- focus_window: args {title} — bring the window to front.\n"
-            "- list_windows: args {} — list all windows; you will receive their id, geometry and title.\n"
+            "- focus_window: args {title|class} — bring a window to front by title or WM_CLASS.\n"
+            "- list_windows: args {} — list windows; you will receive id, geometry and title.\n"
+            "- list_windows_extended: args {} — list windows with pid/class using wmctrl -lx -p.\n"
             "- move_window: args {id|title, x, y} — move a window.\n"
             "- resize_window: args {id|title, w, h} — resize a window.\n"
             "- set_window_state: args {id|title, action} — action in {minimize|maximize|restore|close}.\n"
+            "- app_open: args {cmd, args?, cwd?, wait?} — launch an application/command.\n"
+            "- app_focus: args {title|class} — focus a running app window (alias of focus_window).\n"
+            "- app_close: args {title|class} — close a running app by its window(s).\n"
             "- type_text: args {text} — type the given text into the active window.\n"
             "- type_and_enter: args {text} — type the given text and then press Enter.\n"
             "- click_at: args {x, y, button?} — click at pixel coordinates (0,0 top-left). Button defaults to 1.\n"
             "- press_enter: args {} — press the Enter key.\n"
             "- done: args {} — when the goal is achieved.\n"
+            "You can install apps/packages by running shell commands. If no terminal is open, prefer app_open with cmd='bash' and args=['-lc', '<install command>'] (e.g., 'sudo apt-get update && sudo apt-get install -y <pkg>'). If a terminal (e.g., xterm) is already open, focus_window it and use click_at/type_text/press_enter to run commands. Use non-interactive flags (-y, -q, --no-install-recommends) to avoid prompts.\n"
             "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n"
             "You will also receive screen width/height (pixels). Ensure coordinates are within bounds.\n"
             "Avoid repeating the same tool more than once in a row; after focusing a window, prefer typing or clicking next.\n"
@@ -1029,9 +1084,13 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 recent_steps.append(f"click_at({x_dbg},{y_dbg})")
             elif tool in (
                 "list_windows",
+                "list_windows_extended",
                 "move_window",
                 "resize_window",
                 "set_window_state",
+                "app_open",
+                "app_focus",
+                "app_close",
             ):
                 recent_steps.append(tool)
             else:
