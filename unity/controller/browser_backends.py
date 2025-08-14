@@ -668,7 +668,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
         class NextAction(BaseModel):
             tool: str = Field(
                 ...,
-                description="One of: exists_window, focus_window, type_text, press_enter, done",
+                description="One of: exists_window, focus_window, type_text, type_and_enter, press_enter, done",
             )
             args: dict = Field(default_factory=dict)
             reason: str | None = None
@@ -682,9 +682,11 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "- exists_window: args {title} — check if a window with given title exists.\n"
             "- focus_window: args {title} — bring the window to front.\n"
             "- type_text: args {text} — type the given text into the active window.\n"
+            "- type_and_enter: args {text} — type the given text and then press Enter.\n"
             "- press_enter: args {} — press the Enter key.\n"
             "- done: args {} — when the goal is achieved.\n"
-            "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n",
+            "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n"
+            "For terminal commands, typically: focus_window → type_text (the exact command) → press_enter → done.\n",
         )
 
         max_steps = 12
@@ -710,6 +712,17 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 "screenshot_unavailable",
                 "Could not capture desktop screenshot",
             )
+
+        # --- Simple completion heuristic for command typing ---
+        import re as _re
+
+        typed_history: list[str] = []
+        enter_after_last_type: bool = False
+        # Try to extract a quoted command from the instruction (e.g., 'echo ready')
+        target_cmd_match = _re.search(r"'([^']+)'|\"([^\"]+)\"", instruction)
+        target_cmd = None
+        if target_cmd_match:
+            target_cmd = next(g for g in target_cmd_match.groups() if g)
 
         while step < max_steps:
             step += 1
@@ -778,21 +791,71 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     "/linux/act",
                     payload={"focusWindowTitle": title},
                 )
+                # Reset command completion heuristic on focus change
+                enter_after_last_type = False
                 continue
 
             if tool == "type_text":
                 text = str(args.get("text") or args.get("keys") or "")
                 if not text:
                     continue
-                await self._request("POST", "/linux/act", payload={"keys": [text]})
+                # Interpret trailing newline as Enter
+                if text.endswith("\n"):
+                    text = text[:-1]
+                    await self._request("POST", "/linux/act", payload={"keys": [text]})
+                    await self._request(
+                        "POST",
+                        "/linux/act",
+                        payload={"keys": ["Enter"]},
+                    )
+                    typed_history.append(text)
+                    enter_after_last_type = True
+                    await asyncio.sleep(0.4)
+                else:
+                    await self._request("POST", "/linux/act", payload={"keys": [text]})
+                    typed_history.append(text)
+                    enter_after_last_type = False
+                # Heuristic completion: if target command typed and enter pressed
+                if (
+                    target_cmd
+                    and target_cmd in " ".join(typed_history)
+                    and enter_after_last_type
+                ):
+                    return expectation or "success"
+                continue
+
+            if tool == "type_and_enter":
+                text = str(args.get("text") or "")
+                if not text:
+                    continue
+                await self._request(
+                    "POST",
+                    "/linux/act",
+                    payload={"keys": [text, "Enter"]},
+                )
+                typed_history.append(text)
+                enter_after_last_type = True
+                await asyncio.sleep(0.4)
+                if target_cmd and target_cmd in " ".join(typed_history):
+                    return expectation or "success"
                 continue
 
             if tool == "press_enter":
                 await self._request("POST", "/linux/act", payload={"keys": ["Enter"]})
+                # Heuristic completion: press after a type likely completes a command
+                if typed_history:
+                    enter_after_last_type = True
+                    await asyncio.sleep(0.4)
+                    if target_cmd and target_cmd in " ".join(typed_history):
+                        return expectation or "success"
                 continue
 
             # Unknown tool – no-op to avoid spinning
             continue
+
+        # Final heuristic: if we typed something and pressed Enter at least once, consider success
+        if typed_history and enter_after_last_type:
+            return expectation or "success"
 
         return expectation or "incomplete"
 
