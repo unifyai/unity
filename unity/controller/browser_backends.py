@@ -310,20 +310,6 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     continue
                 raise
 
-    async def _pointer_context_line(self) -> str:
-        """Return 'Pointer: x=.. y=.. screen=.. window=..' or empty string on failure."""
-        try:
-            mouse = await self._request("GET", "/linux/mouse/position")
-            if isinstance(mouse, dict):
-                px = mouse.get("x")
-                py = mouse.get("y")
-                scr = mouse.get("screen")
-                win = mouse.get("window")
-                return f"Mouse/Pointer: x={px} y={py} screen={scr} window={win}"
-        except Exception:
-            pass
-        return ""
-
     async def act(self, instruction: str, expectation: str = "") -> str:
         """
         Executes a high-level browser task using the Magnitude BrowserAgent.
@@ -649,6 +635,20 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
                 raise
+
+    async def _pointer_context_line(self) -> str:
+        """Return 'Mouse/Pointer: x=.. y=.. screen=.. window=..' or empty string on failure."""
+        try:
+            mouse = await self._request("GET", "/linux/mouse/position")
+            if isinstance(mouse, dict):
+                px = mouse.get("x")
+                py = mouse.get("y")
+                scr = mouse.get("screen")
+                win = mouse.get("window")
+                return f"Mouse/Pointer: x={px} y={py} screen={scr} window={win}"
+        except Exception:
+            pass
+        return ""
 
     # Private helper to execute a selected tool step and update context
     async def _execute_tool(self, tool: str, args: dict, dims: tuple[int, int]) -> bool:
