@@ -227,6 +227,13 @@ def _dumps(
         ret = {k: _dumps(v, idx + ["k"]) for k, v in obj.items()}
     elif isinstance(obj, list):
         ret = [_dumps(v, idx + [i]) for i, v in enumerate(obj)]
+    elif isinstance(obj, set):
+        # Convert sets to a sorted list for deterministic, JSON-serialisable output
+        try:
+            ret = sorted(_dumps(v, idx + [i]) for i, v in enumerate(sorted(obj)))
+        except Exception:
+            # Fallback: best-effort conversion preserving insertion order where possible
+            ret = [_dumps(v, idx + [i]) for i, v in enumerate(list(obj))]
     elif isinstance(obj, tuple):
         ret = tuple(_dumps(v, idx + [i]) for i, v in enumerate(obj))
     else:
