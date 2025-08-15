@@ -40,6 +40,7 @@ import aiohttp
 import logging
 import sys
 import time
+from datetime import datetime
 import wave
 from contextlib import contextmanager
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
@@ -877,9 +878,16 @@ def configure_sandbox_logging(
             _bh.setFormatter(_fmt)
             root_logger.addHandler(_bh)
             _actual = _srv._port
+            # Also write a full-session copy to a hidden, timestamped file in CWD
+            _ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            _hidden_name = f".logs_{_ts}.txt"
+            _fh_all = _logging.FileHandler(_hidden_name, mode="w", encoding="utf-8")
+            _fh_all.setFormatter(_fmt)
+            root_logger.addHandler(_fh_all)
             print(
                 f"📡 Log stream on 127.0.0.1:{_actual} – connect via: nc 127.0.0.1 {_actual} (Ctrl-C to detach)",
             )
+            print(f"📝 Full session logs: {_hidden_name}")
         except Exception as _exc:
             print(f"⚠️  Failed to start log TCP stream on port {tcp_port}: {_exc}")
 
