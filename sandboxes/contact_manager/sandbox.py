@@ -270,20 +270,29 @@ async def _main_async() -> None:
                         print("⚠️  No description provided – cancelled.")
                         continue
 
-                print(
-                    "[generate] Building synthetic contacts – this can take a moment…",
-                )
                 if args.voice:
-                    _speak_wait("Sure thing, building your custom scenario now.")
-                try:
-                    await _build_scenario(description)
-                    if args.voice:
+                    task = asyncio.create_task(_build_scenario(description))
+                    _speak_wait("Got it, working on your custom scenario now.")
+                    print(
+                        "[generate] Building synthetic contacts – this can take a moment…",
+                    )
+                    try:
+                        await task
                         _speak_wait(
                             "All done, your custom scenario is built and ready to go.",
                         )
-                except Exception as exc:
-                    LG.error("Scenario generation failed: %s", exc, exc_info=True)
-                    print(f"❌  Failed to generate scenario: {exc}")
+                    except Exception as exc:
+                        LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                        print(f"❌  Failed to generate scenario: {exc}")
+                else:
+                    print(
+                        "[generate] Building synthetic contacts – this can take a moment…",
+                    )
+                    try:
+                        await _build_scenario(description)
+                    except Exception as exc:
+                        LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                        print(f"❌  Failed to generate scenario: {exc}")
                 continue  # back to REPL
 
             if cmd_lower in {"usv", "update_scenario_vocally"}:
@@ -300,15 +309,16 @@ async def _main_async() -> None:
                     continue
                 print(f"▶️  {description}")
 
+                task = asyncio.create_task(_build_scenario(description))
+                _speak_wait("Got it, working on your custom scenario now.")
                 print(
                     "[generate] Building synthetic contacts – this can take a moment…",
                 )
                 try:
-                    await _build_scenario(description)
-                    if args.voice:
-                        _speak_wait(
-                            "All done, your custom scenario is built and ready to go.",
-                        )
+                    await task
+                    _speak_wait(
+                        "All done, your custom scenario is built and ready to go.",
+                    )
                 except Exception as exc:
                     LG.error("Scenario generation failed: %s", exc, exc_info=True)
                     print(f"❌  Failed to generate scenario: {exc}")
