@@ -1444,6 +1444,19 @@ class MagnitudeDesktopBackend(BrowserBackend):
         if screen_w is not None and screen_h is not None:
             statement_txt += f"\nScreen: width={screen_w} height={screen_h} (pixels)"
 
+        # Include current mouse/pointer position for better spatial grounding
+        try:
+            mouse = await self._request("GET", "/linux/mouse/position")
+            if isinstance(mouse, dict):
+                px = mouse.get("x")
+                py = mouse.get("y")
+                scr = mouse.get("screen")
+                win = mouse.get("window")
+                statement_txt += f"\nPointer: x={px} y={py} screen={scr} window={win}"
+        except Exception:
+            # best-effort; ignore if service is unavailable
+            pass
+
         content = [
             {"type": "text", "text": statement_txt},
         ]
