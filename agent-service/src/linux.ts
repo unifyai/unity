@@ -129,31 +129,48 @@ async function resolveWindowIdsByClass(className: string): Promise<string[]> {
 }
 
 // GET /linux/screenshot
-linux.get('/screenshot', async (_req: any, res: any) => {
+linux.get('/screenshot', async (req: any, res: any) => {
   try {
+    const { save } = req.query as any;
+    const shouldSave = String(save || '').toLowerCase() === 'true' || save === '1';
     const { stdout } = await execAsync(
       `import -window root png:-`,
       { encoding: 'buffer', maxBuffer: 10 * 1024 * 1024 }
     );
-    res.json({ screenshot: (stdout as any).toString('base64') });
+    const buf: Buffer = stdout as any;
+    let filepath: string | undefined;
+    if (shouldSave) {
+      const iso = new Date().toISOString().replace(/[:.]/g, '-');
+      filepath = path.join(os.tmpdir(), `screenshot-${iso}.png`);
+      await fs.writeFile(filepath, buf);
+    }
+    res.json({ screenshot: buf.toString('base64'), saved: shouldSave, filepath });
   } catch (err) {
     res.status(500).json({ error: 'screenshot_failed', message: String(err) });
   }
 });
 
-// GET /linux/screenshot/region?x=&y=&w=&h=
+// GET /linux/screenshot/region?x=&y=&w=&h=&save=
 linux.get('/screenshot/region', async (req: any, res: any) => {
-  const { x, y, w, h } = req.query as any;
+  const { x, y, w, h, save } = req.query as any;
   const xi = Number(x), yi = Number(y), wi = Number(w), hi = Number(h);
   if (!Number.isFinite(xi) || !Number.isFinite(yi) || !Number.isFinite(wi) || !Number.isFinite(hi) || wi <= 0 || hi <= 0) {
     return res.status(400).json({ error: 'bad_request', message: 'valid x,y,w,h required' });
   }
   try {
+    const shouldSave = String(save || '').toLowerCase() === 'true' || save === '1';
     const { stdout } = await execAsync(
       `import -window root png:- | convert png:- -crop ${wi}x${hi}+${xi}+${yi} png:-`,
       { encoding: 'buffer', maxBuffer: 10 * 1024 * 1024 }
     );
-    res.json({ screenshot: (stdout as any).toString('base64') });
+    const buf: Buffer = stdout as any;
+    let filepath: string | undefined;
+    if (shouldSave) {
+      const iso = new Date().toISOString().replace(/[:.]/g, '-');
+      filepath = path.join(os.tmpdir(), `screenshot-region-${xi}-${yi}-${wi}x${hi}-${iso}.png`);
+      await fs.writeFile(filepath, buf);
+    }
+    res.json({ screenshot: buf.toString('base64'), saved: shouldSave, filepath });
   } catch (err) {
     res.status(500).json({ error: 'screenshot_region_failed', message: String(err) });
   }

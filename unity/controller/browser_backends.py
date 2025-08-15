@@ -501,6 +501,9 @@ class MagnitudeDesktopBackend(BrowserBackend):
         self._last_focus_title: str | None = None
         self._consecutive_repeat_count: int = 0
         self._target_cmd: str | None = None
+        # Track last two full desktop screenshots captured by the loop
+        self._prev_full_shot_b64: str = ""
+        self._curr_full_shot_b64: str = ""
 
     def _start_service(self, headless: bool):
         port = self._find_free_port()
@@ -760,6 +763,17 @@ class MagnitudeDesktopBackend(BrowserBackend):
             if isinstance(args.get("env"), dict):
                 payload["env"] = args.get("env")
             await self._request("POST", "/linux/app/open", payload=payload)
+            # Refresh window context to nudge LLM toward focus_window rather than re-open
+            try:
+                await asyncio.sleep(0.5)
+                res = await self._request("GET", "/linux/window?extended=1")
+                self._last_windows = res.get("windows", []) or []
+            except Exception:
+                try:
+                    res = await self._request("GET", "/linux/window")
+                    self._last_windows = res.get("windows", []) or []
+                except Exception:
+                    pass
             return False
 
         if tool == "app_focus":
@@ -786,6 +800,17 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 "/linux/window/state",
                 payload={"title": title_val, "class": class_val, "action": "close"},
             )
+            # Refresh window context after closing
+            try:
+                await asyncio.sleep(0.3)
+                res = await self._request("GET", "/linux/window?extended=1")
+                self._last_windows = res.get("windows", []) or []
+            except Exception:
+                try:
+                    res = await self._request("GET", "/linux/window")
+                    self._last_windows = res.get("windows", []) or []
+                except Exception:
+                    pass
             return False
 
         if tool == "click_at":
@@ -1326,7 +1351,10 @@ class MagnitudeDesktopBackend(BrowserBackend):
         while step < max_steps:
             step += 1
             # Mandatory screenshot for each step
+            # roll previous/current
+            self._prev_full_shot_b64 = getattr(self, "_curr_full_shot_b64", "")
             screenshot_b64 = await _must_get_screenshot()
+            self._curr_full_shot_b64 = screenshot_b64
             dims = _png_size_from_b64(screenshot_b64) or (0, 0)
 
             history_txt = " | ".join(recent_steps[-5:]) if recent_steps else "(none)"
@@ -1441,11 +1469,15 @@ class MagnitudeDesktopBackend(BrowserBackend):
         client = unify.Unify(endpoint="claude-4-sonnet@anthropic")
         client.set_response_format(Verify)
         client.set_system_message(
-            "You are a strict visual verifier. Determine if the user's statement is true for the current desktop screenshot.\n"
+            "You are a strict visual verifier. You may receive one or two screenshots: a previous ('before') and a current ('after').\n"
+            "Judge the statement against the current ('after') screenshot. If the statement implies a change (e.g., resized, moved), compare before vs after.\n"
             "Return only JSON with {matches: boolean, reason?: string}. Do not infer beyond visible evidence.\n",
         )
 
+        # capture and track current/previous screenshots
+        self._prev_full_shot_b64 = getattr(self, "_curr_full_shot_b64", "")
         screenshot_b64 = await self.get_screenshot()
+        self._curr_full_shot_b64 = screenshot_b64
 
         # Derive screen width/height from the PNG header, if available
         screen_w = screen_h = None
@@ -1473,10 +1505,20 @@ class MagnitudeDesktopBackend(BrowserBackend):
         except Exception:
             pass
 
-        content = [
-            {"type": "text", "text": statement_txt},
-        ]
+        content = [{"type": "text", "text": statement_txt}]
+        # Include BEFORE then AFTER images if available
+        if self._prev_full_shot_b64:
+            content.append({"type": "text", "text": "Previous (before):"})
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{self._prev_full_shot_b64}",
+                    },
+                },
+            )
         if screenshot_b64:
+            content.append({"type": "text", "text": "Current (after):"})
             content.append(
                 {
                     "type": "image_url",
@@ -1494,8 +1536,10 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "reason": out.reason,
         }
 
-    async def get_screenshot(self) -> str:
-        data = await self._request("GET", "/linux/screenshot")
+    async def get_screenshot(self, *, save: bool = False) -> str:
+        params = "?save=true" if save else ""
+        data = await self._request("GET", f"/linux/screenshot{params}")
+        # Optionally the caller can read data.get('filepath') if needed
         return data.get("screenshot", "")
 
     async def get_current_url(self) -> str:

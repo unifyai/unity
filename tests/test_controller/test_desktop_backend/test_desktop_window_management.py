@@ -136,3 +136,22 @@ async def test_close_and_reopen_xterm(backend):
         ),
         timeout=90,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(90)
+async def test_app_install_and_use_cowsay(backend):
+    # Ask the agent to install cowsay non-interactively and prove usage
+    instr = (
+        "If a terminal is available, use it; otherwise open one. "
+        "Install 'cowsay' using 'apt-get update -y && apt-get install -y cowsay' and then run 'cowsay READY'. "
+        "Finish when the word READY from cowsay is visible on screen."
+    )
+    await asyncio.wait_for(
+        _act_until_match(
+            backend,
+            instr,
+            "The terminal shows the word READY (from cowsay).",
+        ),
+        timeout=90,
+    )
