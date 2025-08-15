@@ -1253,8 +1253,8 @@ async def _async_tool_use_loop_inner(
             k: v for k, v in extra_kwargs.items() if k in params or has_varkw
         }
 
-        # Keep only supported call args
-        allowed_call_args = {k: v for k, v in call_args.items() if k in params}
+        # Forward ALL call args verbatim. Let the callee raise if unsupported.
+        allowed_call_args = call_args
         merged_kwargs = {**allowed_call_args, **filtered_extras}
 
         # Build coroutine
@@ -2603,9 +2603,8 @@ async def _async_tool_use_loop_inner(
                             for k, v in extra_kwargs.items()
                             if k in params or has_varkw
                         }
-                        allowed_call_args = {
-                            k: v for k, v in args.items() if k in params
-                        }
+                        # Forward ALL call args verbatim. Let the callee raise if unsupported.
+                        allowed_call_args = args
                         merged_kwargs = {**allowed_call_args, **filtered_extras}
 
                         if asyncio.iscoroutinefunction(fn):
