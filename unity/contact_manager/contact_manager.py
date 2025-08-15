@@ -954,6 +954,7 @@ class ContactManager(BaseContactManager):
             "pause_event",
             "clarification_up_q",
             "clarification_down_q",
+            "kwargs",
         }
         safe: Dict[str, Any] = {}
         for key, value in (custom_columns or {}).items():
@@ -1010,13 +1011,17 @@ class ContactManager(BaseContactManager):
         response_policy : str | None
             Optional policy text that qualifies how the assistant should respond to this
             contact. When omitted, a safe default policy is automatically applied.
-        kwargs : Any
-            Additional key/value pairs are treated as values for custom columns.
-            - Keys must be existing column names (snake_case) that are not part of the
-              built‑in ``Contact`` schema. Create new columns first via
-              ``_create_custom_column``.
-            - Values are stored as‑is. Choose appropriate types when creating the column
-              (e.g. ``str``, ``int``, ``bool``, ``list``, ``dict``).
+        Additional keyword arguments
+        ----------------------------
+        Any additional top‑level keyword arguments are treated as values for existing
+        custom columns.
+        - Keys must be existing column names (snake_case) that are not part of the
+          built‑in ``Contact`` schema. Create new columns first via
+          ``_create_custom_column``.
+        - Values are stored as‑is. Choose appropriate types when creating the column
+          (e.g. ``str``, ``int``, ``bool``, ``list``, ``dict``).
+        - Do not include a key literally named ``"kwargs"``. Pass custom fields
+          as top‑level keys instead.
 
         Returns
         -------
@@ -1159,10 +1164,13 @@ class ContactManager(BaseContactManager):
             unchanged.
         response_policy : str | None
             Override the contact‑specific response policy. Omit to leave unchanged.
-        kwargs : Any
-            Additional key/value updates for custom columns. Keys must be existing column
-            names (snake_case) that are not part of the built‑in ``Contact`` schema. Any key
-            with a ``None`` value is ignored. Pass custom columns directly as keyword arguments.
+        Additional keyword arguments
+        ----------------------------
+        Any additional top‑level keyword arguments are treated as updates for existing
+        custom columns. Keys must be existing column names (snake_case) that are not part of
+        the built‑in ``Contact`` schema. Any key with a ``None`` value is ignored.
+        Do not include a key literally named ``"kwargs"``; pass custom fields directly at
+        the top level.
 
         Returns
         -------
