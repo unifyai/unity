@@ -3,7 +3,7 @@ import inspect
 import threading
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
-from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
+from ..common.embed_utils import EMBED_MODEL, ensure_vector_column, list_private_fields
 from .types.function import Function
 from ..common.model_to_fields import model_to_fields
 
@@ -216,6 +216,7 @@ class FunctionManager(threading.Thread):
         logs = unify.get_logs(
             context=self._ctx,
             filter=f"function_id == {function_id}",
+            exclude_fields=list_private_fields(self._ctx),
         )
         assert len(logs) == 1, f"No function with id {function_id!r} exists."
         return logs[0]
@@ -306,7 +307,10 @@ class FunctionManager(threading.Thread):
           ``include_implementations=True``)
         """
         entries: Dict[str, Dict[str, Any]] = {}
-        for log in unify.get_logs(context=self._ctx):
+        for log in unify.get_logs(
+            context=self._ctx,
+            exclude_fields=list_private_fields(self._ctx),
+        ):
             data = {
                 "argspec": log.entries["argspec"],
                 "docstring": log.entries["docstring"],
@@ -330,6 +334,7 @@ class FunctionManager(threading.Thread):
             context=self._ctx,
             filter=f"name == '{function_name}'",
             limit=1,
+            exclude_fields=list_private_fields(self._ctx),
         )
         if not logs:
             return None
@@ -395,6 +400,7 @@ class FunctionManager(threading.Thread):
             filter=filter,
             offset=offset,
             limit=limit,
+            exclude_fields=list_private_fields(self._ctx),
         )
         return [lg.entries for lg in logs]
 
@@ -438,6 +444,6 @@ class FunctionManager(threading.Thread):
                 f"cosine({self._FUNC_EMB}, embed('{escaped_query}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=n,
-            exclude_fields=[self._FUNC_EMB],
+            exclude_fields=list_private_fields(self._ctx),
         )
         return [lg.entries for lg in logs]

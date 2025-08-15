@@ -232,7 +232,6 @@ def fetch_top_k_by_terms(
     terms is a list of (embed_column_name, reference_text) pairs that already exist
     in the provided context.
     """
-    exclude_fields = list_private_fields(context)
 
     if len(terms) == 0:
         return []
@@ -247,7 +246,7 @@ def fetch_top_k_by_terms(
                 f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=k,
-            exclude_fields=exclude_fields,
+            exclude_fields=list_private_fields(context),
         )
         return [lg.entries for lg in logs]
 
@@ -255,7 +254,12 @@ def fetch_top_k_by_terms(
     # creating a summed-cosine derived column which can fail on empty contexts.
     try:
         if row_filter is not None:
-            any_rows = unify.get_logs(context=context, filter=row_filter, limit=1)
+            any_rows = unify.get_logs(
+                context=context,
+                filter=row_filter,
+                limit=1,
+                exclude_fields=list_private_fields(context),
+            )
             if not any_rows:
                 return []
     except Exception:
@@ -273,7 +277,7 @@ def fetch_top_k_by_terms(
         filter=row_filter,
         sorting={sum_key: "ascending"},
         limit=k,
-        exclude_fields=exclude_fields,
+        exclude_fields=list_private_fields(context),
     )
     return [lg.entries for lg in logs]
 
@@ -361,11 +365,6 @@ def backfill_rows(
                     seen_ids.add(r.get(unique_id_field))
 
     # Exclude embedding/vector columns in payloads
-    try:
-        exclude_fields = list_private_fields(context)
-    except Exception:
-        exclude_fields = []
-
     needed = k - len(results)
     offset = 0
     while needed > 0:
@@ -374,7 +373,7 @@ def backfill_rows(
             filter=row_filter,
             offset=offset,
             limit=k,
-            exclude_fields=exclude_fields,
+            exclude_fields=list_private_fields(context),
         )
         if not fallback_logs:
             break
