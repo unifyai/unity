@@ -1425,8 +1425,27 @@ class MagnitudeDesktopBackend(BrowserBackend):
         )
 
         screenshot_b64 = await self.get_screenshot()
+
+        # Derive screen width/height from the PNG header, if available
+        screen_w = screen_h = None
+        if screenshot_b64:
+            try:
+                import base64 as _b64, struct as _struct
+
+                data = _b64.b64decode(screenshot_b64)
+                # PNG signature + IHDR width/height positions
+                if data[:8] == b"\x89PNG\r\n\x1a\n":
+                    screen_w = _struct.unpack(">I", data[16:20])[0]
+                    screen_h = _struct.unpack(">I", data[20:24])[0]
+            except Exception:
+                pass
+
+        statement_txt = f"Statement: {query}"
+        if screen_w is not None and screen_h is not None:
+            statement_txt += f"\nScreen: width={screen_w} height={screen_h} (pixels)"
+
         content = [
-            {"type": "text", "text": f"Statement: {query}"},
+            {"type": "text", "text": statement_txt},
         ]
         if screenshot_b64:
             content.append(
