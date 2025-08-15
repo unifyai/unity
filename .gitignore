@@ -18,3 +18,4 @@ dump.rdb
 .cache.json
 .async_trace.html
 .unity_plans
+*.txt
