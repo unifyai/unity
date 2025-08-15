@@ -864,7 +864,12 @@ class ContactManager(BaseContactManager):
         )
 
         client.set_system_message(
-            build_update_prompt(tools, include_activity=include_activity),
+            build_update_prompt(
+                tools,
+                num_contacts=self._num_contacts(),
+                columns=self._list_columns(),
+                include_activity=include_activity,
+            ),
         )
         handle = start_async_tool_use_loop(
             client,
