@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import List, Tuple, Dict, Optional
+import json
 import hashlib
 import os
 
@@ -359,6 +360,32 @@ def fetch_top_k_by_references(
     # let the caller's backfill logic drive the result set.
     if not references:
         return []
+
+    # Be tolerant to callers accidentally passing a JSON string for `references`
+    # instead of an object. Parse it when it looks like JSON.
+    if isinstance(references, str):
+        s = references.strip()
+        if s.startswith("{") or s.startswith("["):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, dict):
+                    # Ensure values are strings for the embedding reference text
+                    references = {str(k): (v if isinstance(v, str) else str(v)) for k, v in parsed.items()}  # type: ignore[assignment]
+                else:
+                    raise TypeError
+            except Exception:
+                raise TypeError(
+                    "`references` must be a mapping (e.g., {'bio': 'text'}) or a JSON string of such a mapping.",
+                )
+        else:
+            raise TypeError(
+                "`references` must be a mapping (e.g., {'bio': 'text'}) or a JSON string of such a mapping.",
+            )
+
+    if not isinstance(references, dict):  # defensive guard
+        raise TypeError(
+            "`references` must be a mapping (e.g., {'bio': 'text'}) or a JSON string of such a mapping.",
+        )
 
     # Collect (embed_col, ref_text) pairs
     terms: List[Tuple[str, str]] = []
