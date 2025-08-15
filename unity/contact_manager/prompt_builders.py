@@ -190,6 +190,8 @@ Anti‑patterns to avoid
 
 def build_update_prompt(
     tools: Dict[str, Callable],
+    num_contacts: int,
+    columns: List[Dict[str, str]],
     *,
     include_activity: bool = True,
 ) -> str:
@@ -341,9 +343,12 @@ Anti‑patterns to avoid
             "Contact schema:",
             json.dumps(Contact.model_json_schema(), indent=4),
             "",
+            f"There are currently {num_contacts} contacts are stored in a table with the following colums:",
+            json.dumps(columns, indent=4),
+            "",
             "ColumnType schema (for custom columns):",
             json.dumps(column_type_schema, indent=4),
-            "",
+            "Do *not* create new columns if an alias already exists" "",
             f"Current UTC time is {_now()}.",
             "",
         ],
