@@ -539,7 +539,7 @@ class ContactManager(BaseContactManager):
         - If you need to store vectors/embeddings, use the dedicated vector helpers instead;
           this method creates standard mutable columns.
         - After creating the column you can write values via ``_create_contact`` or
-          ``_update_contact`` using the same key in ``custom_fields``.
+          ``_update_contact`` using the same key.
         """
         assert (
             column_name not in self._REQUIRED_COLUMNS
@@ -986,8 +986,6 @@ class ContactManager(BaseContactManager):
               ``_create_custom_column``.
             - Values are stored as‑is. Choose appropriate types when creating the column
               (e.g. ``str``, ``int``, ``bool``, ``list``, ``dict``).
-            - The legacy ``custom_fields`` argument is not supported. Pass custom columns
-              directly as keyword arguments instead.
 
         Returns
         -------
@@ -1031,11 +1029,6 @@ class ContactManager(BaseContactManager):
             contact_details["response_policy"] = self.DEFAULT_RESPONSE_POLICY
 
         # Merge any custom columns provided by the caller.
-        # Reject legacy nested custom_fields usage explicitly.
-        if "custom_fields" in kwargs:
-            raise ValueError(
-                "'custom_fields' is no longer supported. Pass custom columns directly as keyword arguments.",
-            )
         if kwargs:
             contact_details.update(kwargs)
 
@@ -1101,7 +1094,7 @@ class ContactManager(BaseContactManager):
         rolling_summary: Optional[str] = None,
         respond_to: Optional[bool] = None,
         response_policy: Optional[str] = None,
-        custom_fields: Optional[Dict[str, ColumnType]] = None,
+        **kwargs: Any,
     ) -> ToolOutcome:
         """
         Update one or more fields of an existing contact.
@@ -1133,9 +1126,10 @@ class ContactManager(BaseContactManager):
             unchanged.
         response_policy : str | None
             Override the contact‑specific response policy. Omit to leave unchanged.
-        custom_fields : Dict[str, ColumnType] | None
+        **kwargs : Any
             Additional key/value updates for custom columns. Keys must be existing column
-            names (snake_case). Any key with a ``None`` value is ignored.
+            names (snake_case) that are not part of the built‑in ``Contact`` schema. Any key
+            with a ``None`` value is ignored. Pass custom columns directly as keyword arguments.
 
         Returns
         -------
@@ -1167,9 +1161,9 @@ class ContactManager(BaseContactManager):
             "respond_to": respond_to,
             "response_policy": response_policy,
         }
-
-        if custom_fields:
-            contact_details.update(custom_fields)
+        # Merge any additional kwargs as custom columns/known fields
+        if kwargs:
+            contact_details.update(kwargs)
 
         updates_to_apply = [{k: v} for k, v in contact_details.items() if v is not None]
         if not updates_to_apply:
@@ -1409,7 +1403,7 @@ class ContactManager(BaseContactManager):
                     for k in self._BUILTIN_FIELDS
                     if k in builtin_updates
                 },
-                custom_fields=custom_updates or None,
+                **(custom_updates or {}),
             )
 
         # Delete the other contact

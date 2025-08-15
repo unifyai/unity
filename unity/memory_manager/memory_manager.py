@@ -530,7 +530,7 @@ class MemoryManager(BaseMemoryManager):
             await asyncio.to_thread(
                 self._contact_manager._update_contact,
                 contact_id=final_id,
-                custom_fields={"bio": bio},
+                bio=bio,
             )
             return f"Bio for contact with id {final_id} successfully updated"
 
@@ -628,7 +628,7 @@ class MemoryManager(BaseMemoryManager):
             await asyncio.to_thread(
                 self._contact_manager._update_contact,
                 contact_id=final_id,
-                custom_fields={"rolling_summary": rolling_summary},
+                rolling_summary=rolling_summary,
             )
             return (
                 f"Rolling summary for contact with id {final_id} successfully updated"
@@ -736,7 +736,7 @@ class MemoryManager(BaseMemoryManager):
             await asyncio.to_thread(
                 self._contact_manager._update_contact,
                 contact_id=final_id,
-                custom_fields={"response_policy": response_policy},
+                response_policy=response_policy,
             )
             return (
                 f"Response policy for contact with id {final_id} successfully updated"
