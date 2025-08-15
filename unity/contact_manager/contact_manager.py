@@ -562,37 +562,7 @@ class ContactManager(BaseContactManager):
         }
         response = requests.request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
-        ret = response.json()
-
-        # ------------------------------------------------------------------
-        # Temporary backfill of existing logs for the newly created column
-        # ------------------------------------------------------------------
-        # This is a TEMPORARY PATCH to ensure that, immediately after creating a
-        # new custom field, all existing contact logs have that field explicitly
-        # present with a value of None. The backend field-creation endpoint will
-        # soon support `backfill_logs: bool = True`, which will perform this
-        # operation automatically. Once the backend is updated, this client-side
-        # backfill should be removed.
-        try:
-            ids = unify.get_logs(
-                context=self._ctx,
-                # Use the API's ids-only return to avoid fetching full entries
-                return_ids_only=True,
-            )
-            if ids:
-                unify.update_logs(
-                    logs=ids,
-                    context=self._ctx,
-                    entries=[{column_name: None} for _ in ids],
-                    overwrite=True,
-                )
-        except Exception:
-            # Non-fatal: if the backfill fails, the column still exists; future
-            # writes will populate it. This will be superseded by backend support
-            # for automatic backfill.
-            pass
-
-        return ret
+        return response.json()
 
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
         """
