@@ -702,6 +702,7 @@ class ContactManager(BaseContactManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
             reasoning_effort="high",
+            service_tier="priority",
         )
 
         # Build a *live* tools-dict so the prompt never hard-codes
@@ -823,6 +824,7 @@ class ContactManager(BaseContactManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
             reasoning_effort="high",
+            service_tier="priority",
         )
 
         tools = dict(self._update_tools)
