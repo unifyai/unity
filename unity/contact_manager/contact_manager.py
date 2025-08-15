@@ -459,7 +459,11 @@ class ContactManager(BaseContactManager):
         ret = response.json()
         return {k: v["data_type"] for k, v in ret.items()}
 
-    def _list_columns(self, *, include_types: bool = True) -> Dict[str, Any]:
+    def _list_columns(
+        self,
+        *,
+        include_types: bool = True,
+    ) -> Dict[str, Any] | List[str]:
         """
         Return the list of available columns in the contacts table, optionally with types.
 
@@ -475,9 +479,9 @@ class ContactManager(BaseContactManager):
 
         Returns
         -------
-        Dict[str, Any] | set[str]
+        Dict[str, Any] | List[str]
             - If ``include_types=True``: ``dict`` mapping column names to their types.
-            - If ``include_types=False``: ``set`` of column names.
+            - If ``include_types=False``: ``list`` of column names.
 
         Notes
         -----
@@ -489,7 +493,7 @@ class ContactManager(BaseContactManager):
           the Pydantic ``Contact`` model and are immutable.
         """
         cols = self._get_columns()
-        return cols if include_types else set(cols)
+        return cols if include_types else list(cols)
 
     def _create_custom_column(
         self,
