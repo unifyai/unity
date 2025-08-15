@@ -948,7 +948,7 @@ class ContactManager(BaseContactManager):
         rolling_summary: Optional[str] = None,
         respond_to: bool = False,
         response_policy: Optional[str] = None,
-        custom_fields: Optional[Dict[str, ColumnType]] = None,
+        **kwargs: Any,
     ) -> ToolOutcome:
         """
         Create and persist a new contact.
@@ -979,10 +979,15 @@ class ContactManager(BaseContactManager):
         response_policy : str | None
             Optional policy text that qualifies how the assistant should respond to this
             contact. When omitted, a safe default policy is automatically applied.
-        custom_fields : Dict[str, ColumnType] | None
-            Extra fields to set at creation time. Keys must be valid column names
-            (snake_case). Values are the data to store. Any referenced columns that do not
-            exist should be created beforehand using ``_create_custom_column``.
+        **kwargs : Any
+            Additional key/value pairs are treated as values for custom columns.
+            - Keys must be existing column names (snake_case) that are not part of the
+              built‑in ``Contact`` schema. Create new columns first via
+              ``_create_custom_column``.
+            - Values are stored as‑is. Choose appropriate types when creating the column
+              (e.g. ``str``, ``int``, ``bool``, ``list``, ``dict``).
+            - The legacy ``custom_fields`` argument is not supported. Pass custom columns
+              directly as keyword arguments instead.
 
         Returns
         -------
@@ -1004,6 +1009,8 @@ class ContactManager(BaseContactManager):
         - ``response_policy`` defaults to a conservative policy that avoids sharing sensitive
           information when not explicitly provided.
         - Unspecified fields remain ``None`` and can be populated later via ``_update_contact``.
+        - For custom columns, ensure the column exists beforehand via ``_create_custom_column``;
+          otherwise the request will fail server‑side.
         """
 
         # Build the contact dictionary directly from the arguments
@@ -1023,9 +1030,14 @@ class ContactManager(BaseContactManager):
         if contact_details["response_policy"] is None:
             contact_details["response_policy"] = self.DEFAULT_RESPONSE_POLICY
 
-        # Merge any custom fields provided by the caller
-        if custom_fields:
-            contact_details.update(custom_fields)
+        # Merge any custom columns provided by the caller.
+        # Reject legacy nested custom_fields usage explicitly.
+        if "custom_fields" in kwargs:
+            raise ValueError(
+                "'custom_fields' is no longer supported. Pass custom columns directly as keyword arguments.",
+            )
+        if kwargs:
+            contact_details.update(kwargs)
 
         assert any(
             v is not None for v in contact_details.values()
