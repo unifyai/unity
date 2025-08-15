@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Union, Any
 
 import unify
 import requests
-from ..common.embed_utils import ensure_vector_column
+from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
@@ -599,7 +599,11 @@ class TranscriptManager(BaseTranscriptManager):
         # Default behaviour: when references is None/empty, skip semantic search and
         # return the most recent messages directly from transcripts context.
         if not references:
-            logs = unify.get_logs(context=self._transcripts_ctx, limit=k)
+            logs = unify.get_logs(
+                context=self._transcripts_ctx,
+                limit=k,
+                exclude_fields=list_private_fields(self._transcripts_ctx),
+            )
             return [Message(**lg.entries) for lg in logs]
 
         # Field name sets to classify expressions as message-side vs contact-side
@@ -736,6 +740,7 @@ class TranscriptManager(BaseTranscriptManager):
                 context=left_ctx,
                 filter=f"message_id == {int(mid)}",
                 limit=1,
+                exclude_fields=list_private_fields(left_ctx),
             )
             if rows:
                 results.append(Message(**rows[0].entries))
@@ -787,11 +792,7 @@ class TranscriptManager(BaseTranscriptManager):
             offset=offset,
             limit=limit,
             sorting={"timestamp": "descending"},
-            exclude_fields=[
-                k
-                for k in unify.get_fields(context=self._transcripts_ctx).keys()
-                if k.endswith("_emb")
-            ],
+            exclude_fields=list_private_fields(self._transcripts_ctx),
         )
         return [Message(**lg.entries) for lg in logs]
 

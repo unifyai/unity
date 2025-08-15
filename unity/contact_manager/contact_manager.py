@@ -5,7 +5,7 @@ import json
 import functools
 import os
 from .prompt_builders import build_ask_prompt, build_update_prompt
-from ..common.embed_utils import ensure_vector_column
+from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..knowledge_manager.types import ColumnType
 from ..helpers import _handle_exceptions
 from ..common.tool_outcome import ToolOutcome
@@ -1521,11 +1521,7 @@ class ContactManager(BaseContactManager):
             filter=filter,
             offset=offset,
             limit=limit,
-            exclude_fields=[
-                k
-                for k in unify.get_fields(context=self._ctx).keys()
-                if k.endswith("_emb")
-            ],
+            exclude_fields=list_private_fields(self._ctx),
         )
         return [Contact(**lg.entries) for lg in logs]
 
