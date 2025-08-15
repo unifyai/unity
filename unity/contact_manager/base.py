@@ -34,9 +34,9 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Query the contact book in natural language and receive an **LLM
-        reasoning handle** (`SteerableToolHandle`) that can be awaited,
-        paused/resumed, interjected, or cancelled.
+        Query the contact book with a *read-only question* in natural language
+        and receive an **LLM reasoning handle** (`SteerableToolHandle`) that
+        can be awaited, paused/resumed, interjected, or cancelled.
 
         Do *not* request *how* the question should be answered, just ask a
         question in natural language and allow the `ask` method to determine
