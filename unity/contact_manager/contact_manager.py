@@ -698,9 +698,10 @@ class ContactManager(BaseContactManager):
         )
 
         client = unify.AsyncUnify(
-            "o4-mini@openai",  # Consider making model configurable
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
         )
 
         # Build a *live* tools-dict so the prompt never hard-codes
@@ -818,9 +819,10 @@ class ContactManager(BaseContactManager):
         )
 
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
         )
 
         tools = dict(self._update_tools)
