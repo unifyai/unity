@@ -170,7 +170,7 @@ def ensure_mean_cosine_column_piecewise(
                 "key": key,
                 "equation": equation,
                 "referenced_logs": {"lg": {"context": context}},
-                # "derived": False,
+                "derived": False,
             }
             resp = requests.request("POST", url, json=json_input, headers=headers)
             _handle_exceptions(resp)
@@ -186,7 +186,7 @@ def ensure_mean_cosine_column_piecewise(
                 "key": key,
                 "equation": equation,
                 "referenced_logs": {"lg": {"context": context}},
-                # "derived": False,
+                "derived": False,
             }
             resp = requests.request("POST", url, json=json_input, headers=headers)
             _handle_exceptions(resp)
@@ -207,16 +207,15 @@ def ensure_mean_cosine_column_piecewise(
             "key": sum_key,
             "equation": sum_equation,
             "referenced_logs": {"lg": {"context": context}},
-            # "derived": False,
+            "derived": False,
         }
         resp = requests.request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(resp)
 
-    # Uncomment once this bug (https://app.clickup.com/t/86c50z6hg) is fixed
-    # unify.delete_fields(
-    #     num_keys + den_keys,
-    #     context=context,
-    # )
+    unify.delete_fields(
+        num_keys + den_keys,
+        context=context,
+    )
     return sum_key
 
 
