@@ -326,7 +326,8 @@ Anti‑patterns to avoid
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.",
             "Prefer minimal, precise mutations to existing records identified by contact_id.",
             "When the user describes a contact semantically, resolve the id first by requesting the contact_id from the ask method, then perform the update via the contact_id.",
-            "use the ask method to see if you can find any missing context *before* asking the user for clarifications.",
+            "use the `ask` method to see if you can find any missing context *before* you consider asking the user for clarifications.",
+            "If the `ask` method is the only available tool, then ask a *read-only question*, mutation-capable tools will be exposed in subsequent turns."
             "",
             "Tools (name → argspec):",
             sig_json,
