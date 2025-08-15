@@ -291,14 +291,10 @@ class TranscriptManager(BaseTranscriptManager):
                 if k in built_in_fields and k != "contact_id"
             }
 
-            # Capture any extra / custom fields present on the Contact
-            custom_fields = {
-                k: v
-                for k, v in c.model_dump().items()
-                if k not in built_in_fields and v is not None
-            }
-            if custom_fields:
-                create_kwargs["custom_fields"] = custom_fields
+            # Merge any extra / custom fields directly into the creation kwargs
+            for k, v in c.model_dump().items():
+                if k not in built_in_fields and v is not None:
+                    create_kwargs[k] = v
 
             # Synchronously create the new contact
             outcome = self._contact_manager._create_contact(**create_kwargs)
