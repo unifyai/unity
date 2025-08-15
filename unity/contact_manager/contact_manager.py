@@ -936,6 +936,35 @@ class ContactManager(BaseContactManager):
     # Private #
     # --------#
 
+    def _sanitize_custom_columns(
+        self,
+        custom_columns: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Return a filtered copy of custom columns safe for JSON logging.
+
+        - Drops internal control keys injected by the async tool loop
+          (pause/interject/clarification/context channels).
+        - Drops any values that are not JSON-serialisable.
+        """
+        internal_keys = {
+            "parent_chat_context",
+            "interject_queue",
+            "pause_event",
+            "clarification_up_q",
+            "clarification_down_q",
+        }
+        safe: Dict[str, Any] = {}
+        for key, value in (custom_columns or {}).items():
+            if key in internal_keys:
+                continue
+            try:
+                json.dumps(value)
+            except Exception:
+                # Skip non-serialisable values (e.g. asyncio.Event, queues, etc.)
+                continue
+            safe[key] = value
+        return safe
+
     def _create_contact(
         self,
         *,
@@ -948,7 +977,7 @@ class ContactManager(BaseContactManager):
         rolling_summary: Optional[str] = None,
         respond_to: bool = False,
         response_policy: Optional[str] = None,
-        **kwargs: Any,
+        **custom_columns: Any,
     ) -> ToolOutcome:
         """
         Create and persist a new contact.
@@ -979,7 +1008,7 @@ class ContactManager(BaseContactManager):
         response_policy : str | None
             Optional policy text that qualifies how the assistant should respond to this
             contact. When omitted, a safe default policy is automatically applied.
-        **kwargs : Any
+        custom_columns : Any
             Additional key/value pairs are treated as values for custom columns.
             - Keys must be existing column names (snake_case) that are not part of the
               built‑in ``Contact`` schema. Create new columns first via
@@ -1028,9 +1057,11 @@ class ContactManager(BaseContactManager):
         if contact_details["response_policy"] is None:
             contact_details["response_policy"] = self.DEFAULT_RESPONSE_POLICY
 
-        # Merge any custom columns provided by the caller.
-        if kwargs:
-            contact_details.update(kwargs)
+        # Merge any custom columns provided by the caller (sanitised first).
+        if custom_columns:
+            contact_details.update(
+                self._sanitize_custom_columns(custom_columns),
+            )
 
         assert any(
             v is not None for v in contact_details.values()
@@ -1094,7 +1125,7 @@ class ContactManager(BaseContactManager):
         rolling_summary: Optional[str] = None,
         respond_to: Optional[bool] = None,
         response_policy: Optional[str] = None,
-        **kwargs: Any,
+        **custom_columns: Any,
     ) -> ToolOutcome:
         """
         Update one or more fields of an existing contact.
@@ -1126,7 +1157,7 @@ class ContactManager(BaseContactManager):
             unchanged.
         response_policy : str | None
             Override the contact‑specific response policy. Omit to leave unchanged.
-        **kwargs : Any
+        custom_columns : Any
             Additional key/value updates for custom columns. Keys must be existing column
             names (snake_case) that are not part of the built‑in ``Contact`` schema. Any key
             with a ``None`` value is ignored. Pass custom columns directly as keyword arguments.
@@ -1161,9 +1192,11 @@ class ContactManager(BaseContactManager):
             "respond_to": respond_to,
             "response_policy": response_policy,
         }
-        # Merge any additional kwargs as custom columns/known fields
-        if kwargs:
-            contact_details.update(kwargs)
+        # Merge any additional custom columns (sanitised first)
+        if custom_columns:
+            contact_details.update(
+                self._sanitize_custom_columns(custom_columns),
+            )
 
         updates_to_apply = [{k: v} for k, v in contact_details.items() if v is not None]
         if not updates_to_apply:
