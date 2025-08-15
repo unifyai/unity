@@ -127,7 +127,7 @@ async def test_close_and_reopen_xterm(backend):
     )
 
     # Re-open xterm (the agent can use app_open or launcher)
-    instr_open = "Open a new xterm terminal window and focus it. Finish when done."
+    instr_open = "Open a new xterm terminal window. Finish when done."
     await asyncio.wait_for(
         _act_until_match(
             backend,
