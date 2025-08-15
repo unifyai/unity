@@ -10,6 +10,8 @@ const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
 
 const linux = express.Router();
+// In-memory map for screen recordings: recording ID -> process and output file
+const recordProcs: Record<string, { proc: any; filepath: string }> = {};
 
 // Linux desktop automation endpoints
 
@@ -305,10 +307,10 @@ linux.post('/mouse/move', async (req: any, res: any) => {
   }
 });
 
-// POST /linux/drag { fromX?, fromY?, toX, toY, button?, steps?, delayMs? }
+// POST /linux/drag { fromX?, fromY?, toX, toY, button?, steps?, delayMs?, modifiers? }
 linux.post('/drag', async (req: any, res: any) => {
-  const { fromX, fromY, toX, toY, button = 1, steps = 1, delayMs = 0 } = req.body as {
-    fromX?: number; fromY?: number; toX?: number; toY?: number; button?: number; steps?: number; delayMs?: number;
+  const { fromX, fromY, toX, toY, button = 1, steps = 1, delayMs = 0, modifiers = [] } = req.body as {
+    fromX?: number; fromY?: number; toX?: number; toY?: number; button?: number; steps?: number; delayMs?: number; modifiers?: string[];
   };
   if (typeof toX !== 'number' || typeof toY !== 'number') {
     return res.status(400).json({ error: 'bad_request', message: 'toX and toY are required numbers' });
@@ -326,8 +328,14 @@ linux.post('/drag', async (req: any, res: any) => {
       startX = Number(map['X'] || 0);
       startY = Number(map['Y'] || 0);
     }
+    // Normalize modifiers
+    const normMods = (modifiers as string[]).map(normalizeModifier).filter(Boolean) as string[];
     // Move to start
     await execFileAsync('xdotool', ['mousemove', `${startX}`, `${startY}`]);
+    // Press modifiers (keydown)
+    for (const mod of normMods) {
+      await execFileAsync('xdotool', ['keydown', mod]);
+    }
     // Mouse down
     await execFileAsync('xdotool', ['mousedown', `${button}`]);
     // Intermediate moves if steps > 1
@@ -340,6 +348,10 @@ linux.post('/drag', async (req: any, res: any) => {
     }
     // Mouse up
     await execFileAsync('xdotool', ['mouseup', `${button}`]);
+    // Release modifiers (keyup)
+    for (const mod of normMods.slice().reverse()) {
+      await execFileAsync('xdotool', ['keyup', mod]);
+    }
     res.json({ status: 'ok' });
   } catch (err) {
     res.status(500).json({ error: 'drag_failed', message: String(err) });
@@ -588,6 +600,79 @@ linux.post('/window/state', async (req: any, res: any) => {
     res.json({ status: 'ok', affected: 1 });
   } catch (err) {
     res.status(500).json({ error: 'state_failed', message: String(err) });
+  }
+});
+
+// POST /linux/record/start { fps?, region? }
+linux.post('/record/start', async (req: any, res: any) => {
+  const { fps = 10, region } = req.body as { fps?: number; region?: { x: number; y: number; w: number; h: number } };
+  try {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const outfile = path.join(os.tmpdir(), `record-${id}.mp4`);
+    const args: string[] = ['-y', '-f', 'x11grab', '-framerate', `${fps}`];
+    if (
+      region &&
+      Number.isFinite(region.x) &&
+      Number.isFinite(region.y) &&
+      Number.isFinite(region.w) &&
+      Number.isFinite(region.h)
+    ) {
+      args.push('-video_size', `${region.w}x${region.h}`, '-i', `:99.0+${region.x},${region.y}`);
+    } else {
+      args.push('-video_size', '1920x1080', '-i', process.env.DISPLAY || ':99.0');
+    }
+    args.push(outfile);
+    const child = spawn('ffmpeg', args, { detached: true, stdio: 'ignore' });
+    child.unref();
+    recordProcs[id] = { proc: child, filepath: outfile };
+    res.json({ id, status: 'started', filepath: outfile });
+  } catch (err) {
+    res.status(500).json({ error: 'record_start_failed', message: String(err) });
+  }
+});
+
+// POST /linux/record/stop { id }
+linux.post('/record/stop', async (req: any, res: any) => {
+  const { id } = req.body as { id?: string };
+  if (!id || !recordProcs[id]) {
+    return res.status(400).json({ error: 'bad_request', message: 'valid id required' });
+  }
+  try {
+    const { proc, filepath } = recordProcs[id];
+    proc.kill('SIGINT');
+    delete recordProcs[id];
+    res.json({ id, status: 'stopped', filepath });
+  } catch (err) {
+    res.status(500).json({ error: 'record_stop_failed', message: String(err) });
+  }
+});
+
+// GET /linux/fs/list?path=
+linux.get('/fs/list', async (req: any, res: any) => {
+  const { path: p } = req.query as any;
+  try {
+    if (typeof p !== 'string') throw new Error('path is required');
+    const target = path.resolve(process.cwd(), p);
+    if (!target.startsWith(process.cwd())) throw new Error('path out of range');
+    const files = await fs.readdir(target);
+    res.json({ files });
+  } catch (err) {
+    res.status(500).json({ error: 'fs_list_failed', message: String(err) });
+  }
+});
+
+// POST /linux/fs/write { path, contentBase64 }
+linux.post('/fs/write', async (req: any, res: any) => {
+  const { path: p, contentBase64 } = req.body as any;
+  try {
+    if (!p || typeof contentBase64 !== 'string') throw new Error('path and contentBase64 required');
+    const target = path.resolve(process.cwd(), p);
+    if (!target.startsWith(process.cwd())) throw new Error('path out of range');
+    const buf = Buffer.from(contentBase64, 'base64');
+    await fs.writeFile(target, buf);
+    res.json({ status: 'ok', path: p });
+  } catch (err) {
+    res.status(500).json({ error: 'fs_write_failed', message: String(err) });
   }
 });
 

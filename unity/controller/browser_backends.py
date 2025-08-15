@@ -960,6 +960,12 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     payload["delayMs"] = max(0, int(args.get("delayMs")))
             except Exception:
                 pass
+            # optional modifiers for drag operations
+            try:
+                if isinstance(args.get("modifiers"), list):
+                    payload["modifiers"] = [str(m) for m in args.get("modifiers")]
+            except Exception:
+                pass
             await self._request("POST", "/linux/drag", payload=payload)
             return False
 
@@ -1100,6 +1106,51 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     self._typed_history,
                 ):
                     return True
+            return False
+
+        # --- Recording and File System Tools ---
+        if tool == "record_start":
+            # Start screen recording at given fps and optional region
+            params: dict = {}
+            if args.get("fps") is not None:
+                try:
+                    params["fps"] = int(args.get("fps"))
+                except:
+                    pass
+            if isinstance(args.get("region"), dict):
+                params["region"] = args.get("region")
+            await self._request("POST", "/linux/record/start", payload=params)
+            return False
+
+        if tool == "record_stop":
+            # Stop screen recording by id
+            rec_id = args.get("id")
+            if not rec_id:
+                return False
+            await self._request("POST", "/linux/record/stop", payload={"id": rec_id})
+            return False
+
+        if tool == "fs_list":
+            # List files in a directory
+            path_val = str(args.get("path") or "")
+            if not path_val:
+                return False
+            # URL-encode path
+            encoded = requests.utils.quote(path_val)
+            await self._request("GET", f"/linux/fs/list?path={encoded}")
+            return False
+
+        if tool == "fs_write":
+            # Write a file with base64 content
+            p = args.get("path")
+            content = args.get("contentBase64")
+            if not p or not isinstance(content, str):
+                return False
+            await self._request(
+                "POST",
+                "/linux/fs/write",
+                payload={"path": str(p), "contentBase64": content},
+            )
             return False
 
         # Unknown tool
