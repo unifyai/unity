@@ -310,6 +310,20 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     continue
                 raise
 
+    async def _pointer_context_line(self) -> str:
+        """Return 'Pointer: x=.. y=.. screen=.. window=..' or empty string on failure."""
+        try:
+            mouse = await self._request("GET", "/linux/mouse/position")
+            if isinstance(mouse, dict):
+                px = mouse.get("x")
+                py = mouse.get("y")
+                scr = mouse.get("screen")
+                win = mouse.get("window")
+                return f"Mouse/Pointer: x={px} y={py} screen={scr} window={win}"
+        except Exception:
+            pass
+        return ""
+
     async def act(self, instruction: str, expectation: str = "") -> str:
         """
         Executes a high-level browser task using the Magnitude BrowserAgent.
@@ -1316,15 +1330,22 @@ class MagnitudeDesktopBackend(BrowserBackend):
             dims = _png_size_from_b64(screenshot_b64) or (0, 0)
 
             history_txt = " | ".join(recent_steps[-5:]) if recent_steps else "(none)"
+            # Include pointer context
+            ptr = await self._pointer_context_line()
+            header = (
+                f"Goal: {instruction}\n"
+                f"Screen: width={dims[0]} height={dims[1]} (pixels)\n"
+                f"{ptr}\n"
+                if ptr
+                else f"Goal: {instruction}\nScreen: width={dims[0]} height={dims[1]} (pixels)\n"
+            )
+            header += (
+                f"Recent steps: {history_txt}\nContext: {json.dumps(_context_blob())}"
+            )
             content = [
                 {
                     "type": "text",
-                    "text": (
-                        f"Goal: {instruction}\n"
-                        f"Screen: width={dims[0]} height={dims[1]} (pixels)\n"
-                        f"Recent steps: {history_txt}\n"
-                        f"Context: {json.dumps(_context_blob())}"
-                    ),
+                    "text": header,
                 },
             ]
             if screenshot_b64:
@@ -1444,17 +1465,12 @@ class MagnitudeDesktopBackend(BrowserBackend):
         if screen_w is not None and screen_h is not None:
             statement_txt += f"\nScreen: width={screen_w} height={screen_h} (pixels)"
 
-        # Include current mouse/pointer position for better spatial grounding
+        # Include current mouse/pointer position for better spatial grounding (helper)
         try:
-            mouse = await self._request("GET", "/linux/mouse/position")
-            if isinstance(mouse, dict):
-                px = mouse.get("x")
-                py = mouse.get("y")
-                scr = mouse.get("screen")
-                win = mouse.get("window")
-                statement_txt += f"\nPointer: x={px} y={py} screen={scr} window={win}"
+            ptr = await self._pointer_context_line()
+            if ptr:
+                statement_txt += f"\n{ptr}"
         except Exception:
-            # best-effort; ignore if service is unavailable
             pass
 
         content = [
