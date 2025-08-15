@@ -977,7 +977,7 @@ class ContactManager(BaseContactManager):
         rolling_summary: Optional[str] = None,
         respond_to: bool = False,
         response_policy: Optional[str] = None,
-        **custom_columns: Any,
+        **kwargs: Any,
     ) -> ToolOutcome:
         """
         Create and persist a new contact.
@@ -1008,7 +1008,7 @@ class ContactManager(BaseContactManager):
         response_policy : str | None
             Optional policy text that qualifies how the assistant should respond to this
             contact. When omitted, a safe default policy is automatically applied.
-        custom_columns : Any
+        kwargs : Any
             Additional key/value pairs are treated as values for custom columns.
             - Keys must be existing column names (snake_case) that are not part of the
               built‑in ``Contact`` schema. Create new columns first via
@@ -1058,9 +1058,9 @@ class ContactManager(BaseContactManager):
             contact_details["response_policy"] = self.DEFAULT_RESPONSE_POLICY
 
         # Merge any custom columns provided by the caller (sanitised first).
-        if custom_columns:
+        if kwargs:
             contact_details.update(
-                self._sanitize_custom_columns(custom_columns),
+                self._sanitize_custom_columns(kwargs),
             )
 
         assert any(
@@ -1125,7 +1125,7 @@ class ContactManager(BaseContactManager):
         rolling_summary: Optional[str] = None,
         respond_to: Optional[bool] = None,
         response_policy: Optional[str] = None,
-        **custom_columns: Any,
+        **kwargs: Any,
     ) -> ToolOutcome:
         """
         Update one or more fields of an existing contact.
@@ -1157,7 +1157,7 @@ class ContactManager(BaseContactManager):
             unchanged.
         response_policy : str | None
             Override the contact‑specific response policy. Omit to leave unchanged.
-        custom_columns : Any
+        kwargs : Any
             Additional key/value updates for custom columns. Keys must be existing column
             names (snake_case) that are not part of the built‑in ``Contact`` schema. Any key
             with a ``None`` value is ignored. Pass custom columns directly as keyword arguments.
@@ -1193,9 +1193,9 @@ class ContactManager(BaseContactManager):
             "response_policy": response_policy,
         }
         # Merge any additional custom columns (sanitised first)
-        if custom_columns:
+        if kwargs:
             contact_details.update(
-                self._sanitize_custom_columns(custom_columns),
+                self._sanitize_custom_columns(kwargs),
             )
 
         updates_to_apply = [{k: v} for k, v in contact_details.items() if v is not None]
