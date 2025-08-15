@@ -1193,6 +1193,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "- press_enter: args {} — press the Enter key.\n"
             "- done: args {} — when the goal is achieved.\n"
             "You can install apps/packages by running shell commands. If no terminal is open, prefer app_open with cmd='bash' and args=['-lc', '<install command>'] (e.g., 'sudo apt-get update && sudo apt-get install -y <pkg>'). If a terminal (e.g., xterm) is already open, focus_window it and use click_at/type_text/press_enter to run commands. Use non-interactive flags (-y, -q, --no-install-recommends) to avoid prompts.\n"
+            "You can use key combos by passing a list of keys to type_text. For example, ['ctrl', 'c'] will copy the current selection, and ['ctrl', 'shift', 't'] will open a new terminal window.\n"
             "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n"
             "You will also receive screen width/height (pixels). Ensure coordinates are within bounds.\n"
             "Avoid repeating the same tool more than once in a row; after focusing a window, prefer typing or clicking next.\n"
