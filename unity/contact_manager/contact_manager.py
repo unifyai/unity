@@ -1048,6 +1048,9 @@ class ContactManager(BaseContactManager):
         - For custom columns, ensure the column exists beforehand via ``_create_custom_column``;
           otherwise the request will fail server‑side.
         """
+        # remove and unpack kwargs from kwargs, if passed by mistaken LLM
+        if "kwargs" in kwargs:
+            kwargs = {**kwargs, **kwargs.pop("kwargs")}
 
         # Build the contact dictionary directly from the arguments
         contact_details = {
@@ -1193,6 +1196,11 @@ class ContactManager(BaseContactManager):
         - ``contact_id`` itself cannot be changed here; use ``_merge_contacts`` if you need
           to consolidate records and choose which id to keep.
         """
+
+        # remove and unpack kwargs from kwargs, if passed by mistaken LLM
+        if "kwargs" in kwargs:
+            kwargs = {**kwargs, **kwargs.pop("kwargs")}
+
         contact_details = {
             "first_name": first_name,
             "surname": surname,
