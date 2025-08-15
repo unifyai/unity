@@ -11,6 +11,22 @@ import unify
 EMBED_MODEL = "text-embedding-3-small"
 
 
+def list_private_fields(context: str) -> list[str]:
+    """
+    Return a list of private field names for a context.
+
+    Private fields are defined as columns whose names start with "_". These
+    typically include derived/debug columns and embedding vectors which can be
+    very large, so they should be excluded from payloads returned to clients.
+    """
+    try:
+        fields = unify.get_fields(context=context)
+        return [name for name in fields.keys() if name.startswith("_")]
+    except Exception:
+        # If field introspection fails (e.g. offline tests), fall back to none
+        return []
+
+
 def ensure_vector_column(
     context: str,
     embed_column: str,

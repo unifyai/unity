@@ -7,7 +7,7 @@ import os
 import requests
 import unify
 
-from .embed_utils import EMBED_MODEL, ensure_vector_column
+from .embed_utils import EMBED_MODEL, ensure_vector_column, list_private_fields
 from ..helpers import _handle_exceptions
 
 
@@ -232,9 +232,7 @@ def fetch_top_k_by_terms(
     terms is a list of (embed_column_name, reference_text) pairs that already exist
     in the provided context.
     """
-    exclude_fields = [
-        fld for fld in unify.get_fields(context=context).keys() if fld.endswith("_emb")
-    ]
+    exclude_fields = list_private_fields(context)
 
     if len(terms) == 0:
         return []
@@ -364,11 +362,7 @@ def backfill_rows(
 
     # Exclude embedding/vector columns in payloads
     try:
-        exclude_fields = [
-            fld
-            for fld in unify.get_fields(context=context).keys()
-            if fld.endswith("_emb")
-        ]
+        exclude_fields = list_private_fields(context)
     except Exception:
         exclude_fields = []
 

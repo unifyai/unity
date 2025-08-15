@@ -7,7 +7,7 @@ import requests
 from typing import Any, Dict, List, Optional, Callable, Union
 
 import json
-from ..common.embed_utils import ensure_vector_column
+from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..helpers import _handle_exceptions
 from .types import ColumnType
 from ..common.llm_helpers import (
@@ -1627,20 +1627,15 @@ class KnowledgeManager(BaseKnowledgeManager):
         # ToDo: convert to map function
         results = dict()
         for table in tables:
+            ctx = self._ctx_for_table(table)
             results[table] = [
                 log.entries
                 for log in unify.get_logs(
-                    context=self._ctx_for_table(table),
+                    context=ctx,
                     filter=filter,
                     offset=offset,
                     limit=limit,
-                    exclude_fields=[
-                        k
-                        for k in unify.get_fields(
-                            context=self._ctx_for_table(table),
-                        ).keys()
-                        if k.endswith("_emb")
-                    ],
+                    exclude_fields=list_private_fields(ctx),
                 )
             ]
         return results
@@ -1741,6 +1736,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 filter=result_where,
                 offset=result_offset,
                 limit=result_limit,
+                exclude_fields=list_private_fields(dest_ctx),
             )
         ]
 
@@ -1868,13 +1864,15 @@ class KnowledgeManager(BaseKnowledgeManager):
         assert previous_table is not None  # mypy guard
 
         # -------- 4.  Read final result ---------------------------------
+        final_ctx = self._ctx_for_table(previous_table)
         rows: List[Dict[str, Any]] = [
             log.entries
             for log in unify.get_logs(
-                context=self._ctx_for_table(previous_table),
+                context=final_ctx,
                 filter=result_where,
                 offset=result_offset,
                 limit=result_limit,
+                exclude_fields=list_private_fields(final_ctx),
             )
         ]
 

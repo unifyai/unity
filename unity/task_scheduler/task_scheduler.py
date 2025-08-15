@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
 
-from ..common.embed_utils import ensure_vector_column
+from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
@@ -2088,7 +2088,7 @@ class TaskScheduler(BaseTaskScheduler):
                 filter=filter,
                 offset=offset,
                 limit=limit,
-                exclude_fields=[self._VEC_TASK],
+                exclude_fields=list_private_fields(self._ctx),
             )
         ]
 
