@@ -225,104 +225,17 @@ def ensure_mean_cosine_column_piecewise_named(
     *,
     public_prefix: str = "score_",
 ) -> str:
-    """Create a non-private (non-underscore) mean-of-cosines column for terms.
+    """Create a private mean-of-cosines column for the provided terms.
 
-    Mirrors ``ensure_mean_cosine_column_piecewise`` but exposes the final sum key
-    as a public (non-underscored) column so it is not filtered out by
-    ``list_private_fields``. Temporary per-term/intermediate columns remain
-    private and are cleaned up at the end.
+    Backward-compatible wrapper that previously created a public (non-underscored)
+    score column. To ensure all intermediate columns remain private, this now
+    delegates to ``ensure_mean_cosine_column_piecewise`` and returns its private
+    key (which is underscored). The ``public_prefix`` parameter is ignored.
 
-    Returns the created (or existing) public sum column key.
+    Returns the created (or existing) private sum column key.
     """
-    if len(terms) == 0:
-        sum_key = f"{public_prefix}sum_cos_piecewise_{seed}"
-        ensure_derived_column(
-            context=context,
-            key=sum_key,
-            equation="0",
-            derived=False,
-        )
-        return sum_key
-
-    # Reuse the piecewise builder but with a public final key
-    # Prepare per-term equation strings
-    num_equations: list[str] = []
-    den_equations: list[str] = []
-    for embed_col, ref_text in terms:
-        num, den = _build_term_equations(embed_col, ref_text)
-        num_equations.append(num)
-        den_equations.append(den)
-
-    # Derive keys for each term
-    num_keys: list[str] = [f"_num_cos_{i}_{seed}" for i in range(len(num_equations))]
-    den_keys: list[str] = [f"_den_has_{i}_{seed}" for i in range(len(den_equations))]
-
-    # Public sum key
-    sum_key = f"{public_prefix}sum_cos_piecewise_{seed}"
-
-    existing_fields = unify.get_fields(context=context)
-
-    # Create per-term numerator/denominator columns (private)
-    for key, equation in zip(num_keys, num_equations):
-        if key not in existing_fields:
-            ensure_derived_column(
-                context=context,
-                key=key,
-                equation=equation,
-                derived=False,
-            )
-
-    for key, equation in zip(den_keys, den_equations):
-        if key not in existing_fields:
-            ensure_derived_column(
-                context=context,
-                key=key,
-                equation=equation,
-                derived=False,
-            )
-
-    # Totals
-    num_total_key = f"_num_cos_total_{seed}"
-    den_total_key = f"_den_has_total_{seed}"
-
-    numerator = " + ".join(["{lg:" + k + "}" for k in num_keys]) if num_keys else "0"
-    denominator = " + ".join(["{lg:" + k + "}" for k in den_keys]) if den_keys else "0"
-
-    existing_fields = unify.get_fields(context=context)
-    if num_total_key not in existing_fields:
-        ensure_derived_column(
-            context=context,
-            key=num_total_key,
-            equation=numerator,
-            derived=False,
-        )
-
-    existing_fields = unify.get_fields(context=context)
-    if den_total_key not in existing_fields:
-        ensure_derived_column(
-            context=context,
-            key=den_total_key,
-            equation=denominator,
-            derived=False,
-        )
-
-    sum_equation = (
-        f"(({{lg:{num_total_key}}}) / ({{lg:{den_total_key}}})) "
-        f"if (({{lg:{den_total_key}}}) > 0) else 2"
-    )
-
-    ensure_derived_column(
-        context=context,
-        key=sum_key,
-        equation=sum_equation,
-        derived=False,
-    )
-
-    unify.delete_fields(
-        num_keys + den_keys + [num_total_key, den_total_key],
-        context=context,
-    )
-    return sum_key
+    # Always return the private key created by the piecewise builder
+    return ensure_mean_cosine_column_piecewise(context, terms, seed)
 
 
 def fetch_top_k_by_terms_with_score(
@@ -331,12 +244,12 @@ def fetch_top_k_by_terms_with_score(
     *,
     k: int = 10,
     row_filter: Optional[str] = None,
-    score_prefix: str = "score_",
 ) -> tuple[list[dict], str]:
-    """Return top-k rows plus the public score column name for provided terms.
+    """Return top-k rows plus the private score column key for provided terms.
 
-    The score column is created with a non-underscore prefix so it is returned
-    even when private fields are excluded from payloads.
+    The score column remains private (underscored). Internally, this function
+    includes that private column in the returned payload to enable downstream
+    consumers to combine scores, while still excluding all other private fields.
     """
     if len(terms) == 0:
         return [], ""
@@ -345,19 +258,17 @@ def fetch_top_k_by_terms_with_score(
     import hashlib as _hashlib
 
     sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
-    sum_key = ensure_mean_cosine_column_piecewise_named(
-        context,
-        terms,
-        sum_hash,
-        public_prefix=score_prefix,
-    )
+    sum_key = ensure_mean_cosine_column_piecewise_named(context, terms, sum_hash)
+
+    # Exclude all private fields except the score key we need to read
+    exclude_fields = [f for f in list_private_fields(context) if f != sum_key]
 
     logs = unify.get_logs(
         context=context,
         filter=row_filter,
         sorting={sum_key: "ascending"},
         limit=k,
-        exclude_fields=list_private_fields(context),
+        exclude_fields=exclude_fields,
     )
     return [lg.entries for lg in logs], sum_key
 
@@ -368,9 +279,8 @@ def fetch_scores_for_ids(
     *,
     id_field: str,
     ids: list[int],
-    score_prefix: str = "score_",
 ) -> tuple[dict[int, float], str]:
-    """Fetch scores for a specific set of IDs using a non-private score column.
+    """Fetch scores for a specific set of IDs using a private score column.
 
     Returns a mapping from id -> score and the score column key used.
     """
@@ -381,22 +291,20 @@ def fetch_scores_for_ids(
     import hashlib as _hashlib
 
     sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
-    sum_key = ensure_mean_cosine_column_piecewise_named(
-        context,
-        terms,
-        sum_hash,
-        public_prefix=score_prefix,
-    )
+    sum_key = ensure_mean_cosine_column_piecewise_named(context, terms, sum_hash)
 
     # Build a safe OR filter to avoid potential backend issues with list literals
     or_clauses = [f"{id_field} == {int(v)}" for v in ids]
     id_filter = " or ".join(or_clauses)
 
+    # Exclude all private fields except the score key we need to read
+    exclude_fields = [f for f in list_private_fields(context) if f != sum_key]
+
     rows = unify.get_logs(
         context=context,
         filter=id_filter if id_filter else None,
         limit=len(ids),
-        exclude_fields=list_private_fields(context),
+        exclude_fields=exclude_fields,
     )
     out: dict[int, float] = {}
     for lg in rows:
