@@ -62,6 +62,9 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
 
 def build_ask_prompt(
     tools: Dict[str, Callable],
+    num_messages: int,
+    transcript_columns: Dict[str, str] | list[dict] | list[str],
+    contact_columns: Dict[str, str] | list[dict] | list[str],
     *,
     include_activity: bool = True,
 ) -> str:  # noqa: C901 – long, but flat
@@ -103,16 +106,37 @@ def build_ask_prompt(
         else ""
     )
 
+    # Strongly emphasize correct tool selection in a format consistent with ContactManager
     usage_examples_base = f"""
-        Examples
-        --------
-        • **Semantic search** – top-3 messages about *banking and budgeting*
-          `{search_messages_fname}(text="banking and budgeting", k=3)`
+Examples
+--------
 
-        • **Filter search** – most recent WhatsApp from *contact 7*
-          `{filter_messages_fname}(filter="contact_id == 7 and medium == 'whatsapp_message'", limit=1, offset=0)`
+─ Tool selection (read carefully) ─
+• For ANY semantic question over free‑form text (message content, free‑text custom columns), ALWAYS use `{search_messages_fname}`. Never try to approximate meaning with brittle substring filters.
+• Use `{filter_messages_fname}` only for exact/boolean logic over structured message fields (ids, mediums, equality checks) or for narrow, constrained text where substring checks make sense. Contact fields (sender profile) are NOT available in `{filter_messages_fname}`.
 
-        Important: if the question refers to message *content* (topic etc.) rather than meta-data (datetime, medium etc.) then you should almost always use {search_messages_fname} before trying exact string matching via {filter_messages_fname}. You're much more likely to get a match on your first attempt.
+─ Semantic search: targeted references across columns (ranked by SUM of cosine distances) ─
+• Find top‑3 messages about budgeting and banking (signal in `content`)
+  `{search_messages_fname}(references={{'content': 'banking and budgeting'}}, k=3)`
+
+• Combine message content with sender profile (contact‑side signal)
+  `{search_messages_fname}(references={{'content': 'contract renewal', 'bio': 'procurement manager'}}, k=5)`
+
+• Use a derived expression for content when you need normalisation
+  `expr = "lower(str({{content}}))"`
+  `{search_messages_fname}(references={{expr: 'kickoff call summary'}}, k=5)`
+
+─ Filtering (exact/boolean; not semantic) ─
+• Most recent WhatsApp from contact 7
+  `{filter_messages_fname}(filter="sender_id == 7 and medium == 'whatsapp_message'", limit=1, offset=0)`
+• Last month’s emails (if datetime comparisons are supported by your backend)
+  `{filter_messages_fname}(filter="medium == 'email' and timestamp >= '2024-01-01T00:00:00' and timestamp < '2024-02-01T00:00:00'", limit=100)`
+
+Anti‑patterns to avoid
+---------------------
+• Avoid the default search behaviour of concatenating every column into one long string and comparing a single embedding of the whole question. Instead, pass multiple, focused reference texts keyed by their specific columns. The ranking minimises the sum of cosine distances and is more robust.
+• Avoid filtering for text‑heavy columns; substring matching is brittle. Prefer `{search_messages_fname}` for content‑based queries.
+• Do not attempt to reference contact fields (e.g., `bio`, `occupation`) inside `{filter_messages_fname}`; those fields live on the Contacts table. Use `{search_messages_fname}` to leverage sender contact fields.
     """
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
@@ -125,12 +149,22 @@ def build_ask_prompt(
         [
             activity_block,
             "You are an assistant specialised in **querying and analysing communication transcripts**.",
-            "Work **exclusively** through the tools listed below to gather data",
-            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best method yourself.",
-            "before composing your final answer.",
+            "Work strictly through the tools provided.",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
+            "Use the tools to gather missing context before asking the user for clarifications.",
             "",
-            "Tools (name → argspec)",
-            "----------------------",
+            f"There are currently {num_messages} messages stored in the Transcripts table.",
+            "Transcript columns:",
+            json.dumps(transcript_columns, indent=4),
+            "",
+            "Sender contact columns (fields available on the Contacts table for the message sender):",
+            json.dumps(contact_columns, indent=4),
+            "",
+            "Two-table reasoning:",
+            "- Use semantic `{search_messages_fname}` when you need message content and/or sender contact attributes (e.g., `bio`, `first_name`). The tool will internally ensure embeddings and, when needed, join Transcripts with Contacts on `sender_id == contact_id` to rank results by the sum of per-term similarities.",
+            "- Use exact `{filter_messages_fname}` only over transcript fields (ids, mediums, timestamps, content equality/contains). Contact fields are not in scope for filtering.",
+            "",
+            "Tools (name → argspec):",
             sig_json,
             "",
             usage_examples,
