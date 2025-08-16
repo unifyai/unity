@@ -62,21 +62,94 @@ async def test_log_messages():
 async def test_get_messages():
     start_time = datetime.now(UTC).isoformat()
     time.sleep(0.1)
-    random.seed(0)
     tm = TranscriptManager()
 
-    # log messages
-    for i in range(10):
-        tm.log_messages(
-            Message(
-                medium=random.choice(VALID_MEDIA),
-                sender_id=random.randint(0, 2),
-                receiver_ids=[random.randint(0, 2)],
-                timestamp=datetime.now(UTC),
-                content=random.choice(MESSAGES),
-                exchange_id=i,
-            ),
-        )
+    # Hard-coded messages for deterministic testing
+    test_messages = [
+        Message(
+            medium="email",
+            sender_id=0,
+            receiver_ids=[1],
+            timestamp=datetime.now(UTC),
+            content="Hello, how are you?",
+            exchange_id=0,
+        ),
+        Message(
+            medium="sms_message",
+            sender_id=1,
+            receiver_ids=[0],
+            timestamp=datetime.now(UTC),
+            content="Sorry I couldn't hear you",
+            exchange_id=1,
+        ),
+        Message(
+            medium="whatsapp_message",
+            sender_id=0,
+            receiver_ids=[1],
+            timestamp=datetime.now(UTC),
+            content="Hell no, I won't do that",
+            exchange_id=2,
+        ),
+        Message(
+            medium="email",
+            sender_id=1,
+            receiver_ids=[0],
+            timestamp=datetime.now(UTC),
+            content="Wow, did you see that?",
+            exchange_id=3,
+        ),
+        Message(
+            medium="sms_message",
+            sender_id=0,
+            receiver_ids=[1],
+            timestamp=datetime.now(UTC),
+            content="Goodbye",
+            exchange_id=4,
+        ),
+        Message(
+            medium="whatsapp_message",
+            sender_id=1,
+            receiver_ids=[0],
+            timestamp=datetime.now(UTC),
+            content="Hell no, I won't do that",
+            exchange_id=5,
+        ),
+        Message(
+            medium="email",
+            sender_id=0,
+            receiver_ids=[1],
+            timestamp=datetime.now(UTC),
+            content="Sorry I couldn't hear you",
+            exchange_id=6,
+        ),
+        Message(
+            medium="sms_message",
+            sender_id=1,
+            receiver_ids=[0],
+            timestamp=datetime.now(UTC),
+            content="Wow, did you see that?",
+            exchange_id=7,
+        ),
+        Message(
+            medium="whatsapp_message",
+            sender_id=0,
+            receiver_ids=[1],
+            timestamp=datetime.now(UTC),
+            content="Hell no, I won't do that",
+            exchange_id=8,
+        ),
+        Message(
+            medium="email",
+            sender_id=1,
+            receiver_ids=[0],
+            timestamp=datetime.now(UTC),
+            content="Hello, how are you?",
+            exchange_id=9,
+        ),
+    ]
+
+    for msg in test_messages:
+        tm.log_messages(msg)
     tm.join_published()
 
     ## get all
@@ -88,33 +161,28 @@ async def test_get_messages():
     ## search
 
     # sender
-
     messages = tm._filter_messages(filter="sender_id == 0")
-    assert len(messages) == 3
-    assert all(isinstance(msg, Message) for msg in messages)
-
-    # contains
-
-    messages = tm._filter_messages(filter="'Hell' in content")
-    assert len(messages) == 3
-    assert all(isinstance(msg, Message) for msg in messages)
-
-    # does not contain
-
-    messages = tm._filter_messages(filter="',' not in content")
     assert len(messages) == 5
     assert all(isinstance(msg, Message) for msg in messages)
 
-    # medium
+    # contains
+    messages = tm._filter_messages(filter="'Hell' in content")
+    assert len(messages) == 5
+    assert all(isinstance(msg, Message) for msg in messages)
 
+    # does not contain
+    messages = tm._filter_messages(filter="',' not in content")
+    assert len(messages) == 3
+    assert all(isinstance(msg, Message) for msg in messages)
+
+    # medium
     messages = tm._filter_messages(
         filter="medium in ('email', 'whatsapp_message')",
     )
-    assert len(messages) == 1
+    assert len(messages) == 7
     assert all(isinstance(msg, Message) for msg in messages)
 
     # timestamp
-
     messages = tm._filter_messages(filter=f"timestamp < '{start_time}'")
     assert len(messages) == 0
     messages = tm._filter_messages(filter=f"timestamp > '{start_time}'")
