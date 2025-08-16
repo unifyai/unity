@@ -1,4 +1,5 @@
 import time
+import json
 import random
 import pytest
 from datetime import datetime, UTC
@@ -223,3 +224,65 @@ async def test_multiple_receivers():
     m = found[0]
     # Primary assertions ----------------------------------------------------
     assert m.receiver_ids == [1, 2], "receiver_ids should preserve the full list"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@_handle_project
+async def test_filter_messages_contacts_table_output():
+    tm = TranscriptManager()
+
+    # Seed a few deterministic messages
+    msgs = [
+        Message(
+            medium="email",
+            sender_id=0,
+            receiver_ids=[1],
+            timestamp=datetime.now(UTC),
+            content="hello A",
+            exchange_id=111,
+        ),
+        Message(
+            medium="email",
+            sender_id=1,
+            receiver_ids=[0],
+            timestamp=datetime.now(UTC),
+            content="hello B",
+            exchange_id=111,
+        ),
+    ]
+    [tm.log_messages(m) for m in msgs]
+    tm.join_published()
+
+    # Call with contacts table rendering enabled
+    result = tm._filter_messages(
+        filter="exchange_id == 111",
+        return_with_contacts_table=True,
+    )
+
+    assert (
+        isinstance(result, str)
+        and "Contacts (once):" in result
+        and "\n\nMessages:\n" in result
+    )
+
+    # Parse the two JSON blobs
+    head, tail = result.split("\n\nMessages:\n", 1)
+    contacts_json = head.split("Contacts (once):\n", 1)[1]
+    contacts = json.loads(contacts_json)
+    messages = json.loads(tail)
+
+    # Validate uniqueness and coverage of contacts
+    contact_ids_from_table = {c.get("contact_id") for c in contacts}
+    assert len(contact_ids_from_table) == len(contacts)
+
+    referenced_ids = set()
+    for m in messages:
+        if m.get("sender_id") is not None:
+            referenced_ids.add(m["sender_id"])
+        for rid in m.get("receiver_ids", []) or []:
+            referenced_ids.add(rid)
+
+    assert referenced_ids.issubset(
+        contact_ids_from_table,
+    ), "All participant ids must be included in contacts table"
