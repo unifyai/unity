@@ -73,7 +73,7 @@ class ScenarioBuilder:
         *,
         description: str,
         tools: Dict[str, Callable],
-        endpoint: str = "o4-mini@openai",
+        endpoint: str = "gpt-5->o4-mini@openai",
         traced: bool = True,
         stateful: bool = True,
     ) -> None:
@@ -90,6 +90,8 @@ class ScenarioBuilder:
             cache=True,
             traced=traced,
             stateful=stateful,
+            reasoning_effort="high",
+            service_tier="priority",
         )
         # System prompt is rebuilt lazily in .create() so that the arg‑specs
         # reflect any monkey‑patched callables between calls.

@@ -1461,7 +1461,7 @@ class TranscriptGenerator:
     def __init__(
         self,
         *,
-        endpoint: str = "o4-mini@openai",
+        endpoint: str = "gpt-5->o4-mini@openai",
         traced: bool = True,
         stateful: bool = True,
         in_conversation_manager: bool = False,
