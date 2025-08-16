@@ -188,7 +188,14 @@ class TranscriptManager(BaseTranscriptManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
             preprocess_msgs=self._inject_broader_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=lambda i, _tools: (
+                (
+                    "required",
+                    {"search_messages": _tools["search_messages"]},
+                )
+                if i < 1 and "search_messages" in _tools
+                else ("auto", _tools)
+            ),
         )
 
         # ── 3.  Wrap with logging (outgoing, pause, …)  ─────────────────────
