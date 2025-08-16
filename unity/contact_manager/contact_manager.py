@@ -698,7 +698,7 @@ class ContactManager(BaseContactManager):
         )
 
         client = unify.AsyncUnify(
-            "gpt-5@openai",
+            "gpt-5->o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
             reasoning_effort="high",
@@ -820,7 +820,7 @@ class ContactManager(BaseContactManager):
         )
 
         client = unify.AsyncUnify(
-            "gpt-5@openai",
+            "gpt-5->o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
             reasoning_effort="high",
