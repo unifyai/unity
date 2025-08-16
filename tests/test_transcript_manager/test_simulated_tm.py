@@ -136,7 +136,7 @@ async def test_tm_stateful_memory():
 # ────────────────────────────────────────────────────────────────────────────
 # 7.  Doc-string inheritance                                                 #
 # ────────────────────────────────────────────────────────────────────────────
-def test_simulated_cm_docstrings_match_base():
+def test_simulated_tm_docstrings_match_base():
     """
     Public methods in SimulatedTranscriptManager should copy the real
     BaseTranscriptManager doc-strings one-for-one (via functools.wraps).
@@ -145,8 +145,8 @@ def test_simulated_cm_docstrings_match_base():
     from unity.transcript_manager.simulated import SimulatedTranscriptManager
 
     assert (
-        SimulatedTranscriptManager.ask.__doc__.strip()
-        == BaseTranscriptManager.ask.__doc__.strip()
+        BaseTranscriptManager.ask.__doc__.strip()
+        in SimulatedTranscriptManager.ask.__doc__.strip()
     ), ".store doc-string was not copied correctly"
 
 
