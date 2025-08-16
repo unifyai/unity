@@ -129,7 +129,7 @@ async def test_search_messages_cross_contact_and_message_disambiguation():
     tm.join_published()
 
     # Query mixes message content and sender bio; should pick Alice's message as best match
-    refs = {"content": "let's meet next week", "bio": "account"}
+    refs = {"content": "meeting next week", "bio": "accounts"}
     nearest = tm._search_messages(references=refs, k=3)
 
     assert len(nearest) >= 1
