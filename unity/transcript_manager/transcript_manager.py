@@ -33,6 +33,8 @@ from ..common.semantic_search import (
     is_plain_identifier,
     ensure_vector_for_source,
     fetch_top_k_by_terms,
+    fetch_top_k_by_terms_with_score,
+    fetch_scores_for_ids,
 )
 
 
@@ -547,9 +549,10 @@ class TranscriptManager(BaseTranscriptManager):
 
         Provide a mapping of source expressions to reference texts. Each source expression can target either side:
         - Message-side fields (columns in the `Message` schema), e.g. "content" or a derived expression like "str({content}).lower()".
-        - Sender contact-side fields (columns in the `Contact` schema), e.g. "bio" or a derived expression like "str({first_name}) + ' ' + str({surname})".
+        - Contact-side fields scoped to either the sender or the receivers, by prefixing with either "sender_" or "receiver_" (e.g., "sender_bio", "receiver_bio").
+          Backwards-compat: unprefixed contact fields (e.g., "bio") are treated as sender-side.
 
-        The function automatically ensures embedding columns exist for every source expression and then ranks messages by the sum of cosine similarities between each term's embedding and its reference text embedding. If at least one contact-side term is present, a temporary join between Transcripts (messages) and Contacts (senders) is performed on `sender_id == contact_id` to compute the combined ranking. Only the sender is considered for contact-side terms (receiver attributes are not used here).
+        The function automatically ensures embedding columns exist for every source expression and then ranks messages by the sum of cosine similarities between each term's embedding and its reference text embedding. If at least one sender-side contact term is present, a temporary join between Transcripts (messages) and Contacts (senders) is performed on `sender_id == contact_id` to compute the combined ranking. When receiver-side terms are present, each message is scored using the minimum (best) cosine distance among all of its receivers against the receiver-side terms, and this value is added to the sender/message score for final ranking.
 
         Parameters
         ----------
@@ -583,7 +586,8 @@ class TranscriptManager(BaseTranscriptManager):
           • Single term: messages ranked by cosine similarity to that reference.
           • Multiple terms: messages ranked by the sum of per-term cosine similarities, favouring rows that are jointly similar across all terms.
         - Join semantics:
-          • When at least one contact-side term exists, the method creates a temporary joined context between Transcripts and Contacts on `sender_id == contact_id`. Only sender fields are considered; receiver fields are not used for ranking.
+          • When at least one sender contact-side term exists, the method creates a temporary joined context between Transcripts and Contacts on `sender_id == contact_id`.
+          • Receiver contact-side terms do not materialize a join per receiver. Instead, receivers are scored in the Contacts table and each message aggregates its receivers by the minimum distance.
         - Column management:
           • For plain identifiers, the function embeds the referenced column directly.
           • For derived expressions, a stable derived source column is created (if needed) and then embedded.
@@ -624,7 +628,8 @@ class TranscriptManager(BaseTranscriptManager):
 
         # Ensure/embed columns and gather terms
         msg_embed_columns: list[tuple[str, str]] = []
-        contact_embed_columns: list[tuple[str, str]] = []
+        sender_contact_embed_columns: list[tuple[str, str]] = []
+        receiver_contact_embed_columns: list[tuple[str, str]] = []
 
         # For deterministic naming of derived columns and the join context
         import hashlib
@@ -641,7 +646,12 @@ class TranscriptManager(BaseTranscriptManager):
             )
             is_message_side = False
             if is_plain_identifier(source_expr):
-                is_message_side = source_expr in msg_fields
+                # Only treat as message-side if it's a Message field and not a prefixed contact key
+                is_message_side = (
+                    source_expr in msg_fields
+                    and not source_expr.startswith("sender_")
+                    and not source_expr.startswith("receiver_")
+                )
             else:
                 # If any placeholder matches a message field, treat as message-side
                 is_message_side = any(ph in msg_fields for ph in placeholders)
@@ -660,28 +670,52 @@ class TranscriptManager(BaseTranscriptManager):
                 if not is_plain_identifier(source_expr)
                 else []
             )
-            is_contact_side = False
+            # Determine contact role and base expression/key
+            role: Optional[str] = None
+            base_expr = source_expr
             if is_plain_identifier(source_expr):
-                is_contact_side = (source_expr in contact_fields) and (
+                if source_expr.startswith("sender_"):
+                    role = "sender"
+                    base_expr = source_expr[len("sender_") :]
+                elif source_expr.startswith("receiver_"):
+                    role = "receiver"
+                    base_expr = source_expr[len("receiver_") :]
+                elif (source_expr in contact_fields) and (
                     source_expr not in msg_fields
-                )
+                ):
+                    # Backward-compat: unprefixed contact field → sender
+                    role = "sender"
+                    base_expr = source_expr
             else:
-                # If all placeholders are contact fields (or there are placeholders and none are message fields), treat as contact-side
-                is_contact_side = (
+                # Derived expressions for contacts are only supported if placeholders
+                # are exclusively contact fields; treat as sender-side unless explicitly
+                # prefixed (we do not support derived receiver_* expressions for now).
+                if (
                     (len(placeholders) > 0)
                     and all(ph in contact_fields for ph in placeholders)
                     and not any(ph in msg_fields for ph in placeholders)
-                )
+                ):
+                    if base_expr.startswith("sender_"):
+                        role = "sender"
+                        base_expr = base_expr[len("sender_") :]
+                    elif base_expr.startswith("receiver_"):
+                        role = "receiver"  # best-effort; see note above
+                        base_expr = base_expr[len("receiver_") :]
+                    else:
+                        role = "sender"
 
-            if is_contact_side:
+            if role is not None:
                 embed_column_name = ensure_vector_for_source(
                     self._contact_manager._ctx,
-                    source_expr,
+                    base_expr,
                 )
-                contact_embed_columns.append((embed_column_name, ref_text))
+                if role == "sender":
+                    sender_contact_embed_columns.append((embed_column_name, ref_text))
+                else:
+                    receiver_contact_embed_columns.append((embed_column_name, ref_text))
 
-        # 3) If there are no contact-side terms, we can compute directly in transcripts context (no join)
-        if not contact_embed_columns:
+        # 3) If there are no contact-side terms (sender/receiver), compute directly in transcripts context (no join)
+        if not sender_contact_embed_columns and not receiver_contact_embed_columns:
             # Ensure at least one message-side term exists; otherwise default to content
             if not msg_embed_columns:
                 ensure_vector_column(self._transcripts_ctx, self._MSG_EMB, "content")
@@ -694,41 +728,175 @@ class TranscriptManager(BaseTranscriptManager):
             )
             return [Message(**lg) for lg in rows]
 
-        # 4) Otherwise, create a temporary joined context between transcripts and contacts
+        # 4) Build sender-join context and compute base scores (message + sender)
         left_ctx = self._transcripts_ctx
-        right_ctx = self._contact_manager._ctx  # reuse the active Contacts table
+        right_ctx = self._contact_manager._ctx  # Contacts table
 
-        # Create a deterministic destination context name
-        join_ctx = f"{left_ctx}__sender_join__{query_hash}"
+        sender_join_ctx = f"{left_ctx}__sender_join__{query_hash}"
 
-        # ────────────────────────────────────────────────────────────────────
-        # TEMPORARY BACKEND WORKAROUND
-        # Join on raw text columns (content/bio) and then recompute embeddings
-        # in the joined context to work around a backend bug where derived
-        # vector columns (e.g. _content_emb, _bio_emb) are not copied during
-        # join operations. Remove this helper once the backend is fixed.
-        # ────────────────────────────────────────────────────────────────────
+        # Temporary backend workaround: join and recompute selected vectors
         self._TEMP_join_on_raw_and_recompute_vectors(
             left_ctx=left_ctx,
             right_ctx=right_ctx,
-            join_ctx=join_ctx,
+            join_ctx=sender_join_ctx,
             msg_embed_columns=msg_embed_columns,
-            contact_embed_columns=contact_embed_columns,
+            contact_embed_columns=sender_contact_embed_columns,
         )
 
-        # Rank by summed cosine across all included embed columns
-        joined_rows = fetch_top_k_by_terms(
-            join_ctx,
-            msg_embed_columns + contact_embed_columns,
-            k=k,
+        # Base terms for sender join ranking
+        base_terms = list(msg_embed_columns) + list(sender_contact_embed_columns)
+
+        # If there are no base terms (only receiver terms supplied), select candidates by top receiver contacts
+        candidate_rows: list[dict]
+        candidate_score_key = ""
+        if base_terms:
+            # Oversample to allow receiver score to influence final ranking
+            oversample = max(k * 5, 50)
+            candidate_rows, candidate_score_key = fetch_top_k_by_terms_with_score(
+                sender_join_ctx,
+                base_terms,
+                k=oversample,
+            )
+        else:
+            # Receiver-only search: rank contacts by receiver terms, then gather messages that include
+            # those contacts as receivers; compute per-message min receiver score; finally return top-k.
+            top_contacts_limit = max(k * 10, 200)
+            top_contact_rows, recv_score_key = fetch_top_k_by_terms_with_score(
+                right_ctx,
+                receiver_contact_embed_columns,
+                k=top_contacts_limit,
+            )
+            # Accumulate candidate messages keyed by message_id with their provisional score (min over receivers)
+            msg_to_score: dict[int, float] = {}
+            seen_msg_ids: set[int] = set()
+            for contact_row in top_contact_rows:
+                cid = contact_row.get("contact_id")
+                if cid is None:
+                    continue
+                try:
+                    cid_int = int(cid)
+                except Exception:
+                    continue
+                try:
+                    c_score = float(contact_row.get(recv_score_key, 0))
+                except Exception:
+                    c_score = 0.0
+                # Fetch messages where this contact is in receiver_ids
+                msgs = unify.get_logs(
+                    context=left_ctx,
+                    filter=f"{cid_int} in receiver_ids",
+                    limit=max(k * 5, 100),
+                    exclude_fields=list_private_fields(left_ctx),
+                )
+                for m in msgs:
+                    mid = m.entries.get("message_id")
+                    if mid is None:
+                        continue
+                    try:
+                        mid_int = int(mid)
+                    except Exception:
+                        continue
+                    prev = msg_to_score.get(mid_int)
+                    if (prev is None) or (c_score < prev):
+                        msg_to_score[mid_int] = c_score
+                        seen_msg_ids.add(mid_int)
+                if len(seen_msg_ids) >= k * 5:
+                    break
+            # Turn into candidate rows with only message_id and receiver_ids; we'll refine later
+            candidate_rows = []
+            if msg_to_score:
+                # Fetch these messages to populate receiver_ids for the next step
+                for mid in list(msg_to_score.keys()):
+                    rows = unify.get_logs(
+                        context=left_ctx,
+                        filter=f"message_id == {int(mid)}",
+                        limit=1,
+                        exclude_fields=list_private_fields(left_ctx),
+                    )
+                    if rows:
+                        row = dict(rows[0].entries)
+                        # Inject a synthetic base score column name for uniformity in later code
+                        row["_receiver_only_base"] = 0.0
+                        candidate_rows.append(row)
+
+        # Fast path: no receiver terms → return top-k by base ranking
+        if not receiver_contact_embed_columns:
+            # Map back to original messages by message_id
+            results: List[Message] = []
+            taken = 0
+            for row in candidate_rows:
+                if taken >= k:
+                    break
+                mid = row.get("message_id")
+                if mid is None:
+                    continue
+                rows = unify.get_logs(
+                    context=left_ctx,
+                    filter=f"message_id == {int(mid)}",
+                    limit=1,
+                    exclude_fields=list_private_fields(left_ctx),
+                )
+                if rows:
+                    results.append(Message(**rows[0].entries))
+                    taken += 1
+            return results
+
+        # 5) Receiver terms present → compute per-contact receiver scores and combine per message (min over receivers)
+        # Collect unique receiver ids across candidates
+        receiver_id_set: set[int] = set()
+        for row in candidate_rows:
+            rids = row.get("receiver_ids", [])
+            if isinstance(rids, list):
+                for rid in rids:
+                    try:
+                        receiver_id_set.add(int(rid))
+                    except Exception:
+                        continue
+
+        # Fetch scores for those receiver contacts
+        receiver_scores_map, receiver_score_key = fetch_scores_for_ids(
+            right_ctx,
+            receiver_contact_embed_columns,
+            id_field="contact_id",
+            ids=sorted(receiver_id_set),
         )
 
-        # Query top-k original Messages by message_id
-        results: List[Message] = []
-        for row in joined_rows:
+        # Combine scores per message_id
+        combined: list[tuple[int, float]] = []
+        for row in candidate_rows:
             mid = row.get("message_id")
             if mid is None:
                 continue
+            # Base score (if available); when only receiver terms were provided, treat base score as 0
+            base_score = 0.0
+            if candidate_score_key and (candidate_score_key in row):
+                try:
+                    base_score = float(row.get(candidate_score_key, 0))
+                except Exception:
+                    base_score = 0.0
+
+            # Min receiver score across this message's receivers
+            min_recv = 2.0
+            rids = row.get("receiver_ids", [])
+            if isinstance(rids, list) and rids:
+                for rid in rids:
+                    try:
+                        rv = receiver_scores_map.get(int(rid))
+                        if rv is not None:
+                            if rv < min_recv:
+                                min_recv = rv
+                    except Exception:
+                        continue
+            # If there are no receivers or no scores, keep min_recv at worst-case 2.0
+            combined.append((int(mid), base_score + min_recv))
+
+        # Sort by combined score ascending and take top-k message_ids
+        combined.sort(key=lambda t: t[1])
+        top_ids = [mid for mid, _ in combined[:k]]
+
+        # Fetch and return original message rows
+        results: List[Message] = []
+        for mid in top_ids:
             rows = unify.get_logs(
                 context=left_ctx,
                 filter=f"message_id == {int(mid)}",
@@ -772,7 +940,10 @@ class TranscriptManager(BaseTranscriptManager):
         # the buggy *_emb columns that we intend to recompute in the joined
         # context; otherwise the backend will create empty columns and our
         # ensure helper would early‑exit.
-        select: Dict[str, str] = {f"{left_ctx}.message_id": "message_id"}
+        select: Dict[str, str] = {
+            f"{left_ctx}.message_id": "message_id",
+            f"{left_ctx}.receiver_ids": "receiver_ids",
+        }
         for embed_col, _ in msg_embed_columns:
             if not (need_msg_content and embed_col == "_content_emb"):
                 select[f"{left_ctx}.{embed_col}"] = embed_col
