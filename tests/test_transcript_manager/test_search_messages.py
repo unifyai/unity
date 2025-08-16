@@ -53,12 +53,12 @@ async def test_search_messages_simple_similarity():
     assert "Totally unrelated: machine learning and Python" not in contents
 
     # When references is None/empty, skip semantic search and return most recent messages
-    recent_only = await tm._search_messages(references=None, k=2)
+    recent_only = tm._search_messages(references=None, k=2)
     assert [m.content for m in recent_only] == [
         "Totally unrelated: machine learning and Python",
         "Let's discuss banking plans tomorrow",
     ]
-    recent_only_empty = await tm._search_messages(references={}, k=2)
+    recent_only_empty = tm._search_messages(references={}, k=2)
     assert [m.content for m in recent_only_empty] == [
         "Totally unrelated: machine learning and Python",
         "Let's discuss banking plans tomorrow",
