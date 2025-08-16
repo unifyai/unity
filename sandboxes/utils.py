@@ -1785,8 +1785,12 @@ class TranscriptGenerator:
         # ------------------------------------------------------------------ #
 
         prompt = (
-            "You are a **Conversation Synthesis Assistant**. Your task is to invent a realistic conversation that fulfils the scenario description provided by the user. "
-            "When you are ready, call the `submit_conversation` tool *exactly once* with a single JSON argument following this structure:\n\n"
+            "You are a **Conversation Synthesis Assistant**. Your task is to fulfil the scenario description provided by the user.\n\n"
+            "Tool usage policy:\n"
+            "- If (and only if) the user explicitly asks to generate a conversation/transcript/messages/exchanges, then call the `submit_conversation` tool **exactly once** with a single JSON argument following the structure shown below.\n"
+            "- If the user only asks to create or update contacts (and does not ask for a transcript), then use `update_contacts` as needed and finish without calling `submit_conversation`.\n"
+            "- You may also use `update_contacts` before `submit_conversation` to ensure participants exist.\n\n"
+            "`submit_conversation` payload shape:\n\n"
             "{\n"
             '  "medium": "phone_call|sms_message|email|whatsapp_message|whatsapp_call",\n'
             '  "participants": {\n'
@@ -1798,8 +1802,8 @@ class TranscriptGenerator:
             '      { "sender": "Bob",   "content": "Hi Alice, great to hear from you." }\n'
             "  ]\n"
             "}\n\n"
-            f"If the scenario doesn't specify how long the chat should be, aim for roughly {min_messages}-{max_messages} messages. "
-            "Be concise – avoid unnecessary filler text. After you have called the tool, do **not** output anything else."
+            f"When a transcript is requested and length is unspecified, aim for roughly {min_messages}-{max_messages} messages. "
+            "Be concise – avoid unnecessary filler text. After you finish calling tools, do **not** output anything else."
         )
 
         # ------------------------------------------------------------------ #
@@ -1842,9 +1846,7 @@ class TranscriptGenerator:
 
         await builder.create()
 
-        if not transcript:
-            raise RuntimeError("TranscriptGenerator produced an empty transcript.")
-
+        # Allow empty transcripts when the user's request only involved contact creation/updates.
         return transcript
 
 
