@@ -44,7 +44,7 @@ from datetime import datetime
 import wave
 from contextlib import contextmanager
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
-from typing import List, Optional, Tuple, Any, Coroutine
+from typing import List, Optional, Tuple, Any, Coroutine, cast
 from av import AudioFrame
 import pyaudio
 import math
@@ -471,7 +471,7 @@ async def _speak_async(text: str) -> None:
                 if hasattr(frame, "data"):  # mid-2024 builds
                     return bytes(frame.data)
                 if hasattr(frame, "to_wav_bytes"):  # old fallback → strip header
-                    return frame.to_wav_bytes()[44:]
+                    return cast(bytes, frame.to_wav_bytes())[44:]
                 return bytes(frame)  # last-resort
 
             async with tts.synthesize(text) as synth_stream:
@@ -724,6 +724,16 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         metavar="PORT",
         help="serve logs over TCP on localhost:PORT (default -1 auto-picks an available port; 0 disables; >0 binds requested port)",
     )
+    parser.add_argument(
+        "--http_log_tcp_port",
+        type=int,
+        default=-1,
+        metavar="PORT",
+        help=(
+            "serve UNIFY/HTTP debug logs over TCP on localhost:PORT (default -1 auto-picks when UNIFY_REQUESTS_DEBUG is set; "
+            "0 disables; >0 binds requested port)"
+        ),
+    )
     return parser
 
 
@@ -830,8 +840,10 @@ class _BroadcastLogHandler(logging.Handler):
 
 def configure_sandbox_logging(
     log_in_terminal: bool = False,
-    log_file: Optional[str] = ".logs.txt",
+    log_file: Optional[str] = ".logs_main.txt",
     tcp_port: int = 0,
+    http_tcp_port: int = 0,
+    http_log_file: Optional[str] = ".logs_http.txt",
 ) -> None:
     """Configure logging to a file by default, with optional terminal streaming.
 
@@ -859,15 +871,22 @@ def configure_sandbox_logging(
     _abs_main_log: Optional[str] = None
     if log_file:
         try:
-            import os as _os
-
-            _abs_main_log = _os.path.abspath(log_file)
+            _abs_main_log = os.path.abspath(log_file)
         except Exception:
             _abs_main_log = log_file
 
     if _abs_main_log:
         _fh = _logging.FileHandler(_abs_main_log, mode="w", encoding="utf-8")
         _fh.setFormatter(_fmt)
+
+        # Exclude HTTP debug logs from the main log file to keep it high-level
+        # (HTTP logs have their own dedicated file and stream)
+        class _LazyHTTPExcludeFilter(_logging.Filter):
+            def filter(self, record: _logging.LogRecord) -> bool:
+                name = record.name or ""
+                return not any(name.startswith(p) for p in _HTTP_PREFIXES)
+
+        _fh.addFilter(_LazyHTTPExcludeFilter())
         root_logger.addHandler(_fh)
 
     if log_in_terminal:
@@ -875,7 +894,39 @@ def configure_sandbox_logging(
         _sh.setFormatter(_fmt)
         root_logger.addHandler(_sh)
 
-    # Optional TCP broadcast for external terminals
+    # Helper: common filter to exclude/include HTTP-debug loggers
+    class _NamePrefixFilter(_logging.Filter):
+        def __init__(
+            self,
+            include_prefixes: Optional[list[str]] = None,
+            exclude_prefixes: Optional[list[str]] = None,
+        ) -> None:
+            super().__init__()
+            self._include = tuple(include_prefixes or [])
+            self._exclude = tuple(exclude_prefixes or [])
+
+        def filter(self, record: _logging.LogRecord) -> bool:  # noqa: D401
+            name = record.name or ""
+            if self._include and not any(name.startswith(p) for p in self._include):
+                return False
+            if self._exclude and any(name.startswith(p) for p in self._exclude):
+                return False
+            return True
+
+    # Determine HTTP-debug logger prefixes (override via env if needed)
+    _http_logger_env = os.getenv("HTTP_DEBUG_LOGGERS", "").strip()
+    if _http_logger_env:
+        _HTTP_PREFIXES = [p.strip() for p in _http_logger_env.split(",") if p.strip()]
+    else:
+        _HTTP_PREFIXES = [
+            "unify_requests",  # Unify SDK dedicated HTTP logger
+            "httpx",  # HTTPX client
+            "httpcore",  # HTTPX transport
+            "urllib3",  # requests/urllib3
+            "requests",  # requests top-level logger (if used)
+        ]
+
+    # Optional TCP broadcast for external terminals (main logs)
     # tcp_port semantics:
     #   -1 → auto-pick a free port and enable streaming by default
     #    0 → disabled
@@ -893,9 +944,7 @@ def configure_sandbox_logging(
             _hidden_name = f".logs_{_ts}.txt"
             # Resolve the hidden full-session log path to absolute for printing
             try:
-                import os as _os
-
-                _abs_hidden = _os.path.abspath(_hidden_name)
+                _abs_hidden = os.path.abspath(_hidden_name)
             except Exception:
                 _abs_hidden = _hidden_name
 
@@ -908,6 +957,74 @@ def configure_sandbox_logging(
             print(f"📝 Full session logs: {_abs_hidden}")
         except Exception as _exc:
             print(f"⚠️  Failed to start log TCP stream on port {tcp_port}: {_exc}")
+
+    # Dedicated HTTP/REST debug stream (enabled when port provided or UNIFY_REQUESTS_DEBUG truthy and http_tcp_port == -1)
+    _unify_debug_env = os.getenv("UNIFY_REQUESTS_DEBUG", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    _start_http_stream = False
+    _http_bind_port = http_tcp_port
+    if http_tcp_port == -1:
+        _start_http_stream = _unify_debug_env
+        _http_bind_port = -1  # auto-pick if enabled
+    elif http_tcp_port > 0:
+        _start_http_stream = True
+
+    if _start_http_stream:
+        try:
+            # Ensure HTTP-related loggers emit DEBUG when UNIFY_REQUESTS_DEBUG is truthy
+            if _unify_debug_env:
+                for _name in _HTTP_PREFIXES:
+                    try:
+                        _logging.getLogger(_name).setLevel(_logging.DEBUG)
+                    except Exception:
+                        pass
+            _srv_http = _LogBroadcastServer(_http_bind_port)
+            _srv_http.start()
+            _bh_http = _BroadcastLogHandler(_srv_http)
+            _bh_http.setFormatter(_fmt)
+            # Only include HTTP-debug logger categories
+            _bh_http.addFilter(_NamePrefixFilter(include_prefixes=_HTTP_PREFIXES))
+
+            # Attach to root but exclude these from main console/broadcast by filtering there
+            root_logger.addHandler(_bh_http)
+            _http_actual = _srv_http._port
+
+            # Exclude HTTP-debug logs from the main stream and console if present
+            for h in list(root_logger.handlers):
+                if h is _bh_http:
+                    continue
+                if isinstance(h, (_logging.StreamHandler, _BroadcastLogHandler)):
+                    h.addFilter(_NamePrefixFilter(exclude_prefixes=_HTTP_PREFIXES))
+
+            print(
+                f"📡 HTTP/REST debug stream on 127.0.0.1:{_http_actual} – connect via: nc 127.0.0.1 {_http_actual} (Ctrl-C to detach)",
+            )
+        except Exception as _exc:
+            print(
+                f"⚠️  Failed to start HTTP debug TCP stream on port {http_tcp_port}: {_exc}",
+            )
+
+    # Dedicated HTTP/REST debug file
+    _abs_http_log: Optional[str] = None
+    if http_log_file:
+        try:
+            _abs_http_log = os.path.abspath(http_log_file)
+        except Exception:
+            _abs_http_log = http_log_file
+
+    if _abs_http_log:
+        try:
+            _fh_http = _logging.FileHandler(_abs_http_log, mode="w", encoding="utf-8")
+            _fh_http.setFormatter(_fmt)
+            _fh_http.addFilter(_NamePrefixFilter(include_prefixes=_HTTP_PREFIXES))
+            root_logger.addHandler(_fh_http)
+            print(f"📝 HTTP logs to {_abs_http_log}")
+        except Exception as _exc:
+            print(f"⚠️  Failed to open HTTP log file {_abs_http_log}: {_exc}")
 
     # Friendly hints
     if _abs_main_log:
@@ -1738,6 +1855,12 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     """
     import unity
     from unity.events.event_bus import EVENT_BUS
+
+    # Force verbose HTTP/REST request logging in sandbox runs
+    try:
+        os.environ["UNIFY_REQUESTS_DEBUG"] = "true"
+    except Exception:
+        pass
 
     unity.init(
         project_name,
