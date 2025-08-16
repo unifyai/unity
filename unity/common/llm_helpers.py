@@ -436,9 +436,22 @@ def method_to_schema(
     sig = inspect.signature(bound_method)
     hints = get_type_hints(bound_method)
 
+    import inspect as _inspect
+
     props, required, hidden = {}, [], set()
 
+    # Detect whether the callable accepts **kwargs so we can permit extra keys
+    has_var_keyword = any(
+        p.kind == _inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
+
     for name, param in sig.parameters.items():
+        # Skip star-args and star-kwargs – these are not expressible as fixed JSON fields
+        if param.kind in (
+            _inspect.Parameter.VAR_POSITIONAL,
+            _inspect.Parameter.VAR_KEYWORD,
+        ):
+            continue
         # Determine whether *name* is **hidden** (never exposed to the LLM)
         is_hidden = (
             name.startswith("_") and param.default is not inspect._empty
@@ -478,7 +491,7 @@ def method_to_schema(
         else:
             tool_name = bound_method.__name__.lstrip("_")
 
-    return {
+    schema: dict = {
         "type": "function",
         "strict": True,
         "function": {
@@ -491,6 +504,10 @@ def method_to_schema(
             },
         },
     }
+    # Allow arbitrary extra keys when the function accepts **kwargs
+    if has_var_keyword:
+        schema["function"]["parameters"]["additionalProperties"] = True
+    return schema
 
 
 async def _maybe_await(obj):
@@ -2051,6 +2068,83 @@ async def _async_tool_use_loop_inner(
                             method on the live handle and **waits** for the return
                             value (sync or async).
                             """
+                            # ── normalise/validate incoming arguments against the bound method ──
+                            try:
+                                import inspect as _inspect  # local to avoid polluting module ns
+
+                                sig = _inspect.signature(_bound)
+                                params = sig.parameters
+                                has_varkw = any(
+                                    p.kind == _inspect.Parameter.VAR_KEYWORD
+                                    for p in params.values()
+                                )
+
+                                # 1) Expand nested {"kwargs": {...}} if present
+                                if "kwargs" in _kw and isinstance(_kw["kwargs"], dict):
+                                    nested_kw = _kw.pop("kwargs")
+                                    for k, v in nested_kw.items():
+                                        _kw.setdefault(k, v)
+
+                                # 2) Drop common placeholder noise keys when empty (e.g. "a", "kw")
+                                for _noise in ("a", "kw"):
+                                    if _noise in _kw and (
+                                        _kw[_noise] is None or _kw[_noise] == ""
+                                    ):
+                                        _kw.pop(_noise, None)
+
+                                # 3) Map positional array → named params if provided under "args"
+                                if "args" in _kw and isinstance(_kw["args"], list):
+                                    pos_params = [
+                                        name
+                                        for name, p in params.items()
+                                        if name != "self"
+                                        and p.kind
+                                        in (
+                                            _inspect.Parameter.POSITIONAL_ONLY,
+                                            _inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                        )
+                                    ]
+                                    for idx, val in enumerate(_kw["args"]):
+                                        if (
+                                            idx < len(pos_params)
+                                            and pos_params[idx] not in _kw
+                                        ):
+                                            _kw[pos_params[idx]] = val
+                                    _kw.pop("args", None)
+
+                                # 4) If the method has exactly one public parameter, accept common aliases
+                                public_params = [
+                                    name
+                                    for name, p in params.items()
+                                    if name not in ("self",)
+                                ]
+                                # exclude underscored keyword-only helpers from public consideration
+                                public_params = [
+                                    n for n in public_params if not n.startswith("_")
+                                ]
+                                if (
+                                    len(public_params) == 1
+                                    and public_params[0] not in _kw
+                                ):
+                                    for alias in (
+                                        "question",
+                                        "query",
+                                        "text",
+                                        "message",
+                                        "prompt",
+                                        "content",
+                                    ):
+                                        if alias in _kw:
+                                            _kw[public_params[0]] = _kw.pop(alias)
+                                            break
+
+                                # 5) Unless the method accepts **kwargs, drop unknown keys
+                                if not has_varkw:
+                                    _kw = {k: v for k, v in _kw.items() if k in params}
+                            except Exception:
+                                # Best-effort normalisation – never fail the call because of sanitisation
+                                pass
+
                             res = await _maybe_await(_bound(**_kw))
                             return {"call_id": _call_id, "result": res}
 
@@ -2872,7 +2966,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                 )
 
             class _StaticHandle(SteerableToolHandle):
-                async def interject(self, *a, **kw): ...
+                async def interject(self, message: str): ...
 
                 def stop(self): ...
 
@@ -2886,7 +2980,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                 async def result(self):
                     return await _static()
 
-                async def ask(self, *a, **kw):
+                async def ask(self, question: str) -> "SteerableToolHandle":
                     return self
 
             return _StaticHandle()  # pragma: no cover
