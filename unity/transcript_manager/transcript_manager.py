@@ -1032,10 +1032,6 @@ class TranscriptManager(BaseTranscriptManager):
         )
         return [Message(**lg.entries) for lg in logs]
 
-    # _search_summaries removed – summary functionality deprecated.
-    def _search_summaries(self, *args, **kwargs):
-        raise NotImplementedError("Summary functionality removed.")
-
     def _update_contact_id(
         self,
         *,
