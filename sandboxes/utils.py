@@ -843,7 +843,7 @@ def configure_sandbox_logging(
     log_file: Optional[str] = ".logs_main.txt",
     tcp_port: int = 0,
     http_tcp_port: int = 0,
-    http_log_file: Optional[str] = ".logs_unify_requests.txt",
+    unify_requests_log_file: Optional[str] = ".logs_unify_requests.txt",
 ) -> None:
     """Configure logging to a file by default, with optional terminal streaming.
 
@@ -1008,11 +1008,11 @@ def configure_sandbox_logging(
 
     # Dedicated Unify Request debug file
     _abs_http_log: Optional[str] = None
-    if http_log_file:
+    if unify_requests_log_file:
         try:
-            _abs_http_log = os.path.abspath(http_log_file)
+            _abs_http_log = os.path.abspath(unify_requests_log_file)
         except Exception:
-            _abs_http_log = http_log_file
+            _abs_http_log = unify_requests_log_file
 
     if _abs_http_log:
         try:
