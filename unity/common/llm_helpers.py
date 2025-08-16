@@ -376,6 +376,10 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     if origin is not None and origin.__name__ == "Annotated":  # Py ≥3.10
         ann = get_args(ann)[0]
 
+    # ── 0a. Explicitly recognise NoneType so Optional[T] collapses correctly ──
+    if ann is type(None):
+        return {"type": "null"}
+
     # ── 1. Primitive scalars (str/int/float/bool) ────────────────────────────
     if ann in TYPE_MAP:
         return {"type": TYPE_MAP[ann]}
@@ -413,7 +417,16 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
         }
 
     # ── 6. typing.Union / Optional …  → anyOf schemas ────────────────────────
-    if origin is Union:
+    # Support both typing.Union and PEP 604 unions (types.UnionType)
+    _is_union = False
+    try:
+        import types as _types  # local import to avoid top-level dependency
+
+        _is_union = origin is Union or origin is _types.UnionType
+    except Exception:
+        _is_union = origin is Union
+
+    if _is_union:
         sub_schemas = [annotation_to_schema(a) for a in get_args(ann)]
         # Collapse trivial Optional[X] (i.e. Union[X, NoneType]) into X
         if len(sub_schemas) == 2 and {"type": "null"} in sub_schemas:
