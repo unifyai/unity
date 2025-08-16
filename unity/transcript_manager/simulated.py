@@ -22,6 +22,7 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..common.simulated import mirror_transcript_manager_tools
+from .types.message import Message
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,8 +192,19 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         )
         # Use shared helper to mirror the real TranscriptManager's tools
         tools_for_prompt = mirror_transcript_manager_tools()
+        # Provide placeholder counts/columns for the simulated environment
+        fake_columns = [{k: str(v.annotation)} for k, v in Message.model_fields.items()]
+        # Include sender contact columns for clarity
+        from ..contact_manager.types.contact import Contact as _Contact
+
+        fake_contact_columns = [
+            {k: str(v.annotation)} for k, v in _Contact.model_fields.items()
+        ]
         ask_sys = build_ask_prompt(
             tools_for_prompt,
+            num_messages=10,
+            transcript_columns=fake_columns,
+            contact_columns=fake_contact_columns,
             include_activity=self._rolling_summary_in_prompts,
         )
 

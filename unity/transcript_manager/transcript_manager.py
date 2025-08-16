@@ -167,7 +167,13 @@ class TranscriptManager(BaseTranscriptManager):
         )
 
         client.set_system_message(
-            build_ask_prompt(tools, include_activity=include_activity),
+            build_ask_prompt(
+                tools,
+                num_messages=self._num_messages(),
+                transcript_columns=self._list_columns(),
+                contact_columns=self._contact_manager._list_columns(),
+                include_activity=include_activity,
+            ),
         )
 
         # ── 2.  Launch the interactive tool-use loop ───────────────────────
@@ -532,13 +538,16 @@ class TranscriptManager(BaseTranscriptManager):
         """
         Semantic search across transcript messages using one or more reference texts, ranked by the summed cosine similarity across all provided terms.
 
-        Overview
-        --------
-        Provide a mapping of source expressions to reference texts. Each source expression can target either:
-        - Message-side fields (columns in the `Message` schema), e.g. `"content"` or a derived expression like `"lower(str({content}))"`.
-        - Sender contact-side fields (columns in the `Contact` schema), e.g. `"bio"` or a derived expression like `"str({first_name}) + ' ' + str({surname})"`.
+        Two tables and how they are used
+        --------------------------------
+        - Transcripts table (Message schema): fields like `content`, `medium`, `timestamp`, `sender_id`, `receiver_ids`.
+        - Contacts table (Contact schema): fields describing the sender, e.g., `bio`, `first_name`, `surname`, plus any custom contact columns.
 
-        The function automatically ensures embedding columns exist for every source expression and then ranks messages by the sum of cosine similarities between each term's embedding and its reference text embedding. If at least one contact-side term is present, a temporary join between transcripts (messages) and contacts (senders) is performed on `sender_id == contact_id` to compute the combined ranking.
+        Provide a mapping of source expressions to reference texts. Each source expression can target either side:
+        - Message-side fields (columns in the `Message` schema), e.g. "content" or a derived expression like "lower(str({content}))".
+        - Sender contact-side fields (columns in the `Contact` schema), e.g. "bio" or a derived expression like "str({first_name}) + ' ' + str({surname})".
+
+        The function automatically ensures embedding columns exist for every source expression and then ranks messages by the sum of cosine similarities between each term's embedding and its reference text embedding. If at least one contact-side term is present, a temporary join between Transcripts (messages) and Contacts (senders) is performed on `sender_id == contact_id` to compute the combined ranking. Only the sender is considered for contact-side terms (receiver attributes are not used here).
 
         Parameters
         ----------
@@ -546,13 +555,13 @@ class TranscriptManager(BaseTranscriptManager):
             Mapping of `source_expr → reference_text` that defines the semantic query.
             - source_expr: Either a plain identifier naming a field on `Message` (message-side) or `Contact` (contact-side), or a full Unify expression that can reference fields using `{field_name}` placeholders.
               Examples:
-                - Message-side (plain): `"content"`
-                - Message-side (derived): `"lower(str({content}))"`
-                - Contact-side (plain): `"bio"`, `"first_name"`, `"surname"`
-                - Contact-side (derived): `"str({first_name}) + ' ' + str({bio})"`
+                - Message-side (plain): "content"
+                - Message-side (derived): "lower(str({content}))"
+                - Contact-side (plain): "bio", "first_name", "surname"
+                - Contact-side (derived): "str({first_name}) + ' ' + str({bio})"
             - reference_text: The free-form text to embed and compare against each row’s source embedding for this term.
             Notes:
-            - When an expression is not a plain identifier, any `{...}` placeholders must reference valid fields on the selected side (message vs contact). Mixed-side expressions are not allowed; if placeholders include any message fields, the term is treated as message-side; if placeholders include only contact fields, the term is treated as contact-side.
+            - When an expression is not a plain identifier, any `{...}` placeholders must reference valid fields on the selected side (message vs contact). Mixed-side expressions are not allowed; if placeholders include any message fields, the term is treated as message-side; if placeholders include only contact fields, the term is contact-side.
             - If you supply only contact-side terms, a join with the contacts table is performed and the top-k messages are returned based on their senders' similarity to the provided references.
             - The embeddings model and derived columns are managed automatically.
         k : int, default 10
@@ -561,7 +570,7 @@ class TranscriptManager(BaseTranscriptManager):
         Returns
         -------
         List[Message]
-            Up to `k` messages sorted by best match first (highest summed cosine similarity / lowest summed distance). Each element is a validated `Message` model from the original transcripts context. Private embedding columns (those ending in `_emb`) are not included in the returned models.
+            Up to `k` messages sorted by best match first (highest summed cosine similarity / lowest summed distance). Each element is a validated `Message` model from the original transcripts context. Private embedding columns (those ending with `_emb`) are not included in the returned models.
 
         Behaviour and Details
         ---------------------
@@ -572,7 +581,7 @@ class TranscriptManager(BaseTranscriptManager):
           • Single term: messages ranked by cosine similarity to that reference.
           • Multiple terms: messages ranked by the sum of per-term cosine similarities, favouring rows that are jointly similar across all terms.
         - Join semantics:
-          • When at least one contact-side term exists, the method creates a temporary joined context between transcripts and contacts on `sender_id == contact_id`. Only sender fields are considered; receiver fields are not used for ranking.
+          • When at least one contact-side term exists, the method creates a temporary joined context between Transcripts and Contacts on `sender_id == contact_id`. Only sender fields are considered; receiver fields are not used for ranking.
         - Column management:
           • For plain identifiers, the function embeds the referenced column directly.
           • For derived expressions, a stable derived source column is created (if needed) and then embedded.
@@ -590,7 +599,7 @@ class TranscriptManager(BaseTranscriptManager):
         -----
         - This tool considers the sender contact only. If you need to factor in receivers, perform a separate search and then filter/merge as needed.
         - Avoid quoting issues in expressions; use single quotes inside expressions where necessary. The API will create any required derived columns automatically.
-        - For exact, column-wise filtering (e.g., by `medium` or `sender_id`), prefer `_filter_messages` instead of this semantic search.
+        - For exact, column-wise filtering (e.g., by `medium` or `sender_id`), prefer `_filter_messages` instead of this semantic search; `_filter_messages` cannot reference Contact fields.
         """
         # Default behaviour: when references is None/empty, skip semantic search and
         # return the most recent messages directly from transcripts context.
@@ -882,3 +891,53 @@ class TranscriptManager(BaseTranscriptManager):
                 "updated_messages": total_updates,
             },
         }
+
+    # ────────────────────────────────────────────────────────────────────
+    # Column and metrics helpers (paralleling ContactManager)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _get_columns(self) -> Dict[str, str]:
+        """
+        Return {column_name: column_type} for the transcripts table.
+
+        Returns
+        -------
+        Dict[str, str]
+            Dictionary mapping column names to their types.
+        """
+        proj = unify.active_project()
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={self._transcripts_ctx}"
+        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        response = requests.request("GET", url, headers=headers)
+        _handle_exceptions(response)
+        ret = response.json()
+        return {k: v["data_type"] for k, v in ret.items()}
+
+    def _list_columns(
+        self,
+        *,
+        include_types: bool = True,
+    ) -> Dict[str, str] | list[str]:
+        """
+        Return the list of available columns in the transcripts table, optionally with types.
+
+        Parameters
+        ----------
+        include_types : bool, default True
+            Controls the shape of the returned value:
+            - When True: returns a mapping {column_name: column_type}.
+            - When False: returns a list of column names.
+        """
+        cols = self._get_columns()
+        return cols if include_types else list(cols)
+
+    def _num_messages(self) -> int:
+        """Return the total number of messages in transcripts."""
+        ret = unify.get_logs_metric(
+            metric="count",
+            key="message_id",
+            context=self._transcripts_ctx,
+        )
+        if ret is None:
+            return 0
+        return int(ret)
