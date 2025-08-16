@@ -1,5 +1,6 @@
 import random
 import pytest
+import json
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message, VALID_MEDIA
@@ -270,6 +271,68 @@ async def test_search_messages_receiver_bio_multi_receiver_min_aggregation():
     # The top should be the message that includes Bob among receivers due to min aggregation
     bob_rec = cm._filter_contacts(filter="first_name == 'Bob'", limit=1)[0]
     assert bob_rec.contact_id in top.receiver_ids
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@pytest.mark.asyncio
+@_handle_project
+async def test_search_messages_contacts_table_output():
+    tm = TranscriptManager()
+
+    # Ensure both participating contacts exist by creating them explicitly
+    cm = ContactManager()
+    c1 = cm._create_contact(first_name="AlphaUser")
+    c2 = cm._create_contact(first_name="BetaUser")
+    id1 = c1["details"]["contact_id"]
+    id2 = c2["details"]["contact_id"]
+
+    # Seed two messages between the created contacts
+    msgs = [
+        Message(
+            medium=random.choice(VALID_MEDIA),
+            sender_id=id1,
+            receiver_ids=[id2],
+            timestamp="2025-07-01 10:00:00",
+            content="alpha topic",
+            exchange_id=555,
+        ),
+        Message(
+            medium=random.choice(VALID_MEDIA),
+            sender_id=id2,
+            receiver_ids=[id1],
+            timestamp="2025-07-01 10:01:00",
+            content="beta topic",
+            exchange_id=555,
+        ),
+    ]
+    [tm.log_messages(m) for m in msgs]
+    tm.join_published()
+
+    # Ask for a semantic search with contacts table rendering
+    result = tm._search_messages(
+        references={"content": "alpha topic"},
+        k=5,
+        return_with_contacts_table=True,
+    )
+
+    assert (
+        isinstance(result, str)
+        and "Contacts (once):" in result
+        and "\n\nMessages:\n" in result
+    )
+
+    head, tail = result.split("\n\nMessages:\n", 1)
+    contacts_json = head.split("Contacts (once):\n", 1)[1]
+    contacts = json.loads(contacts_json)
+    messages = json.loads(tail)
+
+    # The messages must reference only ids present in contacts
+    contact_ids_from_table = {c.get("contact_id") for c in contacts}
+    for m in messages:
+        assert m["sender_id"] in contact_ids_from_table
+        for rid in m.get("receiver_ids", []) or []:
+            assert rid in contact_ids_from_table
 
 
 @pytest.mark.unit
