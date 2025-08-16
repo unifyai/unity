@@ -344,6 +344,326 @@ def ensure_mean_cosine_column_piecewise(
     return sum_key
 
 
+def ensure_mean_cosine_column_piecewise_named(
+    context: str,
+    terms: List[Tuple[str, str]],
+    seed: str,
+    *,
+    public_prefix: str = "score_",
+) -> str:
+    """Create a non-private (non-underscore) mean-of-cosines column for terms.
+
+    Mirrors ``ensure_mean_cosine_column_piecewise`` but exposes the final sum key
+    as a public (non-underscored) column so it is not filtered out by
+    ``list_private_fields``. Temporary per-term/intermediate columns remain
+    private and are cleaned up at the end.
+
+    Returns the created (or existing) public sum column key.
+    """
+    if len(terms) == 0:
+        # Caller should guard against empty, but be safe and create a trivial constant
+        # Note: Using a constant expression avoids backend errors on empty inputs
+        sum_key = f"{public_prefix}sum_cos_piecewise_{seed}"
+        existing_fields = unify.get_fields(context=context)
+        if sum_key not in existing_fields:
+            lock = _get_column_lock(context, sum_key)
+            with lock:
+                existing_fields = unify.get_fields(context=context)
+                if sum_key not in existing_fields:
+                    url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+                    headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+                    json_input = {
+                        "project": unify.active_project(),
+                        "context": context,
+                        "key": sum_key,
+                        "equation": "0",
+                        "referenced_logs": {"lg": {"context": context}},
+                        "derived": False,
+                    }
+                    resp = requests.request(
+                        "POST",
+                        url,
+                        json=json_input,
+                        headers=headers,
+                    )
+                    if resp.status_code != 200:
+                        _handle_exceptions(resp)
+        return sum_key
+
+    # Reuse the piecewise builder but with a public final key
+    # Prepare per-term equation strings
+    num_equations: list[str] = []
+    den_equations: list[str] = []
+    for embed_col, ref_text in terms:
+        escaped_ref = escape_single_quotes(ref_text)
+        num_equations.append(
+            (
+                "((cosine({lg:"
+                + embed_col
+                + "}, "
+                + f"embed('{escaped_ref}', model='{EMBED_MODEL}'))) "
+                + f"if exists({{lg:{embed_col}}}) else 0)"
+            ),
+        )
+        den_equations.append(f"(1 if exists({{lg:{embed_col}}}) else 0)")
+
+    # Derive keys for each term
+    num_keys: list[str] = [f"_num_cos_{i}_{seed}" for i in range(len(num_equations))]
+    den_keys: list[str] = [f"_den_has_{i}_{seed}" for i in range(len(den_equations))]
+
+    # Public sum key
+    sum_key = f"{public_prefix}sum_cos_piecewise_{seed}"
+
+    existing_fields = unify.get_fields(context=context)
+
+    # Create per-term numerator/denominator columns (private)
+    for key, equation in zip(num_keys, num_equations):
+        if key not in existing_fields:
+            lock = _get_column_lock(context, key)
+            with lock:
+                existing_fields = unify.get_fields(context=context)
+                if key not in existing_fields:
+                    url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+                    headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+                    json_input = {
+                        "project": unify.active_project(),
+                        "context": context,
+                        "key": key,
+                        "equation": equation,
+                        "referenced_logs": {"lg": {"context": context}},
+                        "derived": False,
+                    }
+                    resp = requests.request(
+                        "POST",
+                        url,
+                        json=json_input,
+                        headers=headers,
+                    )
+                    if resp.status_code != 200:
+                        body = getattr(resp, "text", "") or ""
+                        if (
+                            "already exists" in body
+                            or "duplicate key value violates unique constraint" in body
+                        ):
+                            pass
+                        else:
+                            _handle_exceptions(resp)
+
+    for key, equation in zip(den_keys, den_equations):
+        if key not in existing_fields:
+            lock = _get_column_lock(context, key)
+            with lock:
+                existing_fields = unify.get_fields(context=context)
+                if key not in existing_fields:
+                    url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+                    headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+                    json_input = {
+                        "project": unify.active_project(),
+                        "context": context,
+                        "key": key,
+                        "equation": equation,
+                        "referenced_logs": {"lg": {"context": context}},
+                        "derived": False,
+                    }
+                    resp = requests.request(
+                        "POST",
+                        url,
+                        json=json_input,
+                        headers=headers,
+                    )
+                    if resp.status_code != 200:
+                        body = getattr(resp, "text", "") or ""
+                        if (
+                            "already exists" in body
+                            or "duplicate key value violates unique constraint" in body
+                        ):
+                            pass
+                        else:
+                            _handle_exceptions(resp)
+
+    # Totals
+    num_total_key = f"_num_cos_total_{seed}"
+    den_total_key = f"_den_has_total_{seed}"
+
+    numerator = " + ".join(["{lg:" + k + "}" for k in num_keys]) if num_keys else "0"
+    denominator = " + ".join(["{lg:" + k + "}" for k in den_keys]) if den_keys else "0"
+
+    existing_fields = unify.get_fields(context=context)
+    if num_total_key not in existing_fields:
+        lock = _get_column_lock(context, num_total_key)
+        with lock:
+            existing_fields = unify.get_fields(context=context)
+            if num_total_key not in existing_fields:
+                url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+                headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+                json_input = {
+                    "project": unify.active_project(),
+                    "context": context,
+                    "key": num_total_key,
+                    "equation": numerator,
+                    "referenced_logs": {"lg": {"context": context}},
+                    "derived": False,
+                }
+                resp = requests.request("POST", url, json=json_input, headers=headers)
+                if resp.status_code != 200:
+                    body = getattr(resp, "text", "") or ""
+                    if (
+                        "already exists" in body
+                        or "duplicate key value violates unique constraint" in body
+                    ):
+                        pass
+                    else:
+                        _handle_exceptions(resp)
+
+    existing_fields = unify.get_fields(context=context)
+    if den_total_key not in existing_fields:
+        lock = _get_column_lock(context, den_total_key)
+        with lock:
+            existing_fields = unify.get_fields(context=context)
+            if den_total_key not in existing_fields:
+                url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+                headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+                json_input = {
+                    "project": unify.active_project(),
+                    "context": context,
+                    "key": den_total_key,
+                    "equation": denominator,
+                    "referenced_logs": {"lg": {"context": context}},
+                    "derived": False,
+                }
+                resp = requests.request("POST", url, json=json_input, headers=headers)
+                if resp.status_code != 200:
+                    body = getattr(resp, "text", "") or ""
+                    if (
+                        "already exists" in body
+                        or "duplicate key value violates unique constraint" in body
+                    ):
+                        pass
+                    else:
+                        _handle_exceptions(resp)
+
+    sum_equation = (
+        f"(({{lg:{num_total_key}}}) / ({{lg:{den_total_key}}})) "
+        f"if (({{lg:{den_total_key}}}) > 0) else 2"
+    )
+
+    existing_fields = unify.get_fields(context=context)
+    if sum_key not in existing_fields:
+        lock = _get_column_lock(context, sum_key)
+        with lock:
+            existing_fields = unify.get_fields(context=context)
+            if sum_key not in existing_fields:
+                url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+                headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+                json_input = {
+                    "project": unify.active_project(),
+                    "context": context,
+                    "key": sum_key,
+                    "equation": sum_equation,
+                    "referenced_logs": {"lg": {"context": context}},
+                    "derived": False,
+                }
+                resp = requests.request("POST", url, json=json_input, headers=headers)
+                if resp.status_code != 200:
+                    body = getattr(resp, "text", "") or ""
+                    if (
+                        "already exists" in body
+                        or "duplicate key value violates unique constraint" in body
+                    ):
+                        pass
+                    else:
+                        _handle_exceptions(resp)
+
+    unify.delete_fields(
+        num_keys + den_keys + [num_total_key, den_total_key],
+        context=context,
+    )
+    return sum_key
+
+
+def fetch_top_k_by_terms_with_score(
+    context: str,
+    terms: List[Tuple[str, str]],
+    *,
+    k: int = 10,
+    row_filter: Optional[str] = None,
+    score_prefix: str = "score_",
+) -> tuple[list[dict], str]:
+    """Return top-k rows plus the public score column name for provided terms.
+
+    The score column is created with a non-underscore prefix so it is returned
+    even when private fields are excluded from payloads.
+    """
+    if len(terms) == 0:
+        return [], ""
+
+    canonical = "|".join(f"{i}:{col}=>{txt}" for i, (col, txt) in enumerate(terms))
+    import hashlib as _hashlib
+
+    sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+    sum_key = ensure_mean_cosine_column_piecewise_named(
+        context,
+        terms,
+        sum_hash,
+        public_prefix=score_prefix,
+    )
+
+    logs = unify.get_logs(
+        context=context,
+        filter=row_filter,
+        sorting={sum_key: "ascending"},
+        limit=k,
+        exclude_fields=list_private_fields(context),
+    )
+    return [lg.entries for lg in logs], sum_key
+
+
+def fetch_scores_for_ids(
+    context: str,
+    terms: List[Tuple[str, str]],
+    *,
+    id_field: str,
+    ids: list[int],
+    score_prefix: str = "score_",
+) -> tuple[dict[int, float], str]:
+    """Fetch scores for a specific set of IDs using a non-private score column.
+
+    Returns a mapping from id -> score and the score column key used.
+    """
+    if len(terms) == 0 or len(ids) == 0:
+        return {}, ""
+
+    canonical = "|".join(f"{i}:{col}=>{txt}" for i, (col, txt) in enumerate(terms))
+    import hashlib as _hashlib
+
+    sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+    sum_key = ensure_mean_cosine_column_piecewise_named(
+        context,
+        terms,
+        sum_hash,
+        public_prefix=score_prefix,
+    )
+
+    # Build a safe OR filter to avoid potential backend issues with list literals
+    or_clauses = [f"{id_field} == {int(v)}" for v in ids]
+    id_filter = " or ".join(or_clauses)
+
+    rows = unify.get_logs(
+        context=context,
+        filter=id_filter if id_filter else None,
+        limit=len(ids),
+        exclude_fields=list_private_fields(context),
+    )
+    out: dict[int, float] = {}
+    for lg in rows:
+        e = lg.entries
+        try:
+            out[int(e[id_field])] = float(e.get(sum_key, 0))
+        except Exception:
+            continue
+    return out, sum_key
+
+
 def fetch_top_k_by_terms(
     context: str,
     terms: List[Tuple[str, str]],
