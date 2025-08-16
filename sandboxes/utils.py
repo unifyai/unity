@@ -730,8 +730,8 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         default=-1,
         metavar="PORT",
         help=(
-            "serve UNIFY/HTTP debug logs over TCP on localhost:PORT (default -1 auto-picks when UNIFY_REQUESTS_DEBUG is set; "
-            "0 disables; >0 binds requested port)"
+            "serve Unify Request logs (logger: 'unify_requests' only) over TCP on localhost:PORT "
+            "(default -1 auto-picks when UNIFY_REQUESTS_DEBUG is set; 0 disables; >0 binds requested port)"
         ),
     )
     return parser
@@ -843,13 +843,14 @@ def configure_sandbox_logging(
     log_file: Optional[str] = ".logs_main.txt",
     tcp_port: int = 0,
     http_tcp_port: int = 0,
-    http_log_file: Optional[str] = ".logs_http.txt",
+    http_log_file: Optional[str] = ".logs_unify_requests.txt",
 ) -> None:
     """Configure logging to a file by default, with optional terminal streaming.
 
     - Overwrites the given log_file on each run.
     - Adds a StreamHandler to stdout when log_in_terminal is True.
     - Optionally serves logs over TCP on localhost:tcp_port for external viewing.
+    - Supports a dedicated Unify Request log stream/file that captures only the 'unify_requests' logger.
     - Prints a short hint on how to watch the last 50 lines live.
     """
     import sys as _sys
@@ -879,8 +880,8 @@ def configure_sandbox_logging(
         _fh = _logging.FileHandler(_abs_main_log, mode="w", encoding="utf-8")
         _fh.setFormatter(_fmt)
 
-        # Exclude HTTP debug logs from the main log file to keep it high-level
-        # (HTTP logs have their own dedicated file and stream)
+        # Exclude Unify Request logs from the main log file to keep it high-level
+        # (Unify Request logs have their own dedicated file and stream)
         class _LazyHTTPExcludeFilter(_logging.Filter):
             def filter(self, record: _logging.LogRecord) -> bool:
                 name = record.name or ""
@@ -913,17 +914,14 @@ def configure_sandbox_logging(
                 return False
             return True
 
-    # Determine HTTP-debug logger prefixes (override via env if needed)
+    # Determine Unify Request logger prefixes (override via env if needed)
     _http_logger_env = os.getenv("HTTP_DEBUG_LOGGERS", "").strip()
     if _http_logger_env:
         _HTTP_PREFIXES = [p.strip() for p in _http_logger_env.split(",") if p.strip()]
     else:
+        # Restrict to only Unify Request logs by default
         _HTTP_PREFIXES = [
-            "unify_requests",  # Unify SDK dedicated HTTP logger
-            "httpx",  # HTTPX client
-            "httpcore",  # HTTPX transport
-            "urllib3",  # requests/urllib3
-            "requests",  # requests top-level logger (if used)
+            "unify_requests",  # Unify SDK dedicated request logger
         ]
 
     # Optional TCP broadcast for external terminals (main logs)
@@ -958,7 +956,7 @@ def configure_sandbox_logging(
         except Exception as _exc:
             print(f"⚠️  Failed to start log TCP stream on port {tcp_port}: {_exc}")
 
-    # Dedicated HTTP/REST debug stream (enabled when port provided or UNIFY_REQUESTS_DEBUG truthy and http_tcp_port == -1)
+    # Dedicated Unify Request debug stream (enabled when port provided or UNIFY_REQUESTS_DEBUG truthy and http_tcp_port == -1)
     _unify_debug_env = os.getenv("UNIFY_REQUESTS_DEBUG", "").strip().lower() in {
         "1",
         "true",
@@ -975,7 +973,7 @@ def configure_sandbox_logging(
 
     if _start_http_stream:
         try:
-            # Ensure HTTP-related loggers emit DEBUG when UNIFY_REQUESTS_DEBUG is truthy
+            # Ensure 'unify_requests' logger emits DEBUG when UNIFY_REQUESTS_DEBUG is truthy
             if _unify_debug_env:
                 for _name in _HTTP_PREFIXES:
                     try:
@@ -986,14 +984,14 @@ def configure_sandbox_logging(
             _srv_http.start()
             _bh_http = _BroadcastLogHandler(_srv_http)
             _bh_http.setFormatter(_fmt)
-            # Only include HTTP-debug logger categories
+            # Only include the Unify Request logger category
             _bh_http.addFilter(_NamePrefixFilter(include_prefixes=_HTTP_PREFIXES))
 
             # Attach to root but exclude these from main console/broadcast by filtering there
             root_logger.addHandler(_bh_http)
             _http_actual = _srv_http._port
 
-            # Exclude HTTP-debug logs from the main stream and console if present
+            # Exclude Unify Request logs from the main stream and console if present
             for h in list(root_logger.handlers):
                 if h is _bh_http:
                     continue
@@ -1001,14 +999,14 @@ def configure_sandbox_logging(
                     h.addFilter(_NamePrefixFilter(exclude_prefixes=_HTTP_PREFIXES))
 
             print(
-                f"📡 HTTP/REST debug stream on 127.0.0.1:{_http_actual} – connect via: nc 127.0.0.1 {_http_actual} (Ctrl-C to detach)",
+                f"📡 Unify Request debug stream on 127.0.0.1:{_http_actual} – connect via: nc 127.0.0.1 {_http_actual} (Ctrl-C to detach)",
             )
         except Exception as _exc:
             print(
-                f"⚠️  Failed to start HTTP debug TCP stream on port {http_tcp_port}: {_exc}",
+                f"⚠️  Failed to start Unify Request debug TCP stream on port {http_tcp_port}: {_exc}",
             )
 
-    # Dedicated HTTP/REST debug file
+    # Dedicated Unify Request debug file
     _abs_http_log: Optional[str] = None
     if http_log_file:
         try:
@@ -1022,9 +1020,9 @@ def configure_sandbox_logging(
             _fh_http.setFormatter(_fmt)
             _fh_http.addFilter(_NamePrefixFilter(include_prefixes=_HTTP_PREFIXES))
             root_logger.addHandler(_fh_http)
-            print(f"📝 HTTP logs to {_abs_http_log}")
+            print(f"📝 Unify Request logs to {_abs_http_log}")
         except Exception as _exc:
-            print(f"⚠️  Failed to open HTTP log file {_abs_http_log}: {_exc}")
+            print(f"⚠️  Failed to open Unify Request log file {_abs_http_log}: {_exc}")
 
     # Friendly hints
     if _abs_main_log:
@@ -1856,7 +1854,7 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     import unity
     from unity.events.event_bus import EVENT_BUS
 
-    # Force verbose HTTP/REST request logging in sandbox runs
+    # Force verbose Unify Request logging in sandbox runs
     try:
         os.environ["UNIFY_REQUESTS_DEBUG"] = "true"
     except Exception:
