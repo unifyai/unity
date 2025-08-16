@@ -242,7 +242,72 @@ def ensure_mean_cosine_column_piecewise(
     # Build the final mean equation from the per-term columns
     numerator = " + ".join(["{lg:" + k + "}" for k in num_keys]) if num_keys else "0"
     denominator = " + ".join(["{lg:" + k + "}" for k in den_keys]) if den_keys else "0"
-    sum_equation = f"(({numerator}) / ({denominator})) if (({denominator}) > 0) else 2"
+
+    # Create aggregate numerator/denominator temporary columns
+    num_total_key = f"_num_cos_total_{seed}"
+    den_total_key = f"_den_has_total_{seed}"
+
+    # Create numerator total column
+    existing_fields = unify.get_fields(context=context)
+    if num_total_key not in existing_fields:
+        lock = _get_column_lock(context, num_total_key)
+        with lock:
+            existing_fields = unify.get_fields(context=context)
+            if num_total_key not in existing_fields:
+                url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+                headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+                json_input = {
+                    "project": unify.active_project(),
+                    "context": context,
+                    "key": num_total_key,
+                    "equation": numerator,
+                    "referenced_logs": {"lg": {"context": context}},
+                    "derived": False,
+                }
+                resp = requests.request("POST", url, json=json_input, headers=headers)
+                if resp.status_code != 200:
+                    body = getattr(resp, "text", "") or ""
+                    if (
+                        "already exists" in body
+                        or "duplicate key value violates unique constraint" in body
+                    ):
+                        pass
+                    else:
+                        _handle_exceptions(resp)
+
+    # Create denominator total column
+    existing_fields = unify.get_fields(context=context)
+    if den_total_key not in existing_fields:
+        lock = _get_column_lock(context, den_total_key)
+        with lock:
+            existing_fields = unify.get_fields(context=context)
+            if den_total_key not in existing_fields:
+                url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+                headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+                json_input = {
+                    "project": unify.active_project(),
+                    "context": context,
+                    "key": den_total_key,
+                    "equation": denominator,
+                    "referenced_logs": {"lg": {"context": context}},
+                    "derived": False,
+                }
+                resp = requests.request("POST", url, json=json_input, headers=headers)
+                if resp.status_code != 200:
+                    body = getattr(resp, "text", "") or ""
+                    if (
+                        "already exists" in body
+                        or "duplicate key value violates unique constraint" in body
+                    ):
+                        pass
+                    else:
+                        _handle_exceptions(resp)
+
+    # Now define the final mean equation in terms of the aggregate columns
+    sum_equation = (
+        f"(({{lg:{num_total_key}}}) / ({{lg:{den_total_key}}})) "
+        f"if (({{lg:{den_total_key}}}) > 0) else 2"
+    )
 
     # Create the piecewise mean column
     existing_fields = unify.get_fields(context=context)
@@ -273,7 +338,7 @@ def ensure_mean_cosine_column_piecewise(
                         _handle_exceptions(resp)
 
     unify.delete_fields(
-        num_keys + den_keys,
+        num_keys + den_keys + [num_total_key, den_total_key],
         context=context,
     )
     return sum_key
