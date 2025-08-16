@@ -46,6 +46,63 @@ def list_private_fields(context: str) -> list[str]:
         return []
 
 
+def escape_single_quotes(text: str) -> str:
+    """Return text with single quotes escaped for Unify expressions."""
+    return text.replace("'", "\\'")
+
+
+def ensure_derived_column(
+    context: str,
+    key: str,
+    equation: str,
+    *,
+    referenced_logs_context: str | None = None,
+    derived: bool | None = None,
+) -> None:
+    """
+    Ensure a derived column exists with the given equation.
+
+    - Creates the column if missing, guarded by a process-local lock to avoid
+      duplicate creations under concurrency.
+    - Tolerates backend uniqueness races.
+    - By default, scopes placeholders to a local alias `lg` referencing the
+      provided `context` when `referenced_logs_context` is not specified.
+    """
+    existing = unify.get_fields(context=context)
+    if key in existing:
+        return
+
+    lock = _get_column_lock(context, key)
+    with lock:
+        existing = unify.get_fields(context=context)
+        if key in existing:
+            return
+
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        json_input: dict = {
+            "project": unify.active_project(),
+            "context": context,
+            "key": key,
+            "equation": equation,
+            "referenced_logs": {
+                "lg": {"context": referenced_logs_context or context},
+            },
+        }
+        if derived is not None:
+            json_input["derived"] = derived
+
+        response = requests.request("POST", url, json=json_input, headers=headers)
+        if response.status_code != 200:
+            body = getattr(response, "text", "") or ""
+            if (
+                "already exists" in body
+                or "duplicate key value violates unique constraint" in body
+            ):
+                return
+            assert response.status_code == 200, response.text
+
+
 def ensure_vector_column(
     context: str,
     embed_column: str,
@@ -76,37 +133,11 @@ def ensure_vector_column(
                 f"Source column '{source_column}' does not exist in context '{context}' "
                 f"and no derived_expr was provided to create it.",
             )
-        source_lock = _get_column_lock(context, source_column)
-        with source_lock:
-            # Re-check after acquiring the lock in case another thread created it
-            existing = unify.get_fields(context=context)
-            if source_column not in existing:
-                url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
-                headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
-                expr = derived_expr
-                json_input = {
-                    "project": unify.active_project(),
-                    "context": context,
-                    "key": source_column,
-                    "equation": expr,
-                    "referenced_logs": {"lg": {"context": context}},
-                }
-                response = requests.request(
-                    "POST",
-                    url,
-                    json=json_input,
-                    headers=headers,
-                )
-                if response.status_code != 200:
-                    # Tolerate backend uniqueness races from other processes
-                    body = getattr(response, "text", "") or ""
-                    if (
-                        "already exists" in body
-                        or "duplicate key value violates unique constraint" in body
-                    ):
-                        pass
-                    else:
-                        assert response.status_code == 200, response.text
+        ensure_derived_column(
+            context=context,
+            key=source_column,
+            equation=derived_expr,
+        )
 
     # Ensure the embedding column exists
     # Refresh existing fields view
@@ -114,31 +145,12 @@ def ensure_vector_column(
     if embed_column in existing:
         return
 
-    embed_lock = _get_column_lock(context, embed_column)
-    with embed_lock:
-        # Re-check within the lock
-        existing = unify.get_fields(context=context)
-        if embed_column in existing:
-            return
-        # Define the embedding equation, with explicit lg scoping
-        embed_expr = f"embed({{lg:{source_column}}}, model='{EMBED_MODEL}')"
+    # Define the embedding equation, with explicit lg scoping
+    embed_expr = f"embed({{lg:{source_column}}}, model='{EMBED_MODEL}')"
 
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
-        json_input = {
-            "project": unify.active_project(),
-            "context": context,
-            "key": embed_column,
-            "equation": embed_expr,
-            "referenced_logs": {"lg": {"context": context}},
-        }
-        response = requests.request("POST", url, json=json_input, headers=headers)
-        if response.status_code != 200:
-            body = getattr(response, "text", "") or ""
-            if (
-                "already exists" in body
-                or "duplicate key value violates unique constraint" in body
-            ):
-                return
-            assert response.status_code == 200, response.text
-        return response.json()
+    ensure_derived_column(
+        context=context,
+        key=embed_column,
+        equation=embed_expr,
+    )
+    return None
