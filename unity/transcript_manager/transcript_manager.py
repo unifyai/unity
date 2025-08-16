@@ -546,7 +546,7 @@ class TranscriptManager(BaseTranscriptManager):
         - Contacts table (Contact schema): fields describing the sender, e.g., `bio`, `first_name`, `surname`, plus any custom contact columns.
 
         Provide a mapping of source expressions to reference texts. Each source expression can target either side:
-        - Message-side fields (columns in the `Message` schema), e.g. "content" or a derived expression like "lower(str({content}))".
+        - Message-side fields (columns in the `Message` schema), e.g. "content" or a derived expression like "str({content}).lower()".
         - Sender contact-side fields (columns in the `Contact` schema), e.g. "bio" or a derived expression like "str({first_name}) + ' ' + str({surname})".
 
         The function automatically ensures embedding columns exist for every source expression and then ranks messages by the sum of cosine similarities between each term's embedding and its reference text embedding. If at least one contact-side term is present, a temporary join between Transcripts (messages) and Contacts (senders) is performed on `sender_id == contact_id` to compute the combined ranking. Only the sender is considered for contact-side terms (receiver attributes are not used here).
@@ -558,7 +558,7 @@ class TranscriptManager(BaseTranscriptManager):
             - source_expr: Either a plain identifier naming a field on `Message` (message-side) or `Contact` (contact-side), or a full Unify expression that can reference fields using `{field_name}` placeholders.
               Examples:
                 - Message-side (plain): "content"
-                - Message-side (derived): "lower(str({content}))"
+                - Message-side (derived): "str({content}).lower()"
                 - Contact-side (plain): "bio", "first_name", "surname"
                 - Contact-side (derived): "str({first_name}) + ' ' + str({bio})"
             - reference_text: The free-form text to embed and compare against each row’s source embedding for this term.
@@ -775,7 +775,7 @@ class TranscriptManager(BaseTranscriptManager):
             - "timestamp >= '2024-01-01T00:00:00' and timestamp < '2024-02-01T00:00:00'" (if your backend supports datetime comparisons)
             When `None`, all messages are returned (subject to `offset`/`limit`).
             Notes:
-            - String comparisons are case-sensitive unless you explicitly normalize (e.g., `lower(content).contains('foo')` if supported by your Unify backend).
+            - String comparisons are case-sensitive unless you explicitly normalize (e.g., `content.lower().contains('foo')` if supported by your Unify backend).
             - Only `Message` fields are available here. Contact fields are not in scope; to filter by sender attributes, either precompute columns or combine with results from `_search_messages`.
         offset : int, default 0
             Zero-based index of the first row to include. Must be non-negative. Use for pagination together with `limit`.
