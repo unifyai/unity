@@ -1830,7 +1830,11 @@ class TranscriptGenerator:
 
         builder = ScenarioBuilder(
             description=prompt,
-            tools={"submit_conversation": submit_conversation},
+            tools={
+                "submit_conversation": submit_conversation,
+                # Expose ContactManager.update so scenarios can explicitly create/update contacts
+                "update_contacts": self._tm._contact_manager.update,
+            },
             endpoint=self._endpoint,
             traced=self._traced,
             stateful=self._stateful,
