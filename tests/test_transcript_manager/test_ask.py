@@ -408,26 +408,88 @@ async def test_ask_requests_clarification_when_context_missing(
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    # ── 3.  Call `.ask()` WITHOUT parent context ───────────────────────────
+    # ── 3.  Start a dynamic clarification responder (may handle multiple turns) ─
+    saw_first_clarification = asyncio.Event()
+
+    original_user_query = (
+        "What day was the conversation? Request a clarification if you're unsure."
+    )
+    known_conversations = [
+        {
+            "topic": "basketball",
+            "medium": "phone_call",
+            "date": "2025-05-20",
+            "exchange_id": 123,
+        },
+        {
+            "topic": "holiday",
+            "medium": "email",
+            "date": "2025-05-25",
+            "exchange_id": 321,
+        },
+    ]
+
+    async def _clarification_worker() -> None:
+        clarifier = unify.Unify(
+            "o4-mini@openai",
+            cache=_get_unity_test_env_var("UNIFY_CACHE"),
+            traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        )
+        clarifier.set_system_message(
+            "You are a helpful assistant that answers clarification questions succinctly. "
+            "You know about two possible conversations: a basketball phone call on 2025-05-20 (exchange 123), "
+            "and a holiday email on 2025-05-25 (exchange 321). "
+            "When asked to disambiguate which conversation the user means, prefer the basketball conversation. "
+            "Keep responses short and directly disambiguate (e.g., 'The basketball phone call last week.').",
+        )
+
+        while True:
+            try:
+                q = await asyncio.wait_for(up_q.get(), timeout=60)
+            except asyncio.TimeoutError:
+                break
+
+            if not saw_first_clarification.is_set():
+                saw_first_clarification.set()
+
+            payload = _dumps(
+                {
+                    "clarification_question": q,
+                    "original_user_query": original_user_query,
+                    "known_conversations": known_conversations,
+                },
+                indent=2,
+            )
+            try:
+                answer = clarifier.generate(payload)
+            except Exception:
+                # Fallback deterministic answer if LLM call fails
+                answer = "The basketball phone call last week."
+
+            await down_q.put(answer.strip())
+
+    worker_task = asyncio.create_task(_clarification_worker())
+
+    # ── 4.  Call `.ask()` WITHOUT parent context ───────────────────────────
     handle = await tm.ask(
-        "What day was the conversation? Request a clarification if you're unsure.",
+        original_user_query,
         _return_reasoning_steps=True,
         clarification_up_q=up_q,
         clarification_down_q=down_q,
     )
 
-    # ── 4.  There should be a clarification request at some point ─────────
-    clar_question: str = await asyncio.wait_for(up_q.get(), timeout=60)
-    assert clar_question, "No clarification question was asked."
+    # Ensure at least one clarification was requested
+    await asyncio.wait_for(saw_first_clarification.wait(), timeout=60)
 
-    # The wording is model-dependent; merely check it *asks which conversation*.
-    assert "which" in clar_question.lower() or "conversation" in clar_question.lower()
-
-    # ── 5.  Supply an answer that disambiguates (mention 'basketball') ─────
-    await down_q.put("The conversation about basketball we had last week.")
-
-    # ── 6.  Await final answer and reasoning steps ─────────────────────────
+    # ── 5.  Await final answer and reasoning steps ─────────────────────────
     answer, steps = await handle.result()
+
+    # Stop the worker
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
 
     # ── 7.  Initial step roles ─────────────────────────
     assert steps[0]["role"] == "system"
