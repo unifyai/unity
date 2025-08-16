@@ -855,8 +855,18 @@ def configure_sandbox_logging(
         "%Y-%m-%d %H:%M:%S",
     )
 
+    # Resolve the main log file path to an absolute path for clearer, clickable output
+    _abs_main_log: Optional[str] = None
     if log_file:
-        _fh = _logging.FileHandler(log_file, mode="w", encoding="utf-8")
+        try:
+            import os as _os
+
+            _abs_main_log = _os.path.abspath(log_file)
+        except Exception:
+            _abs_main_log = log_file
+
+    if _abs_main_log:
+        _fh = _logging.FileHandler(_abs_main_log, mode="w", encoding="utf-8")
         _fh.setFormatter(_fmt)
         root_logger.addHandler(_fh)
 
@@ -881,21 +891,29 @@ def configure_sandbox_logging(
             # Also write a full-session copy to a hidden, timestamped file in CWD
             _ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
             _hidden_name = f".logs_{_ts}.txt"
-            _fh_all = _logging.FileHandler(_hidden_name, mode="w", encoding="utf-8")
+            # Resolve the hidden full-session log path to absolute for printing
+            try:
+                import os as _os
+
+                _abs_hidden = _os.path.abspath(_hidden_name)
+            except Exception:
+                _abs_hidden = _hidden_name
+
+            _fh_all = _logging.FileHandler(_abs_hidden, mode="w", encoding="utf-8")
             _fh_all.setFormatter(_fmt)
             root_logger.addHandler(_fh_all)
             print(
                 f"📡 Log stream on 127.0.0.1:{_actual} – connect via: nc 127.0.0.1 {_actual} (Ctrl-C to detach)",
             )
-            print(f"📝 Full session logs: {_hidden_name}")
+            print(f"📝 Full session logs: {_abs_hidden}")
         except Exception as _exc:
             print(f"⚠️  Failed to start log TCP stream on port {tcp_port}: {_exc}")
 
     # Friendly hints
-    if log_file:
+    if _abs_main_log:
         print(
-            "📝 Logging to .logs.txt (overwrites each run). "
-            "To follow live with scrollback: less +F .logs.txt (Ctrl-C to pause, F to resume, q to quit). "
+            f"📝 Logging to {_abs_main_log} (overwrites each run). "
+            f"To follow live with scrollback: less +F {_abs_main_log} (Ctrl-C to pause, F to resume, q to quit). "
             "Pass --log_in_terminal to also stream logs here.",
         )
 
