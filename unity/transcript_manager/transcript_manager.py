@@ -156,9 +156,11 @@ class TranscriptManager(BaseTranscriptManager):
 
         # ── 1.  Build LLM client & inject dynamic system-prompt ───────────
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5->o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         include_activity = (
             self._rolling_summary_in_prompts
