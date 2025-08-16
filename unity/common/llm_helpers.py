@@ -1173,7 +1173,6 @@ async def _async_tool_use_loop_inner(
     async def _ensure_placeholders_for_pending(
         assistant_msg: Optional[dict] = None,
         *,
-        reason: str = "",
         content: Optional[str] = None,
     ) -> list[str]:
         created: list[str] = []
@@ -1209,6 +1208,68 @@ async def _async_tool_use_loop_inner(
             created.append(_inf["call_id"])
 
         return created
+
+    # Helper: detect helper-tool names (continue_/stop_/pause_/resume_/clarify_/interject_)
+    def _is_helper_tool(name: str) -> bool:
+        return (
+            name.startswith("continue_")
+            or name.startswith("stop_")
+            or name.startswith("pause_")
+            or name.startswith("resume_")
+            or name.startswith("clarify_")
+            or name.startswith("interject_")
+        )
+
+    # Helper: build human-readable acknowledgement content for helper tools
+    def _build_helper_ack_content(name: str, args_json: Any) -> str:
+        ack_content = "Acknowledged."
+        try:
+            payload = (
+                json.loads(args_json or "{}")
+                if isinstance(args_json, str)
+                else (args_json or {})
+            )
+        except Exception:
+            payload = {}
+
+        if name.startswith("continue_"):
+            ack_content = "Continue request acknowledged. Still waiting for the original tool call to finish."
+        elif name.startswith("stop_"):
+            ack_content = "Stop request acknowledged. If the underlying call is still running, it will be stopped."
+        elif name.startswith("pause_"):
+            ack_content = "Pause request acknowledged. If the underlying call is still running, it will be paused."
+        elif name.startswith("resume_"):
+            ack_content = "Resume request acknowledged. If the underlying call was paused, it will be resumed."
+        elif name.startswith("clarify_"):
+            ans = payload.get("answer")
+            ack_content = (
+                f"Clarification answer received: {ans!r}. Waiting for the original tool to proceed."
+                if ans is not None
+                else "Clarification helper acknowledged. Waiting for the original tool to proceed."
+            )
+        elif name.startswith("interject_"):
+            guidance = payload.get("content")
+            ack_content = (
+                f"Guidance forwarded to the running tool: {guidance!r}."
+                if guidance
+                else "Interjection acknowledged and forwarded to the running tool."
+            )
+        return ack_content
+
+    # Helper: insert a tool-acknowledgement message for helper tools
+    async def _acknowledge_helper_call(
+        asst_msg: dict,
+        call_id: str,
+        name: str,
+        args_json: Any,
+    ) -> None:
+        tool_msg = {
+            "role": "tool",
+            "tool_call_id": call_id,
+            "name": name,
+            "content": _build_helper_ack_content(name, args_json),
+        }
+        await _insert_after_assistant(asst_msg, tool_msg)
 
     # Helper: schedule a base tool call (shared by main path and backfill)
     async def _schedule_base_tool_call(
@@ -1352,15 +1413,12 @@ async def _async_tool_use_loop_inner(
                 args_json = call["function"].get("arguments", "{}")
 
                 # Handle dynamic helpers similarly to main path
-                if (
-                    name.startswith("continue_")
-                    or name.startswith("stop_")
-                    or name.startswith("pause_")
-                    or name.startswith("resume_")
-                    or name.startswith("clarify_")
-                    or name.startswith("interject_")
-                ):
-                    # We don't auto-trigger helpers here; they are orchestration tools.
+                if _is_helper_tool(name):
+                    # Do not execute helpers during backfill, only acknowledge
+                    try:
+                        await _acknowledge_helper_call(asst_msg, cid, name, args_json)
+                    except Exception:
+                        pass
                     scheduled.append(cid)
                     continue
 
@@ -1383,7 +1441,6 @@ async def _async_tool_use_loop_inner(
         try:
             await _ensure_placeholders_for_pending(
                 assistant_msg=asst_msg,
-                reason="backfill",
             )
         except Exception:
             pass
@@ -1392,7 +1449,7 @@ async def _async_tool_use_loop_inner(
     # Initialise loop state early so preflight backfill can schedule tasks
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
-    total_tool_calls_made: int = 0  # base-tool calls actually launched
+    # Note: removed unused total_tool_calls_made counter
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
     clarification_channels: Dict[
         str,
@@ -1760,7 +1817,6 @@ async def _async_tool_use_loop_inner(
             if pending and not llm_turn_required:
                 # Ensure placeholders exist for any pending calls before the next assistant turn
                 await _ensure_placeholders_for_pending(
-                    reason="pre_llm_wait",
                     content=(
                         "Still running… you can use any of the available helper tools "
                         "to interact with this tool call while it is in progress."
@@ -2177,7 +2233,6 @@ async def _async_tool_use_loop_inner(
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
             await _ensure_placeholders_for_pending(
-                reason="pre_llm_merge_helpers",
                 content=(
                     "Still running… you can use any of the available helper tools "
                     "to interact with this tool call while it is in progress."
@@ -2391,7 +2446,7 @@ async def _async_tool_use_loop_inner(
                     # ── Special-case dynamic helpers ──────────────────────
                     # • continue_* → acknowledge, no scheduling
                     # • cancel_*   → cancel underlying task & purge metadata
-                    if name.startswith("continue_"):
+                    if _is_helper_tool("continue_") and name.startswith("continue_"):
                         call_id = "_".join(name.split("_")[-2:])
 
                         tgt_task = next(
@@ -2444,7 +2499,7 @@ async def _async_tool_use_loop_inner(
                                 "content": finished,
                             }
                             await _insert_after_assistant(
-                                info["assistant_msg"],
+                                msg,
                                 tool_msg,
                             )
                         continue  # completed handling of this _continue
@@ -2727,7 +2782,7 @@ async def _async_tool_use_loop_inner(
                                 "arguments": call["function"]["arguments"],
                             },
                         }
-                        # original_tool_calls removed
+                        # Scheduling dynamic helper call
 
                         t = asyncio.create_task(coro, name=f"ToolCall_{name}")
                         pending.add(t)
@@ -2752,9 +2807,6 @@ async def _async_tool_use_loop_inner(
                             "raw_arguments_json": call["function"]["arguments"],
                         }
                     else:
-                        # ⇢ counts only "real" (base) tool invocations
-                        total_tool_calls_made += 1
-
                         # Use shared helper for base tools
                         await _schedule_base_tool_call(
                             msg,
@@ -2774,7 +2826,6 @@ async def _async_tool_use_loop_inner(
                 try:
                     await _ensure_placeholders_for_pending(
                         assistant_msg=msg,
-                        reason="post_schedule_immediate",
                         content="Pending… tool call accepted. Working on it.",
                     )
                 except Exception as _ph_exc:
