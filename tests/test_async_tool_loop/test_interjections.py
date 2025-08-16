@@ -182,6 +182,72 @@ async def test_stop_stops_gracefully():
     with pytest.raises(asyncio.CancelledError):
         await handle.result()
 
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_backfills_missing_tool_reply_for_helper_call() -> None:
+    """
+    Pre-seed transcript with an assistant helper tool_call (e.g. continue_…)
+    but no tool reply. The loop must backfill an acknowledgement tool message
+    directly after that assistant turn so API ordering is satisfied.
+    """
+    client = new_client()
+
+    helper_call_id = "call_TEST_HELPER"
+    helper_name = "continue_slow_call_TESTSLOW"
+    assistant_msg = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": helper_call_id,
+                "type": "function",
+                "function": {"name": helper_name, "arguments": "{}"},
+            },
+        ],
+    }
+    client.append_messages([assistant_msg])
+
+    handle = start_async_tool_use_loop(
+        client=client,
+        message="Please proceed.",
+        tools={},  # helpers are acknowledged during backfill without execution
+    )
+
+    # Wait until the assistant turn is present and a backfilled tool reply appears after it
+    assistant_idx: int | None = None
+    for _ in range(60):
+        await asyncio.sleep(0.05)
+        for i, m in enumerate(client.messages or []):
+            if (
+                m.get("role") == "assistant"
+                and m.get("tool_calls")
+                and any(tc.get("id") == helper_call_id for tc in m["tool_calls"])
+            ):
+                assistant_idx = i
+                break
+        if assistant_idx is not None and len(client.messages) > assistant_idx + 1:
+            break
+
+    assert assistant_idx is not None, "helper assistant turn not found in transcript"
+    assert (assistant_idx + 1) < len(client.messages)
+
+    next_msg = client.messages[assistant_idx + 1]
+    assert (
+        next_msg.get("role") == "tool"
+    ), "expected a backfilled tool reply after helper call"
+    assert (
+        next_msg.get("tool_call_id") == helper_call_id
+    ), "backfilled tool reply must match helper tool_call_id"
+    assert (
+        next_msg.get("name") == helper_name
+    ), "ack tool message should use the helper tool name"
+
+    # Cleanly stop the loop
+    handle.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await handle.result()
+
     assert handle.done()
 
 
