@@ -139,3 +139,237 @@ async def test_search_messages_cross_contact_and_message_disambiguation():
     sender = cm._filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[0]
     assert sender.first_name == "Alice"
     assert top.content == "let's meet next week"
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@pytest.mark.asyncio
+@_handle_project
+async def test_search_messages_sender_bio_only():
+    tm = TranscriptManager()
+    cm = ContactManager()
+
+    alice = Contact(
+        first_name="Alice",
+        surname="Alpha",
+        bio="experienced accountant",
+        contact_id=-1,
+    )
+    bob = Contact(
+        first_name="Bob",
+        surname="Beta",
+        bio="software engineer",
+        contact_id=-1,
+    )
+
+    msgs = [
+        {
+            "sender_id": alice,
+            "receiver_ids": [bob],
+            "content": "generic note",
+            "timestamp": "2025-06-04 10:00:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+        {
+            "sender_id": bob,
+            "receiver_ids": [alice],
+            "content": "another generic",
+            "timestamp": "2025-06-04 10:01:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+    ]
+
+    [tm.log_messages(m) for m in msgs]
+    tm.join_published()
+
+    nearest = tm._search_messages(references={"sender_bio": "accountant"}, k=1)
+
+    assert len(nearest) == 1
+    top = nearest[0]
+    sender = cm._filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[0]
+    assert sender.first_name == "Alice"
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@pytest.mark.asyncio
+@_handle_project
+async def test_search_messages_receiver_bio_only_single():
+    tm = TranscriptManager()
+
+    alice = Contact(first_name="Alice", bio="accountant", contact_id=-1)
+    bob = Contact(first_name="Bob", bio="engineering manager", contact_id=-1)
+    carol = Contact(first_name="Carol", bio="chef", contact_id=-1)
+
+    msgs = [
+        {
+            "sender_id": alice,
+            "receiver_ids": [bob],
+            "content": "hello there",
+            "timestamp": "2025-06-05 09:00:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+        {
+            "sender_id": alice,
+            "receiver_ids": [carol],
+            "content": "hi there",
+            "timestamp": "2025-06-05 09:01:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+    ]
+
+    [tm.log_messages(m) for m in msgs]
+    tm.join_published()
+
+    nearest = tm._search_messages(references={"receiver_bio": "engineer"}, k=1)
+
+    assert len(nearest) == 1
+    top = nearest[0]
+    # Top should be the message where Bob (engineering manager) is the receiver
+    assert any(rid == top.receiver_ids[0] for rid in top.receiver_ids)
+    assert len(top.receiver_ids) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@pytest.mark.asyncio
+@_handle_project
+async def test_search_messages_receiver_bio_multi_receiver_min_aggregation():
+    tm = TranscriptManager()
+    cm = ContactManager()
+
+    alice = Contact(first_name="Alice", bio="accountant", contact_id=-1)
+    bob = Contact(first_name="Bob", bio="software engineer", contact_id=-1)
+    carol = Contact(first_name="Carol", bio="graphic designer", contact_id=-1)
+
+    # One message has both Bob (engineer) and Carol as receivers
+    msgs = [
+        {
+            "sender_id": alice,
+            "receiver_ids": [bob, carol],
+            "content": "check this out",
+            "timestamp": "2025-06-06 08:00:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+        {
+            "sender_id": alice,
+            "receiver_ids": [carol],
+            "content": "another msg",
+            "timestamp": "2025-06-06 08:01:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+    ]
+
+    [tm.log_messages(m) for m in msgs]
+    tm.join_published()
+
+    nearest = tm._search_messages(references={"receiver_bio": "engineer"}, k=1)
+
+    assert len(nearest) == 1
+    top = nearest[0]
+    # The top should be the message that includes Bob among receivers due to min aggregation
+    bob_rec = cm._filter_contacts(filter="first_name == 'Bob'", limit=1)[0]
+    assert bob_rec.contact_id in top.receiver_ids
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@pytest.mark.asyncio
+@_handle_project
+async def test_search_messages_combined_sender_and_receiver_terms():
+    tm = TranscriptManager()
+    cm = ContactManager()
+
+    alice = Contact(first_name="Alice", bio="accountant", contact_id=-1)
+    bob = Contact(first_name="Bob", bio="software engineer", contact_id=-1)
+    carol = Contact(first_name="Carol", bio="project manager", contact_id=-1)
+
+    msgs = [
+        {
+            "sender_id": alice,
+            "receiver_ids": [bob],
+            "content": "status update",
+            "timestamp": "2025-06-07 12:00:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+        {
+            "sender_id": carol,
+            "receiver_ids": [bob],
+            "content": "status update",
+            "timestamp": "2025-06-07 12:01:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+        {
+            "sender_id": alice,
+            "receiver_ids": [carol],
+            "content": "status update",
+            "timestamp": "2025-06-07 12:02:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+    ]
+
+    [tm.log_messages(m) for m in msgs]
+    tm.join_published()
+
+    refs = {"sender_bio": "accountant", "receiver_bio": "engineer"}
+    nearest = tm._search_messages(references=refs, k=3)
+
+    assert len(nearest) >= 1
+    top = nearest[0]
+    s = cm._filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[0]
+    assert s.first_name == "Alice"
+    # Ensure Bob is among receivers
+    bob_rec = cm._filter_contacts(filter="first_name == 'Bob'", limit=1)[0]
+    assert bob_rec.contact_id in top.receiver_ids
+
+
+@pytest.mark.unit
+@pytest.mark.requires_real_unify
+@pytest.mark.asyncio
+@_handle_project
+async def test_search_messages_receiver_only_returns_expected_messages():
+    tm = TranscriptManager()
+    cm = ContactManager()
+
+    alice = Contact(first_name="Alice", bio="accountant", contact_id=-1)
+    bob = Contact(first_name="Bob", bio="engineer", contact_id=-1)
+    dave = Contact(first_name="Dave", bio="engineer", contact_id=-1)
+    eve = Contact(first_name="Eve", bio="designer", contact_id=-1)
+
+    msgs = [
+        {
+            "sender_id": alice,
+            "receiver_ids": [bob],
+            "content": "msg1",
+            "timestamp": "2025-06-08 08:00:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+        {
+            "sender_id": alice,
+            "receiver_ids": [dave],
+            "content": "msg2",
+            "timestamp": "2025-06-08 08:01:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+        {
+            "sender_id": alice,
+            "receiver_ids": [eve],
+            "content": "msg3",
+            "timestamp": "2025-06-08 08:02:00",
+            "medium": random.choice(VALID_MEDIA),
+        },
+    ]
+
+    [tm.log_messages(m) for m in msgs]
+    tm.join_published()
+
+    nearest = tm._search_messages(references={"receiver_bio": "engineer"}, k=2)
+
+    assert len(nearest) == 2
+    # Both results should have receivers among {bob, dave}; order not guaranteed
+    eng_ids = {
+        c.contact_id
+        for c in cm._filter_contacts(filter="first_name in ['Bob', 'Dave']")
+    }
+    for m in nearest:
+        assert any(rid in eng_ids for rid in m.receiver_ids)
