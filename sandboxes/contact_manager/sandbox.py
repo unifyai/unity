@@ -180,7 +180,7 @@ async def _main_async() -> None:
         log_file=".logs_main.txt",
         tcp_port=args.log_tcp_port,
         http_tcp_port=args.http_log_tcp_port,
-        http_log_file=".logs_http.txt",
+        unify_requests_log_file=".logs_unify_requests.txt",
     )
     LG.setLevel(logging.INFO)
 
