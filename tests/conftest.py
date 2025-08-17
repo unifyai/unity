@@ -278,6 +278,13 @@ def pytest_sessionstart(session):
     project_name = (
         _generate_random_project_name() if randomize_project_name else "UnityTests"
     )
+
+    if os.environ.get("CI"):
+        # In CI, always generate a fresh writecache file.
+        # This ensures old cache entries are removed, keeping only those actually used.
+        # The cache file can be manually updated when necessary.
+        unify.set_cache_backend("local_separate")
+
     unify.activate(
         project_name,
         overwrite=_get_unity_test_env_var("UNIFY_OVERWRITE_PROJECT"),
