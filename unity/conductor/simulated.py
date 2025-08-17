@@ -111,7 +111,6 @@ class SimulatedConductor:
             **passive,  # read-only tools are also valid here
             **methods_to_tool_dict(
                 self._contact_manager.update,
-                self._transcript_manager.summarize,
                 self._knowledge_manager.update,
                 self._task_scheduler.update,
                 ToolSpec(self._task_scheduler.execute_task, max_concurrent=1),
@@ -167,9 +166,11 @@ class SimulatedConductor:
             tools["request_clarification"] = request_clarification
 
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5->o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         include_activity = (
             self._rolling_summary_in_prompts
@@ -256,9 +257,11 @@ class SimulatedConductor:
             tools["request_clarification"] = request_clarification
 
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5->o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         include_activity = (
             self._rolling_summary_in_prompts

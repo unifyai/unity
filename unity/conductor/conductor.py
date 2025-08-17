@@ -111,8 +111,6 @@ class Conductor(BaseConductor):
         passive = methods_to_tool_dict(
             self._contact_manager.ask,
             self._transcript_manager.ask,
-            # technically not passive, but likely useful for question answering
-            self._transcript_manager.summarize,
             #
             self._knowledge_manager.ask,
             self._task_scheduler.ask,
@@ -124,7 +122,7 @@ class Conductor(BaseConductor):
         active = {
             **passive,  # read-only tools are also valid here
             **methods_to_tool_dict(
-                self._transcript_manager.summarize,
+                self._contact_manager.update,
                 self._knowledge_manager.update,
                 self._task_scheduler.update,
                 ToolSpec(self._task_scheduler.execute_task, max_concurrent=1),
@@ -173,9 +171,11 @@ class Conductor(BaseConductor):
             tools["request_clarification"] = request_clarification
 
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5->o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         include_activity = (
             self._rolling_summary_in_prompts
@@ -255,9 +255,11 @@ class Conductor(BaseConductor):
             tools["request_clarification"] = request_clarification
 
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5->o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         include_activity = (
             self._rolling_summary_in_prompts
