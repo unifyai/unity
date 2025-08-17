@@ -171,4 +171,5 @@ jobs:
           tests.log
           report.xml
           report.html
+          .cache_write.json
         retention-days: 7
