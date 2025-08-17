@@ -339,3 +339,76 @@ async def test_execute_task_requests_clarification_for_unknown_id(monkeypatch):
 
     # Gracefully stop the loop – we're only interested in the clarification behaviour.
     await handle.result()
+
+
+# --------------------------------------------------------------------------- #
+#  A. Activation metadata                                                      #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_task_sets_activated_by_explicit():
+    """Starting a task explicitly via execute_task should set activated_by='explicit'."""
+
+    planner = SimulatedPlanner(steps=0)
+    ts = TaskScheduler(planner=planner)
+
+    # Seed a simple queued task
+    name = "Simple queued task"
+    task_id = ts._create_task(name=name, description=name)["details"]["task_id"]
+
+    # Start by id (fast-path)
+    handle = await ts.execute_task(text=str(task_id))
+    await handle.result()
+
+    # Verify activated_by on the activated instance (may already be completed)
+    rows = ts._filter_tasks(filter=f"task_id == {task_id}")
+    assert any(r.get("activated_by") == "explicit" for r in rows)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_update_status_cannot_force_active_and_does_not_set_activation_metadata():
+    """Direct status updates cannot set 'active' and should not set 'activated_by'."""
+
+    planner = SimulatedPlanner(steps=0)
+    ts = TaskScheduler(planner=planner)
+
+    # Create a normal queued task
+    label = "Cannot force active"
+    task_id = ts._create_task(name=label, description=label)["details"]["task_id"]
+
+    # Attempt to force 'active' via status update should fail
+    with pytest.raises(ValueError):
+        ts._update_task_status(task_ids=task_id, new_status="active")
+
+    # Ensure no activation metadata exists prior to activation
+    rows = ts._filter_tasks(filter=f"task_id == {task_id}")
+    assert len(rows) == 1
+    assert rows[0].get("activated_by") in (None, "")
+
+    # Change a non-active status and ensure activated_by remains unset
+    ts._update_task_status(task_ids=task_id, new_status="paused")
+    rows2 = ts._filter_tasks(filter=f"task_id == {task_id}")
+    assert rows2[0].get("status") == "paused"
+    assert rows2[0].get("activated_by") in (None, "")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_tasks_table_has_activated_by_column():
+    """The Tasks context should include the activated_by column based on the Task model."""
+
+    planner = SimulatedPlanner(steps=0)
+    ts = TaskScheduler(planner=planner)
+
+    # Create any task to ensure context exists
+    title = "Column presence check"
+    _ = ts._create_task(name=title, description=title)
+
+    cols = ts._list_columns()
+    if isinstance(cols, dict):
+        assert "activated_by" in cols
+    else:
+        assert "activated_by" in cols
