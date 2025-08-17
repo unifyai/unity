@@ -545,12 +545,18 @@ class TaskScheduler(BaseTaskScheduler):
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
+                # Decide execution scope (A: isolate | B: chain) for this explicit request
+                scope = await self._decide_execution_scope(
+                    request_text=freeform_text,
+                    parent_chat_context=parent_chat_context,
+                )
                 direct_handle = await self._execute_task_internal(
                     task_id=int(stripped),
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
                     clarification_down_q=clarification_down_q,
                     activated_by=ActivatedBy.explicit,
+                    execution_scope=scope,
                 )
 
                 # Wrap with the same event-logging helper used elsewhere so
@@ -580,12 +586,18 @@ class TaskScheduler(BaseTaskScheduler):
         async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
             """Start the task with *task_id* and bubble up its handle (passthrough)."""
 
+            # Decide execution scope (A: isolate | B: chain) for this explicit request
+            scope = await self._decide_execution_scope(
+                request_text=freeform_text,
+                parent_chat_context=parent_chat_context,
+            )
             handle = await self._execute_task_internal(
                 task_id=task_id,
                 parent_chat_context=parent_chat_context,
                 clarification_up_q=clarification_up_q,
                 clarification_down_q=clarification_down_q,
                 activated_by=ActivatedBy.explicit,
+                execution_scope=scope,
             )
             # 💡 signal pass-through so the outer loop adopts this handle
             setattr(handle, "__passthrough__", True)
@@ -658,6 +670,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         activated_by: Optional[ActivatedBy] = None,
+        execution_scope: Literal["isolate", "chain"] = "isolate",
     ) -> SteerableToolHandle:
         """
         Start the execution of a runnable task by its identifier.
@@ -712,7 +725,121 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] in ("completed", "cancelled", "failed", "active"):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
-        # 1. build the *real* active plan
+        # 1. Adjust queue linkages based on explicit activation scope
+        sched = task_row.get("schedule") or {}
+        prev_tid = self._sched_prev(sched)
+        next_tid = self._sched_next(sched)
+        start_at = sched.get("start_at") if isinstance(sched, dict) else None
+
+        def _get_log_obj(tid: int) -> unify.Log:
+            logs = self._get_logs_by_task_ids(task_ids=tid, return_ids_only=False)
+            assert len(logs) == 1, "Task IDs should be unique"
+            return logs[0]  # type: ignore[return-value]
+
+        # Disconnect the preceding task from this one (shared behaviour)
+        if prev_tid is not None:
+            prev_log = _get_log_obj(prev_tid)
+            prev_sched = {
+                **((getattr(prev_log, "entries", {}) or {}).get("schedule") or {}),
+            }
+            if prev_sched.get("next_task") == task_id:
+                prev_sched["next_task"] = None
+                # If we are reconnecting under branch A below, we'll set it there.
+                unify.update_logs(
+                    logs=prev_log.id if hasattr(prev_log, "id") else prev_log,
+                    context=self._ctx,
+                    entries={"schedule": prev_sched},
+                    overwrite=True,
+                )
+
+        if sched is not None:
+            if execution_scope == "isolate":
+                # Branch A: detach this task entirely from the queue
+                if next_tid is not None:
+                    next_log = _get_log_obj(next_tid)
+                    next_sched = {
+                        **(
+                            (getattr(next_log, "entries", {}) or {}).get("schedule")
+                            or {}
+                        ),
+                    }
+                    if prev_tid is None:
+                        # This task was the head; next becomes new head and inherits start_at
+                        next_sched["prev_task"] = None
+                        if start_at is not None:
+                            next_sched["start_at"] = start_at
+                    else:
+                        # Middle of queue: reconnect prev -> next
+                        next_sched["prev_task"] = prev_tid
+                        # non-head must not carry start_at
+                        next_sched.pop("start_at", None)
+                        # also set prev.next_task -> next (complete reconnection)
+                        if prev_tid is not None:
+                            prev_log = _get_log_obj(prev_tid)
+                            prev_sched = {
+                                **(
+                                    (getattr(prev_log, "entries", {}) or {}).get(
+                                        "schedule",
+                                    )
+                                    or {}
+                                ),
+                            }
+                            prev_sched["next_task"] = next_tid
+                            unify.update_logs(
+                                logs=(
+                                    prev_log.id if hasattr(prev_log, "id") else prev_log
+                                ),
+                                context=self._ctx,
+                                entries={"schedule": prev_sched},
+                                overwrite=True,
+                            )
+                    unify.update_logs(
+                        logs=next_log.id if hasattr(next_log, "id") else next_log,
+                        context=self._ctx,
+                        entries={"schedule": next_sched},
+                        overwrite=True,
+                    )
+
+                # Finally, detach current task completely
+                cur_log = _get_log_obj(task_id)
+                if (getattr(cur_log, "entries", {}) or {}).get("schedule") is not None:
+                    unify.update_logs(
+                        logs=cur_log.id if hasattr(cur_log, "id") else cur_log,
+                        context=self._ctx,
+                        entries={"schedule": None},
+                        overwrite=True,
+                    )
+            else:
+                # Branch B: keep tasks behind queued to follow this task
+                cur_log = _get_log_obj(task_id)
+                new_sched: Dict[str, Any] = {"prev_task": None, "next_task": next_tid}
+                if start_at is not None:
+                    new_sched["start_at"] = start_at
+                unify.update_logs(
+                    logs=cur_log.id if hasattr(cur_log, "id") else cur_log,
+                    context=self._ctx,
+                    entries={"schedule": new_sched},
+                    overwrite=True,
+                )
+
+                if next_tid is not None:
+                    next_log = _get_log_obj(next_tid)
+                    next_sched = {
+                        **(
+                            (getattr(next_log, "entries", {}) or {}).get("schedule")
+                            or {}
+                        ),
+                    }
+                    next_sched["prev_task"] = task_id
+                    next_sched.pop("start_at", None)
+                    unify.update_logs(
+                        logs=next_log.id if hasattr(next_log, "id") else next_log,
+                        context=self._ctx,
+                        entries={"schedule": next_sched},
+                        overwrite=True,
+                    )
+
+        # 2. build the *real* active plan
         plan_handle = await self._planner.execute(
             task_row["description"],
             parent_chat_context=parent_chat_context,
@@ -720,7 +847,7 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_down_q=clarification_down_q,
         )
 
-        # 2. wrap it so we can keep the task-table in sync
+        # 3. wrap it so we can keep the task-table in sync
         handle = ActiveTask(
             plan_handle,
             task_id=task_id,
@@ -738,7 +865,7 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] == Status.triggerable.value or task_row.get("repeat"):
             self._clone_task_instance(task_row)
 
-        # 3. Promote status → active (and record activation reason) and clear primed pointer if needed
+        # 4. Promote status → active (and record activation reason) and clear primed pointer if needed
 
         # Infer activation reason based on provided cause or task configuration
         reason: ActivatedBy
@@ -2225,3 +2352,50 @@ class TaskScheduler(BaseTaskScheduler):
         if ret is None:
             return 0
         return int(ret)
+
+    # ------------------------------------------------------------------ #
+    #  Helper – decide execution scope (A: isolate | B: chain)           #
+    # ------------------------------------------------------------------ #
+
+    async def _decide_execution_scope(
+        self,
+        *,
+        request_text: str,
+        parent_chat_context: Optional[List[Dict[str, Any]]],
+    ) -> Literal["isolate", "chain"]:
+        """
+        Use a compact LLM classification to decide whether the user intends to
+        run this task in isolation (A) or together with tasks queued behind it (B).
+
+        If ambiguous, default to "isolate".
+        """
+        try:
+            client = unify.AsyncUnify(
+                "o4-mini@openai",
+                cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+                traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            )
+            system = (
+                "Classify the user's intent for execution scope. "
+                "Reply with exactly one word: isolate | chain. "
+                "Choose 'chain' only if the user clearly requests running this task and subsequent queued tasks now. "
+                "If uncertain, reply 'isolate'."
+            )
+            client.set_system_message(system)
+            parts: List[str] = [f"Request: {request_text}"]
+            if parent_chat_context:
+                try:
+                    ctx_preview = json.dumps(
+                        parent_chat_context[-6:],
+                        ensure_ascii=False,
+                    )
+                    parts.append(f"Context: {ctx_preview}")
+                except Exception:
+                    pass
+            ans = await client.generate("\n\n".join(parts))
+            ans = (ans or "").strip().lower()
+            if ans == "chain" or ("chain" in ans and "isolate" not in ans):
+                return "chain"
+            return "isolate"
+        except Exception:
+            return "isolate"
