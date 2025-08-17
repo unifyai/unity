@@ -21,6 +21,7 @@ from .types.schedule import Schedule
 from .types.trigger import Trigger
 from .types.repetition import RepeatPattern
 from .types.task import Task
+from .types.activated_by import ActivatedBy
 
 # Contact manager import (lazy at module level to avoid cycles in other modules)
 from ..contact_manager.contact_manager import ContactManager
@@ -163,6 +164,21 @@ class TaskScheduler(BaseTaskScheduler):
                 fields,
                 context=self._ctx,
             )
+        else:
+            # Ensure any new fields added to the Task model are present in the context
+            try:
+                existing_fields = unify.get_fields(context=self._ctx) or {}
+            except Exception:
+                existing_fields = {}
+            model_fields = model_to_fields(Task)
+            missing = {
+                k: v for k, v in model_fields.items() if k not in existing_fields
+            }
+            if missing:
+                unify.create_fields(
+                    missing,
+                    context=self._ctx,
+                )
 
         # ID of the *single* task that is allowed to be in the **active**
         # state at any moment.  This will be maintained by a forthcoming
@@ -534,6 +550,7 @@ class TaskScheduler(BaseTaskScheduler):
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
                     clarification_down_q=clarification_down_q,
+                    activated_by=ActivatedBy.explicit,
                 )
 
                 # Wrap with the same event-logging helper used elsewhere so
@@ -568,6 +585,7 @@ class TaskScheduler(BaseTaskScheduler):
                 parent_chat_context=parent_chat_context,
                 clarification_up_q=clarification_up_q,
                 clarification_down_q=clarification_down_q,
+                activated_by=ActivatedBy.explicit,
             )
             # 💡 signal pass-through so the outer loop adopts this handle
             setattr(handle, "__passthrough__", True)
@@ -639,6 +657,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        activated_by: Optional[ActivatedBy] = None,
     ) -> SteerableToolHandle:
         """
         Start the execution of a runnable task by its identifier.
@@ -655,6 +674,8 @@ class TaskScheduler(BaseTaskScheduler):
             together with ``clarification_down_q`` for interactive sessions.
         clarification_down_q : asyncio.Queue[str] | None, default ``None``
             Queue on which answers to clarification questions are received.
+        activated_by : ActivatedBy | None, default ``None``
+            Activation reason for the task. If not provided, it will be inferred from the task's configuration.
 
         Returns
         -------
@@ -717,11 +738,30 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] == Status.triggerable.value or task_row.get("repeat"):
             self._clone_task_instance(task_row)
 
-        # 3. Promote status → active and clear primed pointer if needed
+        # 3. Promote status → active (and record activation reason) and clear primed pointer if needed
+
+        # Infer activation reason based on provided cause or task configuration
+        reason: ActivatedBy
+        if activated_by is not None:
+            reason = activated_by
+        else:
+            sched = task_row.get("schedule") or {}
+            if task_row.get("trigger") is not None:
+                reason = ActivatedBy.trigger
+            elif (sched.get("prev_task") is None) and (
+                sched.get("start_at") is not None
+            ):
+                reason = ActivatedBy.schedule
+            elif sched.get("prev_task") is not None:
+                reason = ActivatedBy.queue
+            else:
+                reason = ActivatedBy.explicit
+
         self._update_task_status_instance(
             task_id=task_id,
             instance_id=task_row["instance_id"],
             new_status="active",
+            activated_by=reason,
         )
         if self._primed_task and self._primed_task["task_id"] == task_id:
             self._primed_task = None
@@ -736,6 +776,7 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         instance_id: int,
         new_status: str,
+        activated_by: Optional["ActivatedBy"] = None,
     ) -> Dict[str, str]:
         """
         Update the lifecycle ``status`` for a single ``(task_id, instance_id)`` row.
@@ -771,10 +812,16 @@ class TaskScheduler(BaseTaskScheduler):
                 f"No task instance ({task_id}.{instance_id}) found.",
             )
         assert len(log_objs) == 1, "Composite primary key must be unique."
+        entries: Dict[str, Any] = {"status": new_status}
+        # Only allow `activated_by` to be set during transition to 'active'
+        if str(new_status) == Status.active.value and activated_by is not None:
+            # Set only at the moment of activation; never overwrite later
+            entries["activated_by"] = str(activated_by)
+
         return unify.update_logs(
             logs=log_objs[0].id if hasattr(log_objs[0], "id") else log_objs[0],
             context=self._ctx,
-            entries={"status": new_status},
+            entries=entries,
             overwrite=True,
         )
 
@@ -793,6 +840,8 @@ class TaskScheduler(BaseTaskScheduler):
         clone_payload = {
             k: v for k, v in task_row.items() if k in allowed and k != "instance_id"
         }
+        # Do not carry over activation metadata to a fresh instance
+        clone_payload.pop("activated_by", None)
         # Drop any internal bookkeeping injected by Unify (_id, _log_id …)
         unify.log(
             context=self._ctx,
