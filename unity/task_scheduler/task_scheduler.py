@@ -277,10 +277,15 @@ class TaskScheduler(BaseTaskScheduler):
             ),
         )
 
-        # Prepare effective tool_policy
+        # Prepare effective tool_policy – hard-code first step to use search_tasks
         if tool_policy == "default":
             effective_tool_policy = lambda i, current_tools: (
-                ("required", current_tools) if i < 1 else ("auto", current_tools)
+                (
+                    "required",
+                    {"search_tasks": current_tools["search_tasks"]},
+                )
+                if i < 1 and "search_tasks" in current_tools
+                else ("auto", current_tools)
             )
         else:
             # pass through callable or None
@@ -416,10 +421,10 @@ class TaskScheduler(BaseTaskScheduler):
         # Prepare effective tool_policy
         if tool_policy == "default":
 
-            def _default_update_policy(i: int, current_tools: Dict[str, Any]):
-                if i < 1:
-                    return ("required", self._ask_tools)
-                return ("auto", current_tools)
+            def _default_update_policy(i: int, _tools: Dict[str, Any]):
+                if i < 1 and "ask" in _tools:
+                    return ("required", {"ask": _tools["ask"]})
+                return ("auto", _tools)
 
             effective_tool_policy = _default_update_policy
         else:
