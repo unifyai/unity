@@ -198,12 +198,24 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         # so prompts always reflect the current surface.
         ask_tools = mirror_task_scheduler_tools("ask")
         update_tools = mirror_task_scheduler_tools("update")
+
+        # Provide placeholder counts/columns for the simulated environment
+        from .types.task import Task as _Task
+
+        fake_task_columns = [
+            {k: str(v.annotation)} for k, v in _Task.model_fields.items()
+        ]
+
         ask_msg = build_ask_prompt(
             ask_tools,
+            num_tasks=10,
+            columns=fake_task_columns,
             include_activity=self._rolling_summary_in_prompts,
         )
         update_msg = build_update_prompt(
             update_tools,
+            num_tasks=10,
+            columns=fake_task_columns,
             include_activity=self._rolling_summary_in_prompts,
         )
 

@@ -42,6 +42,8 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..common.semantic_search import fetch_top_k_by_references, backfill_rows
+import requests
+from ..helpers import _handle_exceptions
 
 
 class TaskScheduler(BaseTaskScheduler):
@@ -267,7 +269,12 @@ class TaskScheduler(BaseTaskScheduler):
             else rolling_summary_in_prompts
         )
         client.set_system_message(
-            build_ask_prompt(tools, include_activity=include_activity),
+            build_ask_prompt(
+                tools,
+                num_tasks=self._num_tasks(),
+                columns=self._list_columns(),
+                include_activity=include_activity,
+            ),
         )
 
         # Prepare effective tool_policy
@@ -398,7 +405,12 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         client.set_system_message(
-            build_update_prompt(tools, include_activity=include_activity),
+            build_update_prompt(
+                tools,
+                num_tasks=self._num_tasks(),
+                columns=self._list_columns(),
+                include_activity=include_activity,
+            ),
         )
 
         # Prepare effective tool_policy
@@ -2121,3 +2133,41 @@ class TaskScheduler(BaseTaskScheduler):
                 m["content"] = m["content"].replace("{broader_context}", broader_ctx)
 
         return patched
+
+    # ────────────────────────────────────────────────────────────────────
+    # Column and metrics helpers (paralleling Contact/TranscriptManager)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _get_columns(self) -> Dict[str, str]:
+        """
+        Return {column_name: column_type} for the tasks table.
+        """
+        proj = unify.active_project()
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={self._ctx}"
+        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        response = requests.request("GET", url, headers=headers)
+        _handle_exceptions(response)
+        ret = response.json()
+        return {k: v["data_type"] for k, v in ret.items()}
+
+    def _list_columns(
+        self,
+        *,
+        include_types: bool = True,
+    ) -> Dict[str, str] | list[str]:
+        """
+        Return the list of available columns in the tasks table, optionally with types.
+        """
+        cols = self._get_columns()
+        return cols if include_types else list(cols)
+
+    def _num_tasks(self) -> int:
+        """Return the total number of tasks in the Tasks context."""
+        ret = unify.get_logs_metric(
+            metric="count",
+            key="task_id",
+            context=self._ctx,
+        )
+        if ret is None:
+            return 0
+        return int(ret)

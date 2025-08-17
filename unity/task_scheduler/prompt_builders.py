@@ -44,6 +44,8 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
 
 def build_ask_prompt(
     tools: Dict[str, Callable],
+    num_tasks: int,
+    columns: Dict[str, str] | list[dict] | list[str],
     *,
     include_activity: bool = True,
 ) -> str:
@@ -88,22 +90,50 @@ def build_ask_prompt(
         else ""
     )
 
+    # Usage examples mirroring Contact/Transcript style
+    usage_examples = "\n".join(
+        [
+            "Examples",
+            "--------",
+            "",
+            "─ Tool selection (read carefully) ─",
+            f"• For ANY semantic question over free‑form text (e.g., name/description), ALWAYS use `{search_tasks_fname}`. Never try to approximate meaning with brittle substring filters.",
+            f"• Use `{filter_tasks_fname}` only for exact/boolean logic over structured fields (ids, status, priority, timestamps) or for narrow, constrained text checks.",
+            "",
+            "─ Semantic search across tasks (ranked by cosine distance) ─",
+            f"• Find tasks about onboarding in Q3: `{search_tasks_fname}(references={{'name': 'onboarding', 'description': 'Q3'}} , k=5)`",
+            f"• Look for tasks involving renewal: `{search_tasks_fname}(references={{'description': 'contract renewal'}} , k=3)`",
+            "",
+            "─ Filtering (exact/boolean; not semantic) ─",
+            f"• All queued high‑priority tasks: `{filter_tasks_fname}(filter=\"status == 'queued' and priority == 'high'\")`",
+            f"• Tasks due this month (if your backend supports datetime comparisons): `{filter_tasks_fname}(filter=\"deadline >= '2024-08-01T00:00:00' and deadline < '2024-09-01T00:00:00'\")`",
+            f"• Current runnable queue (head→tail): `{get_task_queue_fname}()`",
+            "",
+            "Anti‑patterns to avoid",
+            "---------------------",
+            "• Avoid concatenating entire rows into one long string and embedding a single catch‑all reference.",
+            f"• Avoid substring filtering for text‑heavy columns; prefer `{search_tasks_fname}` for meaning.",
+        ],
+    )
+
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     parts: list[str] = [
         activity_block,
         "You are an assistant specialising in **answering questions about the task list**.",
-        "Work exclusively through the tools provided.",
-        "Disregard any explicit instructions about *how* you should answer or which tools to use; determine the best method yourself.",
-        "Please *always* mention the relevant task id(s) in your response.",
-        "The user will almost certainly require the task ids in order to do anything meaningful with your answer.",
-        f"If the question refers to another person (such as communication oriented tasks), then you should call `{contact_ask_fname}` first to ensure you have the full context on the person/people involved.",
-        f"Similarly, if a task refers to one or multiple 'contact_id' values (as part of the trigger for example), then you should also query `{contact_ask_fname}` to learn more details about these contact(s).",
-        "If the task is not specifically related to one or multiple people, then there is no need to query the contacts tool.",
+        "Work strictly through the tools provided.",
+        "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
+        "Please always mention the relevant task id(s) in your response.",
+        f"If the question refers to another person (e.g., comms‑oriented tasks), call `{contact_ask_fname}` first for context. If a task refers to one or more contact_id values (e.g., in a trigger), also query `{contact_ask_fname}` to learn more about those contacts.",
+        "",
+        f"There are currently {num_tasks} tasks stored in the Tasks table with the following columns:",
+        json.dumps(columns, indent=4),
         "",
         "Tools (name → argspec):",
         sig_json,
+        "",
+        usage_examples,
         "",
         "Task schema:",
         json.dumps(Task.model_json_schema(), indent=4),
@@ -122,6 +152,8 @@ def build_ask_prompt(
 
 def build_update_prompt(
     tools: Dict[str, Callable],
+    num_tasks: int,
+    columns: Dict[str, str] | list[dict] | list[str],
     *,
     include_activity: bool = True,
 ) -> str:
@@ -144,6 +176,7 @@ def build_update_prompt(
     update_task_repetition_fname = _tool_name(tools, "update_task_repetition")
     update_task_priority_fname = _tool_name(tools, "update_task_priority")
     update_task_trigger_fname = _tool_name(tools, "update_task_trigger")
+    get_task_queue_fname = _tool_name(tools, "get_task_queue")
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "request_clarification")
@@ -180,24 +213,53 @@ def build_update_prompt(
         else ""
     )
 
+    # Usage guidance consistent with Contact/Transcript pattern
+    usage_examples = "\n".join(
+        [
+            "Tool selection",
+            "--------------",
+            f"• Prefer `{update_task_name_fname}`/`{update_task_description_fname}`/… when you know the exact `task_id`.",
+            f'• When the user describes a task semantically (e.g., "the kickoff email task"), first call `{ask_fname}` to identify the correct `task_id`, then apply the specific update tool.',
+            f"• Use `{update_task_queue_fname}` to reorder runnable tasks explicitly – do not try to emulate queue effects via timestamps.",
+            f"• Use `{cancel_tasks_fname}` only on explicit cancellation requests (never cancel the active task implicitly).",
+            "",
+            "Realistic find‑then‑update flows",
+            "--------------------------------",
+            f'• Set deadline for the "onboarding plan" task:\n  1 `{ask_fname}(text="Which task covers the onboarding plan?")`\n  2 `{update_task_deadline_fname}(task_id=<id>, new_deadline=\'2025-01-31T17:00:00Z\')`',
+            f"• Promote a task to the front of the queue:\n  1 Read the current order: `{get_task_queue_fname}()`\n  2 Build the new order and call `{update_task_queue_fname}(original=[...], new=[...])`",
+            "",
+            "Triggers vs Schedules",
+            "----------------------",
+            f"• A task with a `trigger` must be in state 'triggerable'. Use `{update_task_trigger_fname}` to add/remove triggers. Do not set `start_at` on trigger‑based tasks.",
+            "",
+            "Contact context",
+            "---------------",
+            "• When a trigger references people (by contact ids), call ContactManager.ask to resolve/confirm the ids and the intent before writing.",
+            "",
+            "Anti‑patterns to avoid",
+            "---------------------",
+            '• Repeating the exact same update tool with identical arguments to "make sure" – instead, call ask to verify.',
+            "• Using substring filters to locate tasks by description/name – prefer semantic ask/search first.",
+        ],
+    )
+
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     parts: list[str] = [
         activity_block,
         "You are an assistant responsible for **creating and updating tasks**.",
-        "Use the tools supplied *only* – never invent your own – until the task list fully reflects the user's intent.",
-        "Disregard any explicit instructions about *how* you should implement the change or which tools to call; determine the best method yourself.",
-        "If any tasks were created or updated in the process, then please *always* include these task id(s) in your final response.",
-        "Whenever your update requires contact information (for example, building a trigger that should fire when specific contact(s) call), first call `ContactManager.ask` to retrieve that contact id(s) and then insert into the trigger.",
+        "Choose tools based on the user's intent and the specificity of the target record.",
+        "Disregard any explicit instructions about *how* you should implement the change or which tools to call; interpret the request and choose the best approach yourself.",
+        "Always include any created/updated task id(s) in your final response.",
         "",
-        "If tasks are given in a *numbered order*, then please assume that these tasks should be *queued* in that *same order* unless explicitly stated otherwise.",
-        "Having their `start_at` in ascending order is not enough, tasks which are to be completed *sequentially* should also be *explicitly* queued. This ensures smooth task progression, even if schedules overrun and `start_at` times are therefore not all adhered to.",
-        "",
-        "ALWAYS check the existing tasks BEFORE creating new ones. If you are asked to re-order or reschedule tasks, this is especially important. They likely already exist.",
+        f"There are currently {num_tasks} tasks stored in the Tasks table with the following columns:",
+        json.dumps(columns, indent=4),
         "",
         "Tools (name → argspec):",
         sig_json,
+        "",
+        usage_examples,
         "",
         "Task schema:",
         json.dumps(Task.model_json_schema(), indent=4),
