@@ -36,6 +36,7 @@ load_dotenv()
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.common.llm_helpers import SteerableToolHandle
+from unity.planner.simulated import SimulatedPlanner
 from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
@@ -51,6 +52,40 @@ from sandboxes.utils import (
 
 LG = logging.getLogger("task_scheduler_sandbox")
 
+# ─────────────────────── Simulation controls (defaults + parser) ───────────────────────
+
+_DEFAULT_SIM_STEPS: int | None = None
+_DEFAULT_SIM_TIMEOUT: float | None = None
+
+
+class _SimConfig(BaseModel):
+    core_text: str
+    steps: int | None = None
+    timeout_seconds: float | None = None
+
+
+_SIM_PARSER_SYS = (
+    "Extract optional simulation controls from the user's text for starting a task.\n"
+    "Controls to detect (may appear anywhere, any order, any phrasing):\n"
+    "- steps: an integer number of steps (e.g., 'in 5 steps', 'limit to 7 steps', 'steps=3').\n"
+    "- timeout: a duration with units seconds or minutes (e.g., 'in 30 seconds', 'timeout 2 min', '90s', 'timeout=1.5 minutes').\n"
+    "Return JSON with fields: core_text (original text with any control phrases removed),\n"
+    "steps (int or null) and timeout_seconds (float seconds or null).\n"
+    "Do not rewrite the rest of the text. Preserve meaning and wording. Remove only the control phrases and any glue words like 'with', 'for', 'in', 'limit to' that are only part of those control expressions.\n"
+)
+
+
+def _parse_simulation_config(text: str) -> _SimConfig:
+    try:
+        judge = unify.Unify("gpt-4o@openai", response_format=_SimConfig)
+        return _SimConfig.model_validate_json(
+            judge.set_system_message(_SIM_PARSER_SYS).generate(text),
+        )
+    except Exception:
+        # Fallback – no parsing; keep text as-is
+        return _SimConfig(core_text=text, steps=None, timeout_seconds=None)
+
+
 # ═════════════════════════════════ seed helpers ═════════════════════════════
 
 
@@ -59,7 +94,13 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
     Populate the task scheduler with sample data **through the official tools**
     using :class:`ScenarioBuilder`.  Falls back to the fixed seed on any error.
     """
-    ts = TaskScheduler()
+    # Apply current defaults to the scheduler's planner so later 'start' calls inherit them
+    ts = TaskScheduler(
+        planner=SimulatedPlanner(
+            steps=_DEFAULT_SIM_STEPS,
+            timeout=_DEFAULT_SIM_TIMEOUT,
+        ),
+    )
 
     description = (
         custom.strip()
@@ -76,6 +117,19 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
         "and `ask` can verify results to avoid duplications."
     )
 
+    # Allow scenario descriptions to include default simulation controls (steps/timeout)
+    try:
+        parsed = _parse_simulation_config(description)
+        # Update global defaults if provided
+        global _DEFAULT_SIM_STEPS, _DEFAULT_SIM_TIMEOUT
+        if parsed.steps is not None:
+            _DEFAULT_SIM_STEPS = int(parsed.steps)
+        if parsed.timeout_seconds is not None:
+            _DEFAULT_SIM_TIMEOUT = float(parsed.timeout_seconds)
+        description_core = parsed.core_text.strip() or description
+    except Exception:
+        description_core = description
+
     builder = ScenarioBuilder(
         description=description,
         tools={
@@ -85,6 +139,8 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
     )
 
     try:
+        # Use the core description text without sim-control phrases
+        builder._description = description_core  # type: ignore[attr-defined]
         await builder.create()
     except Exception as exc:
         raise RuntimeError(f"LLM seeding via ScenarioBuilder failed. {exc}")
@@ -138,6 +194,7 @@ async def _dispatch_with_context(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
 
+    # For 'start' requests, peel off optional simulation controls and inject a per-call planner
     if intent.action == "update":
         handle = await ts.update(
             raw,
@@ -145,10 +202,31 @@ async def _dispatch_with_context(
             _return_reasoning_steps=show_steps,
         )
     elif intent.action == "start":
-        handle = await ts.execute_task(
-            raw,
-            parent_chat_context=parent_chat_context,
+        parsed = _parse_simulation_config(raw)
+        core_text = parsed.core_text.strip() or raw
+        # Build a one-off planner using extracted controls falling back to defaults
+        eff_steps = parsed.steps if parsed.steps is not None else _DEFAULT_SIM_STEPS
+        eff_timeout = (
+            parsed.timeout_seconds
+            if parsed.timeout_seconds is not None
+            else _DEFAULT_SIM_TIMEOUT
         )
+
+        # Swap the planner on the instance for this call only
+        original_planner = getattr(ts, "_planner", None)
+        try:
+            setattr(
+                ts,
+                "_planner",
+                SimulatedPlanner(steps=eff_steps, timeout=eff_timeout),
+            )
+            handle = await ts.execute_task(
+                core_text,
+                parent_chat_context=parent_chat_context,
+            )
+        finally:
+            if original_planner is not None:
+                setattr(ts, "_planner", original_planner)
     else:  # ask
         handle = await ts.ask(
             raw,
@@ -193,7 +271,7 @@ async def _main_async() -> None:
         None,
         args.log_tcp_port,
         http_tcp_port=args.http_log_tcp_port,
-        http_log_file=".logs_unify_requests.txt",
+        unify_requests_log_file=".logs_unify_requests.txt",
     )
     LG.setLevel(logging.INFO)
 
