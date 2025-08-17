@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from typing import Dict
+from typing import Dict, List
+from datetime import datetime, timezone
 
 import pytest
 
@@ -38,6 +39,24 @@ async def _make_scheduler_with_task(description: str, *, steps: int = 1):
     ]["task_id"]
     handle = await scheduler.execute_task(text=str(task_id))
     return scheduler, handle
+
+
+async def _make_ordered_queue(ts: TaskScheduler, names: List[str]) -> List[int]:
+    """Create tasks and order them head→tail, returning the task_ids.
+
+    Also assigns a queue-level start_at on the head.
+    """
+    ids: List[int] = []
+    for name in names:
+        ids.append(ts._create_task(name=name, description=name)["details"]["task_id"])  # type: ignore[index]
+
+    # Establish explicit order using the current queue snapshot as original
+    original = [t.task_id for t in ts._get_task_queue()]
+    ts._update_task_queue(original=original, new=ids)
+
+    # Put a start_at timestamp on the head only
+    ts._update_task_start_at(task_id=ids[0], new_start_at=datetime.now(timezone.utc))
+    return ids
 
 
 # --------------------------------------------------------------------------- #
@@ -412,3 +431,110 @@ async def test_tasks_table_has_activated_by_column():
         assert "activated_by" in cols
     else:
         assert "activated_by" in cols
+
+
+# --------------------------------------------------------------------------- #
+#  B. Explicit activation scope: isolate vs chain                             #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_task_isolate_detaches_entirely(monkeypatch):
+    """Branch A: Detach the activated task entirely from the queue.
+
+    Scenario: three tasks A->B->C, activate B explicitly with an 'isolate'-leaning
+    prompt (ambiguous by default). Expect B detached, A->C linked, head's start_at
+    preserved/propagated, and B's schedule cleared.
+    """
+
+    planner = SimulatedPlanner(steps=0)
+    ts = TaskScheduler(planner=planner)
+
+    # Build queue A->B->C with start_at on A
+    a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
+
+    # Execute B with an ambiguous request → defaults to isolate (A)
+    handle = await ts.execute_task(text=str(b))
+    await handle.result()
+
+    rows_a = ts._filter_tasks(filter=f"task_id == {a}")
+    rows_b = ts._filter_tasks(filter=f"task_id == {b}")
+    rows_c = ts._filter_tasks(filter=f"task_id == {c}")
+
+    # B must be detached entirely (no schedule)
+    assert rows_b[0].get("schedule") in (None, {})
+
+    # A should now link directly to C; C.prev_task should be A
+    sched_a = rows_a[0].get("schedule") or {}
+    sched_c = rows_c[0].get("schedule") or {}
+    assert sched_a.get("next_task") == c
+    assert sched_c.get("prev_task") == a
+
+    # Only the head owns start_at → ensure C (non-head) does not inherit it unless it became head
+    # Here A remains head, so C must not have start_at
+    assert "start_at" not in sched_c or sched_c.get("start_at") in (None, "")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_task_isolate_when_head_moves_start_at_to_second(monkeypatch):
+    """Branch A (head case): If activated task was head, next becomes head and inherits start_at."""
+
+    planner = SimulatedPlanner(steps=0)
+    ts = TaskScheduler(planner=planner)
+
+    x, y = await _make_ordered_queue(ts, ["X", "Y"])  # type: ignore[misc]
+
+    # Execute X (head) explicitly; ambiguous → isolate → detach X entirely
+    handle = await ts.execute_task(text=str(x))
+    await handle.result()
+
+    rows_x = ts._filter_tasks(filter=f"task_id == {x}")
+    rows_y = ts._filter_tasks(filter=f"task_id == {y}")
+
+    # X detached
+    assert rows_x[0].get("schedule") in (None, {})
+
+    # Y becomes new head: prev_task=None and has start_at
+    sched_y = rows_y[0].get("schedule") or {}
+    assert sched_y.get("prev_task") is None
+    assert "start_at" in sched_y and sched_y.get("start_at")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_task_chain_keeps_followers(monkeypatch):
+    """Branch B: Keep tasks behind still queued to follow the activated task.
+
+    We simulate an unambiguous 'chain' request by monkeypatching the internal
+    classifier to return 'chain'. Expect B to become sub-head (prev=None), keep
+    next pointer to C, and C.prev_task=B, with only the head owning start_at.
+    """
+
+    planner = SimulatedPlanner(steps=0)
+    ts = TaskScheduler(planner=planner)
+
+    a, b, c = await _make_ordered_queue(ts, ["A2", "B2", "C2"])  # type: ignore[misc]
+
+    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "chain"
+
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+
+    handle = await ts.execute_task(text=str(b))
+    await handle.result()
+
+    rows_b = ts._filter_tasks(filter=f"task_id == {b}")
+    rows_c = ts._filter_tasks(filter=f"task_id == {c}")
+
+    sched_b = rows_b[0].get("schedule") or {}
+    sched_c = rows_c[0].get("schedule") or {}
+
+    # B becomes sub-head of its chain
+    assert sched_b.get("prev_task") is None
+    assert sched_b.get("next_task") == c
+    # C follows B
+    assert sched_c.get("prev_task") == b
+    # C must not carry start_at (non-head)
+    assert "start_at" not in sched_c or sched_c.get("start_at") in (None, "")
