@@ -132,11 +132,13 @@ def task_scenario(request: pytest.FixtureRequest):
             except Exception as e:
                 pass
 
-        unify.map(
-            recreate_contexts,
-            list(existing_contexts.keys()),
-            mode="asyncio",
-        )
+        _targets = list(existing_contexts.keys())
+        if _targets:
+            unify.map(
+                recreate_contexts,
+                _targets,
+                mode="asyncio",
+            )
 
     if reuse_scenario and not SCENARIO_COMMIT_HASHES:
 
@@ -149,11 +151,13 @@ def task_scenario(request: pytest.FixtureRequest):
                 )
                 SCENARIO_COMMIT_HASHES[ctx] = history[0]["commit_hash"]
 
-        unify.map(
-            get_context_commits_and_rollback,
-            list(existing_contexts.keys()),
-            mode="asyncio",
-        )
+        _targets = list(existing_contexts.keys())
+        if _targets:
+            unify.map(
+                get_context_commits_and_rollback,
+                _targets,
+                mode="asyncio",
+            )
 
     # --- One-time setup (per session) ---
     sb = ScenarioBuilderTasks()
@@ -168,11 +172,15 @@ def task_scenario(request: pytest.FixtureRequest):
             )
             SCENARIO_COMMIT_HASHES[ctx] = commit_info["commit_hash"]
 
-        unify.map(
-            commit_context_and_store,
-            list(existing_contexts.keys()),
-            mode="asyncio",
-        )
+        # Refresh contexts after seeding so we commit the ones just created
+        existing_contexts = unify.get_contexts(prefix="test_task_scheduler")
+        _targets = list(existing_contexts.keys())
+        if _targets:
+            unify.map(
+                commit_context_and_store,
+                _targets,
+                mode="asyncio",
+            )
 
     yield sb.ts, _TASK_IDS
 
@@ -192,6 +200,8 @@ def basic_task_scenario(task_scenario):
         )
 
     # Rollback to clean state before test
-    unify.map(rollback_context, list(SCENARIO_COMMIT_HASHES.keys()), mode="asyncio")
+    _targets = list(SCENARIO_COMMIT_HASHES.keys())
+    if _targets:
+        unify.map(rollback_context, _targets, mode="asyncio")
 
     yield ts, ids
