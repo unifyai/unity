@@ -6,6 +6,7 @@ from .status import Status
 from .schedule import Schedule
 from .trigger import Trigger
 from .repetition import RepeatPattern
+from .activated_by import ActivatedBy
 from datetime import datetime
 
 UNASSIGNED = -1
@@ -60,6 +61,13 @@ class Task(BaseModel):
             "a contact's own response_policy, the task-level policy takes precedence."
         ),
     )
+    activated_by: Optional[ActivatedBy] = Field(
+        default=None,
+        description=(
+            "Reason the task instance transitioned to the active state.\n"
+            "This is set automatically at activation time and is never directly editable."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -86,6 +94,12 @@ class Task(BaseModel):
         if self.status == Status.triggerable and self.trigger is None:
             raise ValueError(
                 "Status 'triggerable' requires a non-null *trigger* definition.",
+            )
+
+        # `activated_by` may only be present once the task is actually active
+        if self.status != Status.active and self.activated_by is not None:
+            raise ValueError(
+                "`activated_by` may only be set when status is 'active'",
             )
 
         return self
