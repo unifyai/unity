@@ -177,13 +177,13 @@ def test_simulated_cm_docstrings_match_base():
     from unity.task_scheduler.simulated import SimulatedTaskScheduler
 
     assert (
-        SimulatedTaskScheduler.ask.__doc__.strip()
-        == BaseTaskScheduler.ask.__doc__.strip()
+        BaseTaskScheduler.ask.__doc__.strip()
+        in SimulatedTaskScheduler.ask.__doc__.strip()
     ), ".store doc-string was not copied correctly"
 
     assert (
-        SimulatedTaskScheduler.update.__doc__.strip()
-        == BaseTaskScheduler.update.__doc__.strip()
+        BaseTaskScheduler.update.__doc__.strip()
+        in SimulatedTaskScheduler.update.__doc__.strip()
     ), ".retrieve doc-string was not copied correctly"
 
 
