@@ -1543,6 +1543,17 @@ class MagnitudeDesktopBackend(BrowserBackend):
             if finished:
                 return expectation or "success"
 
+            # If an explicit expectation is provided, verify it each iteration.
+            # If already satisfied, finish early; otherwise continue planning.
+            if expectation:
+                try:
+                    obs = await self.observe(expectation)
+                    if isinstance(obs, dict) and obs.get("matches"):
+                        return expectation or "success"
+                except Exception:
+                    # non-fatal; proceed with the loop
+                    pass
+
         # Final heuristic: if we typed something and pressed Enter at least once, consider success
         if self._typed_history and self._enter_after_last_type:
             return expectation or "success"
