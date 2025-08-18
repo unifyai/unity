@@ -40,6 +40,7 @@ class Event(metaclass=_EventRegistry):
         self,
         *,
         timestamp: datetime | str | None = None,
+        contact_details: dict[str, str] = None,
         is_urgent: bool = False,
         transient: bool = False,
         content: str | None = None,
@@ -47,6 +48,7 @@ class Event(metaclass=_EventRegistry):
     ):
         self.timestamp = self._parse_timestamp(timestamp)
         self.fmt_timestamp = self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        self.contact_details = contact_details
         self.is_urgent = is_urgent
         self.transient = transient
         self.content = content
@@ -55,6 +57,7 @@ class Event(metaclass=_EventRegistry):
     def to_dict(self) -> dict[str, Any]:
         payload = {
             "timestamp": self.timestamp.isoformat(),
+            "contact_details": self.contact_details,
             "is_urgent": self.is_urgent,
             "transient": self.transient,
             "content": self.content,

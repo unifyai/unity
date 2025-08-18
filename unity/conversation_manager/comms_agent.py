@@ -105,6 +105,7 @@ class CommsAgent:
         self.voice_id = voice_id
 
         # contact data
+        self.contact_details = {}
         self.assistant_number = assistant_number
         self.assistant_email = assistant_email
         self.user_name = user_name
@@ -1001,20 +1002,21 @@ class CommsAgent:
                         )
                     )
                     sender_id, receiver_ids = "", [""]
+                    user_contact_id = self.contact_details.get("contact_id", 1)
                     if medium == "whatsapp_message":
                         if role == "Assistant":
-                            sender_id = self.assistant_number
-                            receiver_ids = [self.user_whatsapp_number]
+                            sender_id = 0
+                            receiver_ids = [user_contact_id]
                         else:
-                            sender_id = self.user_whatsapp_number
-                            receiver_ids = [self.assistant_number]
+                            sender_id = user_contact_id
+                            receiver_ids = [0]
                     else:
                         if "recieved" in event_name:
-                            sender_id = self.user_number
-                            receiver_ids = [self.assistant_number]
+                            sender_id = user_contact_id
+                            receiver_ids = [0]
                         else:
-                            sender_id = self.assistant_number
-                            receiver_ids = [self.user_number]
+                            sender_id = 0
+                            receiver_ids = [user_contact_id]
                     self.transcript_manager.log_messages(
                         Message(
                             medium=medium,
@@ -1108,6 +1110,9 @@ class CommsAgent:
                     "type": "stop",
                 },
             )
+
+        if event["event"].get("contact_details"):
+            self.contact_details = event["event"]["payload"]["contact_details"]
 
         if to == "past":
             self.past_events.append(event["event"])
