@@ -162,11 +162,12 @@ jobs:
         REGISTER_SUMMARY_CALLBACKS: false
         REGISTER_UPDATE_CALLBACKS: false
 
-    - name: Upload test results
+    - name: Upload test artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: test-results
+        include-hidden-files: true
         path: |
           tests.log
           report.xml
