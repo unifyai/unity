@@ -33,7 +33,7 @@ ENV DISPLAY=:99
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl wget unzip gnupg2 \
-    xvfb x11vnc fluxbox xdotool wmctrl imagemagick \
+    xvfb x11vnc fluxbox xdotool wmctrl imagemagick tesseract-ocr \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
     libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
