@@ -40,11 +40,11 @@ async def test_full_screenshot_save_and_filepath_exists(backend):
 async def test_region_screenshot_then_verify_presence(backend):
     # Focus xterm and capture a small region near top-left of its window title bar to ensure region ability works.
     await backend.act(
-        "Focus the 'xterm' window. Finish when done.",
+        "Focus the 'xterm' window.",
     )
     # Heuristic region near (20, 10)
     await backend.act(
-        "Capture a region screenshot around (x=20,y=10) sized about 200x120. Finish when done.",
+        "Capture a region screenshot around (x=20,y=10) sized about 200x120.",
     )
     # Visual verification is weak here; we just verify that xterm is visible as a sanity check.
     obs = await backend.observe(
@@ -57,12 +57,12 @@ async def test_region_screenshot_then_verify_presence(backend):
 @pytest.mark.timeout(90)
 async def test_image_locate_anchor_and_focus(backend):
     # Ensure xterm present
-    await backend.act("Open or focus an 'xterm' window. Finish when done.")
+    await backend.act("Open or focus an 'xterm' window.")
     # Ask the agent to locate the xterm title area via template and focus it
     await asyncio.wait_for(
         _act_until_match(
             backend,
-            "Use template matching to locate the 'xterm' title bar and click its center. Finish when done.",
+            "Use template matching to locate the 'xterm' title bar and click its center.",
             "The 'xterm' window appears focused (title bar highlighted or on top).",
         ),
         timeout=90,
@@ -73,7 +73,7 @@ async def test_image_locate_anchor_and_focus(backend):
 @pytest.mark.timeout(90)
 async def test_region_changed_after_typing(backend):
     # Capture before, type, capture after, then verify region change
-    await backend.act("Focus the 'xterm' window. Finish when done.")
+    await backend.act("Focus the 'xterm' window.")
     await asyncio.wait_for(
         _act_until_match(
             backend,

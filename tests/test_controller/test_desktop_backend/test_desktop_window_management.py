@@ -26,7 +26,7 @@ async def _act_until_match(backend, instruction: str, query: str, poll_s: float 
 @pytest.mark.asyncio
 @pytest.mark.timeout(90)
 async def test_focus_xterm(backend):
-    instr = "Focus the window titled 'xterm'. Finish when done."
+    instr = "Focus the window titled 'xterm'."
     await asyncio.wait_for(
         _act_until_match(
             backend,
@@ -62,7 +62,7 @@ async def test_move_and_resize_xterm(backend):
 @pytest.mark.timeout(90)
 async def test_maximize_and_restore_xterm(backend):
     # Maximize
-    instr_max = "Maximize the window titled 'xterm'. Finish when done."
+    instr_max = "Maximize the window titled 'xterm'."
     await asyncio.wait_for(
         _act_until_match(
             backend,
@@ -73,9 +73,7 @@ async def test_maximize_and_restore_xterm(backend):
     )
 
     # Restore (unmaximize)
-    instr_restore = (
-        "Restore the 'xterm' window to a normal size (not maximized). Finish when done."
-    )
+    instr_restore = "Restore the 'xterm' window to a normal size (not maximized)."
     await asyncio.wait_for(
         _act_until_match(
             backend,
@@ -90,7 +88,7 @@ async def test_maximize_and_restore_xterm(backend):
 @pytest.mark.timeout(90)
 async def test_minimize_and_focus_again(backend):
     # Minimize the window
-    instr_min = "Minimize the 'xterm' window. Finish when done."
+    instr_min = "Minimize the 'xterm' window."
     await asyncio.wait_for(
         _act_until_match(
             backend,
@@ -101,7 +99,7 @@ async def test_minimize_and_focus_again(backend):
     )
 
     # Bring it back to front
-    instr_focus = "Focus the 'xterm' window again (restore/show it). Finish when done."
+    instr_focus = "Focus the 'xterm' window again (restore/show it)."
     await asyncio.wait_for(
         _act_until_match(
             backend,
@@ -116,7 +114,7 @@ async def test_minimize_and_focus_again(backend):
 @pytest.mark.timeout(90)
 async def test_close_and_reopen_xterm(backend):
     # Close xterm
-    instr_close = "Close the window titled 'xterm'. Finish when done."
+    instr_close = "Close the window titled 'xterm'."
     await asyncio.wait_for(
         _act_until_match(
             backend,
@@ -127,7 +125,7 @@ async def test_close_and_reopen_xterm(backend):
     )
 
     # Re-open xterm (the agent can use app_open or launcher)
-    instr_open = "Open a new xterm terminal window. Finish when done."
+    instr_open = "Open a new xterm terminal window."
     await asyncio.wait_for(
         _act_until_match(
             backend,

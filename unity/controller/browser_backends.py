@@ -1263,7 +1263,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
         - "Install 'cowsay' using apt-get -y and run 'cowsay READY'; finish when the cowsay output shows READY."
         - "Move the 'xterm' window to around (50,50) and resize it to about 900x700; finish when that looks true."
         - "Maximize the 'xterm' window; finish when it fills most of the screen."
-        - "Take a full desktop screenshot; finish when done."
+        - "Take a full desktop screenshot."
 
         Bad instruction examples (overly low‑level/ambiguous):
         - "Move to (250,400), click, then move to (300,420) and click again." (prefer a goal like
@@ -1304,14 +1304,14 @@ class MagnitudeDesktopBackend(BrowserBackend):
             )
             args: dict = Field(default_factory=dict)
             reason: str | None = None
-            verify: str | None = None
+            final_statement: str | None = None
 
         client = unify.Unify(endpoint="claude-4-sonnet@anthropic")
         client.set_response_format(NextAction)
         client.set_system_message(
             "You are a desktop control assistant. Decide the next atomic tool to apply to achieve the user's goal.\n"
             "Return ONLY JSON matching the response schema.\n"
-            "For each selected tool, include a short 'verify' statement that should be TRUE if the tool succeeded (a visual check the observer can answer).\n"
+            "Include 'final_statement': a single concrete observation that will be TRUE when the ENTIRE instruction is complete (not just the current step).\n"
             "Available tools (consolidated):\n"
             "- exists_window: args {title} — check if a window with given title exists.\n"
             "- focus_window: args {title|class} — bring a window to front by title or WM_CLASS.\n"
@@ -1350,6 +1350,14 @@ class MagnitudeDesktopBackend(BrowserBackend):
             return {
                 "known_windows": self._last_exists,
                 "windows": self._last_windows,
+                "vision": {
+                    "ocr_bbox": getattr(self, "_last_ocr_bbox", None),
+                    "image_locate": getattr(self, "_last_image_locate", None),
+                },
+                "input": {
+                    "typed_history": self._typed_history[-5:],
+                    "enter_after_last_type": self._enter_after_last_type,
+                },
             }
 
         async def _must_get_screenshot(attempts: int = 5, delay_s: float = 0.3) -> str:
@@ -1412,8 +1420,15 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 if ptr
                 else f"Goal: {instruction}\nScreen: width={dims[0]} height={dims[1]} (pixels)\n"
             )
+            # Add dynamic guidance to discourage repeats and move forward using known context
+            guidance_lines: list[str] = []
+            if self._consecutive_repeat_count >= 1:
+                guidance_lines.append(
+                    "Avoid repeating the same tool. If a text bbox exists in context.vision.ocr_bbox, proceed to click or drag using that bbox instead of locating again.",
+                )
             header += (
                 f"Recent steps: {history_txt}\nContext: {json.dumps(_context_blob())}"
+                + ("\n" + "\n".join(guidance_lines) if guidance_lines else "")
             )
             content = [
                 {
@@ -1441,10 +1456,31 @@ class MagnitudeDesktopBackend(BrowserBackend):
             args = next_action.args or {}
             verify_stmt = next_action.verify or ""
 
-            # Loop-avoidance guard: detect consecutive repeats
+            # Loop-avoidance guard: detect consecutive repeats and nudge planner
             if self._last_tool_name == tool:
                 self._consecutive_repeat_count += 1
+            else:
+                self._consecutive_repeat_count = 0
             self._last_tool_name = tool
+
+            # If we keep locating without acting, promote next action to click/drag using last bbox
+            if tool == "locate" and self._consecutive_repeat_count >= 2:
+                bbox = getattr(self, "_last_ocr_bbox", None)
+                if bbox and bbox.get("w") and bbox.get("h"):
+                    # Execute a gentle click to advance state; planner can continue from here
+                    try:
+                        cx = int(bbox["x"] + bbox["w"] / 2)
+                        cy = int(bbox["y"] + bbox["h"] / 2)
+                        await self._request(
+                            "POST",
+                            "/linux/click",
+                            payload={"x": cx, "y": cy, "button": 1},
+                        )
+                        recent_steps.append("auto_click(bbox_center)")
+                        # Reset repeat counter after intervention
+                        self._consecutive_repeat_count = 0
+                    except Exception:
+                        pass
 
             # Record step intent for the next iteration's guidance
             if tool in ("focus_window", "exists_window"):
@@ -1468,8 +1504,14 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 x_dbg = args.get("x")
                 y_dbg = args.get("y")
                 recent_steps.append(f"click({x_dbg},{y_dbg})")
-            elif tool in ("list_windows", "app_open", "app_close"):
-                recent_steps.append(tool)
+            elif tool == "drag":
+                to_x = args.get("toX") or args.get("toXPercent")
+                to_y = args.get("toY") or args.get("toYPercent")
+                recent_steps.append(f"drag(to={to_x},{to_y})")
+            elif tool == "window_update":
+                op_val = args.get("op")
+                # keep a compact signature for history parsing guidance above
+                recent_steps.append(f"window_update(op='{op_val}')")
             else:
                 recent_steps.append(tool)
 
@@ -1477,8 +1519,17 @@ class MagnitudeDesktopBackend(BrowserBackend):
             ok = await self._execute_tool(tool, args, dims)
 
             # Observe for completion each step only when the tool provides 'verify'
-            verify_stmt = (next_action.verify or "").strip()
-            if instruction:
+            final_stmt = (next_action.final_statement or "").strip()
+            if final_stmt:
+                print(f"🐍 PYTHON: Verifying final: {final_stmt}")
+                try:
+                    obs = await self.observe(final_stmt)
+                    if isinstance(obs, dict) and obs.get("matches"):
+                        return "success"
+                except Exception:
+                    # non-fatal; continue planning
+                    pass
+            elif instruction:
                 print(f"🐍 PYTHON: Verifying: {instruction}")
                 try:
                     obs = await self.observe(instruction)
@@ -1487,6 +1538,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 except Exception:
                     # non-fatal; continue planning
                     pass
+            # else: no final statement; continue loop
 
         return "incomplete"
 
