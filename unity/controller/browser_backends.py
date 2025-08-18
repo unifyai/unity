@@ -974,9 +974,9 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 to_y = max(0, min(dims[1] - 1, to_y))
             payload = {
                 **({"fromX": from_x} if from_x is not None else {}),
-                **({"fromY": from_y} if from_y is not None else {}),
+                **({"fromY": from_y + 3} if from_y is not None else {}),
                 "toX": to_x,
-                "toY": to_y,
+                "toY": to_y + 3,
             }
             try:
                 if args.get("button") is not None:
@@ -1052,12 +1052,6 @@ class MagnitudeDesktopBackend(BrowserBackend):
             except Exception:
                 return False
             return True
-
-        # legacy screenshot_region removed; use screenshot with region
-
-        # legacy image_locate removed; use consolidated 'locate'
-
-        # legacy ocr_locate_text removed; use consolidated 'locate'
 
         # Consolidated locate: OCR when text/query provided; template search otherwise
         if tool == "locate":
@@ -1299,7 +1293,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 ...,
                 description=(
                     "One of: exists_window, focus_window, list_windows, window_update, app_open, app_close, "
-                    "type, click, mouse_move, drag, scroll, screenshot, locate, compare, record_start, record_stop, fs_list, fs_write"
+                    "type, click, mouse_move, drag, scroll, screenshot, compare, record_start, record_stop, fs_list, fs_write"
                 ),
             )
             args: dict = Field(default_factory=dict)
@@ -1324,7 +1318,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "- mouse_move: args {x, y} — move/hover the pointer without clicking.\n"
             "- drag: args {fromX?, fromY?, toX, toY, button?, steps?, delayMs?, modifiers?[]} — click-drag; percents supported via *_Percent in [0,1] of focused window.\n"
             "- scroll: args {direction:'up'|'down'|'left'|'right', amount?, delayMs?} — scroll wheel events.\n"
-            "- locate: args {text?|query?|templatePath?|templateB64?, x?, y?, w?, h?, threshold?, caseSensitive?, exact?} — OCR or template locate based on provided fields.\n"
+            # "- locate: args {text?|query?|templatePath?|templateB64?, x?, y?, w?, h?, threshold?, caseSensitive?, exact?} — OCR or template locate based on provided fields.\n"
             "- screenshot: args {region?: {x,y,w,h}} — capture full or regional screenshot (base64).\n"
             "- compare: args {beforeB64, afterB64, region: {x,y,w,h}, metric?: 'AE'|'NCC', threshold?} — compare two screenshots over a region.\n"
             "You can install apps/packages by running shell commands. If no terminal is open, prefer app_open with cmd='bash' and args=['-lc', '<install command>'] (e.g., 'sudo apt-get update && sudo apt-get install -y <pkg>'). If a terminal (e.g., xterm) is already open, focus_window it and use click/type to run commands. Use non-interactive flags (-y, -q, --no-install-recommends) to avoid prompts.\n"

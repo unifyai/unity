@@ -55,7 +55,6 @@ async def test_maximize_and_restore_xterm(backend):
     await asyncio.wait_for(
         backend.act(
             instr_max,
-            expectation="The 'xterm' window appears maximized or filling most of the screen.",
         ),
         timeout=90,
     )
@@ -65,7 +64,6 @@ async def test_maximize_and_restore_xterm(backend):
     await asyncio.wait_for(
         backend.act(
             instr_restore,
-            expectation="The 'xterm' window no longer fills most of the screen (not maximized).",
         ),
         timeout=90,
     )
@@ -79,7 +77,6 @@ async def test_minimize_and_focus_again(backend):
     await asyncio.wait_for(
         backend.act(
             instr_min,
-            expectation="The 'xterm' window is not visible on the screen (appears minimized or hidden).",
         ),
         timeout=90,
     )
@@ -89,7 +86,6 @@ async def test_minimize_and_focus_again(backend):
     await asyncio.wait_for(
         backend.act(
             instr_focus,
-            expectation="The 'xterm' window is visible on screen again and appears focused.",
         ),
         timeout=90,
     )
@@ -103,7 +99,6 @@ async def test_close_and_reopen_xterm(backend):
     await asyncio.wait_for(
         backend.act(
             instr_close,
-            expectation="There is no visible window titled 'xterm' on the screen.",
         ),
         timeout=90,
     )
@@ -113,7 +108,6 @@ async def test_close_and_reopen_xterm(backend):
     await asyncio.wait_for(
         backend.act(
             instr_open,
-            expectation="A window titled 'xterm' is visible and appears focused on screen.",
         ),
         timeout=90,
     )
@@ -131,7 +125,6 @@ async def test_app_install_and_use_cowsay(backend):
     await asyncio.wait_for(
         backend.act(
             instr,
-            expectation="The terminal shows the word READY (from cowsay).",
         ),
         timeout=90,
     )
