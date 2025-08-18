@@ -98,6 +98,7 @@ class CommsManager:
                     },
                 )
             elif thread in events_map:
+                contact_details = event.get("contact_details", {})
                 content = event["body"]
                 topic = ""
                 if thread == "email":
@@ -111,6 +112,7 @@ class CommsManager:
                     {
                         "topic": topic,
                         "event": events_map[thread](
+                            contact_details=contact_details,
                             content=content,
                             role="User",
                         ).to_dict(),
@@ -119,6 +121,7 @@ class CommsManager:
                 message.ack()
             elif thread == "call":
                 try:
+                    contact_details = event.get("contact_details", {})
                     # Extract phone numbers from the message data
                     from_number = event.get("caller_number", "")
                     to_number = "+" + event.get("conference_name", "").replace(
@@ -130,6 +133,7 @@ class CommsManager:
                         {
                             "topic": event["caller_number"],
                             "event": PhoneCallInitiatedEvent(
+                                contact_details=contact_details,
                                 voice_id=event.get("voice_id", None),
                                 tts_provider=event.get("tts_provider", None),
                             ).to_dict(),
