@@ -739,62 +739,16 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
         if tool == "list_windows":
             try:
-                res = await self._request("GET", "/linux/window")
+                # Support consolidated arg: {extended?: boolean}
+                extended_flag = bool(args.get("extended", False))
+                endpoint = "/linux/window" + ("?extended=1" if extended_flag else "")
+                res = await self._request("GET", endpoint)
                 self._last_windows = res.get("windows", []) or []
             except Exception:
                 return False
             return True
 
-        if tool == "list_windows_extended":
-            try:
-                res = await self._request("GET", "/linux/window?extended=1")
-                self._last_windows = res.get("windows", []) or []
-            except Exception:
-                return False
-            return True
-
-        if tool == "move_window":
-            id_val = args.get("id")
-            title_val = args.get("title")
-            try:
-                x_val = int(args.get("x"))
-                y_val = int(args.get("y"))
-            except Exception:
-                return False
-            await self._request(
-                "POST",
-                "/linux/window/move",
-                payload={"id": id_val, "title": title_val, "x": x_val, "y": y_val},
-            )
-            return True
-
-        if tool == "resize_window":
-            id_val = args.get("id")
-            title_val = args.get("title")
-            try:
-                w_val = int(args.get("w"))
-                h_val = int(args.get("h"))
-            except Exception:
-                return False
-            await self._request(
-                "POST",
-                "/linux/window/resize",
-                payload={"id": id_val, "title": title_val, "w": w_val, "h": h_val},
-            )
-            return True
-
-        if tool == "set_window_state":
-            id_val = args.get("id")
-            title_val = args.get("title")
-            action_val = str(args.get("action") or "").strip().lower()
-            if action_val not in {"minimize", "maximize", "restore", "close"}:
-                return False
-            await self._request(
-                "POST",
-                "/linux/window/state",
-                payload={"id": id_val, "title": title_val, "action": action_val},
-            )
-            return True
+        # removed legacy: list_windows_extended/move_window/resize_window/set_window_state
 
         if tool == "app_open":
             cmd = args.get("cmd")
@@ -819,19 +773,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 pass
             return True
 
-        if tool == "app_focus":
-            title_val = args.get("title")
-            class_val = args.get("class")
-            if not (title_val or class_val):
-                return False
-            await self._request(
-                "POST",
-                "/linux/window/focus",
-                payload={"title": title_val, "class": class_val},
-            )
-            self._last_focus_title = str(title_val or self._last_focus_title or "")
-            self._enter_after_last_type = False
-            return True
+        # removed legacy: app_focus (use focus_window)
 
         if tool == "app_close":
             title_val = args.get("title")
@@ -852,96 +794,51 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 pass
             return True
 
-        if tool == "click_at":
-            # Support absolute pixels or window-relative percents
-            if args.get("xPercent") is not None and args.get("yPercent") is not None:
+        # legacy click_at removed in favor of consolidated 'click'
+
+        # Consolidated click: supports x/y, percents, or bbox center
+        if tool == "click":
+            # If bbox provided, compute center and click
+            if isinstance(args.get("bbox"), dict):
+                b = args.get("bbox")
                 try:
-                    win = await self._get_focused_window_geometry()
-                    if not win or win.get("w", 0) <= 0 or win.get("h", 0) <= 0:
-                        return False
-                    xp = max(0.0, min(1.0, float(args.get("xPercent"))))
-                    yp = max(0.0, min(1.0, float(args.get("yPercent"))))
-                    x_val = int(win["x"] + xp * win["w"])
-                    y_val = int(win["y"] + yp * win["h"])
+                    cx = int(b.get("x") + b.get("w") / 2)
+                    cy = int(b.get("y") + b.get("h") / 2)
                 except Exception:
                     return False
-            else:
+                payload = {"x": cx, "y": cy}
                 try:
-                    x_val = int(args.get("x"))
-                    y_val = int(args.get("y"))
+                    if args.get("button") is not None:
+                        payload["button"] = int(args.get("button"))
                 except Exception:
-                    return False
-            button = int(args.get("button", 1) or 1)
-            # optional enhancements
-            repeat_val = None
-            delay_ms = None
-            modifiers_val = None
-            try:
-                if args.get("repeat") is not None:
-                    repeat_val = max(1, int(args.get("repeat")))
-            except Exception:
-                repeat_val = None
-            try:
-                if args.get("delayMs") is not None:
-                    delay_ms = max(0, int(args.get("delayMs")))
-            except Exception:
-                delay_ms = None
-            try:
-                if isinstance(args.get("modifiers"), list):
-                    modifiers_val = [str(m) for m in args.get("modifiers")]
-            except Exception:
-                modifiers_val = None
-            if dims[0] > 0 and dims[1] > 0:
-                x_val = max(0, min(dims[0] - 1, x_val))
-                y_val = max(0, min(dims[1] - 1, y_val))
-            mouse_before = None
-            try:
-                mouse_before = await self._request("GET", "/linux/mouse/position")
-            except Exception:
-                mouse_before = None
-            await self._request(
-                "POST",
-                "/linux/click",
-                payload={
-                    "clicks": [
-                        {
-                            "x": x_val,
-                            "y": y_val,
-                            "button": button,
-                            **(
-                                {"repeat": repeat_val} if repeat_val is not None else {}
-                            ),
-                            **({"delayMs": delay_ms} if delay_ms is not None else {}),
-                            **(
-                                {"modifiers": modifiers_val}
-                                if modifiers_val is not None
-                                else {}
-                            ),
-                        },
-                    ],
-                },
-            )
-            await asyncio.sleep(0.2)
-            mouse_after = None
-            try:
-                mouse_after = await self._request("GET", "/linux/mouse/position")
-            except Exception:
-                mouse_after = None
-
-            def _dist(a, b):
+                    pass
+                # optional repeat/delay/modifiers
                 try:
-                    return abs((a or {}).get("x", -1) - (b or {}).get("x", -1)) + abs(
-                        (a or {}).get("y", -1) - (b or {}).get("y", -1),
-                    )
+                    if args.get("repeat") is not None:
+                        payload["repeat"] = max(1, int(args.get("repeat")))
                 except Exception:
-                    return 0
+                    pass
+                try:
+                    if args.get("delayMs") is not None:
+                        payload["delayMs"] = max(0, int(args.get("delayMs")))
+                except Exception:
+                    pass
+                try:
+                    if isinstance(args.get("modifiers"), list):
+                        payload["modifiers"] = [str(m) for m in args.get("modifiers")]
+                except Exception:
+                    pass
+                await self._request("POST", "/linux/click", payload=payload)
+                return True
 
-            if _dist(mouse_after, mouse_before) < 2:
-                self._consecutive_repeat_count = max(self._consecutive_repeat_count, 1)
-            return True
+            # Delegate to click_at path for x/y or percents, preserving arguments
+            return await self._execute_tool("click_at", dict(args), dims)
 
-        if tool == "type_text":
-            # Support either plain text, or structured keys/combos
+        # legacy type_text removed in favor of consolidated 'type'
+
+        # Consolidated typing tool
+        if tool == "type":
+            # Prefer explicit keys if provided
             if args.get("keys") is not None:
                 keys_payload = args.get("keys")
                 try:
@@ -950,9 +847,14 @@ class MagnitudeDesktopBackend(BrowserBackend):
                         "/linux/type",
                         payload={"keys": keys_payload},
                     )
+                    if bool(args.get("pressEnter")):
+                        await self._request(
+                            "POST",
+                            "/linux/type",
+                            payload={"keys": ["Enter"]},
+                        )
                 except Exception:
                     return False
-                # best-effort typed history update
                 try:
                     if isinstance(keys_payload, list):
                         flat_parts: list[str] = []
@@ -968,21 +870,22 @@ class MagnitudeDesktopBackend(BrowserBackend):
                         self._typed_history.append(str(keys_payload))
                 except Exception:
                     pass
-                self._enter_after_last_type = False
+                self._enter_after_last_type = bool(args.get("pressEnter", False))
+                if self._enter_after_last_type:
+                    await asyncio.sleep(0.4)
                 return True
+
             text = str(args.get("text") or "")
-            if not text:
+            if not text and not bool(args.get("pressEnter")):
                 return False
-            if text.endswith("\n"):
-                text = text[:-1]
+            if text:
                 await self._request("POST", "/linux/type", payload={"keys": [text]})
-                await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
                 self._typed_history.append(text)
+            if bool(args.get("pressEnter")):
+                await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
                 self._enter_after_last_type = True
                 await asyncio.sleep(0.4)
             else:
-                await self._request("POST", "/linux/type", payload={"keys": [text]})
-                self._typed_history.append(text)
                 self._enter_after_last_type = False
             return True
 
@@ -1119,7 +1022,30 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
         if tool == "screenshot":
             try:
-                out = await self._request("GET", "/linux/screenshot")
+                # Consolidated: allow optional region {x,y,w,h} or top-level x,y,w,h
+                region = (
+                    args.get("region") if isinstance(args.get("region"), dict) else None
+                )
+                if region and all(k in region for k in ("x", "y", "w", "h")):
+                    x = int(region.get("x"))
+                    y = int(region.get("y"))
+                    w = int(region.get("w"))
+                    h = int(region.get("h"))
+                    out = await self._request(
+                        "GET",
+                        f"/linux/screenshot/region?x={x}&y={y}&w={w}&h={h}",
+                    )
+                elif all(k in args for k in ("x", "y", "w", "h")):
+                    x = int(args.get("x"))
+                    y = int(args.get("y"))
+                    w = int(args.get("w"))
+                    h = int(args.get("h"))
+                    out = await self._request(
+                        "GET",
+                        f"/linux/screenshot/region?x={x}&y={y}&w={w}&h={h}",
+                    )
+                else:
+                    out = await self._request("GET", "/linux/screenshot")
                 b64 = (out or {}).get("screenshot")
                 if b64:
                     self._last_exists["_last_full_screenshot"] = True
@@ -1127,40 +1053,42 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 return False
             return True
 
-        if tool == "screenshot_region":
-            try:
-                x = int(args.get("x"))
-                y = int(args.get("y"))
-                w = int(args.get("w"))
-                h = int(args.get("h"))
-            except Exception:
-                return False
-            # clamp to dims
-            if dims[0] > 0 and dims[1] > 0:
-                x = max(0, min(dims[0] - 1, x))
-                y = max(0, min(dims[1] - 1, y))
-                w = max(1, min(dims[0] - x, w))
-                h = max(1, min(dims[1] - y, h))
-            out = await self._request(
-                "GET",
-                f"/linux/screenshot/region?x={x}&y={y}&w={w}&h={h}",
-            )
-            # store last region bytes for potential region_changed
-            try:
-                b64 = out.get("screenshot")
-                if b64:
-                    # store as before if empty; otherwise after
-                    if not self._last_region_before_b64:
-                        self._last_region_before_b64 = b64
-                    else:
-                        self._last_region_after_b64 = b64
-                    self._last_region_rect = {"x": x, "y": y, "w": w, "h": h}
-            except Exception:
-                pass
-            return True
+        # legacy screenshot_region removed; use screenshot with region
 
-        if tool == "image_locate":
-            payload: dict = {}
+        # legacy image_locate removed; use consolidated 'locate'
+
+        # legacy ocr_locate_text removed; use consolidated 'locate'
+
+        # Consolidated locate: OCR when text/query provided; template search otherwise
+        if tool == "locate":
+            # OCR path if text/query provided
+            if args.get("text") or args.get("query"):
+                q = str(args.get("text") or args.get("query") or "").strip()
+                if not q:
+                    return False
+                payload: dict = {"query": q}
+                for k in ("x", "y", "w", "h"):
+                    if args.get(k) is not None:
+                        try:
+                            payload[k] = int(args.get(k))
+                        except Exception:
+                            pass
+                if args.get("caseSensitive") is not None:
+                    payload["caseSensitive"] = bool(args.get("caseSensitive"))
+                if args.get("exact") is not None:
+                    payload["exact"] = bool(args.get("exact"))
+                out = await self._request(
+                    "POST",
+                    "/linux/ocr/locate_text",
+                    payload=payload,
+                )
+                try:
+                    self._last_ocr_bbox = out if out and out.get("found") else None
+                except Exception:
+                    self._last_ocr_bbox = None
+                return True
+            # Template path
+            payload = {}
             if args.get("templatePath"):
                 payload["templatePath"] = str(args.get("templatePath"))
             elif args.get("templateB64"):
@@ -1185,66 +1113,24 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 pass
             return True
 
-        if tool == "ocr_locate_text":
-            # args: { query, x?, y?, w?, h?, caseSensitive?, exact? }
-            q = str(args.get("query") or args.get("text") or "").strip()
-            if not q:
-                return False
-            payload: dict = {"query": q}
-            for k in ("x", "y", "w", "h"):
-                if args.get(k) is not None:
-                    try:
-                        payload[k] = int(args.get(k))
-                    except Exception:
-                        pass
-            if args.get("caseSensitive") is not None:
-                payload["caseSensitive"] = bool(args.get("caseSensitive"))
-            if args.get("exact") is not None:
-                payload["exact"] = bool(args.get("exact"))
-            out = await self._request("POST", "/linux/ocr/locate_text", payload=payload)
-            try:
-                self._last_ocr_bbox = out if out and out.get("found") else None
-            except Exception:
-                self._last_ocr_bbox = None
-            return True
+        # legacy click_bbox_center removed; use consolidated 'click' with bbox
 
-        if tool == "click_bbox_center":
-            # Prefer provided bbox in args; else use last OCR bbox
-            bbox = None
-            if all(k in args for k in ("x", "y", "w", "h")):
-                try:
-                    bbox = {
-                        "x": int(args.get("x")),
-                        "y": int(args.get("y")),
-                        "w": int(args.get("w")),
-                        "h": int(args.get("h")),
-                    }
-                except Exception:
-                    bbox = None
-            if bbox is None:
-                bbox = getattr(self, "_last_ocr_bbox", None)
-            if not bbox or not bbox.get("w") or not bbox.get("h"):
-                return False
-            cx = int(bbox["x"] + bbox["w"] / 2)
-            cy = int(bbox["y"] + bbox["h"] / 2)
-            await self._request(
-                "POST",
-                "/linux/click",
-                payload={"x": cx, "y": cy, "button": int(args.get("button", 1) or 1)},
+        # legacy region_changed removed; use consolidated 'compare'
+
+        # Consolidated compare: wraps region_changed with region object
+        if tool == "compare":
+            region = (
+                args.get("region") if isinstance(args.get("region"), dict) else None
             )
-            return True
-
-        if tool == "region_changed":
-            need = ("beforeB64", "afterB64", "x", "y", "w", "h")
-            if not all(k in args for k in need):
+            if not region or not all(k in region for k in ("x", "y", "w", "h")):
                 return False
             payload = {
                 "beforeB64": str(args.get("beforeB64")),
                 "afterB64": str(args.get("afterB64")),
-                "x": int(args.get("x")),
-                "y": int(args.get("y")),
-                "w": int(args.get("w")),
-                "h": int(args.get("h")),
+                "x": int(region.get("x")),
+                "y": int(region.get("y")),
+                "w": int(region.get("w")),
+                "h": int(region.get("h")),
             }
             if args.get("metric"):
                 payload["metric"] = str(args.get("metric"))
@@ -1260,26 +1146,55 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 pass
             return True
 
-        if tool == "type_and_enter":
-            text = str(args.get("text") or "")
-            if not text:
-                return False
-            await self._request(
-                "POST",
-                "/linux/type",
-                payload={"keys": [text, "Enter"]},
-            )
-            self._typed_history.append(text)
-            self._enter_after_last_type = True
-            await asyncio.sleep(0.4)
-            return True
+        # removed legacy: type_and_enter, press_enter (use type with pressEnter)
 
-        if tool == "press_enter":
-            await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
-            if self._typed_history:
-                self._enter_after_last_type = True
-                await asyncio.sleep(0.4)
-            return True
+        # Consolidated window update: move/resize/state
+        if tool == "window_update":
+            op = str(args.get("op") or "").strip().lower()
+            if op not in {"move", "resize", "state"}:
+                return False
+            id_val = args.get("id")
+            title_val = args.get("title")
+            class_val = args.get("class")
+            if op == "move":
+                try:
+                    x_val = int(args.get("x"))
+                    y_val = int(args.get("y"))
+                except Exception:
+                    return False
+                await self._request(
+                    "POST",
+                    "/linux/window/move",
+                    payload={"id": id_val, "title": title_val, "x": x_val, "y": y_val},
+                )
+                return True
+            if op == "resize":
+                try:
+                    w_val = int(args.get("w"))
+                    h_val = int(args.get("h"))
+                except Exception:
+                    return False
+                await self._request(
+                    "POST",
+                    "/linux/window/resize",
+                    payload={"id": id_val, "title": title_val, "w": w_val, "h": h_val},
+                )
+                return True
+            if op == "state":
+                action_val = str(args.get("action") or "").strip().lower()
+                if action_val not in {"minimize", "maximize", "restore", "close"}:
+                    return False
+                await self._request(
+                    "POST",
+                    "/linux/window/state",
+                    payload={
+                        "id": id_val,
+                        "title": title_val,
+                        "class": class_val,
+                        "action": action_val,
+                    },
+                )
+                return True
 
         # --- Recording and File System Tools ---
         if tool == "record_start":
@@ -1388,9 +1303,8 @@ class MagnitudeDesktopBackend(BrowserBackend):
             tool: str = Field(
                 ...,
                 description=(
-                    "One of: exists_window, focus_window, list_windows, list_windows_extended, "
-                    "move_window, resize_window, set_window_state, app_open, app_focus, app_close, "
-                    "type_text, type_and_enter, click_at, mouse_move, drag, scroll, screenshot, screenshot_region, image_locate, region_changed, press_enter"
+                    "One of: exists_window, focus_window, list_windows, window_update, app_open, app_close, "
+                    "type, click, mouse_move, drag, scroll, screenshot, locate, compare, record_start, record_stop, fs_list, fs_write"
                 ),
             )
             args: dict = Field(default_factory=dict)
@@ -1403,36 +1317,27 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "You are a desktop control assistant. Decide the next atomic tool to apply to achieve the user's goal.\n"
             "Return ONLY JSON matching the response schema.\n"
             "For each selected tool, include a short 'verify' statement that should be TRUE if the tool succeeded (a visual check the observer can answer).\n"
-            "Available tools (tool field):\n"
+            "Available tools (consolidated):\n"
             "- exists_window: args {title} — check if a window with given title exists.\n"
             "- focus_window: args {title|class} — bring a window to front by title or WM_CLASS.\n"
-            "- list_windows: args {} — list windows; you will receive id, geometry and title.\n"
-            "- list_windows_extended: args {} — list windows with pid/class using wmctrl -lx -p.\n"
-            "- move_window: args {id|title, x, y} — move a window.\n"
-            "- resize_window: args {id|title, w, h} — resize a window.\n"
-            "- set_window_state: args {id|title, action} — action in {minimize|maximize|restore|close}.\n"
+            "- list_windows: args {extended?: boolean} — list windows; geometry by default, plus pid/class when extended=true.\n"
+            "- window_update: args {op: 'move'|'resize'|'state', id?|title?|class?, x?, y?, w?, h?, action?: 'minimize'|'maximize'|'restore'|'close'} — mutate window position/size/state.\n"
             "- app_open: args {cmd, args?, cwd?, wait?} — launch an application/command.\n"
-            "- app_focus: args {title|class} — focus a running app window (alias of focus_window).\n"
             "- app_close: args {title|class} — close a running app by its window(s).\n"
-            "- type_text: args {text | keys} — either plain text, or keys (supports combos as nested arrays, e.g., ['ctrl','c'] or ['ctrl','shift','t']).\n"
-            "- type_and_enter: args {text} — type the given text and then press Enter.\n"
-            "- click_at: args {x, y, button?, repeat?, delayMs?, modifiers?[]} — click at pixel coordinates. Prefer window-relative percents: {xPercent, yPercent} in [0,1] referencing the currently focused window.\n"
+            "- type: args {text?: string, keys?: (string|string[])[], pressEnter?: boolean} — type text or key sequences, optionally pressing Enter.\n"
+            "- click: args {x?, y?, xPercent?, yPercent?, bbox?: {x,y,w,h}, button?, repeat?, delayMs?, modifiers?[]} — click absolute, window-relative percents, or bbox center.\n"
             "- mouse_move: args {x, y} — move/hover the pointer without clicking.\n"
-            "- drag: args {fromX?, fromY?, toX, toY, button?, steps?, delayMs?} — click-drag between points. Prefer percents: {fromXPercent?, fromYPercent?, toXPercent, toYPercent} in [0,1] of the focused window.\n"
+            "- drag: args {fromX?, fromY?, toX, toY, button?, steps?, delayMs?, modifiers?[]} — click-drag; percents supported via *_Percent in [0,1] of focused window.\n"
             "- scroll: args {direction:'up'|'down'|'left'|'right', amount?, delayMs?} — scroll wheel events.\n"
-            "- ocr_locate_text: args {query, x?, y?, w?, h?, caseSensitive?, exact?} — run OCR on the current screenshot/region to get a text bounding box.\n"
-            "- click_bbox_center: args {x?, y?, w?, h?, button?} — click the center of a provided bbox, or of the last OCR-located bbox if omitted.\n"
-            "- screenshot: args {} — capture the full desktop screenshot (base64).\n"
-            "- screenshot_region: args {x,y,w,h} — returns a cropped screenshot region (base64).\n"
-            "- image_locate: args {templatePath|templateB64, x?,y?,w?,h?, threshold?} — locate template on screen/region.\n"
-            "- region_changed: args {beforeB64, afterB64, x,y,w,h, metric?, threshold?} — compare before/after regions.\n"
-            "- press_enter: args {} — press the Enter key.\n"
-            "You can install apps/packages by running shell commands. If no terminal is open, prefer app_open with cmd='bash' and args=['-lc', '<install command>'] (e.g., 'sudo apt-get update && sudo apt-get install -y <pkg>'). If a terminal (e.g., xterm) is already open, focus_window it and use click_at/type_text/press_enter to run commands. Use non-interactive flags (-y, -q, --no-install-recommends) to avoid prompts.\n"
-            "You can use key combos by passing a list of keys to type_text. For example, ['ctrl', 'c'] will copy the current selection, and ['ctrl', 'shift', 't'] will open a new terminal window.\n"
+            "- locate: args {text?|query?|templatePath?|templateB64?, x?, y?, w?, h?, threshold?, caseSensitive?, exact?} — OCR or template locate based on provided fields.\n"
+            "- screenshot: args {region?: {x,y,w,h}} — capture full or regional screenshot (base64).\n"
+            "- compare: args {beforeB64, afterB64, region: {x,y,w,h}, metric?: 'AE'|'NCC', threshold?} — compare two screenshots over a region.\n"
+            "You can install apps/packages by running shell commands. If no terminal is open, prefer app_open with cmd='bash' and args=['-lc', '<install command>'] (e.g., 'sudo apt-get update && sudo apt-get install -y <pkg>'). If a terminal (e.g., xterm) is already open, focus_window it and use click/type to run commands. Use non-interactive flags (-y, -q, --no-install-recommends) to avoid prompts.\n"
+            "You can use key combos by passing a list of keys to type. For example, ['ctrl', 'c'] will copy the current selection, and ['ctrl', 'shift', 't'] will open a new terminal window.\n"
             "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n"
-            "You will also receive screen width/height (pixels) and pointer coordinates. Prefer relative percent coordinates in the focused window (xPercent/yPercent) when you must target by position. When targeting specific text, first call ocr_locate_text('<text>') then click_bbox_center; for selection, prefer double-/triple-click and Shift-extend rather than raw drags.\n"
+            "You will also receive screen width/height (pixels) and pointer coordinates. Prefer relative percent coordinates in the focused window (xPercent/yPercent) when you must target by position. When targeting specific text, first call locate with {text:'<target>'} then click with a bbox; for selection, prefer double-/triple-click and Shift-extend rather than raw drags.\n"
             "Avoid repeating the same tool more than once in a row; after focusing a window, prefer typing or clicking next.\n"
-            "For terminal commands, typically: focus_window → click_at (if needed) → type_text (the exact command) → press_enter.\n",
+            "For terminal commands, typically: focus_window → click (if needed) → type (the exact command, pressEnter:true).\n",
         )
 
         max_steps = 30
@@ -1535,7 +1440,6 @@ class MagnitudeDesktopBackend(BrowserBackend):
             try:
                 next_action = NextAction.model_validate_json(result_json)
             except Exception:
-                # fallback: treat as done to avoid infinite loop
                 break
 
             tool = (next_action.tool or "").strip().lower()
@@ -1556,7 +1460,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     or "",
                 ).strip()
                 recent_steps.append(f"{tool}('{t}')")
-            elif tool in ("type_text", "type_and_enter"):
+            elif tool == "type":
                 shown = str(args.get("text") or args.get("keys") or "").strip()
                 recent_steps.append(
                     (
@@ -1565,20 +1469,11 @@ class MagnitudeDesktopBackend(BrowserBackend):
                         else f"{tool}('{shown}')"
                     ),
                 )
-            elif tool == "click_at":
+            elif tool == "click":
                 x_dbg = args.get("x")
                 y_dbg = args.get("y")
-                recent_steps.append(f"click_at({x_dbg},{y_dbg})")
-            elif tool in (
-                "list_windows",
-                "list_windows_extended",
-                "move_window",
-                "resize_window",
-                "set_window_state",
-                "app_open",
-                "app_focus",
-                "app_close",
-            ):
+                recent_steps.append(f"click({x_dbg},{y_dbg})")
+            elif tool in ("list_windows", "app_open", "app_close"):
                 recent_steps.append(tool)
             else:
                 recent_steps.append(tool)
@@ -1589,6 +1484,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             # Observe for completion each step only when the tool provides 'verify'
             verify_stmt = (next_action.verify or "").strip()
             if verify_stmt:
+                print(f"🐍 PYTHON: Verifying: {verify_stmt}")
                 try:
                     obs = await self.observe(verify_stmt)
                     if isinstance(obs, dict) and obs.get("matches"):
