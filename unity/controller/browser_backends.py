@@ -1325,7 +1325,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "You can use key combos by passing a list of keys to type. For example, ['ctrl', 'c'] will copy the current selection, and ['ctrl', 'shift', 't'] will open a new terminal window.\n"
             "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n"
             "You will also receive screen width/height (pixels) and pointer coordinates. Prefer relative percent coordinates in the focused window (xPercent/yPercent) when you must target by position. When targeting specific text, first call locate with {text:'<target>'} then click with a bbox; for selection, prefer double-/triple-click and Shift-extend rather than raw drags.\n"
-            "Avoid repeating the same tool more than once in a row; after focusing a window, prefer typing or clicking next.\n"
+            "Avoid repeating the same tool more than once in a row (exception: you may repeat 'scroll' when moving through content); after focusing a window, prefer typing or clicking next.\n"
             "For terminal commands, typically: focus_window → click (if needed) → type (the exact command, pressEnter:true).\n",
         )
 
@@ -1555,9 +1555,14 @@ class MagnitudeDesktopBackend(BrowserBackend):
         client = unify.Unify(endpoint="claude-4-sonnet@anthropic")
         client.set_response_format(Verify)
         client.set_system_message(
-            "You are a strict visual verifier. You may receive one or two screenshots: a previous ('before') and a current ('after').\n"
-            "Judge the statement against the current ('after') screenshot. If the statement implies a change (e.g., resized, moved), compare before vs after.\n"
-            "Return only JSON with {matches: boolean, reason?: string}. Do not infer beyond visible evidence.\n",
+            "You are a strict visual verifier.\n"
+            "Context you will receive for each query:\n"
+            "- A textual header including: the verification statement, screen width/height (pixels), mouse/pointer position, and the current windows list.\n"
+            "- Two screenshots: 'Previous (before)' and 'Current (after)'. If the task implies a change (e.g., resized, moved), compare before vs after.\n"
+            "Judgement rule:\n"
+            "- Decide strictly based on the 'Current (after)' screenshot unless the statement explicitly implies a change, in which case compare both.\n"
+            "Output format:\n"
+            "- Return only JSON with {matches: boolean, reason?: string}. Do not infer beyond visible evidence.\n",
         )
 
         # capture and track current/previous screenshots
@@ -1590,6 +1595,48 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 statement_txt += f"\n{ptr}"
         except Exception:
             pass
+
+        # Include windows list: prefer cached from last act loop; fallback to one-time fetch
+        windows = (
+            list(self._last_windows)
+            if isinstance(getattr(self, "_last_windows", None), list)
+            else []
+        )
+        if not windows:
+            try:
+                wins_resp = await self._request("GET", "/linux/window?extended=1")
+                windows = (wins_resp or {}).get("windows", []) or []
+            except Exception:
+                windows = []
+        if windows:
+            try:
+                lines: list[str] = ["Windows (most recent list):"]
+                for w in windows[:12]:
+                    # Prefer geometry when present
+                    idv = w.get("id")
+                    titlev = w.get("title") or w.get("name")
+                    xv = w.get("x")
+                    yv = w.get("y")
+                    wv = w.get("w")
+                    hv = w.get("h")
+                    classv = w.get("class")
+                    pidv = w.get("pid")
+                    if (
+                        xv is not None
+                        and yv is not None
+                        and wv is not None
+                        and hv is not None
+                    ):
+                        lines.append(
+                            f"- id={idv} xywh=({xv},{yv},{wv},{hv}) title={titlev} class={classv} pid={pidv}",
+                        )
+                    else:
+                        lines.append(
+                            f"- id={idv} title={titlev} class={classv} pid={pidv}",
+                        )
+                statement_txt += "\n" + "\n".join(lines)
+            except Exception:
+                pass
 
         content = [{"type": "text", "text": statement_txt}]
         # Include BEFORE then AFTER images if available
