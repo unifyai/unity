@@ -15,13 +15,12 @@ def backend():
     be.stop()
 
 
-async def _act_until_match(backend, instruction: str, query: str, poll_s: float = 1.0):
+async def _act_until_match(backend, instruction: str, query: str):
+    # Deprecated: tests should rely on backend.act(instruction, expectation)
     while True:
-        await backend.act(instruction)
-        obs = await backend.observe(query)
-        if obs.get("matches"):
+        status = await backend.act(instruction, expectation=query)
+        if status == "success":
             return
-        await asyncio.sleep(poll_s)
 
 
 @pytest.mark.asyncio
@@ -46,11 +45,12 @@ async def test_region_screenshot_then_verify_presence(backend):
     await backend.act(
         "Capture a region screenshot around (x=20,y=10) sized about 200x120.",
     )
-    # Visual verification is weak here; we just verify that xterm is visible as a sanity check.
-    obs = await backend.observe(
-        "A window titled 'xterm' is visible somewhere on the desktop.",
+    # Visual verification through act's expectation
+    status = await backend.act(
+        "",
+        expectation="A window titled 'xterm' is visible somewhere on the desktop.",
     )
-    assert obs.get("matches"), "Expected xterm to be visible after region screenshot"
+    assert status == "success", "Expected xterm to be visible after region screenshot"
 
 
 @pytest.mark.asyncio

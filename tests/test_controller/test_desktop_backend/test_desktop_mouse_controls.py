@@ -14,24 +14,14 @@ def backend():
     backend.stop()
 
 
-async def _act_until_match(backend, instruction: str, query: str, poll_s: float = 1.0):
-    while True:
-        await backend.act(instruction)
-        obs = await backend.observe(query)
-        if obs.get("matches"):
-            return
-        await asyncio.sleep(poll_s)
-
-
 @pytest.mark.asyncio
 @pytest.mark.timeout(90)
 async def test_mouse_move_and_position(backend):
     instr = "Move the mouse to x=100 and y=200."
     await asyncio.wait_for(
-        _act_until_match(
-            backend,
+        backend.act(
             instr,
-            "Is the mouse at position (100,200)? Return matches True/False.",
+            expectation="Is the mouse at position (100,200)? Return matches True/False.",
         ),
         timeout=90,
     )
@@ -47,10 +37,9 @@ async def test_highlight_text_with_drag(backend):
     # 2) Highlight the substring 'A TEST' via drag
     instr = "Focus the 'xterm' window, drag over the text 'A TEST' to highlight it."
     await asyncio.wait_for(
-        _act_until_match(
-            backend,
+        backend.act(
             instr,
-            "Is the text 'A TEST' highlighted on screen? Return matches True/False.",
+            expectation="Is the text 'A TEST' highlighted on screen? Return matches True/False.",
         ),
         timeout=90,
     )
@@ -70,10 +59,9 @@ async def test_scroll_until_ready(backend):
     # 3) Scroll up until READY is visible
     instr = "Scroll up until the text 'READY' is visible on screen."
     await asyncio.wait_for(
-        _act_until_match(
-            backend,
+        backend.act(
             instr,
-            "The terminal shows the word READY visible on the screen.",
+            expectation="The terminal shows the word READY visible on the screen.",
         ),
         timeout=90,
     )
@@ -86,10 +74,9 @@ async def test_click_positions(backend):
     x1, y1 = 200, 300
     instr1 = f"Click at pixel ({x1},{y1})."
     await asyncio.wait_for(
-        _act_until_match(
-            backend,
+        backend.act(
             instr1,
-            f"Is the mouse pointer at position ({x1},{y1})? Return matches True/False.",
+            expectation=f"Is the mouse pointer at position ({x1},{y1})? Return matches True/False.",
         ),
         timeout=90,
     )
@@ -98,10 +85,9 @@ async def test_click_positions(backend):
     x2, y2 = 300, 400
     instr2 = f"Click at pixel ({x2},{y2})."
     await asyncio.wait_for(
-        _act_until_match(
-            backend,
+        backend.act(
             instr2,
-            f"Is the mouse pointer at position ({x2},{y2})? Return matches True/False.",
+            expectation=f"Is the mouse pointer at position ({x2},{y2})? Return matches True/False.",
         ),
         timeout=90,
     )
