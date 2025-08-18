@@ -1265,11 +1265,6 @@ class MagnitudeDesktopBackend(BrowserBackend):
         - "Maximize the 'xterm' window; finish when it fills most of the screen."
         - "Take a full desktop screenshot; finish when done."
 
-        Good expectation examples:
-        - "The 'xterm' window looks focused (title bar highlighted or on top)."
-        - "The terminal shows the word READY."
-        - "The 'xterm' window appears near the top-left and roughly 900x700 in size (±15%)."
-
         Bad instruction examples (overly low‑level/ambiguous):
         - "Move to (250,400), click, then move to (300,420) and click again." (prefer a goal like
           "Click the OK button" or describe the visible target)
