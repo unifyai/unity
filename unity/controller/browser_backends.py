@@ -1478,10 +1478,10 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
             # Observe for completion each step only when the tool provides 'verify'
             verify_stmt = (next_action.verify or "").strip()
-            if verify_stmt:
-                print(f"🐍 PYTHON: Verifying: {verify_stmt}")
+            if instruction:
+                print(f"🐍 PYTHON: Verifying: {instruction}")
                 try:
-                    obs = await self.observe(verify_stmt)
+                    obs = await self.observe(instruction)
                     if isinstance(obs, dict) and obs.get("matches"):
                         return "success"
                 except Exception:
