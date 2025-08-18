@@ -15,7 +15,6 @@ def backend():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(90)
 async def test_full_screenshot_save_and_filepath_exists(backend):
     # Take a screenshot with save flag and verify filepath exists.
     meta = await backend.get_screenshot(save=True, return_meta=True)

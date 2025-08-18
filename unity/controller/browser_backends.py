@@ -1329,7 +1329,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "For terminal commands, typically: focus_window → click (if needed) → type (the exact command, pressEnter:true).\n",
         )
 
-        max_steps = 30
+        max_steps = 20
         step = 0
         # Reset per-instruction state
         self._last_exists = {}
