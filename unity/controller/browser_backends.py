@@ -1454,7 +1454,6 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
             tool = (next_action.tool or "").strip().lower()
             args = next_action.args or {}
-            verify_stmt = next_action.verify or ""
 
             # Loop-avoidance guard: detect consecutive repeats and nudge planner
             if self._last_tool_name == tool:
