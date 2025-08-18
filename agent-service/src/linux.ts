@@ -150,6 +150,164 @@ linux.get('/screenshot', async (req: any, res: any) => {
   }
 });
 
+// POST /linux/ocr/locate_text { query, x?, y?, w?, h?, caseSensitive?, exact? }
+linux.post('/ocr/locate_text', async (req: any, res: any) => {
+  const { query, x, y, w, h, caseSensitive = false, exact = false } = req.body || {};
+  try {
+    const q = String(query || '').trim();
+    if (!q) {
+      return res.status(400).json({ error: 'bad_request', message: 'query is required' });
+    }
+
+    // Prepare screenshot or region file
+    let screenshotFile: string | null = null;
+    const xi = x !== undefined ? Number(x) : null;
+    const yi = y !== undefined ? Number(y) : null;
+    const wi = w !== undefined ? Number(w) : null;
+    const hi = h !== undefined ? Number(h) : null;
+    try {
+      screenshotFile = path.join(os.tmpdir(), `ocr-screen-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+      if (xi !== null && yi !== null && wi !== null && hi !== null) {
+        await execAsync(
+          `import -window root png:- | convert png:- -crop ${wi}x${hi}+${xi}+${yi} "${screenshotFile}"`,
+          { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }
+        );
+      } else {
+        await execAsync(`import -window root "${screenshotFile}"`, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+      }
+
+      // Run tesseract to TSV
+      const { stdout: tsv } = await execAsync(`tesseract "${screenshotFile}" stdout -l eng --psm 6 tsv`, { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+
+      // Parse TSV
+      const lines = tsv.split('\n');
+      if (lines.length <= 1) {
+        return res.json({ found: false });
+      }
+      const header = lines[0].split('\t');
+      const idx = {
+        level: header.indexOf('level'),
+        left: header.indexOf('left'),
+        top: header.indexOf('top'),
+        width: header.indexOf('width'),
+        height: header.indexOf('height'),
+        conf: header.indexOf('conf'),
+        text: header.indexOf('text') >= 0 ? header.indexOf('text') : header.indexOf('ocr_text')
+      };
+      const words: Array<{ text: string; left: number; top: number; width: number; height: number; conf: number; lineKey: string }>
+        = [];
+      for (let i = 1; i < lines.length; i++) {
+        const row = lines[i].split('\t');
+        if (row.length < header.length) continue;
+        const level = Number(row[idx.level]);
+        if (level !== 5) continue; // word level
+        const textVal = String(row[idx.text] || '').trim();
+        const confVal = Number(row[idx.conf]);
+        if (!textVal) continue;
+        if (!Number.isFinite(confVal) || confVal < 0) continue;
+        const left = Number(row[idx.left]);
+        const top = Number(row[idx.top]);
+        const width = Number(row[idx.width]);
+        const height = Number(row[idx.height]);
+        // Build a line key from preceding columns (par/line). Use fallback to index.
+        const parts = row;
+        const key = `${parts[2] || '0'}-${parts[3] || '0'}-${parts[4] || '0'}-${parts[5] || '0'}`;
+        words.push({ text: textVal, left, top, width, height, conf: confVal, lineKey: key });
+      }
+
+      if (words.length === 0) return res.json({ found: false });
+
+      const norm = (s: string) => (caseSensitive ? s : s.toLowerCase());
+      const target = norm(q);
+
+      // Group words by line
+      const byLine: Record<string, typeof words> = {} as any;
+      for (const w2 of words) {
+        byLine[w2.lineKey] = byLine[w2.lineKey] || [];
+        byLine[w2.lineKey].push(w2);
+      }
+      // sort by left within a line
+      for (const key of Object.keys(byLine)) {
+        byLine[key].sort((a, b) => a.left - b.left);
+      }
+
+      type Candidate = { left: number; top: number; width: number; height: number; text: string; confidence: number; exact: boolean };
+      const candidates: Candidate[] = [];
+
+      for (const key of Object.keys(byLine)) {
+        const toks = byLine[key];
+        // Try single-token exact/contains matches
+        for (const t of toks) {
+          const tnorm = norm(t.text);
+          const isExact = tnorm === target;
+          const isContains = !exact && tnorm.includes(target);
+          if (isExact || isContains) {
+            candidates.push({
+              left: t.left,
+              top: t.top,
+              width: t.width,
+              height: t.height,
+              text: t.text,
+              confidence: t.conf,
+              exact: isExact
+            });
+          }
+        }
+        // Try multi-token spans
+        for (let i = 0; i < toks.length; i++) {
+          let agg = norm(toks[i].text);
+          let left = toks[i].left;
+          let top = toks[i].top;
+          let right = toks[i].left + toks[i].width;
+          let bottom = toks[i].top + toks[i].height;
+          let confSum = toks[i].conf;
+          let confCount = 1;
+          for (let j = i + 1; j < toks.length && j - i < 8; j++) { // limit span length
+            agg += ' ' + norm(toks[j].text);
+            right = Math.max(right, toks[j].left + toks[j].width);
+            bottom = Math.max(bottom, toks[j].top + toks[j].height);
+            left = Math.min(left, toks[j].left);
+            top = Math.min(top, toks[j].top);
+            confSum += toks[j].conf;
+            confCount++;
+            const isExact = agg === target;
+            const isContains = !exact && agg.includes(target);
+            if (isExact || isContains) {
+              candidates.push({
+                left,
+                top,
+                width: right - left,
+                height: bottom - top,
+                text: toks.slice(i, j + 1).map(t => t.text).join(' '),
+                confidence: confSum / confCount,
+                exact: isExact
+              });
+            }
+          }
+        }
+      }
+
+      if (candidates.length === 0) return res.json({ found: false });
+
+      // Rank: prefer exact, then higher confidence, then larger area
+      candidates.sort((a, b) => {
+        if (a.exact !== b.exact) return a.exact ? -1 : 1;
+        if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+        const areaA = a.width * a.height;
+        const areaB = b.width * b.height;
+        return areaB - areaA;
+      });
+
+      const best = candidates[0];
+      return res.json({ found: true, x: best.left, y: best.top, w: best.width, h: best.height, text: best.text, confidence: best.confidence });
+    } finally {
+      try { if (screenshotFile) await fs.unlink(screenshotFile); } catch {}
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'ocr_locate_failed', message: String(err) });
+  }
+});
+
 // GET /linux/screenshot/region?x=&y=&w=&h=&save=
 linux.get('/screenshot/region', async (req: any, res: any) => {
   const { x, y, w, h, save } = req.query as any;

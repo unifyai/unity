@@ -1185,6 +1185,55 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 pass
             return True
 
+        if tool == "ocr_locate_text":
+            # args: { query, x?, y?, w?, h?, caseSensitive?, exact? }
+            q = str(args.get("query") or args.get("text") or "").strip()
+            if not q:
+                return False
+            payload: dict = {"query": q}
+            for k in ("x", "y", "w", "h"):
+                if args.get(k) is not None:
+                    try:
+                        payload[k] = int(args.get(k))
+                    except Exception:
+                        pass
+            if args.get("caseSensitive") is not None:
+                payload["caseSensitive"] = bool(args.get("caseSensitive"))
+            if args.get("exact") is not None:
+                payload["exact"] = bool(args.get("exact"))
+            out = await self._request("POST", "/linux/ocr/locate_text", payload=payload)
+            try:
+                self._last_ocr_bbox = out if out and out.get("found") else None
+            except Exception:
+                self._last_ocr_bbox = None
+            return True
+
+        if tool == "click_bbox_center":
+            # Prefer provided bbox in args; else use last OCR bbox
+            bbox = None
+            if all(k in args for k in ("x", "y", "w", "h")):
+                try:
+                    bbox = {
+                        "x": int(args.get("x")),
+                        "y": int(args.get("y")),
+                        "w": int(args.get("w")),
+                        "h": int(args.get("h")),
+                    }
+                except Exception:
+                    bbox = None
+            if bbox is None:
+                bbox = getattr(self, "_last_ocr_bbox", None)
+            if not bbox or not bbox.get("w") or not bbox.get("h"):
+                return False
+            cx = int(bbox["x"] + bbox["w"] / 2)
+            cy = int(bbox["y"] + bbox["h"] / 2)
+            await self._request(
+                "POST",
+                "/linux/click",
+                payload={"x": cx, "y": cy, "button": int(args.get("button", 1) or 1)},
+            )
+            return True
+
         if tool == "region_changed":
             need = ("beforeB64", "afterB64", "x", "y", "w", "h")
             if not all(k in args for k in need):
@@ -1369,6 +1418,8 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "- mouse_move: args {x, y} — move/hover the pointer without clicking.\n"
             "- drag: args {fromX?, fromY?, toX, toY, button?, steps?, delayMs?} — click-drag between points. Prefer percents: {fromXPercent?, fromYPercent?, toXPercent, toYPercent} in [0,1] of the focused window.\n"
             "- scroll: args {direction:'up'|'down'|'left'|'right', amount?, delayMs?} — scroll wheel events.\n"
+            "- ocr_locate_text: args {query, x?, y?, w?, h?, caseSensitive?, exact?} — run OCR on the current screenshot/region to get a text bounding box.\n"
+            "- click_bbox_center: args {x?, y?, w?, h?, button?} — click the center of a provided bbox, or of the last OCR-located bbox if omitted.\n"
             "- screenshot: args {} — capture the full desktop screenshot (base64).\n"
             "- screenshot_region: args {x,y,w,h} — returns a cropped screenshot region (base64).\n"
             "- image_locate: args {templatePath|templateB64, x?,y?,w?,h?, threshold?} — locate template on screen/region.\n"
@@ -1378,7 +1429,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "You can install apps/packages by running shell commands. If no terminal is open, prefer app_open with cmd='bash' and args=['-lc', '<install command>'] (e.g., 'sudo apt-get update && sudo apt-get install -y <pkg>'). If a terminal (e.g., xterm) is already open, focus_window it and use click_at/type_text/press_enter to run commands. Use non-interactive flags (-y, -q, --no-install-recommends) to avoid prompts.\n"
             "You can use key combos by passing a list of keys to type_text. For example, ['ctrl', 'c'] will copy the current selection, and ['ctrl', 'shift', 't'] will open a new terminal window.\n"
             "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n"
-            "You will also receive screen width/height (pixels) and pointer coordinates. Prefer relative percent coordinates in the focused window (xPercent/yPercent) when you must target by position.\n"
+            "You will also receive screen width/height (pixels) and pointer coordinates. Prefer relative percent coordinates in the focused window (xPercent/yPercent) when you must target by position. When targeting specific text, first call ocr_locate_text('<text>') then click_bbox_center; for selection, prefer double-/triple-click and Shift-extend rather than raw drags.\n"
             "Avoid repeating the same tool more than once in a row; after focusing a window, prefer typing or clicking next.\n"
             "For terminal commands, typically: focus_window → click_at (if needed) → type_text (the exact command) → press_enter → done.\n",
         )
