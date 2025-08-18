@@ -17,7 +17,7 @@ def backend():
 
 async def _act_until_match(backend, instruction: str, query: str, poll_s: float = 1.0):
     while True:
-        await backend.act(instruction)
+        await backend.act(instruction, expectation=query)
         obs = await backend.observe(query)
         if obs.get("matches"):
             return
@@ -39,10 +39,14 @@ async def test_full_screenshot_save_and_filepath_exists(backend):
 @pytest.mark.timeout(90)
 async def test_region_screenshot_then_verify_presence(backend):
     # Focus xterm and capture a small region near top-left of its window title bar to ensure region ability works.
-    await backend.act("Focus the 'xterm' window. Finish when done.")
+    await backend.act(
+        "Focus the 'xterm' window. Finish when done.",
+        expectation="The 'xterm' window looks active/focused (title bar highlighted or on top).",
+    )
     # Heuristic region near (20, 10)
     await backend.act(
         "Capture a region screenshot around (x=20,y=10) sized about 200x120. Finish when done.",
+        expectation="A region screenshot is captured around (20,10) sized roughly 200x120.",
     )
     # Visual verification is weak here; we just verify that xterm is visible as a sanity check.
     obs = await backend.observe(
