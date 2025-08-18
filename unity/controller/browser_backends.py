@@ -1390,17 +1390,19 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 description=(
                     "One of: exists_window, focus_window, list_windows, list_windows_extended, "
                     "move_window, resize_window, set_window_state, app_open, app_focus, app_close, "
-                    "type_text, type_and_enter, click_at, mouse_move, drag, scroll, screenshot, screenshot_region, image_locate, region_changed, press_enter, done"
+                    "type_text, type_and_enter, click_at, mouse_move, drag, scroll, screenshot, screenshot_region, image_locate, region_changed, press_enter"
                 ),
             )
             args: dict = Field(default_factory=dict)
             reason: str | None = None
+            verify: str | None = None
 
         client = unify.Unify(endpoint="claude-4-sonnet@anthropic")
         client.set_response_format(NextAction)
         client.set_system_message(
             "You are a desktop control assistant. Decide the next atomic tool to apply to achieve the user's goal.\n"
             "Return ONLY JSON matching the response schema.\n"
+            "For each selected tool, include a short 'verify' statement that should be TRUE if the tool succeeded (a visual check the observer can answer).\n"
             "Available tools (tool field):\n"
             "- exists_window: args {title} — check if a window with given title exists.\n"
             "- focus_window: args {title|class} — bring a window to front by title or WM_CLASS.\n"
@@ -1425,13 +1427,12 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "- image_locate: args {templatePath|templateB64, x?,y?,w?,h?, threshold?} — locate template on screen/region.\n"
             "- region_changed: args {beforeB64, afterB64, x,y,w,h, metric?, threshold?} — compare before/after regions.\n"
             "- press_enter: args {} — press the Enter key.\n"
-            "- done: args {} — when the goal is achieved.\n"
             "You can install apps/packages by running shell commands. If no terminal is open, prefer app_open with cmd='bash' and args=['-lc', '<install command>'] (e.g., 'sudo apt-get update && sudo apt-get install -y <pkg>'). If a terminal (e.g., xterm) is already open, focus_window it and use click_at/type_text/press_enter to run commands. Use non-interactive flags (-y, -q, --no-install-recommends) to avoid prompts.\n"
             "You can use key combos by passing a list of keys to type_text. For example, ['ctrl', 'c'] will copy the current selection, and ['ctrl', 'shift', 't'] will open a new terminal window.\n"
             "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n"
             "You will also receive screen width/height (pixels) and pointer coordinates. Prefer relative percent coordinates in the focused window (xPercent/yPercent) when you must target by position. When targeting specific text, first call ocr_locate_text('<text>') then click_bbox_center; for selection, prefer double-/triple-click and Shift-extend rather than raw drags.\n"
             "Avoid repeating the same tool more than once in a row; after focusing a window, prefer typing or clicking next.\n"
-            "For terminal commands, typically: focus_window → click_at (if needed) → type_text (the exact command) → press_enter → done.\n",
+            "For terminal commands, typically: focus_window → click_at (if needed) → type_text (the exact command) → press_enter.\n",
         )
 
         max_steps = 30
@@ -1539,6 +1540,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
             tool = (next_action.tool or "").strip().lower()
             args = next_action.args or {}
+            verify_stmt = next_action.verify or ""
 
             # Loop-avoidance guard: detect consecutive repeats
             if self._last_tool_name == tool:
@@ -1581,19 +1583,21 @@ class MagnitudeDesktopBackend(BrowserBackend):
             else:
                 recent_steps.append(tool)
 
+            print(f"🐍 PYTHON: Executing tool: {tool} with args: {args}")
             ok = await self._execute_tool(tool, args, dims)
 
-            # Observe for completion each step (prefer explicit expectation, else use instruction)
-            verify_stmt = expectation or instruction
-            try:
-                obs = await self.observe(verify_stmt)
-                if isinstance(obs, dict) and obs.get("matches"):
-                    return expectation or "success"
-            except Exception:
-                # non-fatal; continue planning
-                pass
+            # Observe for completion each step only when the tool provides 'verify'
+            verify_stmt = (next_action.verify or "").strip()
+            if verify_stmt:
+                try:
+                    obs = await self.observe(verify_stmt)
+                    if isinstance(obs, dict) and obs.get("matches"):
+                        return "success"
+                except Exception:
+                    # non-fatal; continue planning
+                    pass
 
-        return expectation or "incomplete"
+        return "incomplete"
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
         # LLM verification loop: get screenshot, ask the model if query is true/false

@@ -16,7 +16,7 @@ def backend():
 
 async def _act_until_match(backend, instruction: str, query: str, poll_s: float = 1.0):
     while True:
-        await backend.act(instruction, expectation=query)
+        await backend.act(instruction)
         obs = await backend.observe(query)
         if obs.get("matches"):
             return
@@ -43,7 +43,6 @@ async def test_highlight_text_with_drag(backend):
     # 1) Echo the test phrase
     await backend.act(
         "Focus the 'xterm' window and type 'echo THIS IS A TEST' and press Enter. Finish when done.",
-        expectation="The terminal shows the text THIS IS A TEST in its output.",
     )
     # 2) Highlight the substring 'A TEST' via drag
     instr = "Focus the 'xterm' window, drag over the text 'A TEST' to highlight it. Finish when done."
@@ -63,12 +62,10 @@ async def test_scroll_until_ready(backend):
     # 1) Echo READY
     await backend.act(
         "Focus the 'xterm' window and type 'echo READY' and press Enter. Finish when done.",
-        expectation="The terminal shows the word READY.",
     )
     # 2) Flood terminal with 70 lines
     await backend.act(
         "Focus the 'xterm' window and type 'for i in $(seq 1 70); do echo LINE $i; done' and press Enter. Finish when done.",
-        expectation="The terminal shows many lines of output (LINE 1..LINE 70).",
     )
     # 3) Scroll up until READY is visible
     instr = "Scroll up until the text 'READY' is visible on screen. Finish when done."

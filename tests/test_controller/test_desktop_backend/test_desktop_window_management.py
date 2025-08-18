@@ -16,7 +16,7 @@ def backend():
 
 async def _act_until_match(backend, instruction: str, query: str, poll_s: float = 1.0):
     while True:
-        await backend.act(instruction, expectation=query)
+        await backend.act(instruction)
         obs = await backend.observe(query)
         if obs.get("matches"):
             return
