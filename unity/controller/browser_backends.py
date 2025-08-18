@@ -697,24 +697,22 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
     # Private helper to execute a selected tool step and update context
     async def _execute_tool(self, tool: str, args: dict, dims: tuple[int, int]) -> bool:
-        # done/finish
-        if tool in ("done", "finish", "stop"):
-            return True
 
         if tool == "exists_window":
             title = str(
                 args.get("title") or args.get("windowTitle") or args.get("name") or "",
             ).strip()
-            if title:
-                try:
-                    res = await self._request(
-                        "GET",
-                        f"/linux/window/exist?windowTitle={requests.utils.quote(title)}",
-                    )
-                    self._last_exists[title] = bool(res.get("exists", False))
-                except Exception:
-                    self._last_exists[title] = False
-            return False
+            if not title:
+                return False
+            try:
+                res = await self._request(
+                    "GET",
+                    f"/linux/window/exist?windowTitle={requests.utils.quote(title)}",
+                )
+                self._last_exists[title] = bool(res.get("exists", False))
+            except Exception:
+                return False
+            return True
 
         if tool == "focus_window":
             title = str(
@@ -724,29 +722,36 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 return False
             if title == self._last_focus_title and self._consecutive_repeat_count >= 1:
                 # nudge progress if focusing repeats
-                await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
-                await asyncio.sleep(0.2)
-                return False
+                try:
+                    await self._request(
+                        "POST",
+                        "/linux/type",
+                        payload={"keys": ["Enter"]},
+                    )
+                    await asyncio.sleep(0.2)
+                except Exception:
+                    return False
+                return True
             await self._request("POST", "/linux/window/focus", payload={"title": title})
             self._last_focus_title = title
             self._enter_after_last_type = False
-            return False
+            return True
 
         if tool == "list_windows":
             try:
                 res = await self._request("GET", "/linux/window")
                 self._last_windows = res.get("windows", []) or []
             except Exception:
-                self._last_windows = []
-            return False
+                return False
+            return True
 
         if tool == "list_windows_extended":
             try:
                 res = await self._request("GET", "/linux/window?extended=1")
                 self._last_windows = res.get("windows", []) or []
             except Exception:
-                self._last_windows = []
-            return False
+                return False
+            return True
 
         if tool == "move_window":
             id_val = args.get("id")
@@ -761,7 +766,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 "/linux/window/move",
                 payload={"id": id_val, "title": title_val, "x": x_val, "y": y_val},
             )
-            return False
+            return True
 
         if tool == "resize_window":
             id_val = args.get("id")
@@ -776,7 +781,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 "/linux/window/resize",
                 payload={"id": id_val, "title": title_val, "w": w_val, "h": h_val},
             )
-            return False
+            return True
 
         if tool == "set_window_state":
             id_val = args.get("id")
@@ -789,7 +794,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 "/linux/window/state",
                 payload={"id": id_val, "title": title_val, "action": action_val},
             )
-            return False
+            return True
 
         if tool == "app_open":
             cmd = args.get("cmd")
@@ -811,12 +816,8 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 res = await self._request("GET", "/linux/window?extended=1")
                 self._last_windows = res.get("windows", []) or []
             except Exception:
-                try:
-                    res = await self._request("GET", "/linux/window")
-                    self._last_windows = res.get("windows", []) or []
-                except Exception:
-                    pass
-            return False
+                pass
+            return True
 
         if tool == "app_focus":
             title_val = args.get("title")
@@ -830,7 +831,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             )
             self._last_focus_title = str(title_val or self._last_focus_title or "")
             self._enter_after_last_type = False
-            return False
+            return True
 
         if tool == "app_close":
             title_val = args.get("title")
@@ -848,12 +849,8 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 res = await self._request("GET", "/linux/window?extended=1")
                 self._last_windows = res.get("windows", []) or []
             except Exception:
-                try:
-                    res = await self._request("GET", "/linux/window")
-                    self._last_windows = res.get("windows", []) or []
-                except Exception:
-                    pass
-            return False
+                pass
+            return True
 
         if tool == "click_at":
             # Support absolute pixels or window-relative percents
@@ -941,7 +938,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
             if _dist(mouse_after, mouse_before) < 2:
                 self._consecutive_repeat_count = max(self._consecutive_repeat_count, 1)
-            return False
+            return True
 
         if tool == "type_text":
             # Support either plain text, or structured keys/combos
@@ -972,7 +969,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 except Exception:
                     pass
                 self._enter_after_last_type = False
-                return False
+                return True
             text = str(args.get("text") or "")
             if not text:
                 return False
@@ -987,13 +984,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 await self._request("POST", "/linux/type", payload={"keys": [text]})
                 self._typed_history.append(text)
                 self._enter_after_last_type = False
-            if (
-                self._target_cmd
-                and self._target_cmd in " ".join(self._typed_history)
-                and self._enter_after_last_type
-            ):
-                return True
-            return False
+            return True
 
         if tool == "mouse_move":
             try:
@@ -1009,7 +1000,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 "/linux/mouse/move",
                 payload={"x": x_val, "y": y_val},
             )
-            return False
+            return True
 
         if tool == "drag":
             # fromX/fromY optional; if absent service uses current pointer
@@ -1106,7 +1097,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             except Exception:
                 pass
             await self._request("POST", "/linux/drag", payload=payload)
-            return False
+            return True
 
         if tool == "scroll":
             direction = str(args.get("direction") or "").lower().strip()
@@ -1124,7 +1115,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             except Exception:
                 pass
             await self._request("POST", "/linux/scroll", payload=payload)
-            return False
+            return True
 
         if tool == "screenshot":
             try:
@@ -1133,8 +1124,8 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 if b64:
                     self._last_exists["_last_full_screenshot"] = True
             except Exception:
-                pass
-            return False
+                return False
+            return True
 
         if tool == "screenshot_region":
             try:
@@ -1166,7 +1157,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                     self._last_region_rect = {"x": x, "y": y, "w": w, "h": h}
             except Exception:
                 pass
-            return False
+            return True
 
         if tool == "image_locate":
             payload: dict = {}
@@ -1192,7 +1183,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 self._last_image_locate = out
             except Exception:
                 pass
-            return False
+            return True
 
         if tool == "region_changed":
             need = ("beforeB64", "afterB64", "x", "y", "w", "h")
@@ -1218,7 +1209,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 self._last_exists["_last_region_changed"] = bool(out.get("changed"))
             except Exception:
                 pass
-            return False
+            return True
 
         if tool == "type_and_enter":
             text = str(args.get("text") or "")
@@ -1232,20 +1223,14 @@ class MagnitudeDesktopBackend(BrowserBackend):
             self._typed_history.append(text)
             self._enter_after_last_type = True
             await asyncio.sleep(0.4)
-            if self._target_cmd and self._target_cmd in " ".join(self._typed_history):
-                return True
-            return False
+            return True
 
         if tool == "press_enter":
             await self._request("POST", "/linux/type", payload={"keys": ["Enter"]})
             if self._typed_history:
                 self._enter_after_last_type = True
                 await asyncio.sleep(0.4)
-                if self._target_cmd and self._target_cmd in " ".join(
-                    self._typed_history,
-                ):
-                    return True
-            return False
+            return True
 
         # --- Recording and File System Tools ---
         if tool == "record_start":
@@ -1259,7 +1244,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             if isinstance(args.get("region"), dict):
                 params["region"] = args.get("region")
             await self._request("POST", "/linux/record/start", payload=params)
-            return False
+            return True
 
         if tool == "record_stop":
             # Stop screen recording by id
@@ -1267,7 +1252,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             if not rec_id:
                 return False
             await self._request("POST", "/linux/record/stop", payload={"id": rec_id})
-            return False
+            return True
 
         if tool == "fs_list":
             # List files in a directory
@@ -1277,7 +1262,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             # URL-encode path
             encoded = requests.utils.quote(path_val)
             await self._request("GET", f"/linux/fs/list?path={encoded}")
-            return False
+            return True
 
         if tool == "fs_write":
             # Write a file with base64 content
@@ -1290,7 +1275,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 "/linux/fs/write",
                 payload={"path": str(p), "contentBase64": content},
             )
-            return False
+            return True
 
         # Unknown tool
         return False
@@ -1301,35 +1286,43 @@ class MagnitudeDesktopBackend(BrowserBackend):
 
     async def act(self, instruction: str, expectation: str = "") -> str:
         """
-        Execute a high‑level, natural‑language desktop command via an LLM‑guided
-        tool loop that invokes modular `/linux/*` endpoints.
+        Execute a high‑level, natural‑language desktop command by iteratively
+        selecting tools until the instruction is achieved.
 
-        The loop always reasons from a fresh desktop screenshot at each step and
-        selects the next atomic tool until the goal is achieved or a step limit
-        is reached.
+        How it completes:
+        - The loop executes one tool per step and then observes the screen.
+        - Completion is decided by observing that the instruction (or the explicit
+          expectation) is satisfied.
+
+        Good instruction examples (high‑level):
+        - "Focus the 'xterm' window, type 'echo READY' and press Enter. Finish when 'READY' is visible."
+        - "Install 'cowsay' using apt-get -y and run 'cowsay READY'; finish when the cowsay output shows READY."
+        - "Move the 'xterm' window to around (50,50) and resize it to about 900x700; finish when that looks true."
+        - "Maximize the 'xterm' window; finish when it fills most of the screen."
+        - "Take a full desktop screenshot; finish when done."
+
+        Good expectation examples:
+        - "The 'xterm' window looks focused (title bar highlighted or on top)."
+        - "The terminal shows the word READY."
+        - "The 'xterm' window appears near the top-left and roughly 900x700 in size (±15%)."
+
+        Bad instruction examples (overly low‑level/ambiguous):
+        - "Move to (250,400), click, then move to (300,420) and click again." (prefer a goal like
+          "Click the OK button" or describe the visible target)
+        - "Press the key with code 38." (use human‑readable key names or plain text typing)
+        - "Close the hidden window with PID 1234." (decide from visible state; use title/class)
+        - "Drag from somewhere to somewhere right." (describe what to drag or provide approximate
+          start/end in context of the screenshot)
+        - "Click the exact pixel (123,456) twice." (prefer describing the visible target or use
+          window‑relative percents in the focused window)
 
         Notes:
         - Coordinates are clamped to the screenshot bounds.
-        - Modifiers: one or more of Shift, Ctrl, Alt, Super (Command/Win).
-        - App install is supported (e.g. via app_open with bash -lc or by typing
-          into a focused terminal). Prefer non‑interactive flags (e.g. -y).
-
-        Good instruction examples (high‑level, goal‑oriented):
-        - "Focus the 'xterm' window, type 'echo ready' and press Enter. Finish when 'ready' appears."
-        - "Install the 'cowsay' package and verify by running 'cowsay READY'."
-        - "Maximize the window titled 'xterm'."
-        - "Open the file manager and drag the window to the right half of the screen."
-
-        Bad instruction examples (overly low‑level or ambiguous):
-        - "Move to (250,400), click, then move to (300,420) and click again" (prefer a goal like
-          "Click the 'OK' button" or describe the visible target).
-        - "Press the key with code 38" (use human‑readable key names or plain text typing).
-        - "Close the hidden window with PID 1234" (decide from visible state; use title/class).
-
-        Returns:
-        - "success" (or the provided expectation string) when the loop decides the goal is met,
-          possibly after typing and pressing Enter.
-        - "incomplete" if no completion signal is detected before the step budget expires.
+        - Prefer window‑relative percents for pointing when a position must be used
+          (xPercent/yPercent in [0,1] of the focused window).
+        - Modifiers for input are supported: Shift, Ctrl, Alt, Super (Command/Win).
+        - App install is supported via typing in a focused terminal or via app_open with
+          bash -lc and non‑interactive flags (e.g., -y).
         """
         import json
 
@@ -1499,8 +1492,6 @@ class MagnitudeDesktopBackend(BrowserBackend):
             # Loop-avoidance guard: detect consecutive repeats
             if self._last_tool_name == tool:
                 self._consecutive_repeat_count += 1
-            else:
-                self._consecutive_repeat_count = 0
             self._last_tool_name = tool
 
             # Record step intent for the next iteration's guidance
@@ -1539,24 +1530,17 @@ class MagnitudeDesktopBackend(BrowserBackend):
             else:
                 recent_steps.append(tool)
 
-            finished = await self._execute_tool(tool, args, dims)
-            if finished:
-                return expectation or "success"
+            ok = await self._execute_tool(tool, args, dims)
 
-            # If an explicit expectation is provided, verify it each iteration.
-            # If already satisfied, finish early; otherwise continue planning.
-            if expectation:
-                try:
-                    obs = await self.observe(expectation)
-                    if isinstance(obs, dict) and obs.get("matches"):
-                        return expectation or "success"
-                except Exception:
-                    # non-fatal; proceed with the loop
-                    pass
-
-        # Final heuristic: if we typed something and pressed Enter at least once, consider success
-        if self._typed_history and self._enter_after_last_type:
-            return expectation or "success"
+            # Observe for completion each step (prefer explicit expectation, else use instruction)
+            verify_stmt = expectation or instruction
+            try:
+                obs = await self.observe(verify_stmt)
+                if isinstance(obs, dict) and obs.get("matches"):
+                    return expectation or "success"
+            except Exception:
+                # non-fatal; continue planning
+                pass
 
         return expectation or "incomplete"
 
