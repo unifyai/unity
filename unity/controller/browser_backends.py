@@ -1647,10 +1647,17 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "reason": out.reason,
         }
 
-    async def get_screenshot(self, *, save: bool = False) -> str:
+    async def get_screenshot(self, *, save: bool = False, return_meta: bool = False):
+        """Capture a full desktop screenshot.
+
+        Parameters:
+            save: when True, the service writes the PNG to a temp filepath and includes it in the response.
+            return_meta: when True, return the full JSON (including filepath and saved flags). Otherwise, return base64 PNG string.
+        """
         params = "?save=true" if save else ""
         data = await self._request("GET", f"/linux/screenshot{params}")
-        # Optionally the caller can read data.get('filepath') if needed
+        if return_meta:
+            return data
         return data.get("screenshot", "")
 
     async def get_current_url(self) -> str:
