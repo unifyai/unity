@@ -653,6 +653,48 @@ class MagnitudeDesktopBackend(BrowserBackend):
             pass
         return ""
 
+    async def _get_focused_window_geometry(self) -> dict | None:
+        """Best-effort: return geometry of the currently focused window.
+
+        Strategy:
+        - Read window id from /linux/mouse/position
+        - Match against /linux/window list (id,x,y,w,h)
+        - Fallback to the first window if no exact match
+        """
+        try:
+            pos = await self._request("GET", "/linux/mouse/position")
+            wid = str((pos or {}).get("window") or "").strip().lower()
+        except Exception:
+            wid = ""
+        wins = []
+        try:
+            res = await self._request("GET", "/linux/window")
+            wins = res.get("windows", []) or []
+        except Exception:
+            wins = []
+
+        def _norm(v):
+            return str(v or "").strip().lower()
+
+        if wid:
+            for w in wins:
+                if _norm(w.get("id")) == wid:
+                    return {
+                        "x": int(w.get("x", 0) or 0),
+                        "y": int(w.get("y", 0) or 0),
+                        "w": int(w.get("w", 0) or 0),
+                        "h": int(w.get("h", 0) or 0),
+                    }
+        if wins:
+            w = wins[0]
+            return {
+                "x": int(w.get("x", 0) or 0),
+                "y": int(w.get("y", 0) or 0),
+                "w": int(w.get("w", 0) or 0),
+                "h": int(w.get("h", 0) or 0),
+            }
+        return None
+
     # Private helper to execute a selected tool step and update context
     async def _execute_tool(self, tool: str, args: dict, dims: tuple[int, int]) -> bool:
         # done/finish
@@ -814,11 +856,24 @@ class MagnitudeDesktopBackend(BrowserBackend):
             return False
 
         if tool == "click_at":
-            try:
-                x_val = int(args.get("x"))
-                y_val = int(args.get("y"))
-            except Exception:
-                return False
+            # Support absolute pixels or window-relative percents
+            if args.get("xPercent") is not None and args.get("yPercent") is not None:
+                try:
+                    win = await self._get_focused_window_geometry()
+                    if not win or win.get("w", 0) <= 0 or win.get("h", 0) <= 0:
+                        return False
+                    xp = max(0.0, min(1.0, float(args.get("xPercent"))))
+                    yp = max(0.0, min(1.0, float(args.get("yPercent"))))
+                    x_val = int(win["x"] + xp * win["w"])
+                    y_val = int(win["y"] + yp * win["h"])
+                except Exception:
+                    return False
+            else:
+                try:
+                    x_val = int(args.get("x"))
+                    y_val = int(args.get("y"))
+                except Exception:
+                    return False
             button = int(args.get("button", 1) or 1)
             # optional enhancements
             repeat_val = None
@@ -965,10 +1020,55 @@ class MagnitudeDesktopBackend(BrowserBackend):
                 except Exception:
                     return None
 
-            from_x = _opt("fromX")
-            from_y = _opt("fromY")
-            to_x = _opt("toX")
-            to_y = _opt("toY")
+            # Support percent inputs relative to focused window
+            use_pct = (
+                args.get("toXPercent") is not None
+                and args.get("toYPercent") is not None
+            ) or (
+                args.get("fromXPercent") is not None
+                and args.get("fromYPercent") is not None
+            )
+
+            if use_pct:
+                try:
+                    win = await self._get_focused_window_geometry()
+                    if not win or win.get("w", 0) <= 0 or win.get("h", 0) <= 0:
+                        return False
+
+                    def _pct(v):
+                        return max(0.0, min(1.0, float(v)))
+
+                    from_x = (
+                        None
+                        if args.get("fromXPercent") is None
+                        else int(
+                            win["x"] + _pct(args.get("fromXPercent")) * win["w"],
+                        )
+                    )
+                    from_y = (
+                        None
+                        if args.get("fromYPercent") is None
+                        else int(
+                            win["y"] + _pct(args.get("fromYPercent")) * win["h"],
+                        )
+                    )
+                    to_x = (
+                        int(win["x"] + _pct(args.get("toXPercent")) * win["w"])
+                        if args.get("toXPercent") is not None
+                        else _opt("toX")
+                    )
+                    to_y = (
+                        int(win["y"] + _pct(args.get("toYPercent")) * win["h"])
+                        if args.get("toYPercent") is not None
+                        else _opt("toY")
+                    )
+                except Exception:
+                    return False
+            else:
+                from_x = _opt("fromX")
+                from_y = _opt("fromY")
+                to_x = _opt("toX")
+                to_y = _opt("toY")
             if to_x is None or to_y is None:
                 return False
             if dims[0] > 0 and dims[1] > 0:
@@ -1272,9 +1372,9 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "- app_close: args {title|class} — close a running app by its window(s).\n"
             "- type_text: args {text | keys} — either plain text, or keys (supports combos as nested arrays, e.g., ['ctrl','c'] or ['ctrl','shift','t']).\n"
             "- type_and_enter: args {text} — type the given text and then press Enter.\n"
-            "- click_at: args {x, y, button?, repeat?, delayMs?, modifiers?[]} — click at pixel coordinates.\n"
+            "- click_at: args {x, y, button?, repeat?, delayMs?, modifiers?[]} — click at pixel coordinates. Prefer window-relative percents: {xPercent, yPercent} in [0,1] referencing the currently focused window.\n"
             "- mouse_move: args {x, y} — move/hover the pointer without clicking.\n"
-            "- drag: args {fromX?, fromY?, toX, toY, button?, steps?, delayMs?} — click-drag between points.\n"
+            "- drag: args {fromX?, fromY?, toX, toY, button?, steps?, delayMs?} — click-drag between points. Prefer percents: {fromXPercent?, fromYPercent?, toXPercent, toYPercent} in [0,1] of the focused window.\n"
             "- scroll: args {direction:'up'|'down'|'left'|'right', amount?, delayMs?} — scroll wheel events.\n"
             "- screenshot: args {} — capture the full desktop screenshot (base64).\n"
             "- screenshot_region: args {x,y,w,h} — returns a cropped screenshot region (base64).\n"
@@ -1285,7 +1385,7 @@ class MagnitudeDesktopBackend(BrowserBackend):
             "You can install apps/packages by running shell commands. If no terminal is open, prefer app_open with cmd='bash' and args=['-lc', '<install command>'] (e.g., 'sudo apt-get update && sudo apt-get install -y <pkg>'). If a terminal (e.g., xterm) is already open, focus_window it and use click_at/type_text/press_enter to run commands. Use non-interactive flags (-y, -q, --no-install-recommends) to avoid prompts.\n"
             "You can use key combos by passing a list of keys to type_text. For example, ['ctrl', 'c'] will copy the current selection, and ['ctrl', 'shift', 't'] will open a new terminal window.\n"
             "You will ALWAYS receive a current desktop screenshot. Base your decisions primarily on that visual context.\n"
-            "You will also receive screen width/height (pixels). Ensure coordinates are within bounds.\n"
+            "You will also receive screen width/height (pixels) and pointer coordinates. Prefer relative percent coordinates in the focused window (xPercent/yPercent) when you must target by position.\n"
             "Avoid repeating the same tool more than once in a row; after focusing a window, prefer typing or clicking next.\n"
             "For terminal commands, typically: focus_window → click_at (if needed) → type_text (the exact command) → press_enter → done.\n",
         )
