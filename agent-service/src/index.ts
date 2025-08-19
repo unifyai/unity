@@ -158,7 +158,6 @@ const browserOptions: BrowserOptions = {
           // "--enable-features=WebRtcV4L2VideoCapture",
           "--auto-select-window-capture-source-by-title=Google",
       ],
-      permissions: ["microphone", "camera"],
     },
 };
 
