@@ -107,10 +107,10 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         self._extra_user_msgs.append(message)
         return "Acknowledged."
 
-    def stop(self) -> str:
+    def stop(self, reason: Optional[str] = None) -> str:
         self._cancelled = True
         self._done.set()
-        return "Stopped."
+        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     def pause(self) -> str:
         if self._paused:

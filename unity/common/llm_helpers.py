@@ -570,6 +570,7 @@ async def _async_tool_use_loop_inner(
     loop_id: Optional[str] = None,
     interject_queue: asyncio.Queue[str],
     cancel_event: asyncio.Event,
+    stop_event: asyncio.Event | None = None,
     pause_event: asyncio.Event,
     max_consecutive_failures: int = 3,
     prune_tool_duplicates: bool = True,
@@ -587,6 +588,7 @@ async def _async_tool_use_loop_inner(
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
+    persist: bool = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -695,6 +697,9 @@ async def _async_tool_use_loop_inner(
     """
     # unique id
     loop_id = loop_id if loop_id is not None else short_id()
+
+    # normalise optional graceful stop event
+    stop_event = stop_event or asyncio.Event()
 
     # If structured output is expected, inform the model up-front so it can
     # plan its reasoning with the final JSON shape in mind.  Enforcement via
@@ -1513,6 +1518,10 @@ async def _async_tool_use_loop_inner(
     # before waiting again (user interjection, clarification answer, etc.).
     llm_turn_required = False
 
+    # Last known assistant answer when the model produced a final tool-less reply.
+    # Used when `persist=True` to return a stable result upon explicit stop.
+    last_final_answer: Optional[str] = None
+
     try:
         while True:
 
@@ -1532,7 +1541,15 @@ async def _async_tool_use_loop_inner(
                         cancel_event.wait(),
                         name="CancelEventWait",
                     )
-                    waiters = pending | {pause_waiter, cancel_waiter}
+                    graceful_stop_waiter = asyncio.create_task(
+                        stop_event.wait(),
+                        name="StopEventWait",
+                    )
+                    waiters = pending | {
+                        pause_waiter,
+                        cancel_waiter,
+                        graceful_stop_waiter,
+                    }
 
                     done, _ = await asyncio.wait(
                         waiters,
@@ -1541,7 +1558,7 @@ async def _async_tool_use_loop_inner(
                     )
 
                     # helper-task cleanup so they don't dangle
-                    for w in (pause_waiter, cancel_waiter):
+                    for w in (pause_waiter, cancel_waiter, graceful_stop_waiter):
                         if w not in done and not w.done():
                             w.cancel()
                             await asyncio.gather(w, return_exceptions=True)
@@ -1551,6 +1568,9 @@ async def _async_tool_use_loop_inner(
                         await _process_completed_task(t)
                     if cancel_event.is_set():
                         raise asyncio.CancelledError
+                    if stop_event.is_set() and persist:
+                        # Graceful stop requested during pause
+                        return last_final_answer or ""
                     continue  # remain paused: do not allow the LLM to speak while paused
                 else:
                     # nothing running – just idle until resumed or cancelled
@@ -1564,6 +1584,10 @@ async def _async_tool_use_loop_inner(
                                 cancel_event.wait(),
                                 name="CancelEventWait",
                             ),
+                            asyncio.create_task(
+                                stop_event.wait(),
+                                name="StopEventWait",
+                            ),
                         },
                         return_when=asyncio.FIRST_COMPLETED,
                     )
@@ -1575,6 +1599,8 @@ async def _async_tool_use_loop_inner(
                     # cancelled?
                     if cancel_event.is_set():
                         raise asyncio.CancelledError
+                    if stop_event.is_set() and persist:
+                        return last_final_answer or ""
                         continue  # top-of-loop, still paused
 
             # 0-α. **Global timeout**
@@ -1700,6 +1726,10 @@ async def _async_tool_use_loop_inner(
                     cancel_event.wait(),
                     name="CancelEventWait",
                 )
+                graceful_stop_waiter = asyncio.create_task(
+                    stop_event.wait(),
+                    name="StopEventWait",
+                )
                 clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
                 for _t in pending:
                     # Only listen for *new* clarification questions.
@@ -1712,7 +1742,11 @@ async def _async_tool_use_loop_inner(
                     if cuq is not None:
                         w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
                         clar_waiters[w] = _t
-                waiters = pending | set(clar_waiters) | {cancel_waiter, interject_w}
+                waiters = (
+                    pending
+                    | set(clar_waiters)
+                    | {cancel_waiter, interject_w, graceful_stop_waiter}
+                )
 
                 # ── honour global *timeout* while we wait for tools ───────────
                 wait_timeout: Optional[float] = None
@@ -1750,7 +1784,12 @@ async def _async_tool_use_loop_inner(
                 # ── ensure *unused* auxiliary waiters don't linger ──────────
                 # If one helper won the race we *must* cancel/await the other
                 # so that it cannot consume the next interjection invisibly.
-                for aux in (interject_w, cancel_waiter, *clar_waiters.keys()):
+                for aux in (
+                    interject_w,
+                    cancel_waiter,
+                    graceful_stop_waiter,
+                    *clar_waiters.keys(),
+                ):
                     if aux not in done and not aux.done():
                         aux.cancel()
                         await asyncio.gather(aux, return_exceptions=True)
@@ -1762,6 +1801,8 @@ async def _async_tool_use_loop_inner(
 
                 if cancel_waiter in done:
                     raise asyncio.CancelledError  # cancellation wins
+                if graceful_stop_waiter in done and persist:
+                    return last_final_answer or ""
 
                 # ── clarification request bubbled up from a child tool ──────────────
                 if done & clar_waiters.keys():
@@ -2886,7 +2927,50 @@ async def _async_tool_use_loop_inner(
 
             final_answer = msg["content"]
 
-            return final_answer  # DONE!
+            if not persist:
+                return final_answer  # DONE!
+
+            # Persist mode: remember latest final answer and enter a lingering state
+            last_final_answer = final_answer
+
+            # Wait for either a new interjection (to extend the loop),
+            # a graceful stop (to return the last answer), or a hard cancel.
+            while True:
+                interject_w = asyncio.create_task(
+                    interject_queue.get(),
+                    name="InterjectQueueGet",
+                )
+                cancel_waiter = asyncio.create_task(
+                    cancel_event.wait(),
+                    name="CancelEventWait",
+                )
+                graceful_stop_waiter = asyncio.create_task(
+                    stop_event.wait(),
+                    name="StopEventWait",
+                )
+
+                done, _ = await asyncio.wait(
+                    {interject_w, cancel_waiter, graceful_stop_waiter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # cleanup unused helpers
+                for tsk in (interject_w, cancel_waiter, graceful_stop_waiter):
+                    if tsk not in done and not tsk.done():
+                        tsk.cancel()
+                        await asyncio.gather(tsk, return_exceptions=True)
+
+                if interject_w in done:
+                    # push back so the standard interjection drain builds system guidance
+                    await interject_queue.put(interject_w.result())
+                    llm_turn_required = True
+                    break  # resume main loop to handle new turn
+
+                if cancel_waiter in done:
+                    raise asyncio.CancelledError
+
+                if graceful_stop_waiter in done:
+                    return last_final_answer or ""
 
     except asyncio.CancelledError:  # graceful shutdown
         # NOTE: Caller (or parent task) requested cancellation.  We propagate
@@ -2926,8 +3010,11 @@ class SteerableToolHandle(ABC):
         """Inject an additional *user* turn into the running conversation."""
 
     @abstractmethod
-    def stop(self) -> Awaitable[Optional[str]] | Optional[str]:
-        """Politely ask the loop to shut down (gracefully)."""
+    def stop(
+        self,
+        reason: Optional[str] = None,
+    ) -> Awaitable[Optional[str]] | Optional[str]:
+        """Politely ask the loop to shut down (gracefully). Optionally include a reason."""
 
     @abstractmethod
     def pause(self) -> Awaitable[Optional[str]] | Optional[str]:
@@ -2959,14 +3046,17 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         task: asyncio.Task,
         interject_queue: asyncio.Queue[str],
         cancel_event: asyncio.Event,
+        stop_event: asyncio.Event,
         pause_event: Optional[asyncio.Event] = None,
         client: "unify.AsyncUnify | None" = None,
         loop_id: str = "",
         initial_user_message: Optional[str] = None,
+        persist: bool = False,
     ):
         self._task = task
         self._queue = interject_queue
         self._cancel_event = cancel_event
+        self._stop_event = stop_event
         # "running" ⇢ Event **set**,  "paused" ⇢ Event **cleared**
         self._pause_event = pause_event or asyncio.Event()
         self._client = client
@@ -2975,6 +3065,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self._delegate: Optional["SteerableToolHandle"] = None
         self._pause_event.set()
         self._loop_id: str = loop_id
+        self._persist: bool = persist
 
         # Buffer interjections that may arrive **before** a downstream handle
         # (e.g. an `ActiveTask`) has been adopted.  Once a delegate is ready we
@@ -3032,7 +3123,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             class _StaticHandle(SteerableToolHandle):
                 async def interject(self, message: str): ...
 
-                def stop(self): ...
+                def stop(self, reason: Optional[str] = None): ...
 
                 def pause(self): ...
 
@@ -3158,12 +3249,20 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         await self._queue.put(message)
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
-    def stop(self) -> None:
-        LOGGER.info(f"🛑 [{self._loop_id}] Stop requested")
+    def stop(self, reason: Optional[str] = None) -> None:
+        LOGGER.info(
+            f"🛑 [{self._loop_id}] Stop requested"
+            + (f" – reason: {reason}" if reason else ""),
+        )
         if self._delegate is not None:
-            self._delegate.stop()
+            self._delegate.stop(reason)
             return
-        self._cancel_event.set()
+        # In persist-mode we perform a graceful stop (result resolves).
+        # Otherwise preserve legacy behaviour: cancel so result() raises.
+        if self._persist:
+            self._stop_event.set()
+        else:
+            self._cancel_event.set()
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
     def pause(self) -> None:
@@ -3282,6 +3381,7 @@ def start_async_tool_use_loop(
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,
+    persist: bool = False,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -3291,6 +3391,7 @@ def start_async_tool_use_loop(
     loop_id = loop_id if loop_id is not None else short_id()
     interject_queue: asyncio.Queue[str] = asyncio.Queue()
     cancel_event = asyncio.Event()
+    stop_event = asyncio.Event()
     pause_event = asyncio.Event()
     pause_event.set()  # start un-paused
 
@@ -3307,6 +3408,7 @@ def start_async_tool_use_loop(
             loop_id=loop_id,
             interject_queue=interject_queue,
             cancel_event=cancel_event,
+            stop_event=stop_event,
             pause_event=pause_event,
             max_consecutive_failures=max_consecutive_failures,
             prune_tool_duplicates=prune_tool_duplicates,
@@ -3322,6 +3424,7 @@ def start_async_tool_use_loop(
             preprocess_msgs=preprocess_msgs,
             outer_handle_container=outer_handle_container,
             response_format=response_format,
+            persist=persist,
         ),
         name="ToolUseLoop",
     )
@@ -3330,12 +3433,14 @@ def start_async_tool_use_loop(
         task=task,
         interject_queue=interject_queue,
         cancel_event=cancel_event,
+        stop_event=stop_event,
         pause_event=pause_event,
         client=client,
         loop_id=loop_id,
         initial_user_message=(
             message["content"] if isinstance(message, dict) else message
         ),
+        persist=persist,
     )
 
     # Let the inner coroutine discover the outer handle so it can switch

@@ -107,10 +107,10 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
         self._extra_msgs.append(message)
         return "Acknowledged."
 
-    def stop(self) -> str:
+    def stop(self, reason: str | None = None) -> str:
         self._cancelled = True
         self._done_event.set()
-        return "Stopped."
+        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     def pause(self) -> str:
         if self._paused:
