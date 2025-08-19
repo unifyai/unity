@@ -152,6 +152,12 @@ console.log(`Starting Magnitude BrowserAgent (Headless: ${isHeadless})...`);
 const browserOptions: BrowserOptions = {
     launchOptions: {
         headless: isHeadless,
+        args: [
+          "--disable-blink-features=AutomationControlled",
+          "--disable-features=IsolateOrigins,site-per-process",
+          // "--enable-features=WebRtcV4L2VideoCapture",
+          "--auto-select-window-capture-source-by-title=Google",
+      ],
     },
 };
 

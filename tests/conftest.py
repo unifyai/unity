@@ -309,6 +309,14 @@ def pytest_sessionfinish(session, exitstatus):
         unify.delete_project(unify.active_project())
 
 
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    if _get_unity_test_env_var("UNIFY_CACHE_BENCHMARK"):
+        stats = unify.get_cache_stats()
+        terminalreporter.section(
+            f"Unify cache report | Hits ({stats.get_percentage_of_cache_hits():.2f}%): {stats.hits} | Misses ({stats.get_percentage_of_cache_misses():.2f}%): {stats.misses} | Reads: {stats.reads} | Writes: {stats.writes}",
+        )
+
+
 # Function to check if we're using the unify stub
 def is_using_unify_stub():
     """Return True if tests are running with the unify stub."""

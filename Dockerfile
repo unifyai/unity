@@ -33,53 +33,45 @@ ENV DISPLAY=:99
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl wget unzip gnupg2 \
-    xvfb x11vnc fluxbox \
+    xvfb x11vnc fluxbox xdotool wmctrl imagemagick tesseract-ocr \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
     libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
-    ffmpeg git ca-certificates && \
+    ffmpeg ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # Dependencies for virtual audio
 RUN apt update && apt install -y \
     pipewire pipewire-audio pipewire-bin pipewire-pulse wireplumber \
-    libpipewire-0.3-modules libportaudio2 portaudio19-dev \
+    libpipewire-0.3-modules libportaudio2 \
     pulseaudio-utils alsa-utils alsa-tools \
-    dbus dbus-x11 python3-pip \
+    xterm dbus dbus-x11 \
     xdg-desktop-portal xdg-desktop-portal-gtk \
     && rm -rf /var/lib/apt/lists/*
 
 # Dependencies for virtual camera
-RUN apt-get update && apt-get install -y \
-    gstreamer1.0-tools \
-    gstreamer1.0-plugins-base \
-    gstreamer1.0-plugins-good \
-    gstreamer1.0-plugins-bad \
-    gstreamer1.0-plugins-ugly \
-    gstreamer1.0-libav \
-    gstreamer1.0-pipewire \
-    gstreamer1.0-libcamera \
-    python3-gi \
-    gir1.2-gtk-3.0 \
-    libgirepository1.0-dev \
-    libcairo2-dev \
-    pkg-config \
-    build-essential \
-    cmake \
-    v4l-utils \
-    libspa-0.2-modules \
-    libcamera-tools \
-    gir1.2-gst-plugins-base-1.0 \
-    gir1.2-gstreamer-1.0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Chromium
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
-    chromium-driver \
-    fonts-liberation fonts-noto-color-emoji fonts-noto-core fonts-noto-ui-core fonts-freefont-ttf \
-    libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 libnss3 libxrandr2 libasound2 \
-    libpangocairo-1.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 libxshmfence1
+# RUN apt-get update && apt-get install -y \
+#     gstreamer1.0-tools \
+#     gstreamer1.0-plugins-base \
+#     gstreamer1.0-plugins-good \
+#     gstreamer1.0-plugins-bad \
+#     gstreamer1.0-plugins-ugly \
+#     gstreamer1.0-libav \
+#     gstreamer1.0-pipewire \
+#     gstreamer1.0-libcamera \
+#     python3-gi \
+#     gir1.2-gtk-3.0 \
+#     libgirepository1.0-dev \
+#     libcairo2-dev \
+#     pkg-config \
+#     build-essential \
+#     cmake \
+#     v4l-utils \
+#     libspa-0.2-modules \
+#     libcamera-tools \
+#     gir1.2-gst-plugins-base-1.0 \
+#     gir1.2-gstreamer-1.0 \
+#     && rm -rf /var/lib/apt/lists/*
 
 # Download noVNC
 RUN mkdir -p /opt/novnc && \
@@ -88,6 +80,9 @@ RUN mkdir -p /opt/novnc && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
 
+# Install Node.js & npm for agent-service
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
 
 # Copy requirements file
 COPY requirements.txt .
@@ -99,7 +94,23 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy all application files
-COPY . .
+COPY . /app
+
+# After the other apt-get installs in Dockerfile
+RUN apt-get update && apt-get install -y \
+    libgtk-4-1 \
+    libharfbuzz-icu0 \
+    libenchant-2-2 \
+    libsecret-1-0 \
+    libhyphen0 \
+    libmanette-0.2-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build agent-service
+WORKDIR /app/agent-service
+RUN npm ci
+WORKDIR /app
+
 
 # Set environment variables
 ENV PYTHONPATH=/app
