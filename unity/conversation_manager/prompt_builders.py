@@ -110,6 +110,9 @@ def _build_communication_rules_section(is_call: bool) -> str:
             "- Include the channel to use in the query and use ToolUseAction to send messages to the user.",
             "- Don't call unless needed or requested by the user.",
             "- If you need to ask questions, you should send a message with ToolUseAction.",
+            "- For example, if the user sends you an sms asking about something, then it's expected that you will reply with an sms through the ToolUseAction",
+            "- In the above example, there should ALWAYS be an explicit mention of something like \"REPLY VIA SMS:\" alongside the contents in the ToolUseAction, same applies to the other channels.",
+            "- If it's a third-party SMS, WhatsApp or Email to be sent, then you should also mention that in the ToolUseAction.",
         ]
     lines += [
         "- Say hello to the user during the start of the conversation only, don't need to say hello everytime.",
@@ -129,7 +132,9 @@ def _build_communication_rules_section(is_call: bool) -> str:
     return "\n".join([title, underline] + lines)
 
 
-def _build_user_details_section(name: str) -> str:
+def _build_user_details_section(
+    name: str, number: str, whatsapp_number: str, email: str
+) -> str:
     title = "User Details:"
     underline = "-" * len(title)
     return "\n".join(
@@ -137,6 +142,9 @@ def _build_user_details_section(name: str) -> str:
             title,
             underline,
             f"User Name: {name}",
+            f"User Phone Number: {number}",
+            f"User WhatsApp Number: {whatsapp_number}",
+            f"User Email Address: {email}",
         ],
     )
 
@@ -189,6 +197,9 @@ def _build_task_context_section(
 # prompt builders
 def build_call_sys_prompt(
     user_name: str,
+    user_number: str,
+    user_whatsapp_number: str,
+    user_email: str,
     assistant_name: str,
     assistant_age: str,
     assistant_region: str,
@@ -207,7 +218,12 @@ def build_call_sys_prompt(
             assistant_region,
             assistant_about,
         ),
-        _build_user_details_section(user_name),
+        _build_user_details_section(
+            user_name,
+            user_number,
+            user_whatsapp_number,
+            user_email,
+        ),
         _build_event_stream_section(),
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
@@ -226,6 +242,9 @@ def build_call_sys_prompt(
 
 def build_non_call_sys_prompt(
     user_name: str,
+    user_number: str,
+    user_whatsapp_number: str,
+    user_email: str,
     assistant_name: str,
     assistant_age: str,
     assistant_region: str,
@@ -244,7 +263,12 @@ def build_non_call_sys_prompt(
             assistant_region,
             assistant_about,
         ),
-        _build_user_details_section(user_name),
+        _build_user_details_section(
+            user_name,
+            user_number,
+            user_whatsapp_number,
+            user_email,
+        ),
         _build_event_stream_section(),
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),

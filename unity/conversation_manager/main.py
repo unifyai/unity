@@ -80,6 +80,17 @@ class EventManager:
                     self.topic_to_subs[
                         event["event"]["payload"]["user_whatsapp_number"]
                     ] = self.topic_to_subs["tool_use"]
+                if (
+                    event["topic"] not in self.topic_to_subs
+                    and "contact_details" in event["event"]["payload"]
+                    and event["payload"]["contact_details"] is not None
+                ):
+                    self.topic_to_subs[
+                        event["event"]["payload"]["contact_details"]["phone_number"]
+                    ] = self.topic_to_subs["tool_use"]
+                    self.topic_to_subs[
+                        event["event"]["payload"]["contact_details"]["whatsapp_number"]
+                    ] = self.topic_to_subs["tool_use"]
                 for client in self.topic_to_subs[event["topic"]]:
                     client.handle_event(event)
 
