@@ -60,7 +60,6 @@ echo "Redis started with PID: $REDIS_PID"
 # Virtual desktop and devices
 bash desktop.sh &
 DESKTOP_PID=$!
-DISPLAY=:99 xterm -fa 'Monospace' -fs 10 &
 
 # Start the main application in parallel
 echo "Starting convo manager..."
