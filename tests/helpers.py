@@ -27,8 +27,7 @@ def _get_unity_test_env_var(name):
     Get the value of an environment variable for tests. If requested variable is not set, return the default value.
     If requested variable is not one of the test environment variables, return None.
     """
-    default = TESTS_DEFAULT_ENV_VARS.get(name, None)
-    return json.loads(os.environ.get(name, default))
+    return json.loads(os.environ.get(name, TESTS_DEFAULT_ENV_VARS.get(name, "false")))
 
 
 def _handle_project(
