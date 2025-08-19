@@ -111,7 +111,7 @@ def _build_communication_rules_section(is_call: bool) -> str:
             "- Don't call unless needed or requested by the user.",
             "- If you need to ask questions, you should send a message with ToolUseAction.",
             "- For example, if the user sends you an sms asking about something, then it's expected that you will reply with an sms through the ToolUseAction",
-            "- In the above example, there should ALWAYS be an explicit mention of something like \"REPLY VIA SMS:\" alongside the contents in the ToolUseAction, same applies to the other channels.",
+            '- In the above example, there should ALWAYS be an explicit mention of something like "REPLY VIA SMS:" alongside the contents in the ToolUseAction, same applies to the other channels.',
             "- If it's a third-party SMS, WhatsApp or Email to be sent, then you should also mention that in the ToolUseAction.",
         ]
     lines += [
