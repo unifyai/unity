@@ -605,7 +605,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         name: str,
         description: str | None = None,
         columns: Dict[str, ColumnType] | None = None,
-        unique_column_name: str = "row_id",
+        unique_key_name: str = "row_id",
     ) -> Dict[str, str]:
         """
         **Create** a brand-new table in the knowledge store.
@@ -621,7 +621,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 empty table is created and columns can be added later with
                 :pyfunc:`_create_empty_column`. Colums names MUST be *snake case*.
                 The column name `id` is reserved for internals, do *not* use this name.
-        unique_column_name : str
+        unique_key_name : str
                 Every table *must* have a unique integer column which auto-increments
                 upwards from 0. By default this is called `row_id`, but the name can
                 be customized to be more descriptive for the table. For example,
@@ -638,7 +638,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         ctx = f"{self._ctx}/{name}"
         unify.create_context(
             ctx,
-            unique_column_ids=unique_column_name,
+            unique_keys={unique_key_name: "counting"},
             description=description,
         )
 
@@ -858,7 +858,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 Backend confirmation or error.
         """
         table_ctx = unify.get_context(self._ctx_for_table(table))
-        unique_column_name = table_ctx["unique_column_ids"]
+        unique_column_name = table_ctx["unique_keys"]
         # Guard against removal of mandatory columns
         if (table == "Contacts" and column_name in self._CONTACT_REQUIRED_COLUMNS) or (
             table != "Contacts" and column_name == unique_column_name
@@ -1177,7 +1177,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         ctx = self._ctx_for_table(table)
         ctx_info = unify.get_context(ctx)
-        unique_column_name = ctx_info["unique_column_ids"][0]
+        unique_column_name = ctx_info["unique_keys"][0]
         unique_ids = sorted([int(k) for k in updates.keys()])
         log_ids: List[int] = sorted(
             unify.get_logs(

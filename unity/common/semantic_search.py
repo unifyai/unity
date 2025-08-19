@@ -455,7 +455,7 @@ def backfill_rows(
         Optional row-level predicate to apply while backfilling (e.g., exclude system rows).
     unique_id_field : str | None, default None
         Column used to deduplicate rows when backfilling. When ``None``, attempts to infer
-        from the context's ``unique_column_ids``.
+        from the context's ``unique_keys``.
 
     Returns
     -------
@@ -470,7 +470,7 @@ def backfill_rows(
     if unique_id_field is None:
         try:
             ctx_info = unify.get_context(context)
-            unique_id_field = ctx_info.get("unique_column_ids")
+            unique_id_field = ctx_info.get("unique_keys")
             if isinstance(unique_id_field, list):
                 unique_id_field = unique_id_field[0] if unique_id_field else None
         except Exception:
