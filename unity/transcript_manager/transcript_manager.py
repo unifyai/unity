@@ -119,7 +119,7 @@ class TranscriptManager(BaseTranscriptManager):
         if self._transcripts_ctx not in ctxs:
             unify.create_context(
                 self._transcripts_ctx,
-                unique_column_ids="message_id",
+                unique_keys={"message_id": "counting"},
                 description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
             )
             fields = model_to_fields(Message)

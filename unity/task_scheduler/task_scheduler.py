@@ -151,7 +151,7 @@ class TaskScheduler(BaseTaskScheduler):
         if self._ctx not in unify.get_contexts():
             unify.create_context(
                 self._ctx,
-                unique_column_ids=["task_id", "instance_id"],
+                unique_keys={"task_id": "counting", "instance_id": "counting"},
                 description=(
                     "List of all tasks with their name, description, status, "
                     "schedule, deadline, repeat pattern, priority **and** "

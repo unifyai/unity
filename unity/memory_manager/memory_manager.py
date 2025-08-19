@@ -1156,7 +1156,7 @@ class MemoryManager(BaseMemoryManager):
                 pass
         ctx = f"{active_ctx}/RollingActivity" if active_ctx else "RollingActivity"
         if ctx not in unify.get_contexts():
-            unify.create_context(ctx, unique_column_ids="row_id")
+            unify.create_context(ctx, unique_keys={"row_id": "counting"})
             fields = {
                 col: {"type": "str", "mutable": True} for col in cls._ROLLING_COLUMNS
             }
