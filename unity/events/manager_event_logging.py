@@ -93,9 +93,9 @@ def wrap_handle_with_logging(
             asyncio.create_task(self._publish(action="resume"))
             return self._inner.resume()
 
-        def stop(self):
-            asyncio.create_task(self._publish(action="stop"))
-            return self._inner.stop()
+        def stop(self, reason: str | None = None):
+            asyncio.create_task(self._publish(action="stop", reason=reason))
+            return self._inner.stop(reason)
 
         def done(self):
             return self._inner.done()
