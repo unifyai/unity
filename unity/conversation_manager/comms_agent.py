@@ -16,6 +16,9 @@ from unity.conversation_manager.debug_logger import log_job_startup, mark_job_do
 from unity.conversation_manager.comms_actions import (
     _start_call,
     _join_meet_call,
+    _send_email_via_address,
+    _send_sms_message_via_number,
+    _send_whatsapp_message_via_number,
     Call,
     send_email,
     send_sms_message,
@@ -105,13 +108,19 @@ class CommsAgent:
         self.voice_id = voice_id
 
         # contact data
-        self.contact_details = {}
         self.assistant_number = assistant_number
         self.assistant_email = assistant_email
         self.user_name = user_name
         self.user_number = user_number
         self.user_email = user_email
         self.user_whatsapp_number = user_whatsapp_number
+        self.current_user = {
+            "contact_id": 1,
+            "user_name": user_name,
+            "user_number": user_number,
+            "user_whatsapp_number": user_whatsapp_number,
+            "user_email": user_email,
+        }
 
         # events (history)
         self.conv_context_length = conv_context_length
@@ -175,6 +184,10 @@ class CommsAgent:
                 self._send_sms,
                 self._send_email,
                 self._send_whatsapp,
+                self._send_call_to_third_party,
+                self._send_sms_to_third_party,
+                self._send_email_to_third_party,
+                self._send_whatsapp_to_third_party,
                 self._join_meet,
             )
             return
@@ -302,7 +315,11 @@ class CommsAgent:
                             self.call_proc = run_script(
                                 str(target_path),
                                 "dev",
-                                target_number if target_number else self.user_number,
+                                (
+                                    target_number
+                                    if target_number
+                                    else self.current_user["user_number"]
+                                ),
                                 self.assistant_number,
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
@@ -313,7 +330,7 @@ class CommsAgent:
                             self.call_proc = run_script(
                                 str(target_path),
                                 "console",
-                                self.user_number,
+                                self.current_user["user_number"],
                                 self.assistant_number,
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
@@ -587,7 +604,10 @@ class CommsAgent:
     # response handling
     async def non_phone_call_llm_run(self):
         non_call_sys = build_non_call_sys_prompt(
-            self.user_name,
+            self.current_user["user_name"],
+            self.current_user["user_number"],
+            self.current_user["user_whatsapp_number"],
+            self.current_user["user_email"],
             self.assistant_name,
             self.assistant_age,
             self.assistant_region,
@@ -628,7 +648,10 @@ class CommsAgent:
             self.publish(ev)
 
         call_sys = build_call_sys_prompt(
-            self.user_name,
+            self.current_user["user_name"],
+            self.current_user["user_number"],
+            self.current_user["user_whatsapp_number"],
+            self.current_user["user_email"],
             self.assistant_name,
             self.assistant_age,
             self.assistant_region,
@@ -739,15 +762,74 @@ class CommsAgent:
 
         await self.meet_browser.act("Click on the 'Stop presenting' button")
 
-    # outer communications
+    # inner communications (to the current user)
     async def _send_call(
+        self,
+        purpose: str = "general",
+        task_context: Dict[str, str] = None,
+    ):
+        """
+        Sends a call from the assistant's number to the current user's number.
+
+        Args:
+            to_number (str): The number to call prefixed with +.
+            purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
+            task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
+        """
+        await Call.create(
+            self.current_user["user_number"],
+            purpose,
+            task_context,
+            tools=methods_to_tool_dict(self.contact_manager.ask),
+        )
+
+    async def _send_sms(self, message: str):
+        """
+        Sends an SMS message from the assistant's number to the current user's number.
+
+        Args:
+            message (str): The message to send.
+        """
+        await _send_sms_message_via_number(self.current_user["user_number"], message)
+
+    async def _send_email(self, subject: str, message: str):
+        """
+        Sends an email from the assistant's email address to the current user's email address.
+
+        Args:
+            subject (str): The subject of the email.
+            message (str): The message of the email.
+        """
+        await _send_email_via_address(
+            self.current_user["user_email"],
+            subject,
+            message,
+        )
+
+    async def _send_whatsapp(self, message: str, reply_to_user: bool = False):
+        """
+        Sends a WhatsApp message from the assistant's number to the current user's number.
+
+        Args:
+            message (str): The message to send.
+            reply_to_user (bool): `True` if replying to user's message. `False` if starting a new conversation.
+        """
+        await _send_whatsapp_message_via_number(
+            self.current_user["user_number"],
+            message,
+            reply_to_user,
+        )
+
+    # outer communications (to a third party)
+    async def _send_call_to_third_party(
         self,
         to_number: str,
         purpose: str = "general",
         task_context: Dict[str, str] = None,
     ):
         """
-        Sends a call from the assistant's number to the user's number.
+        Sends a call from the assistant's number to a third party. Only use this tool
+        if the user is asking you to call someone other than themselves.
 
         Args:
             to_number (str): The number to call prefixed with +.
@@ -761,13 +843,15 @@ class CommsAgent:
             tools=methods_to_tool_dict(self.contact_manager.ask),
         )
 
-    async def _send_sms(
+    async def _send_sms_to_third_party(
         self,
         description: str,
         parent_chat_context: list[dict] | None = None,
     ):
         """
-        Sends an SMS message from the assistant's number to the intended recipient.
+        Sends an SMS message from the assistant's number to a third party. Only use this
+        tool if the user is asking you to send an SMS message to someone other than
+        themselves (not when replying to the current user's message).
 
         Args:
             description (str): The description of the contact and content of the SMS message.
@@ -775,13 +859,15 @@ class CommsAgent:
         """
         await send_sms_message(description, parent_chat_context)
 
-    async def _send_email(
+    async def _send_email_to_third_party(
         self,
         description: str,
         parent_chat_context: list[dict] | None = None,
     ):
         """
-        Sends an email from the assistant's email address to the intended recipient.
+        Sends an email from the assistant's email address to a third party. Only use
+        this tool if the user is asking you to send an email to someone other than
+        themselves (not when replying to the current user's email).
 
         Args:
             description (str): The description of the contact and content of the email.
@@ -789,13 +875,16 @@ class CommsAgent:
         """
         await send_email(description, parent_chat_context)
 
-    async def _send_whatsapp(
+    async def _send_whatsapp_to_third_party(
         self,
         description: str,
         parent_chat_context: list[dict] | None = None,
     ):
         """
-        Sends a WhatsApp message from the assistant's number to the user's number.
+        Sends a WhatsApp message from the assistant's number to a third party.
+        Only use this tool if the user is asking you to send a WhatsApp message
+        to someone other than themselves (not when replying to the current user's
+        WhatsApp message).
 
         Args:
             description (str): The description of the WhatsApp message.
@@ -833,6 +922,12 @@ class CommsAgent:
         self.user_number = payload["user_number"]
         self.user_whatsapp_number = payload["user_whatsapp_number"]
         self.user_email = payload["user_email"]
+        self.current_user = {
+            "user_name": self.user_name,
+            "user_number": self.user_number,
+            "user_whatsapp_number": self.user_whatsapp_number,
+            "user_email": self.user_email,
+        }
         self.tts_provider = payload["tts_provider"]
         self.voice_id = payload["voice_id"]
         os.environ["UNIFY_KEY"] = payload.pop("api_key")
@@ -1002,7 +1097,7 @@ class CommsAgent:
                         )
                     )
                     sender_id, receiver_ids = "", [""]
-                    user_contact_id = self.contact_details.get("contact_id", 1)
+                    user_contact_id = self.current_user.get("contact_id", 1)
                     if medium == "whatsapp_message":
                         if role == "Assistant":
                             sender_id = 0
@@ -1112,7 +1207,25 @@ class CommsAgent:
             )
 
         if event["event"].get("contact_details"):
-            self.contact_details = event["event"]["payload"]["contact_details"]
+            self.current_user = {
+                "contact_id": event["event"]["payload"]["contact_details"][
+                    "contact_id"
+                ],
+                "user_name": (
+                    event["event"]["payload"]["contact_details"]["first_name"]
+                    + " "
+                    + event["event"]["payload"]["contact_details"]["surname"]
+                ),
+                "user_number": event["event"]["payload"]["contact_details"][
+                    "phone_number"
+                ],
+                "user_whatsapp_number": event["event"]["payload"]["contact_details"][
+                    "whatsapp_number"
+                ],
+                "user_email": event["event"]["payload"]["contact_details"][
+                    "email_address"
+                ],
+            }
 
         if to == "past":
             self.past_events.append(event["event"])
