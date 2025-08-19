@@ -44,4 +44,5 @@ pactl load-module module-remap-source master=agent_sink.monitor source_name=agen
 pactl set-default-source meet_mic
 pactl set-default-sink agent_sink
 
+DISPLAY=:99 xterm -fa 'Monospace' -fs 10 &
 websockify --web=/opt/novnc 6080 localhost:5900
