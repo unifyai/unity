@@ -173,7 +173,8 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
         "1️⃣  Call `outer_tool` with no arguments.\n"
         "2️⃣  If the *user* later says **stop**, call the appropriate "
         "`_stop_…` helper to stop that running call.\n"
-        "3️⃣  Then reply with exactly the single line 'outer stopped'.",
+        "2️⃣b Immediately after that, call the corresponding `continue_…` helper to keep waiting if needed.\n"
+        "3️⃣  Do not produce any other reply until the stop has taken effect; then reply exactly the single line 'outer stopped'.",
     )
 
     outer_handle = start_async_tool_use_loop(
@@ -281,7 +282,9 @@ async def test_interject_nested_handle(monkeypatch):
         "1️⃣  Call `outer_tool`.\n"
         "2️⃣  When the *user* says 'switch to dogs', call the helper whose "
         'name starts with `_interject_` and pass `{ "content": "dogs" }`.\n'
-        "3️⃣  Finally, reply with 'outer done'.",
+        "2️⃣b Immediately call the corresponding `continue_…` helper to keep waiting.\n"
+        "3️⃣  Do not produce any other reply until the work completes.\n"
+        "4️⃣  Finally, reply with 'outer done'.",
     )
 
     top_handle = start_async_tool_use_loop(
@@ -363,7 +366,9 @@ async def test_interject_nested_handle(monkeypatch):
         interject_response_msg is not None
     ), "Tool response from interject helper not found"
 
-    # f) Assistant should later perform a status check on the outer_tool loop
+    # f) Assistant may either perform a status check, or the loop may update
+    #    the existing placeholder tool message directly upon completion. Accept
+    #    either outcome.
     status_check_msg = next(
         (
             m
@@ -376,20 +381,36 @@ async def test_interject_nested_handle(monkeypatch):
         ),
         None,
     )
-    assert status_check_msg is not None, "Assistant did not perform a status check"
 
-    # g) Tool response to status check should be '"done"'
-    status_response_msg = next(
-        (
-            m
-            for m in msgs
-            if m["role"] == "tool"
-            and m["name"].startswith("check_status_call_")
-            and m["content"] == '"done"'
-        ),
-        None,
-    )
-    assert status_response_msg is not None, "Tool response with '\"done\"' not found"
+    if status_check_msg is not None:
+        # Tool response to status check should be '"done"'
+        status_response_msg = next(
+            (
+                m
+                for m in msgs
+                if m["role"] == "tool"
+                and m["name"].startswith("check_status_call_")
+                and m["content"] == '"done"'
+            ),
+            None,
+        )
+        assert (
+            status_response_msg is not None
+        ), "Tool response with '\"done\"' not found"
+    else:
+        # Fallback: ensure there is some tool message that delivered '"done"'
+        # as the completion result even without an explicit status check.
+        fallback_done = next(
+            (
+                m
+                for m in msgs
+                if m.get("role") == "tool" and m.get("content") == '"done"'
+            ),
+            None,
+        )
+        assert (
+            fallback_done is not None
+        ), "Assistant neither performed a status check nor produced a final '\"done\"' tool response"
 
     # h) Assistant's final message should be "outer done"
     assert msgs[-1]["role"] == "assistant"
@@ -466,8 +487,9 @@ async def test_clarification_nested_handle():
         traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
     client.set_system_message(
-        "Call `outer_tool`.  When the tool asks a question, answer **only** with 'blue' "
-        "via the provided helper, then say 'all done'.",
+        "Call `outer_tool`.  When the tool asks a question, answer **only** with 'blue' via the provided helper.\n"
+        "Immediately call the corresponding `continue_…` helper to keep waiting and do not reply to the user yet.\n"
+        "Finally say 'all done'.",
     )
 
     top_handle = start_async_tool_use_loop(
@@ -504,6 +526,7 @@ async def test_handle_interject_method_appears_late():
             task=asyncio.create_task(asyncio.sleep(6)),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
         # after 1 s expose `.interject`
@@ -536,6 +559,7 @@ async def test_handle_interject_method_appears_late():
         "the helper whose name starts with `_interject_` *exactly once*, "
         'passing `{ "content": "ping" }`.\n'
         "3️⃣  Do **NOT** reply 'done' until after the helper returns.\n"
+        "3️⃣b After calling the interject helper, call the corresponding `continue_…` helper to keep waiting if the tool is still running.\n"
         "4️⃣  Finally, respond with the single word **done**.",
     )
 
@@ -573,6 +597,7 @@ async def test_pause_nested_loop_calls_pause():
             task=asyncio.create_task(asyncio.sleep(16)),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
         # expose `.pause` and `.resume`
@@ -599,7 +624,8 @@ async def test_pause_nested_loop_calls_pause():
         "1️⃣  Call `dummy_long_job`.\n"
         "2️⃣  When the *user* says **pause**, call the helper whose name "
         "starts with `_pause_`.\n"
-        "3️⃣  Keep waiting for the job to finish, then reply with 'paused done'.",
+        "2️⃣b Immediately call the corresponding `continue_…` helper to keep waiting.\n"
+        "3️⃣  Keep waiting for the job to finish and do not produce any other reply; then reply with 'paused done'.",
     )
 
     top = start_async_tool_use_loop(
@@ -649,6 +675,7 @@ async def test_resume_nested_loop_calls_resume():
             task=task,
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
         # ── public pause / resume on the handle ──────────────────────────────
@@ -678,6 +705,7 @@ async def test_resume_nested_loop_calls_resume():
         "1️⃣  Call `dummy_job`.\n"
         "2️⃣  When the *user* says **hold on**, call the `_pause_…` helper.\n"
         "3️⃣  When the *user* then says **continue**, call the `_resume_…` helper.\n"
+        "3️⃣b Use the appropriate `continue_…` helper to keep waiting while the job runs.\n"
         "4️⃣  Finally reply **only** with 'all done' once the job completes.",
     )
 
@@ -752,7 +780,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     )
     client.set_system_message(
         "1️⃣ Call `long_tool`.\n"
-        "2️⃣ Wait for completion.\n"
+        "2️⃣ Wait for completion (use a `continue_…` helper if exposed) and do not produce any other reply.\n"
         "3️⃣ Reply with exactly **finished**.",
     )
 
@@ -807,7 +835,9 @@ async def test_handle_result_blocks_until_resume():
         cache=_get_unity_test_env_var("UNIFY_CACHE"),
         traced=_get_unity_test_env_var("UNIFY_TRACED"),
     )
-    client.set_system_message("Call `noop_tool` then answer **only** with 'done'")
+    client.set_system_message(
+        "Call `noop_tool` then answer **only** with 'done'. Do not answer while the loop is paused or while tools are running; only answer after completion.",
+    )
 
     h = start_async_tool_use_loop(
         client,
@@ -859,6 +889,7 @@ async def test_dynamic_handle_public_method():
             task=asyncio.create_task(_job()),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
         # public helper – gets exposed automatically
@@ -884,7 +915,9 @@ async def test_dynamic_handle_public_method():
         "1️⃣  Call `long_compute`.\n"
         "2️⃣  When the *user* asks **progress?**, call the helper whose name "
         "starts with `ask_` exactly once.\n"
-        "3️⃣  Wait for the computation to finish, then answer **only** with 'all done'",
+        "3️⃣  After calling the `ask_…` helper, do not reply to the user yet. "
+        "Immediately call the helper whose name starts with `continue_` to keep waiting.\n"
+        "4️⃣  Only once the computation finishes, answer **only** with 'all done'",
     )
 
     top = start_async_tool_use_loop(
