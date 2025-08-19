@@ -132,8 +132,7 @@ class CommsAgent:
 
         self.current_llm_run = None
 
-        # switches to "True" when in a call
-        self.call_mode = False
+        # call config
         self.call_purpose = "general"
         self.task_context = task_context
         self.user_turn_end_callback = user_turn_end_callback
@@ -295,6 +294,11 @@ class CommsAgent:
         while True:
             try:
                 new_event = await asyncio.wait_for(self.events_queue.get(), 1)
+                call_mode = new_event["event_name"] not in [
+                    "WhatsappMessageRecievedEvent",
+                    "SMSMessageRecievedEvent",
+                    "EmailRecievedEvent",
+                ]
                 # print("comm agent got", new_event)
                 # continue
                 if new_event["payload"]["transient"]:
@@ -336,7 +340,6 @@ class CommsAgent:
                                 self.voice_id if self.voice_id else "None",
                                 self.meet_id if self.meet_id else "None",
                             )
-                        self.call_mode = True
                         ONGOING_CALL = True
 
                         # Join meet conference programatically
@@ -406,11 +409,11 @@ class CommsAgent:
                             ]
                     else:
                         self.inflight_events = self.pending_events.copy()
-
                     self.current_llm_run = asyncio.create_task(
                         self.run(
                             add_filler=new_event["event_name"]
                             != "PhoneCallStartedEvent",
+                            call_mode=call_mode,
                         ),
                     )
                     self.current_llm_run.add_done_callback(self.on_run_end)
@@ -422,7 +425,9 @@ class CommsAgent:
                     continue
 
                 self.inflight_events = self.pending_events.copy()
-                self.current_llm_run = asyncio.create_task(self.run())
+                self.current_llm_run = asyncio.create_task(
+                    self.run(call_mode=call_mode)
+                )
                 self.current_llm_run.add_done_callback(self.on_run_end)
 
                 self.pending_events.clear()
@@ -570,7 +575,6 @@ class CommsAgent:
             t: AssistantOutput | CallAssistantOutput | None = t.result()
             # everything is fine, just run the actions and add stuff to past events
             if t:
-                # if self.call_mode:
                 self.past_events.extend(self.inflight_events.copy())
                 self.inflight_events.clear()
 
@@ -590,11 +594,11 @@ class CommsAgent:
         finally:
             ...
 
-    async def run(self, add_filler: bool = False):
+    async def run(self, add_filler: bool = False, call_mode: bool = False):
         if self.past_events is None:
             self.past_events = await self.get_bus_events()
 
-        if self.call_mode:
+        if call_mode:
             if self.meet_id:
                 await self.meet_joined.wait()
             return await self.phone_call_llm_run(add_filler=add_filler)
@@ -1001,7 +1005,6 @@ class CommsAgent:
             try:
                 terminate_process(self.call_proc)
                 self.call_proc = None
-                self.call_mode = False
                 global ONGOING_CALL
                 ONGOING_CALL = False
                 print(f"Call process terminated")
