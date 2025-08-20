@@ -110,7 +110,7 @@ def test_search_tasks_all_columns_default_derivation():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_tasks_sum_of_cosine_ranking():
+def test_search_tasks_mean_of_cosine_ranking():
     ts = TaskScheduler()
 
     # A: matches both references

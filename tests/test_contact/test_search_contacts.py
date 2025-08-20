@@ -101,7 +101,7 @@ def test_search_contacts_all_columns_default_derivation():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_contacts_sum_of_cosine_ranking():
+def test_search_contacts_mean_of_cosine_ranking():
     cm = ContactManager()
 
     # Ensure custom column exists

@@ -303,7 +303,7 @@ def test_knowledge_search_multi_join_all_columns_default_derivation():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_multi_join_sum_of_cosine_ranking():
+def test_knowledge_search_multi_join_mean_of_cosine_ranking():
     km = KnowledgeManager()
 
     authors = "MJ_SumCos_Authors"
