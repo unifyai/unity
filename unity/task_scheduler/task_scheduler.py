@@ -352,16 +352,9 @@ class TaskScheduler(BaseTaskScheduler):
             ),
         )
 
-        # Prepare effective tool_policy – hard-code first step to use search_tasks
+        # Prepare effective tool_policy – central helper determines requirement
         if tool_policy == "default":
-            effective_tool_policy = lambda i, current_tools: (
-                (
-                    "required",
-                    {"search_tasks": current_tools["search_tasks"]},
-                )
-                if i < 1 and "search_tasks" in current_tools
-                else ("auto", current_tools)
-            )
+            effective_tool_policy = self._default_ask_tool_policy
         else:
             # pass through callable or None
             effective_tool_policy = tool_policy
@@ -472,13 +465,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Prepare effective tool_policy
         if tool_policy == "default":
-
-            def _default_update_policy(i: int, _tools: Dict[str, Any]):
-                if i < 1 and "ask" in _tools:
-                    return ("required", {"ask": _tools["ask"]})
-                return ("auto", _tools)
-
-            effective_tool_policy = _default_update_policy
+            effective_tool_policy = self._default_update_tool_policy
         else:
             # pass through callable or None
             effective_tool_policy = tool_policy
@@ -2250,6 +2237,30 @@ class TaskScheduler(BaseTaskScheduler):
     def _to_status(value: Union[Status, str]) -> Status:
         """Canonicalise a status-like value to the Status enum."""
         return value if isinstance(value, Status) else Status(value)
+
+    # Default tool-policy helpers (Step 11)
+    @staticmethod
+    def _default_ask_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require search_tasks on the first step; auto thereafter."""
+        if step_index < 1 and "search_tasks" in current_tools:
+            return (
+                "required",
+                {"search_tasks": current_tools["search_tasks"]},
+            )
+        return ("auto", current_tools)
+
+    @staticmethod
+    def _default_update_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require ask on the first step; auto thereafter."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
+        return ("auto", current_tools)
 
     # Centralised simple-field writer (Step 2)
     def _update_fields_if_not_active(
