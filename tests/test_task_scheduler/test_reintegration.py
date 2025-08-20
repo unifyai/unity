@@ -56,6 +56,52 @@ async def test_starting_head_promotes_next_to_scheduled_with_start_at():
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_starting_middle_detaches_and_links_neighbors():
+    ts = TaskScheduler()
+    a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
+
+    # Sanity: A is scheduled (head with start_at), B and C are queued
+    row_a = ts._filter_tasks(filter=f"task_id == {a}")[0]
+    row_b = ts._filter_tasks(filter=f"task_id == {b}")[0]
+    row_c = ts._filter_tasks(filter=f"task_id == {c}")[0]
+    assert row_a["status"] == "scheduled"
+    assert row_b["status"] == "queued"
+    assert row_c["status"] == "queued"
+    original_start = (row_a.get("schedule") or {}).get("start_at")
+    assert original_start
+
+    # Start the middle task explicitly (fast-path by id)
+    handle = await ts.execute_task(text=str(b))
+
+    # After detachment of B, A and C should be directly linked; B should have no schedule
+    row_a2 = ts._filter_tasks(filter=f"task_id == {a}")[0]
+    row_b2 = ts._filter_tasks(filter=f"task_id == {b}")[0]
+    row_c2 = ts._filter_tasks(filter=f"task_id == {c}")[0]
+
+    sa2 = row_a2.get("schedule") or {}
+    sb2 = row_b2.get("schedule")
+    sc2 = row_c2.get("schedule") or {}
+
+    # Head A remains head with same start_at and points to C
+    assert sa2.get("prev_task") is None
+    assert sa2.get("next_task") == c
+    assert sa2.get("start_at") == original_start
+    assert row_a2["status"] == "scheduled"
+
+    # Middle B is detached from the queue
+    assert sb2 is None
+
+    # Tail C now points back to A and must not carry start_at
+    assert sc2.get("prev_task") == a
+    assert "start_at" not in sc2 or not sc2.get("start_at")
+
+    # Clean up the active handle to avoid leaking across tests
+    handle.stop()
+    await handle.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_reinstate_head_restores_head_and_start_at():
     ts = TaskScheduler()
     head_id, next_id = await _make_ordered_queue(ts, ["H", "N"])  # type: ignore[misc]
