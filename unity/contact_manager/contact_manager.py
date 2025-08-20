@@ -18,6 +18,8 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
     methods_to_tool_dict,
+    inject_broader_context,
+    make_request_clarification_tool,
 )
 from ..events.event_bus import EVENT_BUS, Event
 from ..events.manager_event_logging import (
@@ -710,12 +712,7 @@ class ContactManager(BaseContactManager):
         tools = dict(self._ask_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "Clarification queues not properly initialized for ask.",
-                    )
-                # 🔔 clarification requested
+            async def _on_request(q: str):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
@@ -724,14 +721,12 @@ class ContactManager(BaseContactManager):
                             "manager": "ContactManager",
                             "method": "ask",
                             "action": "clarification_request",
-                            "question": question,
+                            "question": q,
                         },
                     ),
                 )
-                await clarification_up_q.put(question)
-                answer = await clarification_down_q.get()
 
-                # 🔔 clarification answered
+            async def _on_answer(ans: str):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
@@ -740,13 +735,17 @@ class ContactManager(BaseContactManager):
                             "manager": "ContactManager",
                             "method": "ask",
                             "action": "clarification_answer",
-                            "answer": answer,
+                            "answer": ans,
                         },
                     ),
                 )
-                return answer
 
-            tools["request_clarification"] = request_clarification
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         include_activity = (
             self._rolling_summary_in_prompts
@@ -776,7 +775,7 @@ class ContactManager(BaseContactManager):
                 if i < 1 and "search_contacts" in _tools
                 else ("auto", _tools)
             ),
-            preprocess_msgs=self._inject_broader_context,
+            preprocess_msgs=inject_broader_context,
         )
 
         # wrap the raw handle so *every* public method logs an event
@@ -830,11 +829,7 @@ class ContactManager(BaseContactManager):
         tools = dict(self._update_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "Clarification queues not properly initialized for update.",
-                    )
+            async def _on_request(q: str):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
@@ -843,12 +838,12 @@ class ContactManager(BaseContactManager):
                             "manager": "ContactManager",
                             "method": "update",
                             "action": "clarification_request",
-                            "question": question,
+                            "question": q,
                         },
                     ),
                 )
-                await clarification_up_q.put(question)
-                answer = await clarification_down_q.get()
+
+            async def _on_answer(ans: str):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
@@ -857,13 +852,17 @@ class ContactManager(BaseContactManager):
                             "manager": "ContactManager",
                             "method": "update",
                             "action": "clarification_answer",
-                            "answer": answer,
+                            "answer": ans,
                         },
                     ),
                 )
-                return answer
 
-            tools["request_clarification"] = request_clarification
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         include_activity = (
             self._rolling_summary_in_prompts
@@ -893,7 +892,7 @@ class ContactManager(BaseContactManager):
                 if i < 1 and "ask" in _tools
                 else ("auto", _tools)
             ),
-            preprocess_msgs=self._inject_broader_context,
+            preprocess_msgs=inject_broader_context,
         )
 
         handle = wrap_handle_with_logging(

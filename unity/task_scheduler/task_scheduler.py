@@ -14,6 +14,7 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
     methods_to_tool_dict,
+    inject_broader_context,
 )
 from ..common.tool_outcome import ToolOutcome
 from .types.status import Status
@@ -2117,7 +2118,7 @@ class TaskScheduler(BaseTaskScheduler):
             loop_id=loop_id,
             parent_chat_context=parent_chat_context,
             log_steps=log_steps,
-            preprocess_msgs=self._inject_broader_context,
+            preprocess_msgs=inject_broader_context,
             tool_policy=tool_policy,
         )
 
