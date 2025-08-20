@@ -590,67 +590,12 @@ class TaskScheduler(BaseTaskScheduler):
                 # active).  Let the LLM ask for clarification / create a task.
                 pass  # ↴ continue with regular flow
 
-        client = self._new_llm_client("o4-mini@openai")
-
-        # ── tool definitions ────────────────────────────────────────────────
-        async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
-            """Start the task with *task_id* and bubble up its handle (passthrough)."""
-
-            # Decide execution scope (A: isolate | B: chain) for this explicit request
-            scope = await self._decide_execution_scope(
-                request_text=freeform_text,
-                parent_chat_context=parent_chat_context,
-            )
-            handle = await self._execute_task_internal(
-                task_id=task_id,
-                parent_chat_context=parent_chat_context,
-                clarification_up_q=clarification_up_q,
-                clarification_down_q=clarification_down_q,
-                activated_by=ActivatedBy.explicit,
-                execution_scope=scope,
-            )
-            # 💡 signal pass-through so the outer loop adopts this handle
-            setattr(handle, "__passthrough__", True)
-            return handle
-
-        async def request_clarification(question: str) -> str:  # type: ignore[valid-type]
-            """Bubble *question* up to the caller and await the answer."""
-            rc = self._make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
-            )
-            return await rc(question)
-
-        # Wrap update to hard-code tool_policy=None while preserving metadata
-        @functools.wraps(self.update, updated=())
-        async def _update_no_forcing(*args, **kwargs):  # type: ignore[valid-type]
-            kwargs["tool_policy"] = None
-            return await self.update(*args, **kwargs)
-
-        tools = methods_to_tool_dict(
-            self.ask,
-            _update_no_forcing,
-            request_clarification,
-            _execute_task_by_id,
-            include_class_name=False,
-        )
-
-        # ── dynamic system prompt ───────────────────────────────────────────
-        client.set_system_message(
-            build_execute_task_prompt(tools),
-        )
-
-        outer_handle = start_async_tool_use_loop(
-            client,
-            freeform_text,
-            tools,
-            loop_id=f"{self.__class__.__name__}.{self.execute_task.__name__}",
+        return self._start_execute_task_loop(
+            freeform_text=freeform_text,
             parent_chat_context=parent_chat_context,
-            log_steps=True,
-            preprocess_msgs=self._inject_broader_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
         )
-
-        return outer_handle
 
     # ------------------------------------------------------------------ #
     #  Internal helper – run existing *by-id* logic without event logging   #
@@ -782,6 +727,83 @@ class TaskScheduler(BaseTaskScheduler):
             self._primed_task = None
 
         return handle
+
+    # ------------------------------------------------------------------ #
+    #  Helper – build and start the execute_task outer tool-use loop      #
+    # ------------------------------------------------------------------ #
+    def _start_execute_task_loop(
+        self,
+        *,
+        freeform_text: str,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> SteerableToolHandle:
+        """Compose tools and prompt, then start the execute_task reasoning loop.
+
+        Mirrors the pre-refactor behaviour byte-for-byte; extracted for clarity.
+        """
+        client = self._new_llm_client("o4-mini@openai")
+
+        # ── tool definitions ────────────────────────────────────────────────
+        async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
+            """Start the task with *task_id* and bubble up its handle (passthrough)."""
+
+            # Decide execution scope (A: isolate | B: chain) for this explicit request
+            scope = await self._decide_execution_scope(
+                request_text=freeform_text,
+                parent_chat_context=parent_chat_context,
+            )
+            handle = await self._execute_task_internal(
+                task_id=task_id,
+                parent_chat_context=parent_chat_context,
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
+                activated_by=ActivatedBy.explicit,
+                execution_scope=scope,
+            )
+            # 💡 signal pass-through so the outer loop adopts this handle
+            setattr(handle, "__passthrough__", True)
+            return handle
+
+        async def request_clarification(question: str) -> str:  # type: ignore[valid-type]
+            """Bubble *question* up to the caller and await the answer."""
+            rc = self._make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+            )
+            return await rc(question)
+
+        # Wrap update to hard-code tool_policy=None while preserving metadata
+        @functools.wraps(self.update, updated=())
+        async def _update_no_forcing(*args, **kwargs):  # type: ignore[valid-type]
+            kwargs["tool_policy"] = None
+            return await self.update(*args, **kwargs)
+
+        tools = methods_to_tool_dict(
+            self.ask,
+            _update_no_forcing,
+            request_clarification,
+            _execute_task_by_id,
+            include_class_name=False,
+        )
+
+        # ── dynamic system prompt ───────────────────────────────────────────
+        client.set_system_message(
+            build_execute_task_prompt(tools),
+        )
+
+        outer_handle = start_async_tool_use_loop(
+            client,
+            freeform_text,
+            tools,
+            loop_id=f"{self.__class__.__name__}.{self.execute_task.__name__}",
+            parent_chat_context=parent_chat_context,
+            log_steps=True,
+            preprocess_msgs=self._inject_broader_context,
+        )
+
+        return outer_handle
 
     #  Per-instance helpers
 
