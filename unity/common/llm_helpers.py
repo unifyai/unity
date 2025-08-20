@@ -2249,9 +2249,12 @@ async def _async_tool_use_loop_inner(
                                             _kw[public_params[0]] = _kw.pop(alias)
                                             break
 
-                                # 5) Unless the method accepts **kwargs, drop unknown keys
-                                if not has_varkw:
-                                    _kw = {k: v for k, v in _kw.items() if k in params}
+                                # 5) Always drop unknown keys to avoid leaking stray args
+                                #    (e.g. passing 'answer' to an 'ask' wrapper that forwards
+                                #    to a stricter inner method).  Wrapper methods may accept
+                                #    **kwargs, but dynamic helper tools are defined by the
+                                #    exposed signature; extra keys should be ignored.
+                                _kw = {k: v for k, v in _kw.items() if k in params}
                             except Exception:
                                 # Best-effort normalisation – never fail the call because of sanitisation
                                 pass
