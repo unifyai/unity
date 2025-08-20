@@ -7,7 +7,7 @@ import functools
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
-from dataclasses import dataclass
+
 
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.llm_helpers import (
@@ -51,17 +51,7 @@ from ..helpers import _handle_exceptions
 # ------------------------------------------------------------------ #
 #  Typed reintegration plan                                          #
 # ------------------------------------------------------------------ #
-
-
-@dataclass
-class ReintegrationPlan:
-    task_id: int
-    instance_id: Optional[int]
-    prev_task: Optional[int]
-    next_task: Optional[int]
-    start_at: Optional[str]
-    was_head: bool
-    original_status: Optional[str]
+from .types.reintegration_plan import ReintegrationPlan
 
 
 class TaskScheduler(BaseTaskScheduler):
