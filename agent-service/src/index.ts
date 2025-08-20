@@ -161,8 +161,11 @@ const browserOptions: BrowserOptions = {
     },
 };
 
-startBrowserAgent({ browser: browserOptions })
-  .then(agent => {
+startBrowserAgent({
+  url: "http://localhost:6080/vnc.html?resize=scale&autoconnect=1",
+  browser: browserOptions,
+  prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the terminal, apps and browser within the virtual desktop.",
+}).then(agent => {
     browserAgent = agent;
     console.log("✅ BrowserAgent started successfully.");
     app.listen(port, () => {
