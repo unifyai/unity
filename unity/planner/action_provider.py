@@ -37,7 +37,7 @@ class ActionProvider:
                 "controller_mode": controller_mode,
             },
             "magnitude": {
-                "headless": True,
+                "headless": headless,
             },
         }
 
