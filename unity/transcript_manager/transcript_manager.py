@@ -4,7 +4,7 @@ import os
 import json
 import asyncio
 import functools
-from typing import List, Dict, Optional, Union, Any
+from typing import List, Dict, Optional, Union, Any, Callable, Literal
 
 import unify
 import requests
@@ -154,6 +154,11 @@ class TranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        tool_policy: Union[
+            Literal["default"],
+            Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
+            None,
+        ] = "default",
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
@@ -226,6 +231,12 @@ class TranscriptManager(BaseTranscriptManager):
             ),
         )
 
+        # Decide effective tool policy (default requires search_messages first)
+        if tool_policy == "default":
+            effective_tool_policy = self._default_ask_tool_policy
+        else:
+            effective_tool_policy = tool_policy
+
         # ── 2.  Launch the interactive tool-use loop ───────────────────────
         handle = start_async_tool_use_loop(
             client,
@@ -234,14 +245,7 @@ class TranscriptManager(BaseTranscriptManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
             preprocess_msgs=inject_broader_context,
-            tool_policy=lambda i, _tools: (
-                (
-                    "required",
-                    {"search_messages": _tools["search_messages"]},
-                )
-                if i < 1 and "search_messages" in _tools
-                else ("auto", _tools)
-            ),
+            tool_policy=effective_tool_policy,
         )
 
         # ── 4.  Optional reasoning exposure  ───────────────────────────────
@@ -255,6 +259,19 @@ class TranscriptManager(BaseTranscriptManager):
             handle.result = wrapped_result  # type: ignore
 
         return handle
+
+    # ------------------------------------------------------------------ #
+    #  Default tool-policy helper                                        #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _default_ask_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require search_messages on the first step; auto thereafter."""
+        if step_index < 1 and "search_messages" in current_tools:
+            return ("required", {"search_messages": current_tools["search_messages"]})
+        return ("auto", current_tools)
 
     async def summarize(self, *args, **kwargs):
         """Deprecated: summarize functionality removed."""
