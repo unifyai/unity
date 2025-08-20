@@ -58,7 +58,11 @@ from ._queue_utils import (
     sched_prev as _q_prev,
     sched_next as _q_next,
     sync_adjacent_links as _q_sync_adjacent_links,
-    attach_with_links as _q_attach_with_links,
+)
+from ._queue_ops import (
+    get_task_queue as _ops_get_task_queue,
+    detach_from_queue_for_activation as _ops_detach_for_activation,
+    attach_with_links as _ops_attach_with_links,
 )
 
 
@@ -1390,147 +1394,11 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         execution_scope: Literal["isolate", "chain"],
     ) -> None:
-        """
-        Detach the task from the runnable queue in preparation for activation.
-
-        In 'isolate' mode the task is fully detached and the former neighbour
-        pointers are reconnected. In 'chain' mode the task becomes the head of
-        its current chain, preserving start_at on the head only.
-        """
-        candidate_rows = self._filter_tasks(
-            filter=(
-                f"task_id == {task_id} and status not in "
-                "('completed','cancelled','failed','active')"
-            ),
+        _ops_detach_for_activation(
+            self,
+            task_id=task_id,
+            execution_scope=execution_scope,
         )
-        if not candidate_rows:
-            raise ValueError(f"No runnable task found with id={task_id}")
-        task_row = sorted(
-            candidate_rows,
-            key=lambda r: r.get("instance_id", 0),
-        )[0]
-
-        sched = task_row.get("schedule") or {}
-        prev_tid = self._sched_prev(sched)
-        next_tid = self._sched_next(sched)
-        start_at = sched.get("start_at") if isinstance(sched, dict) else None
-
-        def _get_log_obj(tid: int) -> unify.Log:
-            logs = self._get_logs_by_task_ids(task_ids=tid, return_ids_only=False)
-            assert len(logs) == 1, "Task IDs should be unique"
-            return logs[0]  # type: ignore[return-value]
-
-        # Record reintegration plan only for isolate scope
-        if execution_scope == "isolate":
-            self._reintegration_plan = ReintegrationPlan(
-                task_id=task_id,
-                instance_id=task_row.get("instance_id"),
-                prev_task=prev_tid,
-                next_task=next_tid,
-                start_at=start_at,
-                was_head=prev_tid is None,
-                original_status=task_row.get("status"),
-            )
-
-        # Disconnect previous neighbour's next pointer
-        if prev_tid is not None:
-            prev_log = _get_log_obj(prev_tid)
-            prev_sched = {
-                **((getattr(prev_log, "entries", {}) or {}).get("schedule") or {}),
-            }
-            if prev_sched.get("next_task") == task_id:
-                prev_sched["next_task"] = None
-                unify.update_logs(
-                    logs=prev_log.id if hasattr(prev_log, "id") else prev_log,
-                    context=self._ctx,
-                    entries={"schedule": prev_sched},
-                    overwrite=True,
-                )
-
-        # Apply branch-specific rewiring
-        if sched is not None:
-            if execution_scope == "isolate":
-                # Reconnect next backwards and transfer start_at to new head if needed
-                if next_tid is not None:
-                    next_log = _get_log_obj(next_tid)
-                    next_sched = {
-                        **(
-                            (getattr(next_log, "entries", {}) or {}).get("schedule")
-                            or {}
-                        ),
-                    }
-                    if prev_tid is None:
-                        next_sched["prev_task"] = None
-                        if start_at is not None:
-                            next_sched["start_at"] = start_at
-                    else:
-                        next_sched["prev_task"] = prev_tid
-                        next_sched.pop("start_at", None)
-                        # also set prev.next_task → next
-                        if prev_tid is not None:
-                            prev_log = _get_log_obj(prev_tid)
-                            prev_sched = {
-                                **(
-                                    (getattr(prev_log, "entries", {}) or {}).get(
-                                        "schedule",
-                                    )
-                                    or {}
-                                ),
-                            }
-                            prev_sched["next_task"] = next_tid
-                            unify.update_logs(
-                                logs=(
-                                    prev_log.id if hasattr(prev_log, "id") else prev_log
-                                ),
-                                context=self._ctx,
-                                entries={"schedule": prev_sched},
-                                overwrite=True,
-                            )
-                    unify.update_logs(
-                        logs=next_log.id if hasattr(next_log, "id") else next_log,
-                        context=self._ctx,
-                        entries={"schedule": next_sched},
-                        overwrite=True,
-                    )
-
-                # Finally, detach current task completely
-                cur_log = _get_log_obj(task_id)
-                if (getattr(cur_log, "entries", {}) or {}).get("schedule") is not None:
-                    unify.update_logs(
-                        logs=cur_log.id if hasattr(cur_log, "id") else cur_log,
-                        context=self._ctx,
-                        entries={"schedule": None},
-                        overwrite=True,
-                    )
-            else:
-                # Keep chain behind current task
-                cur_log = _get_log_obj(task_id)
-                new_sched: Dict[str, Any] = {"prev_task": None, "next_task": next_tid}
-                if start_at is not None:
-                    new_sched["start_at"] = start_at
-                unify.update_logs(
-                    logs=cur_log.id if hasattr(cur_log, "id") else cur_log,
-                    context=self._ctx,
-                    entries={"schedule": new_sched},
-                    overwrite=True,
-                )
-
-                if next_tid is not None:
-                    next_log = _get_log_obj(next_tid)
-                    next_sched = {
-                        **(
-                            (getattr(next_log, "entries", {}) or {}).get("schedule")
-                            or {}
-                        ),
-                    }
-                    next_sched["prev_task"] = task_id
-                    next_sched.pop("start_at", None)
-                    unify.update_logs(
-                        logs=next_log.id if hasattr(next_log, "id") else next_log,
-                        context=self._ctx,
-                        entries={"schedule": next_sched},
-                        overwrite=True,
-                    )
 
     def _attach_with_links(
         self,
@@ -1541,8 +1409,7 @@ class TaskScheduler(BaseTaskScheduler):
         head_start_at: Optional[str],
         err_prefix: str,
     ) -> None:
-        """Delegate to queue-utils to attach with symmetric neighbour updates."""
-        _q_attach_with_links(
+        _ops_attach_with_links(
             self,
             task_id=task_id,
             prev_task=prev_task,
@@ -1593,79 +1460,7 @@ class TaskScheduler(BaseTaskScheduler):
         -----
         Only rows actually traversed are loaded; the full table is not materialised.
         """
-
-        # ----------------  helpers  ---------------- #
-        def _get_task_by_task_id(tid: int) -> Optional[dict]:
-            """Fetch exactly one task row by id or return None."""
-            rows = self._filter_tasks(filter=f"task_id == {tid}", limit=1)
-            return rows[0] if rows else None
-
-        def _choose_start_node(tid: Optional[int]) -> Optional[dict]:
-            """Select the initial node to anchor traversal.
-
-            Preference order:
-            1) Explicit tid when provided
-            2) Primed task (when no tid provided)
-            3) Derived head (unique runnable with no prev_task)
-            """
-            if tid is not None:
-                row = _get_task_by_task_id(tid)
-                if row is not None:
-                    return row
-            else:
-                if self._primed_task:
-                    return self._primed_task
-
-            head_candidates = self._filter_tasks(filter=self._HEAD_FILTER, limit=2)
-            if not head_candidates:
-                return None
-            assert (
-                len(head_candidates) == 1
-            ), f"Multiple heads detected: {head_candidates}"
-            return head_candidates[0]
-
-        def _walk_to_head(row: dict) -> dict:
-            """Walk backwards via prev_task until the head node is reached."""
-            cur = row
-            while True:
-                prev_id = self._sched_prev(cur.get("schedule"))
-                if prev_id is None:
-                    break
-                prev_row = _get_task_by_task_id(prev_id)
-                if prev_row is None:
-                    break  # broken link – treat current as head
-                cur = prev_row
-            return cur
-
-        def _walk_forward(head_row: dict) -> List[Task]:
-            """Walk forwards from head collecting non-terminal tasks as Task models."""
-            ordered: List[Task] = []
-            cur = head_row
-            while cur:
-                if self._to_status(cur.get("status")) not in self._TERMINAL_STATUSES:
-                    ordered.append(Task(**cur))
-
-                nxt_id = self._sched_next(cur.get("schedule"))
-                if nxt_id is None:
-                    break
-                cur = _get_task_by_task_id(nxt_id)
-                if cur is None:
-                    break  # broken link
-            return ordered
-
-        # ----------------  choose start → handle singletons ---------------- #
-        execute_task = _choose_start_node(task_id)
-        if execute_task is None:
-            return []
-
-        if execute_task.get("schedule") is None:
-            # Task exists but has no schedule pointers; therefore the
-            # queue only has one item (the start task).
-            return [Task(**execute_task)]
-
-        # ----------------  derive head and collect ordered list  ---------------- #
-        head_row = _walk_to_head(execute_task)
-        return _walk_forward(head_row)
+        return _ops_get_task_queue(self, task_id=task_id)
 
     def _update_task_queue(
         self,
