@@ -109,6 +109,8 @@ class TaskScheduler(BaseTaskScheduler):
                 self._cancel_tasks,
                 # Queue manipulation
                 self._update_task_queue,
+                # Reintegration
+                self._reinstate_task_to_previous_queue,
                 # Attribute mutations
                 self._update_task_name,
                 self._update_task_description,
@@ -195,6 +197,24 @@ class TaskScheduler(BaseTaskScheduler):
             self._primed_task: Optional[Dict[str, Any]] = None
 
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+
+        # Stores a minimal corrective plan that allows us to restore the
+        # previously queued/scheduled position of the most recently activated
+        # task (when it was started in "isolate" mode).  This enables a
+        # surgical reintegration after a user cancels the task and asks to
+        # "do it as originally scheduled" without reverting unrelated changes.
+        #
+        # Shape:
+        # {
+        #   'task_id': int,
+        #   'instance_id': int,
+        #   'prev_task': int | None,
+        #   'next_task': int | None,
+        #   'start_at': str | None,
+        #   'was_head': bool,
+        #   'original_status': str
+        # }
+        self._reintegration_plan: Optional[Dict[str, Any]] = None
 
     # Public #
     # -------#
@@ -735,6 +755,20 @@ class TaskScheduler(BaseTaskScheduler):
             logs = self._get_logs_by_task_ids(task_ids=tid, return_ids_only=False)
             assert len(logs) == 1, "Task IDs should be unique"
             return logs[0]  # type: ignore[return-value]
+
+        # Before changing any linkage, record a minimal reintegration plan so we
+        # can restore this task to its prior queue position later if the user
+        # cancels and requests to revert to the original schedule.
+        if execution_scope == "isolate":
+            self._reintegration_plan = {
+                "task_id": task_id,
+                "instance_id": task_row.get("instance_id"),
+                "prev_task": prev_tid,
+                "next_task": next_tid,
+                "start_at": start_at,
+                "was_head": prev_tid is None,
+                "original_status": task_row.get("status"),
+            }
 
         # Disconnect the preceding task from this one (shared behaviour)
         if prev_tid is not None:
@@ -1851,7 +1885,10 @@ class TaskScheduler(BaseTaskScheduler):
         if isinstance(new_trigger, dict):
             new_trigger = Trigger(**new_trigger)
 
-        entries: Dict[str, Any] = {"trigger": new_trigger}
+        # Ensure JSON-serialisable payload (pydantic → dict)
+        entries: Dict[str, Any] = {
+            "trigger": new_trigger.model_dump() if new_trigger is not None else None,
+        }
 
         # ── status transitions ───────────────────────────────────────────
         cur_status = Status(current["status"])
@@ -2188,6 +2225,236 @@ class TaskScheduler(BaseTaskScheduler):
             entries={"priority": new_priority},
             overwrite=True,
         )
+
+    # Reinstate a previously isolated-and-activated task back to its prior queue position
+
+    def _reinstate_task_to_previous_queue(
+        self,
+        *,
+        task_id: Optional[int] = None,
+    ) -> ToolOutcome:
+        """
+        Restore the most recently activated task (started in "isolate" scope)
+        back to the exact queue/schedule position it occupied before activation.
+
+        This operation is surgical: it modifies only the affected task and its
+        immediate neighbours (prev/next). It does not revert unrelated changes
+        to other tasks that may have happened in the meantime.
+
+        Parameters
+        ----------
+        task_id : int | None, default ``None``
+            Optionally enforce that the stored reintegration plan matches this
+            id. When ``None``, the stored plan is applied as-is.
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome payload confirming the reinstatement.
+
+        Raises
+        ------
+        ValueError
+            If no reintegration plan is available or the provided task_id
+            does not match the stored plan.
+        """
+        plan = getattr(self, "_reintegration_plan", None)
+        if not plan:
+            raise ValueError("No reintegration plan available.")
+        if task_id is not None and plan["task_id"] != task_id:
+            raise ValueError(
+                f"Reintegration plan exists for task_id={plan['task_id']}, not {task_id}",
+            )
+
+        tid = plan["task_id"]
+        prev_tid = plan["prev_task"]
+        next_tid = plan["next_task"]
+        was_head = bool(plan["was_head"])  # original position
+        original_start_at = plan.get("start_at")
+        original_status = plan.get("original_status")
+
+        # Fetch current affected logs (ids and entries)
+        def _get_log_obj(tid_int: int) -> Optional[unify.Log]:
+            rows = self._get_logs_by_task_ids(task_ids=tid_int, return_ids_only=False)
+            if not rows:
+                return None
+            assert len(rows) == 1, "Task IDs should be unique"
+            return rows[0]  # type: ignore[return-value]
+
+        cur_log = _get_log_obj(tid)
+        if cur_log is None:
+            raise ValueError(f"Task id {tid} no longer exists")
+        # Load current row dict for checks
+        cur_rows = self._filter_tasks(filter=f"task_id == {tid}", limit=1)
+        cur_row = cur_rows[0] if cur_rows else {}
+
+        # Guard: must not be active at this moment
+        if str(cur_row.get("status")) == Status.active.value:
+            raise RuntimeError("Cannot reinstate while the task is active.")
+
+        # Guard: if a trigger exists now, schedule restoration would violate exclusivity
+        if cur_row.get("trigger") is not None:
+            raise ValueError(
+                "Task currently has a trigger; remove the trigger before restoring its schedule/queue position.",
+            )
+
+        # Idempotence: if there is already a schedule present, treat as a no-op
+        if cur_row.get("schedule") is not None:
+            self._reintegration_plan = None
+            return {
+                "outcome": "no-op: task already has a schedule",
+                "details": {"task_id": tid},
+            }
+
+        # Determine viable neighbours (drift-aware)
+        def _is_viable(neighbour_tid: Optional[int]) -> bool:
+            if neighbour_tid is None:
+                return False
+            rows = self._filter_tasks(filter=f"task_id == {neighbour_tid}", limit=1)
+            if not rows:
+                return False
+            return rows[0].get("status") not in self._TERMINAL_STATUSES
+
+        # Current queue view (head, tail) for fallbacks
+        queue_list = self._get_task_queue()
+        queue_ids = [t.task_id for t in queue_list]
+        current_head_id = queue_ids[0] if queue_ids else None
+        current_tail_id = queue_ids[-1] if queue_ids else None
+
+        # Compute final neighbours with graceful fallback
+        final_prev: Optional[int]
+        final_next: Optional[int]
+        if was_head:
+            final_prev = None
+            if _is_viable(next_tid):
+                final_next = next_tid
+            else:
+                # Place as new head; chain to current head if present
+                final_next = (
+                    current_head_id
+                    if (current_head_id is not None and current_head_id != tid)
+                    else None
+                )
+        else:
+            final_prev = (
+                prev_tid
+                if _is_viable(prev_tid)
+                else (
+                    current_tail_id
+                    if (current_tail_id is not None and current_tail_id != tid)
+                    else None
+                )
+            )
+            if _is_viable(next_tid) and next_tid != final_prev:
+                final_next = next_tid
+            else:
+                final_next = None
+
+        if final_prev == tid:
+            final_prev = None
+        if final_next == tid:
+            final_next = None
+        if (
+            final_prev is not None
+            and final_next is not None
+            and final_prev == final_next
+        ):
+            # Prefer keeping prev and dropping next to avoid self-loop via neighbour
+            final_next = None
+
+        # Build payload for current task
+        cur_sched: Dict[str, Any] = {
+            "prev_task": final_prev,
+            "next_task": final_next,
+        }
+        if was_head and original_start_at is not None:
+            cur_sched["start_at"] = original_start_at
+
+        # Decide restored status (respect primed invariants)
+        desired_status = (
+            Status(str(original_status))
+            if original_status is not None
+            else Status.queued
+        )
+        if (
+            desired_status == Status.primed
+            and self._primed_task is not None
+            and self._primed_task.get("task_id") != tid
+        ):
+            # Another primed exists – do not violate single-primed invariant
+            desired_status = Status.queued
+
+        # Invariant check for schedule/state combo before writing
+        self._validate_scheduled_invariants(
+            status=desired_status,
+            schedule=cur_sched,
+            err_prefix=f"While reinstating task {tid}:",
+        )
+
+        # Update neighbours first to maintain linkage symmetry
+        if final_prev is not None:
+            prev_log = _get_log_obj(final_prev)
+            if prev_log is not None:
+                prev_sched = {
+                    **((getattr(prev_log, "entries", {}) or {}).get("schedule") or {}),
+                }
+                prev_sched["next_task"] = tid
+                # A non-head neighbour must not carry start_at due to being non-head
+                # (but we do not forcibly strip here; only the next neighbour is stripped below when needed)
+                unify.update_logs(
+                    logs=prev_log.id if hasattr(prev_log, "id") else prev_log,
+                    context=self._ctx,
+                    entries={"schedule": prev_sched},
+                    overwrite=True,
+                )
+
+        if final_next is not None:
+            next_log = _get_log_obj(final_next)
+            if next_log is not None:
+                next_sched = {
+                    **((getattr(next_log, "entries", {}) or {}).get("schedule") or {}),
+                }
+                next_sched["prev_task"] = tid
+                # If the original task was the head and carried a start_at,
+                # we had transferred that timestamp to the next task upon activation.
+                # Move it back by stripping start_at from the next task now.
+                if was_head and original_start_at is not None:
+                    next_sched.pop("start_at", None)
+                unify.update_logs(
+                    logs=next_log.id if hasattr(next_log, "id") else next_log,
+                    context=self._ctx,
+                    entries={"schedule": next_sched},
+                    overwrite=True,
+                )
+
+        # Finally, restore the current task's schedule
+        unify.update_logs(
+            logs=cur_log.id if hasattr(cur_log, "id") else cur_log,
+            context=self._ctx,
+            entries={"schedule": cur_sched},
+            overwrite=True,
+        )
+
+        # Restore the prior non-active status of the task instance
+        if desired_status != Status.active:
+            # Use per-instance update to avoid touching other instances
+            self._update_task_status_instance(
+                task_id=tid,
+                instance_id=plan.get("instance_id"),
+                new_status=str(desired_status),
+            )
+
+        # Maintain primed cache if needed
+        if desired_status == Status.primed:
+            self._refresh_primed_cache(tid)
+
+        # Clear plan – it has been applied
+        self._reintegration_plan = None
+
+        return {
+            "outcome": "task reinstated to previous queue position",
+            "details": {"task_id": tid},
+        }
 
     # Search Across Tasks
 
