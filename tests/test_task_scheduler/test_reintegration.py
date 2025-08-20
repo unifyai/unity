@@ -95,9 +95,37 @@ async def test_starting_middle_detaches_and_links_neighbors():
     assert sc2.get("prev_task") == a
     assert "start_at" not in sc2 or not sc2.get("start_at")
 
-    # Clean up the active handle to avoid leaking across tests
-    handle.stop()
+    # Stop the active task and reinstate it back into its original queue position
+    handle.stop(
+        "Actually this is taking longer than I expected, let's complete this task as per our original schedule instead",
+    )
     await handle.result()
+
+    _ = ts._reinstate_task_to_previous_queue(task_id=b)
+
+    # After reinstatement, restore A→B→C with head A carrying start_at and scheduled
+    row_a3 = ts._filter_tasks(filter=f"task_id == {a}")[0]
+    row_b3 = ts._filter_tasks(filter=f"task_id == {b}")[0]
+    row_c3 = ts._filter_tasks(filter=f"task_id == {c}")[0]
+
+    sa3 = row_a3.get("schedule") or {}
+    sb3 = row_b3.get("schedule") or {}
+    sc3 = row_c3.get("schedule") or {}
+
+    # Head A remains head with original start_at and points to B
+    assert sa3.get("prev_task") is None
+    assert sa3.get("next_task") == b
+    assert sa3.get("start_at") == original_start
+    assert row_a3["status"] == "scheduled"
+
+    # Middle B is back between A and C, with no start_at and queued status
+    assert sb3.get("prev_task") == a and sb3.get("next_task") == c
+    assert "start_at" not in sb3 or not sb3.get("start_at")
+    assert row_b3["status"] == "queued"
+
+    # Tail C points back to B and carries no start_at
+    assert sc3.get("prev_task") == b
+    assert "start_at" not in sc3 or not sc3.get("start_at")
 
 
 @pytest.mark.asyncio
