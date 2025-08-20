@@ -1086,6 +1086,26 @@ class TaskScheduler(BaseTaskScheduler):
         ------
         ValueError
             On invalid field combinations or uniqueness violations.
+
+        Notes
+        -----
+        Schedule/Queue invariants the model MUST respect when supplying arguments:
+
+        • If you provide a ``schedule`` with ``prev_task is None`` and a non-empty
+          ``start_at`` timestamp (i.e., the queue head with a start time), the
+          task's ``status`` MUST be ``scheduled``. Do not set it to ``queued``.
+
+        • Non-head tasks (``prev_task`` not ``None``) MUST NOT define ``start_at``.
+          The queue-level timestamp lives on the head node only.
+
+        • ``primed`` tasks must be at the head (``prev_task is None``). Do not
+          set ``primed`` on tasks that sit behind another task.
+
+        • A task in ``scheduled`` state must have either a chain position
+          (``prev_task`` is set) or a ``start_at`` timestamp.
+
+        To avoid mistakes, prefer omitting ``status`` and let the scheduler infer
+        the correct lifecycle value from the ``schedule`` you supply.
         """
         # ----------------  helper: iso-8601 → datetime  ---------------- #
         from datetime import datetime, timezone
