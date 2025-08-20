@@ -40,7 +40,18 @@ def get_task_queue(
                 return row
         else:
             if scheduler._primed_task:
-                return scheduler._primed_task
+                # Validate that the cached primed task still exists in storage.
+                primed_id = scheduler._primed_task.get("task_id")
+                primed_row = (
+                    _get_task_by_task_id(primed_id) if primed_id is not None else None
+                )
+                if primed_row is not None:
+                    return primed_row
+                # Stale cache – clear it so we fall back to detecting the head from storage.
+                try:
+                    scheduler._refresh_primed_cache()
+                except Exception:
+                    scheduler._primed_task = None
 
         head_candidates = scheduler._filter_tasks(
             filter=scheduler._HEAD_FILTER,

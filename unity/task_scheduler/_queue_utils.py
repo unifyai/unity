@@ -104,10 +104,20 @@ def attach_with_links(
     """
 
     def _get_log_obj(tid_int: int) -> Optional[unify.Log]:
-        rows = scheduler._get_logs_by_task_ids(
-            task_ids=tid_int,
-            return_ids_only=False,
-        )
+        """
+        Best-effort fetch of a neighbour's log object.
+
+        Returns None when the referenced task no longer exists, instead of
+        raising, so callers can gracefully skip neighbour updates.
+        """
+        try:
+            rows = scheduler._get_logs_by_task_ids(
+                task_ids=tid_int,
+                return_ids_only=False,
+            )
+        except ValueError:
+            # Neighbour was deleted or does not exist in the current context
+            return None
         if not rows:
             return None
         assert len(rows) == 1, "Task IDs should be unique"
