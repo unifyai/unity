@@ -54,8 +54,6 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..common.semantic_search import fetch_top_k_by_references, backfill_rows
-import requests
-from ..helpers import _handle_exceptions
 from ._queue_utils import (
     sched_prev as _q_prev,
     sched_next as _q_next,
@@ -2688,13 +2686,14 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Return {column_name: column_type} for the tasks table.
         """
-        proj = unify.active_project()
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={self._ctx}"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = requests.request("GET", url, headers=headers)
-        _handle_exceptions(response)
-        ret = response.json()
-        return {k: v["data_type"] for k, v in ret.items()}
+        try:
+            fields = unify.get_fields(context=self._ctx) or {}
+            return {
+                k: (v.get("data_type") if isinstance(v, dict) else str(v))
+                for k, v in fields.items()
+            }
+        except Exception:
+            return {}
 
     def _list_columns(
         self,
