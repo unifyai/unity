@@ -311,7 +311,7 @@ class BrowserUsePlan(BaseActiveTask):
         return False
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    async def stop(self) -> str:
+    async def stop(self, reason: Optional[str] = None) -> str:
         if not self._is_valid_method("stop"):
             if self.done():
                 return await self.result()
@@ -324,13 +324,17 @@ class BrowserUsePlan(BaseActiveTask):
         )
         previous_state = self._state
         self._state = _BrowserPlannerState.STOPPED
-        self._result_str = f"Plan {self._task_id} was stopped."
+        self._result_str = (
+            f"Plan {self._task_id} was stopped."
+            if not reason
+            else f"Plan {self._task_id} was stopped: {reason}"
+        )
 
         if previous_state == _BrowserPlannerState.PAUSED:
             self._resume_requested_event.set()
 
         if self._loop_handle and not self._loop_handle.done():
-            self._loop_handle.stop()
+            self._loop_handle.stop(reason)
         elif (
             previous_state == _BrowserPlannerState.IDLE
             and not self._overall_plan_completion_event.is_set()
