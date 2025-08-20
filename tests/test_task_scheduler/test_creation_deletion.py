@@ -14,21 +14,25 @@ def test_create_task():
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
     task_list = task_scheduler._filter_tasks()
-    assert task_list == [
-        {
-            "name": "Promote Jeff Smith",
-            "description": "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
-            "status": Status.primed,
-            "trigger": None,
-            "schedule": None,
-            "deadline": None,
-            "repeat": None,
-            "priority": Priority.normal,
-            "task_id": 0,
-            "instance_id": 0,
-            "response_policy": None,
-        },
-    ]
+    assert len(task_list) == 1
+    row = task_list[0]
+    # After refactor, _filter_tasks returns raw JSON-serialisable values (enums as strings)
+    assert row["name"] == "Promote Jeff Smith"
+    assert (
+        row["description"]
+        == "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
+    )
+    assert Status(row["status"]) == Status.primed
+    assert row["trigger"] is None
+    assert row["schedule"] is None
+    assert row["deadline"] is None
+    assert row["repeat"] is None
+    assert Priority(row["priority"]) == Priority.normal
+    assert row["task_id"] == 0
+    assert row["instance_id"] == 0
+    assert row["response_policy"] is None
+    # New field surfaced by the Task model; should be present but unset on creation
+    assert "activated_by" in row and row["activated_by"] is None
 
 
 @_handle_project
