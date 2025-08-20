@@ -169,3 +169,19 @@ async def test_reinstate_primed_conflict_downgrades_to_queued():
     _ = ts._reinstate_task_to_previous_queue(task_id=h_id)
     reinstated = ts._filter_tasks(filter=f"task_id == {h_id}")[0]
     assert reinstated["status"] == "queued"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_reintegration_plan_clears_on_completion():
+    ts = TaskScheduler()
+    head_id, next_id = await _make_ordered_queue(ts, ["HC", "NC"])  # type: ignore[misc]
+
+    # Start head in isolate and allow it to complete naturally
+    handle = await ts.execute_task(text=str(head_id))
+    # Awaiting result will mark the instance as completed internally
+    await handle.result()
+
+    # Attempting reinstatement should now fail because the plan was cleared
+    with pytest.raises(ValueError):
+        ts._reinstate_task_to_previous_queue(task_id=head_id)
