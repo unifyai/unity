@@ -128,7 +128,7 @@ def log_manager_call(
     method_name: str,
     payload_key: str,
     *,
-    call_id_kw: str = "__call_id",
+    call_id_kw: str = "_call_id",
 ):
     """Decorator factory that publishes an incoming ManagerMethod event and
     wraps the returned handle so subsequent interactions are logged.
