@@ -1269,7 +1269,7 @@ class ContactManager(BaseContactManager):
         *,
         contact_id_1: int,
         contact_id_2: int,
-        overrides: Dict[str, int],
+        overrides: Optional[Dict[str, int]] = None,
     ) -> ToolOutcome:
         """
         Merge two contacts into a single consolidated record.
@@ -1286,16 +1286,14 @@ class ContactManager(BaseContactManager):
             Identifier of the first source contact.
         contact_id_2 : int
             Identifier of the second source contact. Must be different from ``contact_id_1``.
-        overrides : Dict[str, int]
+        overrides : Dict[str, int], optional
             A map indicating which source wins for each column. Keys are column names
             (built‑in or custom). Values must be either ``1`` or ``2`` where:
             - ``1`` → take the value from ``contact_id_1``
             - ``2`` → take the value from ``contact_id_2``
 
-            Columns not present in ``overrides`` use the first non‑``None`` value in the
-            order ``contact_id_1`` → ``contact_id_2``. The special key ``"contact_id"`` can
-            be provided to explicitly choose which id to keep; the other contact will be
-            deleted.
+            If not provided, the first non‑``None`` value in the order ``contact_id_1`` → ``contact_id_2`` is used for each column.
+            The special key ``"contact_id"`` can be provided to explicitly choose which id to keep; the other contact will be deleted.
 
         Returns
         -------
@@ -1323,10 +1321,13 @@ class ContactManager(BaseContactManager):
         if contact_id_1 == contact_id_2:
             raise ValueError("contact_id_1 and contact_id_2 must be distinct.")
 
-        if any(v not in (1, 2) for v in overrides.values()):
-            raise ValueError(
-                "Override values must be 1 or 2, referring to the corresponding contact id argument.",
-            )
+        if overrides is not None:
+            if any(v not in (1, 2) for v in overrides.values()):
+                raise ValueError(
+                    "Override values must be 1 or 2, referring to the corresponding contact id argument.",
+                )
+        else:
+            overrides = {}
 
         # Retrieve both contacts
         def _fetch(cid: int):
@@ -1400,22 +1401,12 @@ class ContactManager(BaseContactManager):
         # Delete the other contact
         self._delete_contact(contact_id=delete_id)
 
-        # ──────────────────────────────────────────────────────────────
         # Keep transcript history consistent by rewriting old ids
-        # ──────────────────────────────────────────────────────────────
-        # Local import to prevent heavy top-level dependency and possible
-        # circular-import issues at module load time.
         from unity.transcript_manager.transcript_manager import (
             TranscriptManager,
         )  # noqa: WPS433
 
-        # Re-use *this* ContactManager instance to avoid creating a second
-        # one inside TranscriptManager which would trigger another round of
-        # context/column checks.
         tm = TranscriptManager(contact_manager=self)
-        # Update all sender/receiver occurrences of the deleted id so that
-        # future transcript queries remain consistent with the merged
-        # contact record.
         tm._update_contact_id(
             original_contact_id=delete_id,
             new_contact_id=keep_id,

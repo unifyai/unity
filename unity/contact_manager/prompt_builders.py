@@ -279,8 +279,8 @@ Schema evolution and custom columns
 
 Merge and delete
 ----------------
-• Merge two contacts when instructed. Decide field winners via the `overrides` map and protect ids 0 and 1 from deletion:
-  `{merge_fname}(contact_id_1=12, contact_id_2=34, overrides={{'contact_id': 12, 'email_address': 2}})`
+• Merge two contacts when instructed. Use the `overrides` map to choose winners; include "contact_id" set to 1 or 2 to select the surviving id. For each field, use 1 or 2 to select from the corresponding source (never literal ids). Protect ids 0 and 1 from deletion:
+  `{merge_fname}(contact_id_1=12, contact_id_2=34, overrides={{'contact_id': 1, 'email_address': 2}})`
 • Delete a contact only when clearly requested (never ids 0 or 1):
   `{delete_fname}(contact_id=77)`
 
