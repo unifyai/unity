@@ -7,6 +7,7 @@ import functools
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
+from dataclasses import dataclass
 
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.llm_helpers import (
@@ -45,6 +46,22 @@ from ..events.manager_event_logging import (
 from ..common.semantic_search import fetch_top_k_by_references, backfill_rows
 import requests
 from ..helpers import _handle_exceptions
+
+
+# ------------------------------------------------------------------ #
+#  Typed reintegration plan                                          #
+# ------------------------------------------------------------------ #
+
+
+@dataclass
+class ReintegrationPlan:
+    task_id: int
+    instance_id: Optional[int]
+    prev_task: Optional[int]
+    next_task: Optional[int]
+    start_at: Optional[str]
+    was_head: bool
+    original_status: Optional[str]
 
 
 class TaskScheduler(BaseTaskScheduler):
@@ -205,16 +222,15 @@ class TaskScheduler(BaseTaskScheduler):
         # "do it as originally scheduled" without reverting unrelated changes.
         #
         # Shape:
-        # {
-        #   'task_id': int,
-        #   'instance_id': int,
-        #   'prev_task': int | None,
-        #   'next_task': int | None,
-        #   'start_at': str | None,
-        #   'was_head': bool,
-        #   'original_status': str
-        # }
-        self._reintegration_plan: Optional[Dict[str, Any]] = None
+        # @dataclass ReintegrationPlan
+        #   task_id: int
+        #   instance_id: int | None
+        #   prev_task: int | None
+        #   next_task: int | None
+        #   start_at: str | None
+        #   was_head: bool
+        #   original_status: str | None
+        self._reintegration_plan: Optional["ReintegrationPlan"] = None
 
     # Public #
     # -------#
@@ -760,15 +776,15 @@ class TaskScheduler(BaseTaskScheduler):
         # can restore this task to its prior queue position later if the user
         # cancels and requests to revert to the original schedule.
         if execution_scope == "isolate":
-            self._reintegration_plan = {
-                "task_id": task_id,
-                "instance_id": task_row.get("instance_id"),
-                "prev_task": prev_tid,
-                "next_task": next_tid,
-                "start_at": start_at,
-                "was_head": prev_tid is None,
-                "original_status": task_row.get("status"),
-            }
+            self._reintegration_plan = ReintegrationPlan(
+                task_id=task_id,
+                instance_id=task_row.get("instance_id"),
+                prev_task=prev_tid,
+                next_task=next_tid,
+                start_at=start_at,
+                was_head=prev_tid is None,
+                original_status=task_row.get("status"),
+            )
 
         # Disconnect the preceding task from this one (shared behaviour)
         if prev_tid is not None:
@@ -979,12 +995,27 @@ class TaskScheduler(BaseTaskScheduler):
             # Set only at the moment of activation; never overwrite later
             entries["activated_by"] = str(activated_by)
 
-        return unify.update_logs(
+        result = unify.update_logs(
             logs=log_objs[0].id if hasattr(log_objs[0], "id") else log_objs[0],
             context=self._ctx,
             entries=entries,
             overwrite=True,
         )
+        # Auto-clear reintegration plan on completion/failed to avoid stale replay.
+        # Intentionally keep the plan on 'cancelled' so callers can reinstate
+        # a cancelled isolated activation back to its prior queue position.
+        try:
+            if (
+                self._reintegration_plan is not None
+                and self._reintegration_plan.task_id == task_id
+                and self._reintegration_plan.instance_id == instance_id
+                and str(new_status) in {Status.completed.value, Status.failed.value}
+            ):
+                self._reintegration_plan = None
+        except Exception:
+            pass
+
+        return result
 
     def _clone_task_instance(self, task_row: Dict[str, Any]) -> None:
         """
@@ -2261,17 +2292,17 @@ class TaskScheduler(BaseTaskScheduler):
         plan = getattr(self, "_reintegration_plan", None)
         if not plan:
             raise ValueError("No reintegration plan available.")
-        if task_id is not None and plan["task_id"] != task_id:
+        if task_id is not None and plan.task_id != task_id:
             raise ValueError(
-                f"Reintegration plan exists for task_id={plan['task_id']}, not {task_id}",
+                f"Reintegration plan exists for task_id={plan.task_id}, not {task_id}",
             )
 
-        tid = plan["task_id"]
-        prev_tid = plan["prev_task"]
-        next_tid = plan["next_task"]
-        was_head = bool(plan["was_head"])  # original position
-        original_start_at = plan.get("start_at")
-        original_status = plan.get("original_status")
+        tid = plan.task_id
+        prev_tid = plan.prev_task
+        next_tid = plan.next_task
+        was_head = bool(plan.was_head)  # original position
+        original_start_at = plan.start_at
+        original_status = plan.original_status
 
         # Fetch current affected logs (ids and entries)
         def _get_log_obj(tid_int: int) -> Optional[unify.Log]:
@@ -2440,7 +2471,7 @@ class TaskScheduler(BaseTaskScheduler):
             # Use per-instance update to avoid touching other instances
             self._update_task_status_instance(
                 task_id=tid,
-                instance_id=plan.get("instance_id"),
+                instance_id=plan.instance_id,
                 new_status=str(desired_status),
             )
 
