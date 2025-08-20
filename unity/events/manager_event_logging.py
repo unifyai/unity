@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+import functools
 from uuid import uuid4
 
 from ..events.event_bus import EVENT_BUS, Event
@@ -11,6 +12,7 @@ __all__ = [
     "new_call_id",
     "publish_manager_method_event",
     "wrap_handle_with_logging",
+    "log_manager_call",
 ]
 
 # ---------------------------------------------------------------------------
@@ -114,3 +116,54 @@ def wrap_handle_with_logging(
             return getattr(self._inner, item)
 
     return _LoggedHandle(inner)
+
+
+# ---------------------------------------------------------------------------
+#  3.  Generic decorator for ManagerMethod logging
+# ---------------------------------------------------------------------------
+
+
+def log_manager_call(
+    manager_name: str,
+    method_name: str,
+    payload_key: str,
+    *,
+    call_id_kw: str = "__call_id",
+):
+    """Decorator factory that publishes an incoming ManagerMethod event and
+    wraps the returned handle so subsequent interactions are logged.
+
+    The decorated coroutine must accept a text payload as its first positional
+    argument or via a keyword named ``text``. A fresh ``call_id`` is injected
+    into the method as a keyword argument named by ``call_id_kw`` so that the
+    implementation can tag any sub-events (e.g. clarification requests) with
+    the same identifier.
+    """
+
+    def _decorator(func):
+        @functools.wraps(func, updated=())
+        async def _wrapper(self, *args, **kwargs):
+            if "text" in kwargs:
+                payload_value = kwargs["text"]
+            elif len(args) >= 1:
+                payload_value = args[0]
+            else:
+                payload_value = ""
+
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                manager_name,
+                method_name,
+                phase="incoming",
+                **{payload_key: payload_value},
+            )
+
+            # Inject call_id for the inner method (for clarification events, etc.)
+            kwargs[call_id_kw] = call_id
+            handle = await func(self, *args, **kwargs)
+            return wrap_handle_with_logging(handle, call_id, manager_name, method_name)
+
+        return _wrapper
+
+    return _decorator
