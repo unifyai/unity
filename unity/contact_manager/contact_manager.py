@@ -687,13 +687,7 @@ class ContactManager(BaseContactManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         __call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = unify.AsyncUnify(
-            "gpt-5->o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        client = self._new_llm_client("gpt-5->o4-mini@openai")
 
         # Build a *live* tools-dict so the prompt never hard-codes
         # either the number of tools or their names/argspecs.
@@ -755,14 +749,7 @@ class ContactManager(BaseContactManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _tools: (
-                (
-                    "required",
-                    {"search_contacts": _tools["search_contacts"]},
-                )
-                if i < 1 and "search_contacts" in _tools
-                else ("auto", _tools)
-            ),
+            tool_policy=self._default_ask_tool_policy,
             preprocess_msgs=inject_broader_context,
         )
 
@@ -790,13 +777,7 @@ class ContactManager(BaseContactManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         __call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = unify.AsyncUnify(
-            "gpt-5->o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        client = self._new_llm_client("gpt-5->o4-mini@openai")
 
         tools = dict(self._update_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
@@ -856,14 +837,7 @@ class ContactManager(BaseContactManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _tools: (
-                (
-                    "required",
-                    {"ask": _tools["ask"]},
-                )
-                if i < 1 and "ask" in _tools
-                else ("auto", _tools)
-            ),
+            tool_policy=self._default_update_tool_policy,
             preprocess_msgs=inject_broader_context,
         )
 
@@ -899,7 +873,7 @@ class ContactManager(BaseContactManager):
         )
         if ret is None:
             return 0
-        return ret
+        return int(ret)
 
     # Private #
     # --------#
@@ -1556,6 +1530,43 @@ class ContactManager(BaseContactManager):
             exclude_fields=list_private_fields(self._ctx),
         )
         return [Contact(**lg.entries) for lg in logs]
+
+    # ------------------------------------------------------------------ #
+    #  Small internal helpers (LLM client + tool policies)               #
+    # ------------------------------------------------------------------ #
+
+    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
+        """Construct a configured AsyncUnify client for the given model."""
+        return unify.AsyncUnify(
+            model,
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
+        )
+
+    @staticmethod
+    def _default_ask_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require search_contacts on the first step; auto thereafter."""
+        if step_index < 1 and "search_contacts" in current_tools:
+            return (
+                "required",
+                {"search_contacts": current_tools["search_contacts"]},
+            )
+        return ("auto", current_tools)
+
+    @staticmethod
+    def _default_update_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require ask on the first step; auto thereafter."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
+        return ("auto", current_tools)
 
     @staticmethod
     def _inject_broader_context(msgs: list[dict]) -> list[dict]:
