@@ -372,14 +372,13 @@ class TaskScheduler(BaseTaskScheduler):
             effective_tool_policy = tool_policy
 
         # Start the tool-use loop
-        handle = start_async_tool_use_loop(
+        handle = self._start_loop(
             client,
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
-            preprocess_msgs=self._inject_broader_context,
             tool_policy=effective_tool_policy,
         )
         # Logging wrapper applied by decorator
@@ -478,14 +477,13 @@ class TaskScheduler(BaseTaskScheduler):
             effective_tool_policy = tool_policy
 
         # Start the interactive loop
-        handle = start_async_tool_use_loop(
+        handle = self._start_loop(
             client,
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
-            preprocess_msgs=self._inject_broader_context,
             tool_policy=effective_tool_policy,
         )
         # Logging wrapper applied by decorator
@@ -771,14 +769,13 @@ class TaskScheduler(BaseTaskScheduler):
             build_execute_task_prompt(tools),
         )
 
-        outer_handle = start_async_tool_use_loop(
+        outer_handle = self._start_loop(
             client,
             freeform_text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.execute_task.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=True,
-            preprocess_msgs=self._inject_broader_context,
         )
 
         return outer_handle
@@ -2302,6 +2299,34 @@ class TaskScheduler(BaseTaskScheduler):
     # ────────────────────────────────────────────────────────────────────
     # Small DRY helpers used by ask/update flows
     # ────────────────────────────────────────────────────────────────────
+
+    def _start_loop(
+        self,
+        client: "unify.AsyncUnify",
+        text: str,
+        tools: ToolsDict,
+        *,
+        loop_id: str,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        log_steps: bool = True,
+        tool_policy: Optional[
+            Union[
+                Literal["default"],
+                Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
+            ]
+        ] = None,
+    ) -> SteerableToolHandle:
+        """Centralised wrapper around start_async_tool_use_loop."""
+        return start_async_tool_use_loop(
+            client,
+            text,
+            tools,
+            loop_id=loop_id,
+            parent_chat_context=parent_chat_context,
+            log_steps=log_steps,
+            preprocess_msgs=self._inject_broader_context,
+            tool_policy=tool_policy,
+        )
 
     def _maybe_add_clarification_tool(
         self,
