@@ -2070,14 +2070,9 @@ class TaskScheduler(BaseTaskScheduler):
         dict[str, str]
             Confirmation payload from :pyfunc:`unify.update_logs`.
         """
-        self._ensure_not_active_task(task_id)
-        # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
-        log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        return unify.update_logs(
-            logs=log_id,
-            context=self._ctx,
+        return self._update_fields_if_not_active(
+            task_id=task_id,
             entries={"name": new_name},
-            overwrite=True,
         )
 
     def _update_task_description(
@@ -2107,14 +2102,9 @@ class TaskScheduler(BaseTaskScheduler):
             If the referenced task is currently *active* – active tasks are
             immutable from the scheduler's perspective.
         """
-        self._ensure_not_active_task(task_id)
-        # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
-        log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        return unify.update_logs(
-            logs=log_id,
-            context=self._ctx,
+        return self._update_fields_if_not_active(
+            task_id=task_id,
             entries={"description": new_description},
-            overwrite=True,
         )
 
     # Update Task(s) Status / Schedule / Deadline / Repetition / Priority
@@ -2289,13 +2279,9 @@ class TaskScheduler(BaseTaskScheduler):
         dict[str, str]
             Confirmation from :pyfunc:`unify.update_logs`.
         """
-        self._ensure_not_active_task(task_id)
-        log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        return unify.update_logs(
-            logs=log_id,
-            context=self._ctx,
+        return self._update_fields_if_not_active(
+            task_id=task_id,
             entries={"deadline": new_deadline},
-            overwrite=True,
         )
 
     def _update_task_repetition(
@@ -2320,13 +2306,9 @@ class TaskScheduler(BaseTaskScheduler):
         dict[str, str]
             Confirmation payload from :pyfunc:`unify.update_logs`.
         """
-        self._ensure_not_active_task(task_id)
-        log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        return unify.update_logs(
-            logs=log_id,
-            context=self._ctx,
+        return self._update_fields_if_not_active(
+            task_id=task_id,
             entries={"repeat": [r.model_dump() for r in new_repeat]},
-            overwrite=True,
         )
 
     def _update_task_priority(
@@ -2351,13 +2333,9 @@ class TaskScheduler(BaseTaskScheduler):
         dict[str, str]
             Confirmation payload from :pyfunc:`unify.update_logs`.
         """
-        self._ensure_not_active_task(task_id)
-        log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        return unify.update_logs(
-            logs=log_id,
-            context=self._ctx,
+        return self._update_fields_if_not_active(
+            task_id=task_id,
             entries={"priority": new_priority},
-            overwrite=True,
         )
 
     # ────────────────────────────────────────────────────────────────────
@@ -2370,6 +2348,28 @@ class TaskScheduler(BaseTaskScheduler):
             model,
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+
+    # Centralised simple-field writer (Step 2)
+    def _update_fields_if_not_active(
+        self,
+        *,
+        task_id: int,
+        entries: Dict[str, Any],
+    ) -> Dict[str, str]:
+        """
+        Update arbitrary fields on a single task, guarding against active-task edits.
+
+        This consolidates the repetitive pattern used by name/description/deadline/
+        repetition/priority updates without changing behaviour.
+        """
+        self._ensure_not_active_task(task_id)
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
+        return unify.update_logs(
+            logs=log_id,
+            context=self._ctx,
+            entries=entries,
+            overwrite=True,
         )
 
     def _make_request_clarification_tool(
