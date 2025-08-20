@@ -138,6 +138,19 @@ class TranscriptManager(BaseTranscriptManager):
     def _get_logger(cls) -> unify.AsyncLoggerManager:
         return cls._LOGGER
 
+    # ------------------------------------------------------------------ #
+    #  Small internal helper – LLM client factory                        #
+    # ------------------------------------------------------------------ #
+    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
+        """Construct a configured AsyncUnify client for the given model."""
+        return unify.AsyncUnify(
+            model,
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
+        )
+
     # Public #
     # -------#
 
@@ -208,13 +221,7 @@ class TranscriptManager(BaseTranscriptManager):
             )
 
         # ── 1.  Build LLM client & inject dynamic system-prompt ───────────
-        client = unify.AsyncUnify(
-            "gpt-5->o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        client = self._new_llm_client("gpt-5->o4-mini@openai")
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
