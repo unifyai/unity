@@ -2024,17 +2024,8 @@ class TaskScheduler(BaseTaskScheduler):
         if not allow_active:
             self._ensure_not_active_task(task_ids)
 
-        # Invariant check per task when setting status to 'scheduled'
-        if new_status_enum == Status.scheduled:
-            rows = self._filter_tasks(filter=f"task_id in {task_ids}")
-            for row in rows:
-                self._validate_scheduled_invariants(
-                    status=new_status_enum,
-                    schedule=row.get("schedule"),
-                    err_prefix=f"While changing status of task {row['task_id']}:",
-                )
-        # Invariant check when transitioning to 'queued'
-        if new_status_enum == Status.queued:
+        # Invariant checks for queue/schedule-sensitive statuses
+        if new_status_enum in {Status.scheduled, Status.queued}:
             rows = self._filter_tasks(filter=f"task_id in {task_ids}")
             for row in rows:
                 self._validate_scheduled_invariants(
