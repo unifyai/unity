@@ -177,6 +177,13 @@ startBrowserAgent({
     process.exit(1);
   });
 
+  startBrowserAgent({
+    url: "https://www.duckduckgo.com/",
+    browser: {
+      launchOptions: {
+        headless: false,
+      }
+    }})
 
 const isAgentReady = (req: Request, res: Response, next: Function) => {
   if (!browserAgent) {
