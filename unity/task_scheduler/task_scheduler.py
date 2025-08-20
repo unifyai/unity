@@ -909,7 +909,16 @@ class TaskScheduler(BaseTaskScheduler):
         err_prefix: str = "Invalid task state:",
     ) -> None:
         """
-        Validate invariants around the ``scheduled`` state.
+        Validate invariants related to queue linkage and scheduling.
+
+        Invariants (when the task is not trigger-based):
+        - If a task is at the head of the queue (prev_task is None) and defines
+          a start_at, then its status must be 'scheduled' (not 'queued').
+        - A task must not define both prev_task and start_at simultaneously –
+          the queue-level timestamp lives on the head node only.
+        - A 'primed' task must be the queue head (prev_task is None).
+        - When setting status to 'scheduled', the task must have either a
+          prev_task (it sits in the chain) or a start_at timestamp.
 
         Parameters
         ----------
@@ -927,35 +936,30 @@ class TaskScheduler(BaseTaskScheduler):
         ValueError
             If any of the queue/scheduling invariants are violated.
         """
-        # ── Trigger-based tasks are **not** subject to the schedule rules ──
+        # Trigger-driven tasks are not subject to queue/schedule invariants
         if trigger is not None:
             return
 
-        # normalise
+        # Normalise status and extract linkage/timestamp
         status = self._to_status(status)
+        prev_task_id = self._sched_prev(schedule)
+        start_at_ts = self._extract_start_at(schedule)
 
-        prev_ptr = self._sched_prev(schedule)
-        if schedule is None:
-            start_ts = None
-        elif isinstance(schedule, Schedule):
-            start_ts = schedule.start_at
-        else:  # dict
-            start_ts = schedule.get("start_at")
-
-        # ── Invariant – queue-head tasks with an explicit start_at must be 'scheduled' ──
-        if status == Status.queued and prev_ptr is None and start_ts is not None:
+        # Head-of-queue tasks with explicit start_at must be 'scheduled'
+        if status == Status.queued and prev_task_id is None and start_at_ts is not None:
             raise ValueError(
                 f"{err_prefix} tasks at the head of the queue that define 'start_at' must have status 'scheduled', not 'queued'.",
             )
 
-        if prev_ptr is not None and start_ts is not None:
+        # A non-head task may not carry a start_at
+        if prev_task_id is not None and start_at_ts is not None:
             raise ValueError(
                 f"{err_prefix} a task cannot define both 'prev_task' and "
                 "'start_at' – the timestamp belongs on the queue head only.",
             )
 
-        # ── Invariant #2 – 'primed' must always be the queue head ───────────
-        if status == Status.primed and prev_ptr is not None:
+        # 'primed' must always be at the head
+        if status == Status.primed and prev_task_id is not None:
             raise ValueError(
                 f"{err_prefix} a task in 'primed' state must be at the head of the queue (prev_task must be None).",
             )
@@ -963,7 +967,8 @@ class TaskScheduler(BaseTaskScheduler):
         if status != Status.scheduled:
             return
 
-        if prev_ptr is None and start_ts is None:
+        # 'scheduled' requires either a chain position or a start_at
+        if prev_task_id is None and start_at_ts is None:
             raise ValueError(
                 f"{err_prefix} a task with status 'scheduled' must have either "
                 "`prev_task` (it sits behind another task in the queue) or a "
@@ -1328,6 +1333,22 @@ class TaskScheduler(BaseTaskScheduler):
     def _sched_next(sched):
         """Thin wrapper: delegate to queue-utils (next pointer)."""
         return _q_next(sched)
+
+    def _extract_start_at(self, sched):
+        """Return the start_at value from a Schedule model or plain dict, or None.
+
+        This helper intentionally performs a light-touch extraction without
+        coercion to preserve existing behaviour; the invariant checks only need
+        to know whether a timestamp is present.
+        """
+        if sched is None:
+            return None
+        if isinstance(sched, Schedule):
+            return sched.start_at
+        try:
+            return sched.get("start_at")
+        except Exception:
+            return None
 
     def _sync_adjacent_links(
         self,
