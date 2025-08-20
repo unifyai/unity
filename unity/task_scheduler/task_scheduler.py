@@ -1605,81 +1605,72 @@ class TaskScheduler(BaseTaskScheduler):
             rows = self._filter_tasks(filter=f"task_id == {tid}", limit=1)
             return rows[0] if rows else None
 
-        # ----------------  starting node  ---------------- #
-        execute_task: Optional[dict] = None
+        def _choose_start_node(tid: Optional[int]) -> Optional[dict]:
+            """Select the initial node to anchor traversal.
 
-        # Pick a starting node
-        if task_id is None:
-            if self._primed_task:
-                execute_task = self._primed_task
-                task_id = execute_task["task_id"]
+            Preference order:
+            1) Explicit tid when provided
+            2) Primed task (when no tid provided)
+            3) Derived head (unique runnable with no prev_task)
+            """
+            if tid is not None:
+                row = _get_task_by_task_id(tid)
+                if row is not None:
+                    return row
             else:
-                # Derive the head: the runnable task whose `prev_task` is None
-                head_candidates = self._filter_tasks(
-                    filter=self._HEAD_FILTER,
-                    limit=2,
-                )
-                if not head_candidates:
-                    return []
-                assert (
-                    len(head_candidates) == 1
-                ), f"Multiple heads detected: {head_candidates}"
-                execute_task = head_candidates[0]
-                task_id = execute_task["task_id"]
+                if self._primed_task:
+                    return self._primed_task
 
-        if execute_task is None and task_id is not None:
-            execute_task = _get_task_by_task_id(task_id)
-
-        if execute_task is None:
-            # fall back to queue head: node with no prev_task and non-terminal status
-            head_candidates = self._filter_tasks(
-                filter=self._HEAD_FILTER,
-                limit=2,
-            )
+            head_candidates = self._filter_tasks(filter=self._HEAD_FILTER, limit=2)
             if not head_candidates:
-                return []
+                return None
             assert (
                 len(head_candidates) == 1
             ), f"Multiple heads detected: {head_candidates}"
-            execute_task = head_candidates[0]
+            return head_candidates[0]
 
-        # not in queue yet? return list with only start task
-        if execute_task is not None and execute_task["schedule"] is None:
+        def _walk_to_head(row: dict) -> dict:
+            """Walk backwards via prev_task until the head node is reached."""
+            cur = row
+            while True:
+                prev_id = self._sched_prev(cur.get("schedule"))
+                if prev_id is None:
+                    break
+                prev_row = _get_task_by_task_id(prev_id)
+                if prev_row is None:
+                    break  # broken link – treat current as head
+                cur = prev_row
+            return cur
+
+        def _walk_forward(head_row: dict) -> List[Task]:
+            """Walk forwards from head collecting non-terminal tasks as Task models."""
+            ordered: List[Task] = []
+            cur = head_row
+            while cur:
+                if self._to_status(cur.get("status")) not in self._TERMINAL_STATUSES:
+                    ordered.append(Task(**cur))
+
+                nxt_id = self._sched_next(cur.get("schedule"))
+                if nxt_id is None:
+                    break
+                cur = _get_task_by_task_id(nxt_id)
+                if cur is None:
+                    break  # broken link
+            return ordered
+
+        # ----------------  choose start → handle singletons ---------------- #
+        execute_task = _choose_start_node(task_id)
+        if execute_task is None:
+            return []
+
+        if execute_task.get("schedule") is None:
             # Task exists but has no schedule pointers; therefore the
             # queue only has one item (the start task).
             return [Task(**execute_task)]
 
-        # ----------------  walk backwards to head  ---------------- #
-        cur = execute_task
-        while True:
-            prev_id = self._sched_prev(cur["schedule"])
-            if prev_id is None:
-                break
-            prev_row = _get_task_by_task_id(prev_id)
-            if prev_row is None:
-                break  # broken link – treat cur as head
-            cur = prev_row  # keep walking
-
-        head_row = cur
-
-        # ----------------  walk forwards collecting list  ---------------- #
-        ordered: List[Task] = []
-        cur = head_row
-        while cur:
-            if self._to_status(cur["status"]) not in self._TERMINAL_STATUSES:
-                ordered.append(Task(**cur))
-
-            nxt_id = self._sched_next(cur["schedule"])
-            if nxt_id is None:
-                break
-
-            # fetch the next node lazily
-            cur = _get_task_by_task_id(nxt_id)
-            # guard against broken links (missing row)
-            if cur is None:
-                break
-
-        return ordered
+        # ----------------  derive head and collect ordered list  ---------------- #
+        head_row = _walk_to_head(execute_task)
+        return _walk_forward(head_row)
 
     def _update_task_queue(
         self,
