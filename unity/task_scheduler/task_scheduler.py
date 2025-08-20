@@ -46,6 +46,12 @@ from ..events.manager_event_logging import (
 from ..common.semantic_search import fetch_top_k_by_references, backfill_rows
 import requests
 from ..helpers import _handle_exceptions
+from ._queue_utils import (
+    sched_prev as _q_prev,
+    sched_next as _q_next,
+    sync_adjacent_links as _q_sync_adjacent_links,
+    attach_with_links as _q_attach_with_links,
+)
 
 
 # ------------------------------------------------------------------ #
@@ -1317,46 +1323,13 @@ class TaskScheduler(BaseTaskScheduler):
     # --------------------  small helpers  -------------------- #
     @staticmethod
     def _sched_prev(sched):
-        """
-        Return ``prev_task`` from a ``Schedule`` value.
-
-        Parameters
-        ----------
-        sched : Schedule | dict | None
-            Schedule model/dict or ``None``.
-
-        Returns
-        -------
-        int | None
-            The id of the previous task in the queue, or ``None``.
-        """
-        if sched is None:
-            return None
-        if isinstance(sched, dict):
-            return sched.get("prev_task")
-        # assume pydantic Schedule
-        return getattr(sched, "prev_task", None)
+        """Thin wrapper: delegate to queue-utils (prev pointer)."""
+        return _q_prev(sched)
 
     @staticmethod
     def _sched_next(sched):
-        """
-        Return ``next_task`` from a ``Schedule`` value.
-
-        Parameters
-        ----------
-        sched : Schedule | dict | None
-            Schedule model/dict or ``None``.
-
-        Returns
-        -------
-        int | None
-            The id of the next task in the queue, or ``None``.
-        """
-        if sched is None:
-            return None
-        if isinstance(sched, dict):
-            return sched.get("next_task")
-        return getattr(sched, "next_task", None)
+        """Thin wrapper: delegate to queue-utils (next pointer)."""
+        return _q_next(sched)
 
     def _sync_adjacent_links(
         self,
@@ -1364,64 +1337,8 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         schedule: Optional[Union[Schedule, dict]],
     ) -> None:
-        """
-        Guarantee link symmetry when (re)linking a task in the runnable queue.
-
-        Parameters
-        ----------
-        task_id : int
-            The id of the task whose neighbours should point back to it.
-        schedule : Schedule | dict | None
-            The schedule containing neighbour pointers (``prev_task`` / ``next_task``).
-
-        Raises
-        ------
-        ValueError
-            If a referenced neighbour id does not exist.
-        """
-        if schedule is None:
-            return
-
-        if isinstance(schedule, Schedule):
-            schedule = schedule.model_dump()
-
-        neighbours: list[tuple[str, str, int]] = []
-        if schedule.get("prev_task") is not None:
-            neighbours.append(("next_task", "prev_task", schedule["prev_task"]))
-        if schedule.get("next_task") is not None:
-            neighbours.append(("prev_task", "next_task", schedule["next_task"]))
-
-        for field_to_set, _, neighbour_id in neighbours:
-            rows = self._filter_tasks(filter=f"task_id == {neighbour_id}", limit=1)
-            if not rows:
-                raise ValueError(
-                    f"Broken queue linkage: referenced task_id {neighbour_id} not found.",
-                )
-
-            row = rows[0]
-            n_sched = {**(row.get("schedule") or {})}
-            if n_sched.get(field_to_set) == task_id:
-                continue  # already correct
-
-            # Strip start_at if the neighbour ceases to be queue head
-            if field_to_set == "prev_task":
-                n_sched.pop("start_at", None)
-
-            n_sched[field_to_set] = task_id
-            log_id = self._get_logs_by_task_ids(task_ids=row["task_id"])
-            unify.update_logs(
-                logs=log_id,
-                context=self._ctx,
-                entries={"schedule": n_sched},
-                overwrite=True,
-            )
-
-            # Was the neighbour the *primed* task?  Keep cache in lock-step.
-            if (
-                self._primed_task is not None
-                and self._primed_task["task_id"] == neighbour_id
-            ):
-                self._refresh_primed_cache(neighbour_id)
+        """Delegate to queue-utils to maintain symmetric neighbour links."""
+        _q_sync_adjacent_links(self, task_id=task_id, schedule=schedule)
 
     # ------------------------------------------------------------------ #
     #  Centralised schedule/status write with invariant validation        #
@@ -1626,58 +1543,13 @@ class TaskScheduler(BaseTaskScheduler):
         head_start_at: Optional[str],
         err_prefix: str,
     ) -> None:
-        """
-        Attach a task into the runnable queue between prev_task and next_task and
-        enforce start_at placement on the head only. Updates neighbour pointers
-        symmetrically and validates invariants for the resulting schedule.
-        """
-
-        def _get_log_obj(tid_int: int) -> Optional[unify.Log]:
-            rows = self._get_logs_by_task_ids(task_ids=tid_int, return_ids_only=False)
-            if not rows:
-                return None
-            assert len(rows) == 1, "Task IDs should be unique"
-            return rows[0]  # type: ignore[return-value]
-
-        # Update neighbours first
-        if prev_task is not None:
-            prev_log = _get_log_obj(prev_task)
-            if prev_log is not None:
-                prev_sched = {
-                    **((getattr(prev_log, "entries", {}) or {}).get("schedule") or {}),
-                }
-                prev_sched["next_task"] = task_id
-                unify.update_logs(
-                    logs=prev_log.id if hasattr(prev_log, "id") else prev_log,
-                    context=self._ctx,
-                    entries={"schedule": prev_sched},
-                    overwrite=True,
-                )
-
-        if next_task is not None:
-            next_log = _get_log_obj(next_task)
-            if next_log is not None:
-                next_sched = {
-                    **((getattr(next_log, "entries", {}) or {}).get("schedule") or {}),
-                }
-                next_sched["prev_task"] = task_id
-                # If we are restoring head-level start_at back to current task, strip from next
-                if head_start_at is not None:
-                    next_sched.pop("start_at", None)
-                unify.update_logs(
-                    logs=next_log.id if hasattr(next_log, "id") else next_log,
-                    context=self._ctx,
-                    entries={"schedule": next_sched},
-                    overwrite=True,
-                )
-
-        # Build current task schedule and write via validated funnel
-        cur_sched: Dict[str, Any] = {"prev_task": prev_task, "next_task": next_task}
-        if prev_task is None and head_start_at is not None:
-            cur_sched["start_at"] = head_start_at
-        self._validated_write(
+        """Delegate to queue-utils to attach with symmetric neighbour updates."""
+        _q_attach_with_links(
+            self,
             task_id=task_id,
-            entries={"schedule": cur_sched},
+            prev_task=prev_task,
+            next_task=next_task,
+            head_start_at=head_start_at,
             err_prefix=err_prefix,
         )
 
