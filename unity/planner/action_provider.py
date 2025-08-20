@@ -99,29 +99,6 @@ class ActionProvider:
             wrapper.__doc__ = backend_method.__doc__
             setattr(self, method_name, wrapper)
 
-    def _setup_desktop_methods(self):
-        """Dynamically create tool methods and assign backend docstrings."""
-        self.desktop.backend.navigate(
-            "http://localhost:6080/vnc.html?resize=scale&autoconnect=1",
-        )
-
-        methods_to_proxy = {
-            "desktop_act": self.desktop.backend.act,
-            "desktop_observe": self.desktop.backend.observe,
-        }
-
-        for method_name, backend_method in methods_to_proxy.items():
-            # Create a simple wrapper that preserves the backend method's behavior and docstring
-            @functools.wraps(backend_method)
-            async def wrapper(*args, _backend_method=backend_method, **kwargs):
-                return await _backend_method(*args, **kwargs)
-
-            # Preserve the original docstring
-            wrapper.__doc__ = (
-                "Controls the Linux virtual desktop.\n" + backend_method.__doc__
-            )
-            setattr(self, method_name, wrapper)
-
     # --- Communication Actions ---
 
     async def send_sms_message(
