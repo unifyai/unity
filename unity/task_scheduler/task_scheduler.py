@@ -760,7 +760,9 @@ class TaskScheduler(BaseTaskScheduler):
         }
 
         # ── clone if this is a triggerable or recurring task ──────────────
-        if task_row["status"] == Status.triggerable.value or task_row.get("repeat"):
+        if self._to_status(task_row["status"]) == Status.triggerable or task_row.get(
+            "repeat",
+        ):
             self._clone_task_instance(task_row)
 
         # 4. Promote status → active (and record activation reason) and clear primed pointer if needed
@@ -837,9 +839,11 @@ class TaskScheduler(BaseTaskScheduler):
                 f"No task instance ({task_id}.{instance_id}) found.",
             )
         assert len(log_objs) == 1, "Composite primary key must be unique."
-        entries: Dict[str, Any] = {"status": new_status}
+        # Normalise status to enum for consistent comparisons
+        new_status_enum = self._to_status(new_status)
+        entries: Dict[str, Any] = {"status": new_status_enum}
         # Only allow `activated_by` to be set during transition to 'active'
-        if str(new_status) == Status.active.value and activated_by is not None:
+        if new_status_enum == Status.active and activated_by is not None:
             # Set only at the moment of activation; never overwrite later
             entries["activated_by"] = str(activated_by)
 
@@ -857,7 +861,7 @@ class TaskScheduler(BaseTaskScheduler):
                 self._reintegration_plan is not None
                 and self._reintegration_plan.task_id == task_id
                 and self._reintegration_plan.instance_id == instance_id
-                and str(new_status) in {Status.completed.value, Status.failed.value}
+                and new_status_enum in {Status.completed, Status.failed}
             ):
                 self._reintegration_plan = None
         except Exception:
@@ -924,7 +928,7 @@ class TaskScheduler(BaseTaskScheduler):
             return
 
         # normalise
-        status = Status(status)
+        status = self._to_status(status)
 
         prev_ptr = self._sched_prev(schedule)
         if schedule is None:
@@ -947,7 +951,7 @@ class TaskScheduler(BaseTaskScheduler):
             )
 
         # ── Invariant #2 – 'primed' must always be the queue head ───────────
-        if Status(status) == Status.primed and prev_ptr is not None:
+        if status == Status.primed and prev_ptr is not None:
             raise ValueError(
                 f"{err_prefix} a task in 'primed' state must be at the head of the queue (prev_task must be None).",
             )
@@ -1108,7 +1112,7 @@ class TaskScheduler(BaseTaskScheduler):
         #  derive status when caller omitted   #
         # ----------------------------------- #
         if status is not None and isinstance(status, str):
-            status = Status(status)
+            status = self._to_status(status)
 
         # Convert schedule dict to Schedule model if needed
         if schedule is not None and isinstance(schedule, dict):
@@ -1140,7 +1144,7 @@ class TaskScheduler(BaseTaskScheduler):
             # --------  event-driven task  -------- #
             if status is None:
                 status = Status.triggerable
-            elif Status(status) != Status.triggerable:
+            elif self._to_status(status) != Status.triggerable:
                 raise ValueError(
                     "Tasks with a *trigger* must start in the 'triggerable' state.",
                 )
@@ -1905,7 +1909,7 @@ class TaskScheduler(BaseTaskScheduler):
                 sched_payload["start_at"] = start_ts
 
             # ----------------  derive *new* status  ---------------- #
-            existing_status = Status(
+            existing_status = self._to_status(
                 existing_logs.get(tid, {}).get("status", Status.queued),
             )
 
@@ -2028,7 +2032,7 @@ class TaskScheduler(BaseTaskScheduler):
         }
 
         # ── status transitions ───────────────────────────────────────────
-        cur_status = Status(current["status"])
+        cur_status = self._to_status(current["status"])
         if new_trigger is not None and cur_status != Status.triggerable:
             entries["status"] = Status.triggerable
         elif new_trigger is None and cur_status == Status.triggerable:
@@ -2144,7 +2148,8 @@ class TaskScheduler(BaseTaskScheduler):
             When trying to edit the live active task without permission.
         """
         # 1. Forbid making anything *active* (unless explicitly allowed)
-        if str(new_status) == Status.active.value and not allow_active:
+        new_status_enum = self._to_status(new_status)
+        if new_status_enum == Status.active and not allow_active:
             raise ValueError(
                 "Direct status changes to 'active' are not allowed; "
                 "use the dedicated activation tool.",
@@ -2155,20 +2160,20 @@ class TaskScheduler(BaseTaskScheduler):
             self._ensure_not_active_task(task_ids)
 
         # ── Invariant check *per task* if new_status becomes 'scheduled' ─────
-        if str(new_status) == Status.scheduled.value:
+        if new_status_enum == Status.scheduled:
             rows = self._filter_tasks(filter=f"task_id in {task_ids}")
             for row in rows:
                 self._validate_scheduled_invariants(
-                    status=new_status,
+                    status=new_status_enum,
                     schedule=row.get("schedule"),
                     err_prefix=f"While changing status of task {row['task_id']}:",
                 )
         # ── Invariant check when transitioning to 'queued' ───────────────
-        if str(new_status) == Status.queued.value:
+        if new_status_enum == Status.queued:
             rows = self._filter_tasks(filter=f"task_id in {task_ids}")
             for row in rows:
                 self._validate_scheduled_invariants(
-                    status=new_status,
+                    status=new_status_enum,
                     schedule=row.get("schedule"),
                     err_prefix=f"While changing status of task {row['task_id']}:",
                 )
@@ -2178,7 +2183,7 @@ class TaskScheduler(BaseTaskScheduler):
         return unify.update_logs(
             logs=log_ids,
             context=self._ctx,
-            entries={"status": new_status},
+            entries={"status": new_status_enum},
             overwrite=True,
         )
 
@@ -2350,6 +2355,11 @@ class TaskScheduler(BaseTaskScheduler):
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
 
+    @staticmethod
+    def _to_status(value: Union[Status, str]) -> Status:
+        """Canonicalise a status-like value to the Status enum."""
+        return value if isinstance(value, Status) else Status(value)
+
     # Centralised simple-field writer (Step 2)
     def _update_fields_if_not_active(
         self,
@@ -2468,7 +2478,7 @@ class TaskScheduler(BaseTaskScheduler):
         cur_row = cur_rows[0] if cur_rows else {}
 
         # Guard: must not be active at this moment
-        if str(cur_row.get("status")) == Status.active.value:
+        if self._to_status(cur_row.get("status")) == Status.active:
             raise RuntimeError("Cannot reinstate while the task is active.")
 
         # Guard: if a trigger exists now, schedule restoration would violate exclusivity
@@ -2551,7 +2561,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Decide restored status (respect primed invariants)
         desired_status = (
-            Status(str(original_status))
+            self._to_status(str(original_status))
             if original_status is not None
             else Status.queued
         )
