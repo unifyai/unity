@@ -161,11 +161,12 @@ const browserOptions: BrowserOptions = {
     },
 };
 
+// Starts desktop agent
 startBrowserAgent({
-  url: "http://localhost:6080/vnc.html?resize=scale&autoconnect=1",
-  browser: browserOptions,
-  prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the terminal, apps and browser within the virtual desktop.",
-}).then(agent => {
+    url: "http://localhost:6080/vnc.html?resize=scale&autoconnect=1",
+    browser: browserOptions,
+    prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the terminal, apps and browser within the virtual desktop.",
+  }).then(agent => {
     browserAgent = agent;
     console.log("✅ BrowserAgent started successfully.");
     app.listen(port, () => {
@@ -177,13 +178,14 @@ startBrowserAgent({
     process.exit(1);
   });
 
-  startBrowserAgent({
-    url: "https://www.duckduckgo.com/",
-    browser: {
-      launchOptions: {
-        headless: false,
-      }
-    }})
+// Browser to be controlled through desktop
+startBrowserAgent({
+  url: "https://www.duckduckgo.com/",
+  browser: {
+    launchOptions: {
+      headless: false,
+    }
+  }})
 
 const isAgentReady = (req: Request, res: Response, next: Function) => {
   if (!browserAgent) {
@@ -193,8 +195,6 @@ const isAgentReady = (req: Request, res: Response, next: Function) => {
 };
 
 // --- API Endpoints ---
-
-
 app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'bad_request', message: 'URL is required.' });

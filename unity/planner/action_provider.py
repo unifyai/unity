@@ -10,7 +10,6 @@ from unity.common.llm_helpers import (
 
 from unity.conversation_manager import comms_actions
 from unity.controller.browser import Browser
-from unity.controller.controller import Controller
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
@@ -38,17 +37,12 @@ class ActionProvider:
                 "controller_mode": controller_mode,
             },
             "magnitude": {
-                "headless": headless,
+                "headless": True,
             },
         }
+
         self.browser = Browser(mode=browser_mode, **browser_kwargs[browser_mode])
         self._setup_browser_methods()
-
-        self.controller = Controller(redis_db=0)
-        self.controller.start()
-
-        # self.desktop = Browser(mode="magnitude", headless=True)
-        # self._setup_desktop_methods()
 
         self._contact_manager = None
         self._transcript_manager = None
