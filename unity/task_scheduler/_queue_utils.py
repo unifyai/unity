@@ -58,9 +58,8 @@ def sync_adjacent_links(
     for field_to_set, _, neighbour_id in neighbours:
         rows = scheduler._filter_tasks(filter=f"task_id == {neighbour_id}", limit=1)
         if not rows:
-            raise ValueError(
-                f"Broken queue linkage: referenced task_id {neighbour_id} not found.",
-            )
+            # Neighbour went missing – skip symmetric update instead of failing
+            continue
 
         row = rows[0]
         n_sched = {**(row.get("schedule") or {})}
@@ -72,7 +71,11 @@ def sync_adjacent_links(
             n_sched.pop("start_at", None)
 
         n_sched[field_to_set] = task_id
-        log_id = scheduler._get_logs_by_task_ids(task_ids=row["task_id"])
+        try:
+            log_id = scheduler._get_logs_by_task_ids(task_ids=row["task_id"])
+        except ValueError:
+            # Neighbour was deleted after we fetched rows – skip
+            continue
         unify.update_logs(
             logs=log_id,
             context=scheduler._ctx,
