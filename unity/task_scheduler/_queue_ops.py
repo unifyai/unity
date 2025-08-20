@@ -165,6 +165,21 @@ def detach_from_queue_for_activation(
                     next_sched["prev_task"] = None
                     if start_at is not None:
                         next_sched["start_at"] = start_at
+                    # New head with an explicit start_at must become 'scheduled'
+                    unify.update_logs(
+                        logs=next_log.id if hasattr(next_log, "id") else next_log,
+                        context=scheduler._ctx,
+                        entries={
+                            "schedule": next_sched,
+                            "status": Status.scheduled,
+                        },
+                        overwrite=True,
+                    )
+                    # Also keep primed cache in sync if we just changed the head
+                    try:
+                        scheduler._refresh_primed_cache(next_tid)
+                    except Exception:
+                        pass
                 else:
                     next_sched["prev_task"] = prev_tid
                     next_sched.pop("start_at", None)
@@ -184,12 +199,13 @@ def detach_from_queue_for_activation(
                             entries={"schedule": prev_sched},
                             overwrite=True,
                         )
-                unify.update_logs(
-                    logs=next_log.id if hasattr(next_log, "id") else next_log,
-                    context=scheduler._ctx,
-                    entries={"schedule": next_sched},
-                    overwrite=True,
-                )
+                if prev_tid is not None:
+                    unify.update_logs(
+                        logs=next_log.id if hasattr(next_log, "id") else next_log,
+                        context=scheduler._ctx,
+                        entries={"schedule": next_sched},
+                        overwrite=True,
+                    )
 
             # Finally, detach current task completely
             cur_log = _get_log_obj(task_id)
