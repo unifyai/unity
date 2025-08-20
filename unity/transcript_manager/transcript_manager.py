@@ -814,14 +814,34 @@ class TranscriptManager(BaseTranscriptManager):
 
         sender_join_ctx = f"{left_ctx}__sender_join__{query_hash}"
 
-        # Temporary backend workaround: join and recompute selected vectors
-        self._TEMP_join_on_raw_and_recompute_vectors(
-            left_ctx=left_ctx,
-            right_ctx=right_ctx,
-            join_ctx=sender_join_ctx,
-            msg_embed_columns=msg_embed_columns,
-            contact_embed_columns=sender_contact_embed_columns,
-        )
+        # Perform sender join selecting derived embedding columns directly
+        select: Dict[str, str] = {
+            f"{left_ctx}.message_id": "message_id",
+            f"{left_ctx}.receiver_ids": "receiver_ids",
+        }
+        for embed_col, _ in msg_embed_columns:
+            select[f"{left_ctx}.{embed_col}"] = embed_col
+        for embed_col, _ in sender_contact_embed_columns:
+            select[f"{right_ctx}.{embed_col}"] = embed_col
+
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
+        payload: Dict[str, Any] = {
+            "project": unify.active_project(),
+            "pair_of_args": (
+                {"context": left_ctx},
+                {"context": right_ctx},
+            ),
+            "join_expr": f"{left_ctx}.sender_id == {right_ctx}.contact_id",
+            "mode": "inner",
+            "new_context": sender_join_ctx,
+            "columns": select,
+        }
+        resp = requests.request("POST", url, json=payload, headers=headers)
+        _handle_exceptions(resp)
 
         # Base terms for sender join ranking
         base_terms = list(msg_embed_columns) + list(sender_contact_embed_columns)
@@ -995,81 +1015,6 @@ class TranscriptManager(BaseTranscriptManager):
             if return_with_contacts_table
             else results
         )
-
-    # ────────────────────────────────────────────────────────────────────
-    # TEMPORARY HACK – remove after backend join bug is fixed
-    # ────────────────────────────────────────────────────────────────────
-    def _TEMP_join_on_raw_and_recompute_vectors(
-        self,
-        *,
-        left_ctx: str,
-        right_ctx: str,
-        join_ctx: str,
-        msg_embed_columns: list[tuple[str, str]],
-        contact_embed_columns: list[tuple[str, str]],
-    ) -> None:
-        """Workaround for backend not copying derived *_emb columns on join.
-
-        Strategy:
-        - Select embedding columns requested by the caller as usual.
-        - Additionally select raw text sources ("content" from transcripts,
-          "bio" from contacts) when their corresponding *_emb columns are
-          involved in the search.
-        - Perform the join into ``join_ctx``.
-        - Recreate the *_emb derived columns inside ``join_ctx`` from the raw
-          text columns so downstream ranking works.
-        """
-
-        # Determine whether to bring raw source columns into the join
-        need_msg_content = any(col == "_content_emb" for col, _ in msg_embed_columns)
-        need_contact_bio = any(col == "_bio_emb" for col, _ in contact_embed_columns)
-
-        # Build the column selection for the join. Intentionally SKIP copying
-        # the buggy *_emb columns that we intend to recompute in the joined
-        # context; otherwise the backend will create empty columns and our
-        # ensure helper would early‑exit.
-        select: Dict[str, str] = {
-            f"{left_ctx}.message_id": "message_id",
-            f"{left_ctx}.receiver_ids": "receiver_ids",
-        }
-        for embed_col, _ in msg_embed_columns:
-            if not (need_msg_content and embed_col == "_content_emb"):
-                select[f"{left_ctx}.{embed_col}"] = embed_col
-        for embed_col, _ in contact_embed_columns:
-            if not (need_contact_bio and embed_col == "_bio_emb"):
-                select[f"{right_ctx}.{embed_col}"] = embed_col
-
-        # Add raw sources if needed (hack-specific)
-        if need_msg_content:
-            select[f"{left_ctx}.content"] = "content"
-        if need_contact_bio:
-            select[f"{right_ctx}.bio"] = "bio"
-
-        # Execute the join
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        payload: Dict[str, Any] = {
-            "project": unify.active_project(),
-            "pair_of_args": (
-                {"context": left_ctx},
-                {"context": right_ctx},
-            ),
-            "join_expr": f"{left_ctx}.sender_id == {right_ctx}.contact_id",
-            "mode": "inner",
-            "new_context": join_ctx,
-            "columns": select,
-        }
-        resp = requests.request("POST", url, json=payload, headers=headers)
-        _handle_exceptions(resp)
-
-        # Recompute embeddings inside the joined context
-        if need_msg_content:
-            ensure_vector_column(join_ctx, "_content_emb", "content")
-        if need_contact_bio:
-            ensure_vector_column(join_ctx, "_bio_emb", "bio")
 
     def _filter_messages(
         self,
