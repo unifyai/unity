@@ -339,7 +339,7 @@ class TaskScheduler(BaseTaskScheduler):
         SteerableToolHandle
             A live handle representing the interactive tool‑use session.
         """
-        client = self._new_llm_client("o4-mini@openai")
+        client = self._new_llm_client("gpt-5->o4-mini@openai")
 
         # Build a live tools dictionary so the prompt reflects reality
         tools = dict(self._ask_tools)
@@ -443,7 +443,7 @@ class TaskScheduler(BaseTaskScheduler):
         SteerableToolHandle
             A live handle representing the interactive tool‑use session.
         """
-        client = self._new_llm_client("o4-mini@openai")
+        client = self._new_llm_client("gpt-5->o4-mini@openai")
 
         # Build a live tools dictionary first (prompt needs it)
         tools = dict(self._update_tools)
@@ -722,7 +722,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """Compose tools and prompt, then start the execute_task reasoning loop."""
-        client = self._new_llm_client("o4-mini@openai")
+        client = self._new_llm_client("gpt-5->o4-mini@openai")
 
         # ── tool definitions ────────────────────────────────────────────────
         async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
@@ -2012,6 +2012,8 @@ class TaskScheduler(BaseTaskScheduler):
             model,
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
 
     @staticmethod
@@ -2537,7 +2539,7 @@ class TaskScheduler(BaseTaskScheduler):
         If ambiguous, default to "isolate".
         """
         try:
-            client = self._new_llm_client("o4-mini@openai")
+            client = self._new_llm_client("gpt-5->o4-mini@openai")
             system = (
                 "Classify the user's intent for execution scope. "
                 "Reply with exactly one word: isolate | chain. "
