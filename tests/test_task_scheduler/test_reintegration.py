@@ -27,6 +27,35 @@ async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_starting_head_promotes_next_to_scheduled_with_start_at():
+    ts = TaskScheduler()
+    a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
+
+    # Sanity: A is scheduled (head with start_at), B and C are queued
+    row_a = ts._filter_tasks(filter=f"task_id == {a}")[0]
+    row_b = ts._filter_tasks(filter=f"task_id == {b}")[0]
+    assert row_a["status"] == "scheduled"
+    assert row_b["status"] == "queued"
+    original_start = (row_a.get("schedule") or {}).get("start_at")
+    assert original_start
+
+    # Start head explicitly (fast-path by id)
+    handle = await ts.execute_task(text=str(a))
+
+    # After detachment, B becomes the new head and should inherit start_at and be scheduled
+    row_b2 = ts._filter_tasks(filter=f"task_id == {b}")[0]
+    sched_b2 = row_b2.get("schedule") or {}
+    assert sched_b2.get("prev_task") is None
+    assert sched_b2.get("start_at") == original_start
+    assert row_b2["status"] == "scheduled"
+
+    # Clean up the active handle to avoid leaking across tests
+    handle.stop()
+    await handle.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_reinstate_head_restores_head_and_start_at():
     ts = TaskScheduler()
     head_id, next_id = await _make_ordered_queue(ts, ["H", "N"])  # type: ignore[misc]
