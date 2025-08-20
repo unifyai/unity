@@ -128,7 +128,7 @@ def test_knowledge_search_all_columns_default_derivation():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_sum_of_cosine_ranking():
+def test_knowledge_search_mean_of_cosine_ranking():
     km = KnowledgeManager()
 
     table = "KB_SumCos"
