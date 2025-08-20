@@ -22,11 +22,7 @@ from ..common.llm_helpers import (
     make_request_clarification_tool,
 )
 from ..events.event_bus import EVENT_BUS, Event
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
-)
+from ..events.manager_event_logging import log_manager_call
 import asyncio
 from ..common.semantic_search import (
     fetch_top_k_by_references,
@@ -679,6 +675,7 @@ class ContactManager(BaseContactManager):
     # Public #
     # -------#
     @functools.wraps(BaseContactManager.ask, updated=())
+    @log_manager_call("ContactManager", "ask", payload_key="question")
     async def ask(
         self,
         text: str,
@@ -688,17 +685,8 @@ class ContactManager(BaseContactManager):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        __call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        # ── generate 1 call-id & log *incoming* request ─────────────────
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "ContactManager",
-            "ask",
-            phase="incoming",
-            question=text,
-        )
-
         client = unify.AsyncUnify(
             "gpt-5->o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -716,7 +704,7 @@ class ContactManager(BaseContactManager):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=call_id,
+                        calling_id=__call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "ask",
@@ -730,7 +718,7 @@ class ContactManager(BaseContactManager):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=call_id,
+                        calling_id=__call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "ask",
@@ -778,14 +766,6 @@ class ContactManager(BaseContactManager):
             preprocess_msgs=inject_broader_context,
         )
 
-        # wrap the raw handle so *every* public method logs an event
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "ContactManager",
-            "ask",
-        )
-
         if _return_reasoning_steps:
             original_result = handle.result
 
@@ -798,6 +778,7 @@ class ContactManager(BaseContactManager):
         return handle
 
     @functools.wraps(BaseContactManager.update, updated=())
+    @log_manager_call("ContactManager", "update", payload_key="request")
     async def update(
         self,
         text: str,
@@ -807,17 +788,8 @@ class ContactManager(BaseContactManager):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        __call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        # ── event: incoming update request ──────────────────────────────
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "ContactManager",
-            "update",
-            phase="incoming",
-            request=text,
-        )
-
         client = unify.AsyncUnify(
             "gpt-5->o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -833,7 +805,7 @@ class ContactManager(BaseContactManager):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=call_id,
+                        calling_id=__call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "update",
@@ -847,7 +819,7 @@ class ContactManager(BaseContactManager):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=call_id,
+                        calling_id=__call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "update",
@@ -893,13 +865,6 @@ class ContactManager(BaseContactManager):
                 else ("auto", _tools)
             ),
             preprocess_msgs=inject_broader_context,
-        )
-
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "ContactManager",
-            "update",
         )
 
         if _return_reasoning_steps:
