@@ -294,25 +294,16 @@ class TaskScheduler(BaseTaskScheduler):
             question=text,
         )
 
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
+        client = self._new_llm_client("o4-mini@openai")
 
         # ── 0.  Build a *live* tools-dict so the prompt reflects reality ───
         tools = dict(self._ask_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
-
-            async def request_clarification(question: str) -> str:
-                """Bubble *question* up, then wait for the answer."""
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError("Clarification queues missing.")
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
-
-            tools["request_clarification"] = request_clarification
+            tools["request_clarification"] = self._make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+            )
 
         # ── 1.  Inject the dynamic system-prompt ───────────────────────────
         include_activity = (
@@ -434,25 +425,16 @@ class TaskScheduler(BaseTaskScheduler):
             request=text,
         )
 
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
+        client = self._new_llm_client("o4-mini@openai")
 
         # ── 0.  Build a *live* tools-dict first (prompt needs it) ─────────
         tools = dict(self._update_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
-
-            async def request_clarification(question: str) -> str:
-                """Bubble *question* up and wait for the reply."""
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError("Clarification queues missing.")
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
-
-            tools["request_clarification"] = request_clarification
+            tools["request_clarification"] = self._make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+            )
 
         # ── 1.  Inject the dynamic system-prompt ──────────────────────────
         include_activity = (
@@ -612,11 +594,7 @@ class TaskScheduler(BaseTaskScheduler):
                 # active).  Let the LLM ask for clarification / create a task.
                 pass  # ↴ continue with regular flow
 
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
+        client = self._new_llm_client("o4-mini@openai")
 
         # ── tool definitions ────────────────────────────────────────────────
         async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
@@ -640,20 +618,12 @@ class TaskScheduler(BaseTaskScheduler):
             return handle
 
         async def request_clarification(question: str) -> str:  # type: ignore[valid-type]
-            """Bubble *question* up to the caller and await the answer.
-
-            When *clarification_up_q* or *clarification_down_q* are *None* the
-            tool raises **RuntimeError** so the LLM avoids using it in
-            non-interactive contexts.
-            """
-
-            if clarification_up_q is None or clarification_down_q is None:
-                raise RuntimeError(
-                    "Clarification queues not supplied – cannot request clarification in this context.",
-                )
-
-            await clarification_up_q.put(question)
-            return await clarification_down_q.get()
+            """Bubble *question* up to the caller and await the answer."""
+            rc = self._make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+            )
+            return await rc(question)
 
         # Wrap update to hard-code tool_policy=None while preserving metadata
         @functools.wraps(self.update, updated=())
@@ -1464,10 +1434,7 @@ class TaskScheduler(BaseTaskScheduler):
         Single funnel for writing schedule/status that enforces invariants and
         keeps neighbour links symmetric.
         """
-        current_rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
-        if not current_rows:
-            raise ValueError(f"No task found with id={task_id}")
-        current = current_rows[0]
+        current = self._get_single_row_or_raise(task_id)
 
         prospective_schedule = entries.get("schedule", current.get("schedule"))
         prospective_status = entries.get("status", current.get("status"))
@@ -2393,6 +2360,51 @@ class TaskScheduler(BaseTaskScheduler):
             overwrite=True,
         )
 
+    # ────────────────────────────────────────────────────────────────────
+    # Small internal helpers (Step 1)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
+        """Construct a configured AsyncUnify client for the given model."""
+        return unify.AsyncUnify(
+            model,
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+
+    def _make_request_clarification_tool(
+        self,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> Callable[[str], "asyncio.Future[str]"]:
+        """Return an async tool that bubbles a question up and awaits the answer.
+
+        The returned coroutine raises RuntimeError if queues are not provided at call time.
+        """
+
+        async def _request(question: str) -> str:
+            if clarification_up_q is None or clarification_down_q is None:
+                raise RuntimeError(
+                    "Clarification queues not supplied – cannot request clarification in this context.",
+                )
+            await clarification_up_q.put(question)
+            return await clarification_down_q.get()
+
+        return _request
+
+    def _get_single_row_or_raise(self, task_id: int) -> Dict[str, Any]:
+        """Fetch exactly one task row by id or raise ValueError."""
+        rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
+        if not rows:
+            raise ValueError(f"No task found with id={task_id}")
+        return rows[0]
+
+    def _get_single_log_obj_or_raise(self, task_id: int) -> "unify.Log":
+        """Fetch the unique unify.Log object for task_id or raise."""
+        logs = self._get_logs_by_task_ids(task_ids=task_id, return_ids_only=False)
+        assert len(logs) == 1, "Task IDs should be unique"
+        return logs[0]  # type: ignore[return-value]
+
     # Reinstate a previously isolated-and-activated task back to its prior queue position
 
     def _reinstate_task_to_previous_queue(
@@ -2769,11 +2781,7 @@ class TaskScheduler(BaseTaskScheduler):
         If ambiguous, default to "isolate".
         """
         try:
-            client = unify.AsyncUnify(
-                "o4-mini@openai",
-                cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-                traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            )
+            client = self._new_llm_client("o4-mini@openai")
             system = (
                 "Classify the user's intent for execution scope. "
                 "Reply with exactly one word: isolate | chain. "
