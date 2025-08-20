@@ -20,6 +20,7 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
     methods_to_tool_dict,
+    make_request_clarification_tool,
 )
 from ..events.manager_event_logging import (
     log_manager_call,
@@ -35,6 +36,7 @@ from ..common.semantic_search import (
     fetch_scores_for_ids,
 )
 import json as _json
+from ..events.event_bus import EVENT_BUS, Event
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -156,21 +158,48 @@ class TranscriptManager(BaseTranscriptManager):
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self._tools)
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                """
-                Query the user for more information about their question, and wait for the reply. Especially useful if their question feels incomplete, and more clarifying details would be useful. Please use this tool liberally if you're unsure, it's always better to ask than to do the wrong thing.
-                """
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "TranscriptManager.ask was called without both "
-                        "clarification queues but the model requested clarifications.",
+            async def _on_request(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "TranscriptManager",
+                                "method": "ask",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
                     )
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                except Exception:
+                    pass
 
-            tools["request_clarification"] = request_clarification
+            async def _on_answer(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "TranscriptManager",
+                                "method": "ask",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         # ── 1.  Build LLM client & inject dynamic system-prompt ───────────
         client = unify.AsyncUnify(
