@@ -1935,9 +1935,18 @@ class TaskScheduler(BaseTaskScheduler):
             err_prefix=f"While updating start_at for task {task_id}:",
         )
 
+        # If we are assigning a head-level start_at, ensure the task's status is 'scheduled'
+        desired_status = self._to_status(current_rows[0]["status"])  # type: ignore[arg-type]
+        if self._sched_prev(current_sched) is None and new_start_at is not None:
+            desired_status = Status.scheduled
+
+        entries: Dict[str, Any] = {"schedule": sched_payload}
+        if desired_status != self._to_status(current_rows[0]["status"]):  # type: ignore[arg-type]
+            entries["status"] = desired_status
+
         return self._validated_write(
             task_id=task_id,
-            entries={"schedule": sched_payload},
+            entries=entries,
             err_prefix=f"While updating start_at for task {task_id}:",
         )
 
