@@ -34,8 +34,10 @@ async def test_starting_head_promotes_next_to_scheduled_with_start_at():
     # Sanity: A is scheduled (head with start_at), B and C are queued
     row_a = ts._filter_tasks(filter=f"task_id == {a}")[0]
     row_b = ts._filter_tasks(filter=f"task_id == {b}")[0]
+    row_c = ts._filter_tasks(filter=f"task_id == {c}")[0]
     assert row_a["status"] == "scheduled"
     assert row_b["status"] == "queued"
+    assert row_c["status"] == "queued"
     original_start = (row_a.get("schedule") or {}).get("start_at")
     assert original_start
 
@@ -49,9 +51,36 @@ async def test_starting_head_promotes_next_to_scheduled_with_start_at():
     assert sched_b2.get("start_at") == original_start
     assert row_b2["status"] == "scheduled"
 
-    # Clean up the active handle to avoid leaking across tests
-    handle.stop()
+    # Stop the active task with guidance to resume as originally scheduled
+    handle.stop(
+        "Actually this is taking longer than I expected, let's complete this task as per our original schedule instead",
+    )
     await handle.result()
+
+    # After reinstatement, restore A→B→C with head A carrying start_at and scheduled
+    row_a3 = ts._filter_tasks(filter=f"task_id == {a}")[0]
+    row_b3 = ts._filter_tasks(filter=f"task_id == {b}")[0]
+    row_c3 = ts._filter_tasks(filter=f"task_id == {c}")[0]
+
+    sa3 = row_a3.get("schedule") or {}
+    sb3 = row_b3.get("schedule") or {}
+    sc3 = row_c3.get("schedule") or {}
+
+    # Head A restored with original start_at and points to B
+    assert sa3.get("prev_task") is None
+    assert sa3.get("next_task") == b
+    assert sa3.get("start_at") == original_start
+    assert row_a3["status"] == "scheduled"
+
+    # Middle B back between A and C, no start_at, queued
+    assert sb3.get("prev_task") == a and sb3.get("next_task") == c
+    assert "start_at" not in sb3 or not sb3.get("start_at")
+    assert row_b3["status"] == "queued"
+
+    # Tail C points back to B, no start_at, queued
+    assert sc3.get("prev_task") == b
+    assert "start_at" not in sc3 or not sc3.get("start_at")
+    assert row_c3["status"] == "queued"
 
 
 @pytest.mark.asyncio
