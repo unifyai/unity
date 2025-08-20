@@ -21,6 +21,7 @@ from ..common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
     make_request_clarification_tool,
+    inject_broader_context,
 )
 from ..events.manager_event_logging import (
     log_manager_call,
@@ -232,7 +233,7 @@ class TranscriptManager(BaseTranscriptManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
-            preprocess_msgs=self._inject_broader_context,
+            preprocess_msgs=inject_broader_context,
             tool_policy=lambda i, _tools: (
                 (
                     "required",
