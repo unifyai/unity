@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
 
 
-from ..common.embed_utils import ensure_vector_column, list_private_fields
+from ..common.embed_utils import list_private_fields
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
@@ -61,8 +61,6 @@ from .types.reintegration_plan import ReintegrationPlan
 
 
 class TaskScheduler(BaseTaskScheduler):
-
-    _VEC_TASK = "_task_emb"
 
     _HEAD_FILTER = (
         "schedule is not None and "
@@ -2483,19 +2481,6 @@ class TaskScheduler(BaseTaskScheduler):
         }
 
     # Search Across Tasks
-
-    def _bootstrap_embeddings(self) -> None:
-        """
-        Ensure that the vector embedding column exists for task search.
-        Creates a derived column combining name and description for embedding.
-        """
-        expr = "str({name}) + ' || ' + str({description})"
-        ensure_vector_column(
-            context=self._ctx,
-            embed_column=self._VEC_TASK,
-            source_column="_name_plus_desc",
-            derived_expr=expr,
-        )
 
     def _search_tasks(
         self,
