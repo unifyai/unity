@@ -685,7 +685,7 @@ class ContactManager(BaseContactManager):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
-        __call_id: Optional[str] = None,
+        _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5->o4-mini@openai")
 
@@ -698,7 +698,7 @@ class ContactManager(BaseContactManager):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=__call_id,
+                        calling_id=_call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "ask",
@@ -712,7 +712,7 @@ class ContactManager(BaseContactManager):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=__call_id,
+                        calling_id=_call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "ask",
@@ -775,7 +775,7 @@ class ContactManager(BaseContactManager):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
-        __call_id: Optional[str] = None,
+        _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5->o4-mini@openai")
 
@@ -786,7 +786,7 @@ class ContactManager(BaseContactManager):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=__call_id,
+                        calling_id=_call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "update",
@@ -800,7 +800,7 @@ class ContactManager(BaseContactManager):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=__call_id,
+                        calling_id=_call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "update",
