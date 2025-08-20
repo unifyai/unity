@@ -74,6 +74,52 @@ class TaskScheduler(BaseTaskScheduler):
         "schedule.get('prev_task') is None"
     )
 
+    # ------------------------------------------------------------------ #
+    #  Decorator – uniform ManagerMethod logging                          #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _log_manager_call(method_name: str, payload_key: str):
+        """Decorator factory to publish incoming ManagerMethod and wrap handle.
+
+        Ensures a single call_id is used for both the incoming event and the
+        logging wrapper around the returned handle. The payload value is taken
+        from the positional/keyword argument named 'text' (the first arg after
+        self), matching existing method signatures.
+        """
+
+        def _decorator(func):
+            @functools.wraps(func, updated=())
+            async def _wrapper(self, *args, **kwargs):
+                # Determine the textual payload (all three methods accept 'text')
+                if "text" in kwargs:
+                    payload_value = kwargs["text"]
+                elif len(args) >= 1:
+                    payload_value = args[0]
+                else:
+                    payload_value = ""
+
+                call_id = new_call_id()
+                await publish_manager_method_event(
+                    call_id,
+                    "TaskScheduler",
+                    method_name,
+                    phase="incoming",
+                    **{payload_key: payload_value},
+                )
+
+                handle = await func(self, *args, **kwargs)
+                handle = wrap_handle_with_logging(
+                    handle,
+                    call_id,
+                    "TaskScheduler",
+                    method_name,
+                )
+                return handle
+
+            return _wrapper
+
+        return _decorator
+
     def __init__(
         self,
         *,
@@ -238,6 +284,7 @@ class TaskScheduler(BaseTaskScheduler):
     # English-Text Question
 
     @functools.wraps(BaseTaskScheduler.ask, updated=())
+    @_log_manager_call.__func__("ask", "question")  # type: ignore[attr-defined]
     async def ask(
         self,
         text: str,
@@ -285,15 +332,6 @@ class TaskScheduler(BaseTaskScheduler):
         SteerableToolHandle
             A live handle representing the interactive tool‑use session.
         """
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "TaskScheduler",
-            "ask",
-            phase="incoming",
-            question=text,
-        )
-
         client = self._new_llm_client("o4-mini@openai")
 
         # ── 0.  Build a *live* tools-dict so the prompt reflects reality ───
@@ -345,13 +383,7 @@ class TaskScheduler(BaseTaskScheduler):
             preprocess_msgs=self._inject_broader_context,
             tool_policy=effective_tool_policy,
         )
-        # ── 3a.  Add logging wrapper ──────────────────────────────────────
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "TaskScheduler",
-            "ask",
-        )
+        # Logging wrapper applied by decorator
 
         # ── 3b.  Optional reasoning exposure ─────────────────────────────
         if _return_reasoning_steps:
@@ -369,6 +401,7 @@ class TaskScheduler(BaseTaskScheduler):
     # English-Text Update Request
 
     @functools.wraps(BaseTaskScheduler.update, updated=())
+    @_log_manager_call.__func__("update", "request")  # type: ignore[attr-defined]
     async def update(
         self,
         text: str,
@@ -416,15 +449,6 @@ class TaskScheduler(BaseTaskScheduler):
         SteerableToolHandle
             A live handle representing the interactive tool‑use session.
         """
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "TaskScheduler",
-            "update",
-            phase="incoming",
-            request=text,
-        )
-
         client = self._new_llm_client("o4-mini@openai")
 
         # ── 0.  Build a *live* tools-dict first (prompt needs it) ─────────
@@ -476,13 +500,7 @@ class TaskScheduler(BaseTaskScheduler):
             preprocess_msgs=self._inject_broader_context,
             tool_policy=effective_tool_policy,
         )
-        # ── 3a.  Add logging wrapper ──────────────────────────────────────
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "TaskScheduler",
-            "update",
-        )
+        # Logging wrapper applied by decorator
 
         # ── 3b.  Optional reasoning exposure ─────────────────────────────
         if _return_reasoning_steps:
@@ -500,6 +518,7 @@ class TaskScheduler(BaseTaskScheduler):
     # Start Task
 
     @functools.wraps(BaseTaskScheduler.execute_task, updated=())
+    @_log_manager_call.__func__("execute_task", "request")  # type: ignore[attr-defined]
     async def execute_task(
         self,
         text: str,
@@ -539,20 +558,6 @@ class TaskScheduler(BaseTaskScheduler):
 
         freeform_text: str = text
 
-        # ---------------------------------------------------------------
-        #  Prepare event logging – get a call_id *early* so that both the
-        #  fast-path and the normal LLM workflow share the same identifier.
-        # ---------------------------------------------------------------
-
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "TaskScheduler",
-            "execute_task",
-            phase="incoming",
-            request=freeform_text,
-        )
-
         # ── Fast-path: direct numeric task_id ───────────────────────────────
         # When the user input *is* a plain integer we can skip the full
         # tool-resolution loop, execute the task immediately and hand back
@@ -575,15 +580,6 @@ class TaskScheduler(BaseTaskScheduler):
                     clarification_down_q=clarification_down_q,
                     activated_by=ActivatedBy.explicit,
                     execution_scope=scope,
-                )
-
-                # Wrap with the same event-logging helper used elsewhere so
-                # callers receive uniform behaviour regardless of the path.
-                direct_handle = wrap_handle_with_logging(
-                    direct_handle,
-                    call_id,
-                    "TaskScheduler",
-                    "execute_task",
                 )
 
                 return direct_handle
@@ -652,14 +648,6 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=parent_chat_context,
             log_steps=True,
             preprocess_msgs=self._inject_broader_context,
-        )
-
-        # Wire up event logging wrapper – outer_handle is an AsyncToolUseLoopHandle
-        outer_handle = wrap_handle_with_logging(
-            outer_handle,
-            call_id,
-            "TaskScheduler",
-            "execute_task",
         )
 
         return outer_handle
