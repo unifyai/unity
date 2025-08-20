@@ -32,3 +32,21 @@ LIVEKIT_API_SECRET={value}
 ### Logging
 
 Check out various logs in the "Assistants" project in the [Unity Interface](https://console.unify.ai/interfaces?project=Unity).
+
+### Desktop Control
+
+1. Build the image.
+
+`docker build --build-arg UNIFY_KEY=<your-key> -t unity_browser:latest -f Dockerfile .`
+
+2. Start the container.
+
+`docker run -it -p 8080:8080 -p 6080:6080 --env-file .env -v $(pwd):/app --rm unity_browser:latest bash`
+
+3. In the container, start the virtual desktop.
+
+`bash desktop.sh`
+
+4. Access the virtual desktop through the address below. It can now be used with the planner and the Magnitude controller.
+
+`http://localhost:6080/vnc.html?resize=scale&autoconnect=1`
