@@ -10,6 +10,7 @@ from unity.common.llm_helpers import (
 
 from unity.conversation_manager import comms_actions
 from unity.controller.browser import Browser
+from unity.controller.controller import Controller
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
@@ -43,8 +44,11 @@ class ActionProvider:
         self.browser = Browser(mode=browser_mode, **browser_kwargs[browser_mode])
         self._setup_browser_methods()
 
-        self.desktop = Browser(mode="magnitude", headless=True)
-        self._setup_desktop_methods()
+        self.controller = Controller(redis_db=0)
+        self.controller.start()
+
+        # self.desktop = Browser(mode="magnitude", headless=True)
+        # self._setup_desktop_methods()
 
         self._contact_manager = None
         self._transcript_manager = None
@@ -88,7 +92,7 @@ class ActionProvider:
         methods_to_proxy = {
             "browser_act": self.browser.backend.act,
             "browser_observe": self.browser.backend.observe,
-            "browser_navigate": self.browser.backend.navigate,
+            # "browser_navigate": self.browser.backend.navigate,
         }
 
         for method_name, backend_method in methods_to_proxy.items():
