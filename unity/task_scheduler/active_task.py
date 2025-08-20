@@ -45,8 +45,8 @@ class ActiveTask(BaseActiveTask):
         await self._active_task.interject(message)
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    def stop(self) -> Optional[str]:
-        ret = self._active_task.stop()
+    def stop(self, reason: Optional[str] = None) -> Optional[str]:
+        ret = self._active_task.stop(reason)  # type: ignore[call-arg]
         self._mirror_status("cancelled")
         self._clear_active_pointer()
         return ret

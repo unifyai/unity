@@ -177,6 +177,7 @@ def build_update_prompt(
     update_task_priority_fname = _tool_name(tools, "update_task_priority")
     update_task_trigger_fname = _tool_name(tools, "update_task_trigger")
     get_task_queue_fname = _tool_name(tools, "get_task_queue")
+    reinstate_task_fname = _tool_name(tools, "reinstate_task_to_previous_queue")
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "request_clarification")
@@ -214,23 +215,36 @@ def build_update_prompt(
     )
 
     # Usage guidance consistent with Contact/Transcript pattern
-    usage_examples = "\n".join(
+    usage_examples_lines: list[str] = [
+        "Tool selection",
+        "--------------",
+        f"• Prefer `{update_task_name_fname}`/`{update_task_description_fname}`/… when you know the exact `task_id`.",
+        f'• When the user describes a task semantically (e.g., "the kickoff email task"), first call `{ask_fname}` to identify the correct `task_id`, then apply the specific update tool.',
+        f"• Use `{update_task_queue_fname}` to reorder runnable tasks explicitly – do not try to emulate queue effects via timestamps.",
+        f"• Use `{cancel_tasks_fname}` only on explicit cancellation requests (never cancel the active task implicitly).",
+        "",
+        "Realistic find‑then‑update flows",
+        "--------------------------------",
+        f'• Set deadline for the "onboarding plan" task:\n  1 `{ask_fname}(text="Which task covers the onboarding plan?")`\n  2 `{update_task_deadline_fname}(task_id=<id>, new_deadline=\'2025-01-31T17:00:00Z\')`',
+        f"• Promote a task to the front of the queue:\n  1 Read the current order: `{get_task_queue_fname}()`\n  2 Build the new order and call `{update_task_queue_fname}(original=[...], new=[...])`",
+        "",
+        "Triggers vs Schedules",
+        "----------------------",
+        f"• A task with a `trigger` must be in state 'triggerable'. Use `{update_task_trigger_fname}` to add/remove triggers. Do not set `start_at` on trigger‑based tasks.",
+    ]
+
+    if reinstate_task_fname:
+        usage_examples_lines.extend(
+            [
+                "",
+                "Reinstating an isolated activation",
+                "----------------------------------",
+                f"• If a task was started in isolation and then cancelled, and the user asks to revert to the original schedule/queue position, call `{reinstate_task_fname}()` to surgically restore its prior linkage and (if applicable) queue‑level `start_at`.",
+            ],
+        )
+
+    usage_examples_lines.extend(
         [
-            "Tool selection",
-            "--------------",
-            f"• Prefer `{update_task_name_fname}`/`{update_task_description_fname}`/… when you know the exact `task_id`.",
-            f'• When the user describes a task semantically (e.g., "the kickoff email task"), first call `{ask_fname}` to identify the correct `task_id`, then apply the specific update tool.',
-            f"• Use `{update_task_queue_fname}` to reorder runnable tasks explicitly – do not try to emulate queue effects via timestamps.",
-            f"• Use `{cancel_tasks_fname}` only on explicit cancellation requests (never cancel the active task implicitly).",
-            "",
-            "Realistic find‑then‑update flows",
-            "--------------------------------",
-            f'• Set deadline for the "onboarding plan" task:\n  1 `{ask_fname}(text="Which task covers the onboarding plan?")`\n  2 `{update_task_deadline_fname}(task_id=<id>, new_deadline=\'2025-01-31T17:00:00Z\')`',
-            f"• Promote a task to the front of the queue:\n  1 Read the current order: `{get_task_queue_fname}()`\n  2 Build the new order and call `{update_task_queue_fname}(original=[...], new=[...])`",
-            "",
-            "Triggers vs Schedules",
-            "----------------------",
-            f"• A task with a `trigger` must be in state 'triggerable'. Use `{update_task_trigger_fname}` to add/remove triggers. Do not set `start_at` on trigger‑based tasks.",
             "",
             "Contact context",
             "---------------",
@@ -242,6 +256,8 @@ def build_update_prompt(
             "• Using substring filters to locate tasks by description/name – prefer semantic ask/search first.",
         ],
     )
+
+    usage_examples = "\n".join(usage_examples_lines)
 
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)

@@ -194,10 +194,10 @@ class SimulatedActiveTask(BaseActiveTask):
     # Dynamic Methods (Public vs Private Depending on State)
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    def stop(self) -> str:
+    def stop(self, reason: Optional[str] = None) -> str:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
-        msg = f"Stopped task '{self._task}'"
+        msg = f"Stopped task '{self._task}' for reason: {reason}"
         # complete with stop message
         self._complete(msg)
         return msg
