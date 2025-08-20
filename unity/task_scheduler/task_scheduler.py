@@ -1556,7 +1556,7 @@ class TaskScheduler(BaseTaskScheduler):
             err_prefix=err_prefix,
         )
 
-    _TERMINAL_STATUSES = {"completed", "cancelled", "failed"}
+    _TERMINAL_STATUSES = {Status.completed, Status.cancelled, Status.failed}
 
     def _refresh_primed_cache(self, task_id: Optional[int] = None) -> None:
         """
@@ -1666,7 +1666,7 @@ class TaskScheduler(BaseTaskScheduler):
         ordered: List[Task] = []
         cur = head_row
         while cur:
-            if cur["status"] not in self._TERMINAL_STATUSES:
+            if self._to_status(cur["status"]) not in self._TERMINAL_STATUSES:
                 ordered.append(Task(**cur))
 
             nxt_id = self._sched_next(cur["schedule"])
@@ -2444,7 +2444,7 @@ class TaskScheduler(BaseTaskScheduler):
             rows = self._filter_tasks(filter=f"task_id == {neighbour_tid}", limit=1)
             if not rows:
                 return False
-            return rows[0].get("status") not in self._TERMINAL_STATUSES
+            return self._to_status(rows[0].get("status")) not in self._TERMINAL_STATUSES
 
         # Current queue view (head, tail) for fallbacks
         queue_list = self._get_task_queue()
