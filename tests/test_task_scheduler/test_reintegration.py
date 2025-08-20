@@ -252,6 +252,32 @@ async def test_reinstate_refuses_when_trigger_present():
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_reinstate_head_with_all_neighbors_deleted_fallback():
+    ts = TaskScheduler()
+    head_id, next_id, tail_id = await _make_ordered_queue(ts, ["H2", "N2", "T2"])  # type: ignore[misc]
+
+    # Activate head and cancel to record reintegration plan (captures original start_at)
+    handle = await ts.execute_task(text=str(head_id))
+    handle.stop()
+    await handle.result()
+
+    # Delete both original neighbors before reinstatement (drift)
+    ts._delete_task(task_id=next_id)
+    ts._delete_task(task_id=tail_id)
+
+    # Reinstate – should restore as a standalone head with original start_at and scheduled status
+    _ = ts._reinstate_task_to_previous_queue(task_id=head_id)
+
+    row_h = ts._filter_tasks(filter=f"task_id == {head_id}")[0]
+    sched_h = row_h.get("schedule") or {}
+    assert sched_h.get("prev_task") is None
+    assert sched_h.get("next_task") is None
+    assert "start_at" in sched_h and sched_h.get("start_at")
+    assert row_h["status"] == "scheduled"
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_reinstate_refuses_while_active():
     ts = TaskScheduler()
     head_id, _ = await _make_ordered_queue(ts, ["AH", "AN"])  # type: ignore[misc]
