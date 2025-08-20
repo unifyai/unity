@@ -24,6 +24,16 @@ from .types.repetition import RepeatPattern
 from .types.task import Task
 from .types.activated_by import ActivatedBy
 
+# ------------------------------------------------------------------ #
+#  Local type aliases                                                 #
+# ------------------------------------------------------------------ #
+# These aliases improve readability and keep signatures concise.
+ScheduleLike = Optional[Union[Schedule, Dict[str, Any]]]
+TriggerLike = Optional[Union[Trigger, Dict[str, Any]]]
+RepeatLike = Optional[List[Union[RepeatPattern, Dict[str, Any]]]]
+TaskRow = Dict[str, Any]
+ToolsDict = Dict[str, Callable]
+
 # Contact manager import (lazy at module level to avoid cycles in other modules)
 from ..contact_manager.contact_manager import ContactManager
 from ..common.model_to_fields import model_to_fields
@@ -878,8 +888,8 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         status: Status | str,
-        schedule: Optional[Union[Schedule, Dict[str, Any]]],
-        trigger: Optional[Union["Trigger", Dict[str, Any]]] = None,
+        schedule: ScheduleLike,
+        trigger: TriggerLike = None,
         err_prefix: str = "Invalid task state:",
     ) -> None:
         """
@@ -1023,10 +1033,10 @@ class TaskScheduler(BaseTaskScheduler):
         name: str,
         description: str,
         status: Optional[Status] = None,
-        schedule: Optional[Union[Schedule, Dict[str, Any]]] = None,
-        trigger: Optional[Union[Trigger, Dict[str, Any]]] = None,
+        schedule: ScheduleLike = None,
+        trigger: TriggerLike = None,
         deadline: Optional[str] = None,
-        repeat: Optional[List[Union[RepeatPattern, Dict[str, Any]]]] = None,
+        repeat: RepeatLike = None,
         priority: Priority = Priority.normal,
         response_policy: Optional[str] = None,
     ) -> ToolOutcome:
@@ -1328,7 +1338,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
-        schedule: Optional[Union[Schedule, dict]],
+        schedule: ScheduleLike,
     ) -> None:
         """Delegate to queue-utils to maintain symmetric neighbour links."""
         _q_sync_adjacent_links(self, task_id=task_id, schedule=schedule)
@@ -1851,7 +1861,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
-        new_trigger: Optional[Union[Trigger, Dict[str, Any]]],
+        new_trigger: TriggerLike,
     ) -> ToolOutcome:
         """
         Set, replace or clear a task's trigger.
@@ -2304,7 +2314,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _maybe_add_clarification_tool(
         self,
-        tools: Dict[str, Callable],
+        tools: ToolsDict,
         clarification_up_q: Optional[asyncio.Queue[str]],
         clarification_down_q: Optional[asyncio.Queue[str]],
     ) -> None:
@@ -2334,7 +2344,7 @@ class TaskScheduler(BaseTaskScheduler):
         handle.result = wrapped_result  # type: ignore[assignment]
         return handle
 
-    def _get_single_row_or_raise(self, task_id: int) -> Dict[str, Any]:
+    def _get_single_row_or_raise(self, task_id: int) -> TaskRow:
         """Fetch exactly one task row by id or raise ValueError."""
         rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
         if not rows:
@@ -2586,7 +2596,7 @@ class TaskScheduler(BaseTaskScheduler):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[TaskRow]:
         """
         Run a **column-wise Python expression** (`filter`) against every task
         and return the matching rows.
