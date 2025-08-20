@@ -332,7 +332,9 @@ class TaskScheduler(BaseTaskScheduler):
         tools = dict(self._ask_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
-            tools["request_clarification"] = self._make_request_clarification_tool(
+            # Add clarification tool when queues are provided
+            self._maybe_add_clarification_tool(
+                tools,
                 clarification_up_q,
                 clarification_down_q,
             )
@@ -374,14 +376,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Optional reasoning exposure
         if _return_reasoning_steps:
-            # Wrap the handle.result() to return both answer and reasoning steps
-            original_result = handle.result
-
-            async def wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = wrapped_result
+            handle = self._wrap_result_with_messages(handle, client)
 
         return handle
 
@@ -442,7 +437,9 @@ class TaskScheduler(BaseTaskScheduler):
         tools = dict(self._update_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
-            tools["request_clarification"] = self._make_request_clarification_tool(
+            # Add clarification tool when queues are provided
+            self._maybe_add_clarification_tool(
+                tools,
                 clarification_up_q,
                 clarification_down_q,
             )
@@ -485,14 +482,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Optional reasoning exposure
         if _return_reasoning_steps:
-            # Wrap the handle.result() to return both answer and reasoning steps
-            original_result = handle.result
-
-            async def wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = wrapped_result
+            handle = self._wrap_result_with_messages(handle, client)
 
         return handle
 
@@ -2316,6 +2306,42 @@ class TaskScheduler(BaseTaskScheduler):
             return await clarification_down_q.get()
 
         return _request
+
+    # ────────────────────────────────────────────────────────────────────
+    # Small DRY helpers used by ask/update flows
+    # ────────────────────────────────────────────────────────────────────
+
+    def _maybe_add_clarification_tool(
+        self,
+        tools: Dict[str, Callable],
+        clarification_up_q: Optional[asyncio.Queue[str]],
+        clarification_down_q: Optional[asyncio.Queue[str]],
+    ) -> None:
+        """Insert a request_clarification tool into tools if queues were provided.
+
+        The inner tool will raise at call-time if queues are missing, mirroring
+        existing behaviour when only one of the queues is supplied.
+        """
+        if clarification_up_q is not None or clarification_down_q is not None:
+            tools["request_clarification"] = self._make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+            )
+
+    def _wrap_result_with_messages(
+        self,
+        handle: SteerableToolHandle,
+        client: "unify.AsyncUnify",
+    ) -> SteerableToolHandle:
+        """Wrap handle.result() so it returns (answer, client.messages)."""
+        original_result = handle.result
+
+        async def wrapped_result():
+            answer = await original_result()
+            return answer, client.messages
+
+        handle.result = wrapped_result  # type: ignore[assignment]
+        return handle
 
     def _get_single_row_or_raise(self, task_id: int) -> Dict[str, Any]:
         """Fetch exactly one task row by id or raise ValueError."""
