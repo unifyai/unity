@@ -1013,18 +1013,24 @@ class TaskScheduler(BaseTaskScheduler):
         list[int | unify.Log]
             The matching log identifiers or objects.
         """
-        singular = False
-        if isinstance(task_ids, int):
-            singular = True
+        singular = isinstance(task_ids, int)
+        original_id = task_ids if singular else None
+        if singular:
             task_ids = [task_ids]
         log_ids = unify.get_logs(
             context=self._ctx,
             filter=f"task_id in {task_ids}",
             return_ids_only=return_ids_only,
         )
-        assert (
-            not singular or len(log_ids) == 1
-        ), f"Expected 1 log for singular task_id, but got {len(log_ids)}"
+        if singular:
+            if len(log_ids) == 0:
+                raise ValueError(
+                    f"Task with task_id == {original_id} does not exist in the task list.",
+                )
+            if len(log_ids) > 1:
+                raise AssertionError(
+                    f"Expected exactly 1 row for task_id {original_id}, but found {len(log_ids)}.",
+                )
         return log_ids
 
     # Private Tools #
