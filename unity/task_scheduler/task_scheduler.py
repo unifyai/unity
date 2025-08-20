@@ -2388,6 +2388,34 @@ class TaskScheduler(BaseTaskScheduler):
                 new_status=str(desired_status),
             )
 
+        # If we reinstated the original head, ensure the next task (now non-head)
+        # does not erroneously remain 'scheduled' after we stripped its start_at.
+        # Downgrade it back to 'queued' to reflect normal queue semantics.
+        if was_head and final_next is not None:
+            try:
+                next_rows = self._filter_tasks(
+                    filter=f"task_id == {final_next}",
+                    limit=1,
+                )
+                if next_rows:
+                    next_row = next_rows[0]
+                    next_sched = next_row.get("schedule") or {}
+                    # If it is no longer head and has no start_at timestamp, it must not be scheduled
+                    if (
+                        self._sched_prev(next_sched) is not None
+                        and (next_sched.get("start_at") is None)
+                        and self._to_status(next_row.get("status"))
+                        in {Status.scheduled, Status.primed}
+                    ):
+                        self._update_task_status_instance(
+                            task_id=final_next,
+                            instance_id=next_row["instance_id"],
+                            new_status="queued",
+                        )
+            except Exception:
+                # Best-effort; do not fail reinstatement because of neighbour status fixups
+                pass
+
         # Maintain primed cache if needed
         if desired_status == Status.primed:
             self._refresh_primed_cache(tid)
