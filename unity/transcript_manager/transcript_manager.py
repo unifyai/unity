@@ -22,9 +22,7 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
 )
 from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
+    log_manager_call,
 )
 from .prompt_builders import build_ask_prompt
 from .base import BaseTranscriptManager
@@ -143,6 +141,7 @@ class TranscriptManager(BaseTranscriptManager):
     # English-Text Question
 
     @functools.wraps(BaseTranscriptManager.ask, updated=())
+    @log_manager_call("TranscriptManager", "ask", payload_key="question")
     async def ask(
         self,
         text: str,
@@ -152,19 +151,10 @@ class TranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self._tools)
-
-        # ── 0b.  Create a call-ID & log the incoming request ────────────────
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "TranscriptManager",
-            "ask",
-            phase="incoming",
-            question=text,
-        )
 
         if clarification_up_q is not None or clarification_down_q is not None:
 
@@ -222,14 +212,6 @@ class TranscriptManager(BaseTranscriptManager):
                 if i < 1 and "search_messages" in _tools
                 else ("auto", _tools)
             ),
-        )
-
-        # ── 3.  Wrap with logging (outgoing, pause, …)  ─────────────────────
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "TranscriptManager",
-            "ask",
         )
 
         # ── 4.  Optional reasoning exposure  ───────────────────────────────
