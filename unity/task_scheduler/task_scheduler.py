@@ -1178,13 +1178,26 @@ class TaskScheduler(BaseTaskScheduler):
                 # Already queued behind another runnable task → never primed
                 status = Status.scheduled if future_start else Status.queued
             else:
-                # No predecessor pointer – use the old heuristic
+                # No predecessor pointer – determine priming based on the
+                # actual presence of a primed row, not just the internal cache.
                 if future_start:
                     status = Status.scheduled
-                elif self._active_task is None and self._primed_task is None:
-                    status = Status.primed
                 else:
-                    status = Status.queued
+                    try:
+                        primed_exists = bool(
+                            self._filter_tasks(filter="status == 'primed'", limit=1),
+                        )
+                    except Exception:
+                        primed_exists = (
+                            self._primed_task is not None
+                            and self._to_status(self._primed_task.get("status"))
+                            == Status.primed
+                        )
+
+                    if self._active_task is None and not primed_exists:
+                        status = Status.primed
+                    else:
+                        status = Status.queued
 
         # ------------------  conflict checks  ------------------ #
         self._validate_scheduled_invariants(
@@ -1468,7 +1481,12 @@ class TaskScheduler(BaseTaskScheduler):
             return
 
         rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
-        self._primed_task = rows[0] if rows else None
+        row = rows[0] if rows else None
+        # Only cache when the referenced row is actually in 'primed' state
+        if row is not None and self._to_status(row.get("status")) == Status.primed:
+            self._primed_task = row
+        else:
+            self._primed_task = None
 
     def _get_task_queue(
         self,
