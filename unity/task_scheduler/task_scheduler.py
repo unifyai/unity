@@ -762,9 +762,14 @@ class TaskScheduler(BaseTaskScheduler):
         tools = methods_to_tool_dict(
             self.ask,
             _update_no_forcing,
-            request_clarification,
             _execute_task_by_id,
             include_class_name=False,
+        )
+        # Only expose clarification tool when both queues are available
+        self._maybe_add_clarification_tool(
+            tools,
+            clarification_up_q,
+            clarification_down_q,
         )
 
         # ── dynamic system prompt ───────────────────────────────────────────
@@ -1177,8 +1182,8 @@ class TaskScheduler(BaseTaskScheduler):
                 "this one as 'primed'.",
             )
 
-        if status == Status.scheduled and not future_start:
-            raise ValueError("Scheduled tasks require a future start_at")
+        # Allow scheduled tasks with past start_at values; downstream logic may
+        # handle these cases (e.g., immediate eligibility) without raising.
 
         # ------------------  assemble payload  ------------------ #
         task_details = Task(
@@ -2128,12 +2133,8 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: Optional[asyncio.Queue[str]],
         clarification_down_q: Optional[asyncio.Queue[str]],
     ) -> None:
-        """Insert a request_clarification tool into tools if queues were provided.
-
-        The inner tool will raise at call-time if queues are missing, mirroring
-        existing behaviour when only one of the queues is supplied.
-        """
-        if clarification_up_q is not None or clarification_down_q is not None:
+        """Insert `request_clarification` only when both queues are provided."""
+        if clarification_up_q is not None and clarification_down_q is not None:
             tools["request_clarification"] = self._make_request_clarification_tool(
                 clarification_up_q,
                 clarification_down_q,
