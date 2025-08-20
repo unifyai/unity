@@ -95,13 +95,11 @@ async def test_starting_middle_detaches_and_links_neighbors():
     assert sc2.get("prev_task") == a
     assert "start_at" not in sc2 or not sc2.get("start_at")
 
-    # Stop the active task and reinstate it back into its original queue position
+    # Stop the active task with guidance to resume as originally scheduled
     handle.stop(
         "Actually this is taking longer than I expected, let's complete this task as per our original schedule instead",
     )
     await handle.result()
-
-    _ = ts._reinstate_task_to_previous_queue(task_id=b)
 
     # After reinstatement, restore A→B→C with head A carrying start_at and scheduled
     row_a3 = ts._filter_tasks(filter=f"task_id == {a}")[0]
