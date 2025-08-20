@@ -2400,6 +2400,70 @@ class TaskScheduler(BaseTaskScheduler):
             "details": {"task_id": tid},
         }
 
+    # Best-effort automatic reinsertion after an isolated activation is stopped
+    def _maybe_reinstate_after_stop(
+        self,
+        *,
+        task_id: int,
+        reason: Optional[str],
+    ) -> None:
+        """
+        Decide whether to restore the task's prior queue/schedule position after a stop.
+
+        Heuristics (best-effort, synchronous):
+        - Reinstate when the reason implies postponement or a return to the original plan
+          (e.g. "as per our original schedule", "resume later", "do this later").
+        - Do not reinstate on explicit cancellation/abandonment cues.
+
+        Only acts when a reintegration plan exists (i.e., the task was started in
+        "isolate" scope). Silently no-ops on any validation error.
+        """
+        plan = getattr(self, "_reintegration_plan", None)
+        if plan is None or plan.task_id != task_id:
+            return  # nothing to do
+
+        text = (reason or "").strip().lower()
+        if not text:
+            return
+
+        positive_markers = (
+            "original schedule",
+            "as per our original schedule",
+            "do it as originally scheduled",
+            "resume later",
+            "later",
+            "postpone",
+            "back into the queue",
+            "put back",
+            "re-insert",
+            "reinsert",
+            "return to schedule",
+            "continue as scheduled",
+        )
+        negative_markers = (
+            "abandon",
+            "not needed",
+            "drop it",
+            "discard",
+            "do not reinsert",
+            "dont reinsert",
+            "don't reinsert",
+            "never mind",
+            "forget it",
+        )
+
+        should_reinstate = any(m in text for m in positive_markers) and not any(
+            m in text for m in negative_markers
+        )
+        if not should_reinstate:
+            return
+
+        try:
+            # Will clear the plan on success; safe to ignore failures here
+            self._reinstate_task_to_previous_queue(task_id=task_id)
+        except Exception:
+            pass
+
     # Search Across Tasks
 
     def _search_tasks(

@@ -35,6 +35,7 @@ class ActiveTask(BaseActiveTask):
         self._scheduler: Optional["TaskScheduler"] = scheduler
         self._task_id: Optional[int] = task_id
         self._instance_id: Optional[int] = instance_id
+        self._was_stopped: bool = False
 
     @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(self, message: str) -> str:
@@ -47,7 +48,20 @@ class ActiveTask(BaseActiveTask):
     @functools.wraps(BaseActiveTask.stop, updated=())
     def stop(self, reason: Optional[str] = None) -> Optional[str]:
         ret = self._active_task.stop(reason)  # type: ignore[call-arg]
+        self._was_stopped = True
         self._mirror_status("cancelled")
+        # Optionally reinstate the task back into its prior queue position
+        try:
+            if self._scheduler and self._task_id is not None:
+                # Lightweight, synchronous decision (heuristic) – if guidance suggests
+                # resuming later or returning to the original schedule, reinsert now.
+                self._scheduler._maybe_reinstate_after_stop(  # type: ignore[attr-defined]
+                    task_id=self._task_id,
+                    reason=reason,
+                )
+        except Exception:
+            # Reinsertion is best-effort and must not interfere with stop semantics
+            pass
         self._clear_active_pointer()
         return ret
 
@@ -71,7 +85,7 @@ class ActiveTask(BaseActiveTask):
     async def result(self) -> str:
         ret = await self._active_task.result()
         # If the task wasn't explicitly cancelled/failed, mark as completed.
-        if self._scheduler and self._task_id is not None:
+        if self._scheduler and self._task_id is not None and not self._was_stopped:
             row = self._scheduler._filter_tasks(  # type: ignore[attr-defined]
                 filter=f"task_id == {self._task_id} and instance_id == {self._instance_id}",
                 limit=1,
