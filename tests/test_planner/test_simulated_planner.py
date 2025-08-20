@@ -163,9 +163,9 @@ async def test_stop_simulated_plan(monkeypatch):
     original_stop = SimulatedActiveTask.stop
 
     @functools.wraps(original_stop)
-    def stop(self) -> str:
+    def stop(self, reason: str | None = None) -> str:
         stopped["count"] += 1
-        return original_stop(self)
+        return original_stop(self, reason=reason)
 
     monkeypatch.setattr(SimulatedActiveTask, "stop", stop, raising=True)
 

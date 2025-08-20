@@ -188,9 +188,9 @@ async def test_execute_task_stop(monkeypatch):
     orig_stop = SimulatedActiveTask.stop
 
     @functools.wraps(orig_stop)
-    def spy_stop(self) -> str:  # type: ignore[override]
+    def spy_stop(self, reason: str | None = None) -> str:  # type: ignore[override]
         called["stop"] += 1
-        return orig_stop(self)
+        return orig_stop(self, reason=reason)
 
     monkeypatch.setattr(SimulatedActiveTask, "stop", spy_stop, raising=True)
 
