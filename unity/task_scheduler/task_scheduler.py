@@ -2273,6 +2273,22 @@ class TaskScheduler(BaseTaskScheduler):
             overwrite=True,
         )
 
+    @staticmethod
+    def _normalize_filter_expr(expr: Optional[str]) -> Optional[str]:
+        """Return a storage-compatible filter expression.
+
+        Currently performs a minimal rewrite so attribute-style access to
+        nested schedule fields (e.g. ``schedule.start_at``) matches how values
+        are stored in Unify (``schedule['start_at']``).  Keep this intentionally
+        conservative to avoid altering semantics of unrelated expressions.
+        """
+        if not isinstance(expr, str):
+            return expr
+        try:
+            return expr.replace(".start_at", "['start_at']")
+        except Exception:
+            return expr
+
     def _make_request_clarification_tool(
         self,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -2571,8 +2587,7 @@ class TaskScheduler(BaseTaskScheduler):
         list[dict]
             Entries for each matching task (raw JSON-serialisable dictionaries).
         """
-        if isinstance(filter, str):
-            filter = filter.replace(".start_at", "['start_at']")
+        filter = self._normalize_filter_expr(filter)
         return [
             log.entries
             for log in unify.get_logs(
