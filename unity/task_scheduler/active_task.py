@@ -108,11 +108,6 @@ class ActiveTask(BaseActiveTask):
             ):
                 self._scheduler._active_task = None  # type: ignore[attr-defined]
 
-    # ── handy passthrough also exposed to the LLM ──────────────────────────
-    def ask(self, question: str) -> str:  # type: ignore[override]
-        """Ask the running plan a question (simply forwards the call)."""
-        return self._active_task.ask(question)
-
     @property
     @functools.wraps(BaseActiveTask.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable]:
@@ -120,7 +115,9 @@ class ActiveTask(BaseActiveTask):
             self.interject.__name__: self.interject,
             self.stop.__name__: self.stop,
         }
-        if self._paused:
+        # Reflect paused state from the underlying task handle when available.
+        paused_flag = getattr(self._active_task, "_paused", False)
+        if paused_flag:
             tools[self.resume.__name__] = self.resume
         else:
             tools[self.pause.__name__] = self.pause
