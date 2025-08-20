@@ -328,7 +328,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         client = self._new_llm_client("o4-mini@openai")
 
-        # ── 0.  Build a *live* tools-dict so the prompt reflects reality ───
+        # Build a live tools dictionary so the prompt reflects reality
         tools = dict(self._ask_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
@@ -337,7 +337,7 @@ class TaskScheduler(BaseTaskScheduler):
                 clarification_down_q,
             )
 
-        # ── 1.  Inject the dynamic system-prompt ───────────────────────────
+        # Inject the dynamic system prompt
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
@@ -359,7 +359,7 @@ class TaskScheduler(BaseTaskScheduler):
             # pass through callable or None
             effective_tool_policy = tool_policy
 
-        # ── 2.  Kick off the tool-use loop ────────────────────────────────
+        # Start the tool-use loop
         handle = start_async_tool_use_loop(
             client,
             text,
@@ -372,7 +372,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
         # Logging wrapper applied by decorator
 
-        # ── 3b.  Optional reasoning exposure ─────────────────────────────
+        # Optional reasoning exposure
         if _return_reasoning_steps:
             # Wrap the handle.result() to return both answer and reasoning steps
             original_result = handle.result
@@ -438,7 +438,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         client = self._new_llm_client("o4-mini@openai")
 
-        # ── 0.  Build a *live* tools-dict first (prompt needs it) ─────────
+        # Build a live tools dictionary first (prompt needs it)
         tools = dict(self._update_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
@@ -447,7 +447,7 @@ class TaskScheduler(BaseTaskScheduler):
                 clarification_down_q,
             )
 
-        # ── 1.  Inject the dynamic system-prompt ──────────────────────────
+        # Inject the dynamic system prompt
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
@@ -470,7 +470,7 @@ class TaskScheduler(BaseTaskScheduler):
             # pass through callable or None
             effective_tool_policy = tool_policy
 
-        # ── 2.  Kick off interactive loop ─────────────────────────────────
+        # Start the interactive loop
         handle = start_async_tool_use_loop(
             client,
             text,
@@ -483,7 +483,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
         # Logging wrapper applied by decorator
 
-        # ── 3b.  Optional reasoning exposure ─────────────────────────────
+        # Optional reasoning exposure
         if _return_reasoning_steps:
             # Wrap the handle.result() to return both answer and reasoning steps
             original_result = handle.result
@@ -624,7 +624,7 @@ class TaskScheduler(BaseTaskScheduler):
             task is already terminal/active.
         """
 
-        # 0. sanity checks
+        # Sanity checks
         if self._active_task is not None:
             raise RuntimeError("Another task is already running – stop it first.")
 
@@ -645,13 +645,13 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] in ("completed", "cancelled", "failed", "active"):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
-        # 1. Adjust queue linkages based on explicit activation scope
+        # Adjust queue linkages based on explicit activation scope
         self._detach_from_queue_for_activation(
             task_id=task_id,
             execution_scope=execution_scope,
         )
 
-        # 2. build the *real* active plan
+        # Build the active plan
         plan_handle = await self._planner.execute(
             task_row["description"],
             parent_chat_context=parent_chat_context,
@@ -659,7 +659,7 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_down_q=clarification_down_q,
         )
 
-        # 3. wrap it so we can keep the task-table in sync
+        # Wrap the plan so the task table stays in sync
         handle = ActiveTask(
             plan_handle,
             task_id=task_id,
@@ -673,13 +673,13 @@ class TaskScheduler(BaseTaskScheduler):
             "handle": handle,
         }
 
-        # ── clone if this is a triggerable or recurring task ──────────────
+        # Clone if this is a triggerable or recurring task
         if self._to_status(task_row["status"]) == Status.triggerable or task_row.get(
             "repeat",
         ):
             self._clone_task_instance(task_row)
 
-        # 4. Promote status → active (and record activation reason) and clear primed pointer if needed
+        # Promote status to active (and record the activation reason) and clear the primed pointer if needed
 
         # Infer activation reason based on provided cause or task configuration
         reason: ActivatedBy
@@ -720,10 +720,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
-        """Compose tools and prompt, then start the execute_task reasoning loop.
-
-        Mirrors the pre-refactor behaviour byte-for-byte; extracted for clarity.
-        """
+        """Compose tools and prompt, then start the execute_task reasoning loop."""
         client = self._new_llm_client("o4-mini@openai")
 
         # ── tool definitions ────────────────────────────────────────────────
@@ -1611,7 +1608,7 @@ class TaskScheduler(BaseTaskScheduler):
         # ----------------  starting node  ---------------- #
         execute_task: Optional[dict] = None
 
-        # ── 0.  Pick a starting node ─────────────────────────────────────
+        # Pick a starting node
         if task_id is None:
             if self._primed_task:
                 execute_task = self._primed_task
@@ -1750,7 +1747,7 @@ class TaskScheduler(BaseTaskScheduler):
             if t.get("schedule") is not None
         }
 
-        # ── 1.  Extract the queue-level timestamp from the old head ──────────
+        # Extract the queue-level timestamp from the old head
         queue_start_ts: Optional[str] = None
         if original:
             _old_head = existing_logs.get(original[0])
@@ -1762,7 +1759,7 @@ class TaskScheduler(BaseTaskScheduler):
             prev_tid = None if idx == 0 else new[idx - 1]
             next_tid = None if idx == len(new) - 1 else new[idx + 1]
 
-            # ── Decide who owns the timestamp & status after re-order ──────
+            # Decide who owns the timestamp and status after re-order
             if idx == 0:  # ↤ HEAD
                 # Prefer the queue-level ts taken from the old head; fall back
                 # to a ts that was already on the new head (rare but legal).
@@ -2025,7 +2022,7 @@ class TaskScheduler(BaseTaskScheduler):
         RuntimeError
             When trying to edit the live active task without permission.
         """
-        # 1. Forbid making anything *active* (unless explicitly allowed)
+        # Forbid making anything active (unless explicitly allowed)
         new_status_enum = self._to_status(new_status)
         if new_status_enum == Status.active and not allow_active:
             raise ValueError(
@@ -2033,11 +2030,11 @@ class TaskScheduler(BaseTaskScheduler):
                 "use the dedicated activation tool.",
             )
 
-        # 2. Forbid touching the existing active task
+        # Forbid touching the existing active task
         if not allow_active:
             self._ensure_not_active_task(task_ids)
 
-        # ── Invariant check *per task* if new_status becomes 'scheduled' ─────
+        # Invariant check per task when setting status to 'scheduled'
         if new_status_enum == Status.scheduled:
             rows = self._filter_tasks(filter=f"task_id in {task_ids}")
             for row in rows:
@@ -2046,7 +2043,7 @@ class TaskScheduler(BaseTaskScheduler):
                     schedule=row.get("schedule"),
                     err_prefix=f"While changing status of task {row['task_id']}:",
                 )
-        # ── Invariant check when transitioning to 'queued' ───────────────
+        # Invariant check when transitioning to 'queued'
         if new_status_enum == Status.queued:
             rows = self._filter_tasks(filter=f"task_id in {task_ids}")
             for row in rows:
@@ -2222,7 +2219,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
     # ────────────────────────────────────────────────────────────────────
-    # Small internal helpers (Step 1)
+    # Small internal helpers
     # ────────────────────────────────────────────────────────────────────
 
     def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
@@ -2238,7 +2235,7 @@ class TaskScheduler(BaseTaskScheduler):
         """Canonicalise a status-like value to the Status enum."""
         return value if isinstance(value, Status) else Status(value)
 
-    # Default tool-policy helpers (Step 11)
+    # Default tool-policy helpers
     @staticmethod
     def _default_ask_tool_policy(
         step_index: int,
@@ -2262,7 +2259,7 @@ class TaskScheduler(BaseTaskScheduler):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
-    # Centralised simple-field writer (Step 2)
+    # Centralised simple-field writer
     def _update_fields_if_not_active(
         self,
         *,
