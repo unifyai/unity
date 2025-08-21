@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 import socket
 import contextlib
+import json
 
 import aiohttp
 import requests
@@ -433,6 +434,72 @@ class MagnitudeBrowserBackend(BrowserBackend):
         #             continue
         #         raise
 
+    def _save_persistent_data(self):
+        """
+        Save all files and folders in the assistant's data directory by sending them
+        to a remote endpoint for persistence.
+        """
+        # Before saving, delete the existing directory first
+        # try:
+        #     user_id = os.environ.get("USER_ID")
+        #     project = "Assistants"
+        #     path = ""  # root of the data directory
+        #     isDirectory = True
+        #     endpoint = os.environ.get("NEXTAUTH_URL", "https://console.redesign.staging.internal.saas.unify.ai") + "/api/code/file"
+        #     headers = {"apiKey": os.environ.get("UNIFY_KEY")}
+        #     payload = {
+        #         "user_id": user_id,
+        #         "project": project,
+        #         "filename": path,
+        #         "isDirectory": isDirectory,
+        #     }
+        #     res = requests.delete(endpoint, headers=headers, data=json.dumps(payload))
+        #     try:
+        #         json_resp = res.json()
+        #     except Exception:
+        #         json_resp = {}
+        #     if not res.ok:
+        #         raise Exception(json_resp.get("detail") or "Network error")
+        # except Exception as e:
+        #     print(f"Failed to delete existing directory before saving: {e}")
+
+        # Recursively walk through all files in the data directory
+        for root, dirs, files in os.walk("/home"):
+            for filename in files:
+                file_path = os.path.join(root, filename)
+                try:
+                    with open(file_path, "rb") as f:
+                        content = f.read()
+                    # Prepare relative path for storage
+                    rel_path = os.path.relpath(file_path, "/home")
+                    # Prepare payload
+                    payload = {
+                        "user_id": os.environ.get("USER_ID"),
+                        "project": "Assistants",
+                        "filename": rel_path,
+                        "content": content.decode("utf-8", errors="replace"),
+                    }
+
+                    # Endpoint URL and API key
+                    endpoint = (
+                        os.environ.get("NEXTAUTH_URL", "http://localhost:8000")
+                        + "/api/code/file"
+                    )
+                    headers = {"apiKey": os.environ.get("UNIFY_KEY")}
+                    res = requests.post(
+                        endpoint,
+                        headers=headers,
+                        data=json.dumps(payload),
+                    )
+                    try:
+                        json_resp = res.json()
+                    except Exception:
+                        json_resp = {}
+                    if not res.ok:
+                        raise Exception(json_resp.get("detail") or "Network error")
+                except Exception as e:
+                    print(f"Failed to save {file_path}: {e}")
+
     def stop(self):
         """Stops the Node.js service subprocess."""
         with MagnitudeBrowserBackend._lock:
@@ -446,6 +513,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 print(
                     f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
                 )
+                # self._save_persistent_data()
                 if sys.platform != "win32":
                     import signal
 
