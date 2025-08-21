@@ -195,3 +195,35 @@ async def test_handle_ask():
     # The original handle should still be awaitable and produce a result
     result = await handle.result()
     assert isinstance(result, str) and result.strip()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 8.  Pause should freeze duration timer                                       #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_pause_freezes_duration():
+    actor = SimulatedActor(duration=0.2)
+    handle = await actor.act("Time-sensitive work.")
+
+    # Give the worker thread a moment to start, then pause quickly
+    await asyncio.sleep(0.05)
+    handle.pause()
+
+    # While paused, wait longer than the total duration; it should NOT complete
+    res = asyncio.create_task(handle.result())
+    await asyncio.sleep(0.3)
+    assert (
+        not res.done()
+    ), "result() must not complete while paused even if wall time exceeds duration"
+
+    # Resume and ensure it doesn't complete immediately; some time should elapse
+    loop = asyncio.get_event_loop()
+    t0 = loop.time()
+    handle.resume()
+    answer = await asyncio.wait_for(res, timeout=2)
+    elapsed_after_resume = loop.time() - t0
+    assert isinstance(answer, str) and answer.strip()
+    assert (
+        elapsed_after_resume >= 0.05
+    ), "Should wait after resume; clock was frozen while paused"
