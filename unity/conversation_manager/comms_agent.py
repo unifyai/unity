@@ -155,6 +155,7 @@ class CommsAgent:
         # logging
         self.loop = asyncio.get_event_loop()
         self.transcript_manager = None
+        self.contact_manager = None
         self.redis = None
         self.broader_context = ""
         self.project_name = project_name
@@ -1020,6 +1021,7 @@ class CommsAgent:
     def handle_logging(self, event: dict):
         with self.logging_lock:
             import unity
+            from unity.contact_manager.contact_manager import ContactManager
             from unity.transcript_manager.transcript_manager import TranscriptManager
             from unity.transcript_manager.types.message import Message
             from unity.events.event_bus import EVENT_BUS
@@ -1072,6 +1074,7 @@ class CommsAgent:
                 return
 
             if self.transcript_manager is None:
+                self.contact_manager = ContactManager()
                 self.transcript_manager = TranscriptManager()
                 self.transcript_manager._get_logger().session.headers[
                     "Authorization"
