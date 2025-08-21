@@ -14,6 +14,7 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
     methods_to_tool_dict,
+    TOOL_LOOP_LINEAGE,
 )
 from ..helpers import _handle_exceptions
 from .base import BaseKnowledgeManager
@@ -308,6 +309,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             tool_policy=self._look_first_tool_policy,
             preprocess_msgs=self._inject_broader_context,
@@ -426,6 +428,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             tool_policy=self._look_first_tool_policy,
             preprocess_msgs=self._inject_broader_context,
@@ -542,6 +545,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
             preprocess_msgs=self._inject_broader_context,
