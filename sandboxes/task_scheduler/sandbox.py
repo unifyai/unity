@@ -69,17 +69,35 @@ _SIM_PARSER_SYS = (
     "Controls to detect (may appear anywhere, any order, any phrasing):\n"
     "- steps: an integer number of steps (e.g., 'in 5 steps', 'limit to 7 steps', 'steps=3').\n"
     "- timeout: a duration with units seconds or minutes (e.g., 'in 30 seconds', 'timeout 2 min', '90s', 'timeout=1.5 minutes').\n"
-    "Return JSON with fields: core_text (original text with any control phrases removed),\n"
+    "Return JSON with fields: core_text (the user's original request with ANY full sentence or standalone clause that expresses simulation controls REMOVED),\n"
     "steps (int or null) and timeout_seconds (float seconds or null).\n"
-    "Do not rewrite the rest of the text. Preserve meaning and wording. Remove only the control phrases and any glue words like 'with', 'for', 'in', 'limit to' that are only part of those control expressions.\n"
+    "Rules for redaction when producing core_text:\n"
+    "- Remove entire sentences that mention simulation parameters (timeout/steps) or are meta-instructions about the simulation.\n"
+    "- If controls are embedded as a trailing or leading clause (e.g., '... and make it 60 seconds timeout'), remove the whole clause so the remaining sentence reads naturally.\n"
+    "- Do not leave dangling words or punctuation (avoid artefacts like 'a.' or double spaces).\n"
+    "- Preserve the user's task wording otherwise; do not paraphrase or summarize.\n"
+    "Examples:\n"
+    "1) Input: 'Could you actually start researching accounted limited, right now? As for the simulation, please make this have a timeout of sixty seconds. Thanks.'\n"
+    "   core_text: 'Could you actually start researching accounted limited, right now? Thanks.' steps: null timeout_seconds: 60\n"
+    "2) Input: 'Start task 12 and in 5 steps please'\n"
+    "   core_text: 'Start task 12' steps: 5 timeout_seconds: null\n"
+    "3) Input: 'Begin now, with a timeout of 90s'\n"
+    "   core_text: 'Begin now' steps: null timeout_seconds: 90\n"
 )
 
 
 def _parse_simulation_config(text: str) -> _SimConfig:
     try:
         judge = unify.Unify("gpt-4o@openai", response_format=_SimConfig)
-        return _SimConfig.model_validate_json(
+        parsed = _SimConfig.model_validate_json(
             judge.set_system_message(_SIM_PARSER_SYS).generate(text),
+        )
+        # Trust the LLM for sentence/phrase removal per system prompt guidance.
+        core = (parsed.core_text or text).strip()
+        return _SimConfig(
+            core_text=core,
+            steps=parsed.steps,
+            timeout_seconds=parsed.timeout_seconds,
         )
     except Exception:
         # Fallback – no parsing; keep text as-is
