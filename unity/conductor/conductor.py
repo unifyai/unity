@@ -23,8 +23,8 @@ from ..transcript_manager.base import BaseTranscriptManager
 from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.base import BaseKnowledgeManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
-from ..planner.base import BasePlanner
-from ..planner.tool_loop_planner import ToolLoopPlanner
+from ..actor.base import BasePlanner
+from ..actor.tool_loop_planner import ToolLoopPlanner
 from ..task_scheduler.base import BaseTaskScheduler
 from .base import BaseConductor
 from ..task_scheduler.task_scheduler import TaskScheduler

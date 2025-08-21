@@ -3,16 +3,16 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, call
 
-from unity.planner.hierarchical_planner import (
+from unity.actor.hierarchical_planner import (
     HierarchicalPlanner,
     HierarchicalPlan,
     VerificationAssessment,
     _HierarchicalPlanState,
 )
-from unity.planner.action_provider import ActionProvider
+from unity.actor.action_provider import ActionProvider
 from unity.controller.browser import Browser
 from unity.function_manager.function_manager import FunctionManager
-import unity.planner.hierarchical_planner as hierarchical_planner_module
+import unity.actor.hierarchical_planner as hierarchical_planner_module
 from unity.common.llm_helpers import AsyncToolUseLoopHandle
 
 

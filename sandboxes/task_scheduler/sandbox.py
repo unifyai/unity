@@ -36,7 +36,7 @@ load_dotenv()
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.common.llm_helpers import SteerableToolHandle
-from unity.planner.simulated import SimulatedPlanner
+from unity.actor.simulated import SimulatedPlanner
 from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,

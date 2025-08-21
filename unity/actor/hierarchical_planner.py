@@ -29,12 +29,12 @@ from unity.common.llm_helpers import (
     SteerableToolHandle,
 )
 from unity.function_manager.function_manager import FunctionManager
-from unity.planner.base import (
+from unity.actor.base import (
     BaseActiveTask,
     BasePlanner,
 )
-from unity.planner.action_provider import ActionProvider
-import unity.planner.prompt_builders as prompt_builders
+from unity.actor.action_provider import ActionProvider
+import unity.actor.prompt_builders as prompt_builders
 
 from unity.controller.browser_backends import BrowserAgentError
 

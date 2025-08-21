@@ -15,7 +15,7 @@ from .prompt_builders import (
     build_update_prompt,
     build_simulated_method_prompt,
 )
-from ..planner.simulated import SimulatedPlanner
+from ..actor.simulated import SimulatedPlanner
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
