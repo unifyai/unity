@@ -17,7 +17,8 @@ from datetime import datetime, timezone
 import pytest
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.actor.simulated import SimulatedActor, SimulatedActiveTask
+from unity.actor.simulated import SimulatedActor
+from unity.task_scheduler.simulated import SimulatedActiveTask
 
 #  The helper used in the existing test‑suite – applies project‑level monkey‐
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
