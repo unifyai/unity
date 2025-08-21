@@ -6,9 +6,9 @@ import unify
 import os
 
 from unity.common.llm_helpers import start_async_tool_use_loop
-from unity.actor.base import BasePlanner, BaseActiveTask
-from unity.actor.browser_use_planner import BrowserUsePlanner, BrowserUsePlan
-from unity.actor.tool_loop_planner import ToolLoopPlanner, ToolLoopPlan
+from unity.actor.base import BaseActor, BaseActiveTask
+from unity.actor.browser_use_actor import BrowserUseActor, BrowserUsePlan
+from unity.actor.tool_loop_actor import ToolLoopActor, ToolLoopPlan
 from tests.helpers import _handle_project, _get_unity_test_env_var
 
 
@@ -23,24 +23,24 @@ def make_client(system_message: str):
     return client
 
 
-PlannerFixture = Tuple[Type[BasePlanner], Type[BaseActiveTask], dict]
+ActorFixture = Tuple[Type[BaseActor], Type[BaseActiveTask], dict]
 
 
 @pytest.fixture(
     params=[
-        (BrowserUsePlanner, BrowserUsePlan, {"headless": True}),
-        (ToolLoopPlanner, ToolLoopPlan, {"headless": True}),
+        (BrowserUseActor, BrowserUsePlan, {"headless": True}),
+        (ToolLoopActor, ToolLoopPlan, {"headless": True}),
     ],
 )
-def planner_and_plan_types(request) -> PlannerFixture:
+def actor_and_plan_types(request) -> ActorFixture:
     return request.param
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_plan(monkeypatch, planner_and_plan_types):
-    planner_class, plan_class, planner_kwargs = planner_and_plan_types
-    planner = planner_class(**planner_kwargs)
+async def test_start_and_ask_plan(monkeypatch, actor_and_plan_types):
+    actor_class, plan_class, actor_kwargs = actor_and_plan_types
+    actor = actor_class(**actor_kwargs)
 
     ask_called = {"count": 0}
     stop_called = {"count": 0}
@@ -110,9 +110,9 @@ async def test_start_and_ask_plan(monkeypatch, planner_and_plan_types):
             )
         return dummy_tools
 
-    monkeypatch.setattr(planner, "_build_tools", patched_build_tools_for_test)
-    if hasattr(planner, "_tools_cache"):
-        planner._tools_cache = None
+    monkeypatch.setattr(actor, "_build_tools", patched_build_tools_for_test)
+    if hasattr(actor, "_tools_cache"):
+        actor._tools_cache = None
     system = (
         "You are an automated test assistant. Your responses must be precise.\n"
         "1. Call `plan` with task_description='perform a search on a Tasty Cola Ltd. using the browser and give me the results'.\n"
@@ -121,7 +121,7 @@ async def test_start_and_ask_plan(monkeypatch, planner_and_plan_types):
         "4. After the `_stop_` tool returns its result, your next and ONLY response MUST be the single word 'ask_completed'. You MUST NOT call any more tools or say anything else."
     )
     client = make_client(system)
-    tools = {"execute": planner.execute}
+    tools = {"execute": actor.execute}
 
     handle = start_async_tool_use_loop(
         client=client,
@@ -138,14 +138,14 @@ async def test_start_and_ask_plan(monkeypatch, planner_and_plan_types):
     assert ask_called["count"] == 1, "BrowserUsePlan.ask should be invoked once"
     assert stop_called["count"] == 1, "BrowserUsePlan.stop should be invoked once"
 
-    await planner.close()
+    await actor.close()
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_plan(monkeypatch, planner_and_plan_types):
-    planner_class, plan_class, planner_kwargs = planner_and_plan_types
-    planner = planner_class(**planner_kwargs)
+async def test_interject_plan(monkeypatch, actor_and_plan_types):
+    actor_class, plan_class, actor_kwargs = actor_and_plan_types
+    actor = actor_class(**actor_kwargs)
 
     interjected_log = {"count": 0, "msgs": []}
     original_interject_method = plan_class.interject
@@ -225,10 +225,10 @@ async def test_interject_plan(monkeypatch, planner_and_plan_types):
             )
         return dummy_tools
 
-    if hasattr(planner, "_tools_cache"):
-        planner._tools_cache = None
+    if hasattr(actor, "_tools_cache"):
+        actor._tools_cache = None
 
-    monkeypatch.setattr(planner, "_build_tools", patched_build_tools_for_test)
+    monkeypatch.setattr(actor, "_build_tools", patched_build_tools_for_test)
     monkeypatch.setattr(plan_class, "interject", patched_interject, raising=True)
 
     system = (
@@ -238,7 +238,7 @@ async def test_interject_plan(monkeypatch, planner_and_plan_types):
         "3. After the `_interject_` tool returns, your next and ONLY response MUST be the single word 'interjection_processed'. You MUST NOT call any more tools or say anything else."
     )
     client = make_client(system)
-    tools = {"execute": planner.execute}
+    tools = {"execute": actor.execute}
 
     handle = start_async_tool_use_loop(
         client=client,
@@ -262,17 +262,17 @@ async def test_interject_plan(monkeypatch, planner_and_plan_types):
         for msg in interjected_log["msgs"]
     ), "Interjection payload incorrect"
 
-    await planner.close()
+    await actor.close()
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_pause_and_resume_plan(
     monkeypatch,
-    planner_and_plan_types,
+    actor_and_plan_types,
 ):
-    planner_class, plan_class, planner_kwargs = planner_and_plan_types
-    planner = planner_class(**planner_kwargs)
+    actor_class, plan_class, actor_kwargs = actor_and_plan_types
+    actor = actor_class(**actor_kwargs)
 
     counts = {"pause": 0, "resume": 0, "stop_after_resume": 0}
     original_pause_method = plan_class.pause
@@ -345,9 +345,9 @@ async def test_pause_and_resume_plan(
             )
         return dummy_tools
 
-    monkeypatch.setattr(planner, "_build_tools", patched_build_tools_for_test)
-    if hasattr(planner, "_tools_cache"):
-        planner._tools_cache = None
+    monkeypatch.setattr(actor, "_build_tools", patched_build_tools_for_test)
+    if hasattr(actor, "_tools_cache"):
+        actor._tools_cache = None
 
     system = (
         "You are an automated test assistant. Your responses must be precise.\n"
@@ -358,7 +358,7 @@ async def test_pause_and_resume_plan(
         "5. After the `_stop_` tool returns, your next and ONLY response MUST be the single word 'pause_resume_completed'. You MUST NOT call any more tools or say anything else."
     )
     client = make_client(system)
-    tools = {"execute": planner.execute}
+    tools = {"execute": actor.execute}
 
     handle = start_async_tool_use_loop(
         client=client,
@@ -384,20 +384,20 @@ async def test_pause_and_resume_plan(
         counts["stop_after_resume"] == 1
     ), "BrowserUsePlan.stop should be called after resume"
 
-    await planner.close()
+    await actor.close()
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_plan_requests_clarification(
     monkeypatch,
-    planner_and_plan_types,
+    actor_and_plan_types,
 ):
     """
     Test that BrowserUsePlan can request and receive clarification via queues.
     """
-    planner_class, plan_class, planner_kwargs = planner_and_plan_types
-    planner = planner_class(**planner_kwargs)
+    actor_class, plan_class, actor_kwargs = actor_and_plan_types
+    actor = actor_class(**actor_kwargs)
     clarification_up_q = asyncio.Queue()
     clarification_down_q = asyncio.Queue()
 
@@ -448,9 +448,9 @@ async def test_plan_requests_clarification(
         )
         return dummy_tools
 
-    monkeypatch.setattr(planner, "_build_tools", patched_build_tools_for_clarification)
-    if hasattr(planner, "_tools_cache"):
-        planner._tools_cache = None
+    monkeypatch.setattr(actor, "_build_tools", patched_build_tools_for_clarification)
+    if hasattr(actor, "_tools_cache"):
+        actor._tools_cache = None
 
     task_description = (
         "Search for 'Tasty Cola products'. "
@@ -458,7 +458,7 @@ async def test_plan_requests_clarification(
         "After clarification, extract content for the specified product's website (assume it's productname.com)."
     )
 
-    plan_handle = await planner.execute(
+    plan_handle = await actor.execute(
         task_description,
         clarification_up_q=clarification_up_q,
         clarification_down_q=clarification_down_q,
@@ -497,4 +497,4 @@ async def test_plan_requests_clarification(
         or "Details for Tasty Cola Zero" not in final_result
     )
 
-    await planner.close()
+    await actor.close()

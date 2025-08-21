@@ -1,5 +1,5 @@
-from .browser_use_planner import BrowserUsePlanner
-from .tool_loop_planner import ToolLoopPlanner
-from .hierarchical_planner import HierarchicalPlanner
+from .browser_use_actor import BrowserUseActor
+from .tool_loop_actor import ToolLoopActor
+from .hierarchical_actor import HierarchicalActor
 
-__all__ = ["BrowserUsePlanner", "ToolLoopPlanner", "HierarchicalPlanner"]
+__all__ = ["BrowserUseActor", "ToolLoopActor", "HierarchicalActor"]

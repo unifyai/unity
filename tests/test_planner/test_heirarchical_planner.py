@@ -3,8 +3,8 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, call
 
-from unity.actor.hierarchical_planner import (
-    HierarchicalPlanner,
+from unity.actor.hierarchical_actor import (
+    HierarchicalActor,
     HierarchicalPlan,
     VerificationAssessment,
     _HierarchicalPlanState,
@@ -12,7 +12,7 @@ from unity.actor.hierarchical_planner import (
 from unity.actor.action_provider import ActionProvider
 from unity.controller.browser import Browser
 from unity.function_manager.function_manager import FunctionManager
-import unity.actor.hierarchical_planner as hierarchical_planner_module
+import unity.actor.hierarchical_actor as hierarchical_actor_module
 from unity.common.llm_helpers import AsyncToolUseLoopHandle
 
 
@@ -50,18 +50,18 @@ def mock_action_provider(mock_browser):
 
 
 @pytest.fixture
-def planner(mock_function_manager, mock_action_provider, monkeypatch):
+def actor(mock_function_manager, mock_action_provider, monkeypatch):
     """
-    Provides a HierarchicalPlanner instance where the real ActionProvider
+    Provides a HierarchicalActor instance where the real ActionProvider
     has been replaced by our mock *before* initialization.
     """
     monkeypatch.setattr(
-        hierarchical_planner_module,
+        hierarchical_actor_module,
         "ActionProvider",
         lambda *args, **kwargs: mock_action_provider,
     )
 
-    p = HierarchicalPlanner(function_manager=mock_function_manager, headless=True)
+    p = HierarchicalActor(function_manager=mock_function_manager, headless=True)
     return p
 
 
@@ -70,12 +70,12 @@ def planner(mock_function_manager, mock_action_provider, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_dynamic_implementation(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
     """
-    Objective: Verify that the planner can correctly identify, implement, and
+    Objective: Verify that the actor can correctly identify, implement, and
     execute a stubbed-out function at runtime.
     """
     # --- Arrange ---
@@ -110,10 +110,10 @@ async def sign_in():
         successful_verification_json,  # For sign_in verification
         successful_verification_json,  # For main_plan verification
     ]
-    monkeypatch.setattr("unity.planner.hierarchical_planner.llm_call", mock_llm)
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    monkeypatch.setattr("unity.actor.hierarchical_actor.llm_call", mock_llm)
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
     # --- Act ---
-    plan = await planner.execute(
+    plan = await actor.execute(
         "Sign in to the website. Once signed in, respond **only** with 'Signed in successfully.'",
     )
     await plan.result()
@@ -142,7 +142,7 @@ async def sign_in():
 
 @pytest.mark.asyncio
 async def test_verification_and_tactical_replanning(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -177,7 +177,7 @@ async def main_plan():
     return f"Found email: {{email}}"
 """
 
-    # Mock the planner's internal LLM-based verification
+    # Mock the actor's internal LLM-based verification
     mock_check_state = AsyncMock()
     # The full, correct sequence of verification calls:
     mock_check_state.side_effect = [
@@ -191,19 +191,19 @@ async def main_plan():
         # 3. Final verification of the parent main_plan succeeds.
         VerificationAssessment(status="ok", reason="Parent plan also looks good."),
     ]
-    monkeypatch.setattr(planner, "_check_state_against_goal", mock_check_state)
+    monkeypatch.setattr(actor, "_check_state_against_goal", mock_check_state)
 
     # Mock the dynamic implementation LLM call
     mock_dynamic_implement = AsyncMock(return_value=reimplemented_find_email_code)
-    monkeypatch.setattr(planner, "_dynamic_implement", mock_dynamic_implement)
+    monkeypatch.setattr(actor, "_dynamic_implement", mock_dynamic_implement)
 
     # Mock the initial plan generation
     mock_generate_plan_llm = AsyncMock(return_value=main_plan_code)
-    monkeypatch.setattr(planner, "_generate_initial_plan", mock_generate_plan_llm)
+    monkeypatch.setattr(actor, "_generate_initial_plan", mock_generate_plan_llm)
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("Find the company email.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("Find the company email.")
     await plan.result()
 
     # --- Assert ---
@@ -226,7 +226,7 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_strategic_replanning_escalation(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -264,14 +264,14 @@ async def main_plan():
         return VerificationAssessment(status="ok", reason="Parent is ok.")
 
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         mock_check_state_against_goal,
     )
 
     # Mock the initial plan generation
     mock_generate_plan = AsyncMock(return_value=main_plan_code)
-    monkeypatch.setattr(planner, "_generate_initial_plan", mock_generate_plan)
+    monkeypatch.setattr(actor, "_generate_initial_plan", mock_generate_plan)
 
     # We will also mock the replan of the parent to see it gets called
     mock_handle_dynamic_implementation = AsyncMock()
@@ -282,8 +282,8 @@ async def main_plan():
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute(
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute(
         "Execute a plan with a flawed child task.",
     )
 
@@ -312,7 +312,7 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_full_plan_modification_and_correction(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -367,29 +367,29 @@ async def course_correction_main():
 
     # Mock the LLM calls
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_initial_plan",
         AsyncMock(return_value=initial_code),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_perform_plan_surgery",
         AsyncMock(return_value=modified_code),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_course_correction_script",
         AsyncMock(return_value=correction_script),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("Go to site A and click B.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("Go to site A and click B.")
 
     # Wait until the first 'act' call completes. This ensures the plan is
     # now running and paused inside the second 'act' call, waiting on our event.
@@ -407,7 +407,7 @@ async def course_correction_main():
     assert "modified and resumed successfully" in modification_result
 
     # 2. The course correction script should have been called.
-    planner._generate_course_correction_script.assert_called_once()
+    actor._generate_course_correction_script.assert_called_once()
     mock_action_provider.browser_act.assert_any_call("Navigate to site C")
 
     # 3. The final plan execution should reflect the new goal.
@@ -419,7 +419,7 @@ async def course_correction_main():
 
 @pytest.mark.asyncio
 async def test_failed_plan_modification_rollback(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -436,28 +436,28 @@ async def main_plan():
 """
     # Mock initial generation
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_initial_plan",
         AsyncMock(return_value=original_code),
     )
 
     # Mock the plan surgery to fail
     monkeypatch.setattr(
-        planner,
+        actor,
         "_perform_plan_surgery",
         AsyncMock(side_effect=Exception("LLM failed to generate new code.")),
     )
 
     # Mock verification to always succeed
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("Do the original task.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("Do the original task.")
     await asyncio.sleep(0.5)  # Let it start
 
     modification_result = await plan.modify_plan("This modification will fail.")
@@ -481,7 +481,7 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_fatal_error_in_verification(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -496,12 +496,12 @@ async def main_plan():
     await action_provider.browser_act("Do something")
 """
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_initial_plan",
         AsyncMock(return_value=plan_code),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(
             return_value=VerificationAssessment(
@@ -512,8 +512,8 @@ async def main_plan():
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("Test fatal error handling.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("Test fatal error handling.")
     await plan.result()
 
     # --- Assert ---
@@ -525,7 +525,7 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_retry_exhaustion_leads_to_escalation(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     monkeypatch,
 ):
     """
@@ -543,12 +543,12 @@ async def main_plan():
     await failing_task()
 """
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_initial_plan",
         AsyncMock(return_value=failing_code),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
@@ -560,8 +560,8 @@ async def main_plan():
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute(
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute(
         "A task that will fail and escalate.",
     )
     # The plan will escalate and pause, so we get the message. This waits for the *entire*
@@ -586,7 +586,7 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_exploratory_mode_with_clarification(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -623,7 +623,7 @@ async def main_plan():
     mock_exploration_handle.result = AsyncMock(side_effect=mock_exploration_result)
 
     # 2. Store the original function so we can call it for the main loop
-    original_start_loop = hierarchical_planner_module.start_async_tool_use_loop
+    original_start_loop = hierarchical_actor_module.start_async_tool_use_loop
 
     def smart_mock_start_loop(*args, **kwargs):
         """
@@ -638,23 +638,23 @@ async def main_plan():
 
     # 3. Apply the new, smarter mock function
     monkeypatch.setattr(
-        hierarchical_planner_module,
+        hierarchical_actor_module,
         "start_async_tool_use_loop",
         smart_mock_start_loop,
     )
 
     # 4. Mock the plan generation and final verification as before.
     mock_generate_plan = AsyncMock(return_value=final_plan_code)
-    monkeypatch.setattr(planner, "_generate_initial_plan", mock_generate_plan)
+    monkeypatch.setattr(actor, "_generate_initial_plan", mock_generate_plan)
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=True))
-    plan = await planner.execute(goal)
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=True))
+    plan = await actor.execute(goal)
     queue_holder["up_q"] = plan.clarification_up_q
     queue_holder["down_q"] = plan.clarification_down_q
 
@@ -683,7 +683,7 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_user_initiated_stop(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -701,14 +701,14 @@ async def test_user_initiated_stop(
 async def main_plan():
     await action_provider.browser_act("long running action")
 """
-    planner._generate_initial_plan = AsyncMock(return_value=plan_code)
-    planner._check_state_against_goal = AsyncMock(
+    actor._generate_initial_plan = AsyncMock(return_value=plan_code)
+    actor._check_state_against_goal = AsyncMock(
         return_value=VerificationAssessment(status="ok", reason="OK"),
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("A long running plan to stop.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("A long running plan to stop.")
     await asyncio.sleep(0.1)  # Ensure the plan has started and is waiting
     assert not plan.done()
 
@@ -722,7 +722,7 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_user_initiated_pause_and_resume(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -744,14 +744,14 @@ async def main_plan():
     await action_provider.browser_act("long running action")
     return "Done"
 """
-    planner._generate_initial_plan = AsyncMock(return_value=plan_code)
-    planner._check_state_against_goal = AsyncMock(
+    actor._generate_initial_plan = AsyncMock(return_value=plan_code)
+    actor._check_state_against_goal = AsyncMock(
         return_value=VerificationAssessment(status="ok", reason="OK"),
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("A long running plan to pause.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("A long running plan to pause.")
     await asyncio.sleep(0.1)
     assert plan._state == _HierarchicalPlanState.RUNNING
 
@@ -779,12 +779,12 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_nested_dynamic_implementation(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
     """
-    Objective: Verify the planner can handle a chain of dynamic implementations,
+    Objective: Verify the actor can handle a chain of dynamic implementations,
     where a newly implemented function itself calls another stubbed function.
     """
     # --- Arrange ---
@@ -824,17 +824,17 @@ async def child_task():
         implemented_parent,
         implemented_child,
     ]
-    monkeypatch.setattr("unity.planner.hierarchical_planner.llm_call", mock_llm)
+    monkeypatch.setattr("unity.actor.hierarchical_actor.llm_call", mock_llm)
 
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("Execute a plan with nested stubs.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("Execute a plan with nested stubs.")
     final_result = await plan.result()
 
     # --- Assert ---
@@ -858,7 +858,7 @@ async def child_task():
 
 @pytest.mark.asyncio
 async def test_modify_plan_while_paused(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -891,30 +891,30 @@ async def main_plan():
 """
 
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_initial_plan",
         AsyncMock(return_value=initial_code),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_perform_plan_surgery",
         AsyncMock(return_value=modified_code),
     )
     # No course correction needed for this simple change
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_course_correction_script",
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("A plan to be modified while paused.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("A plan to be modified while paused.")
     await asyncio.sleep(0.1)  # Let the plan start and hit the waiting act()
 
     # Pause the running plan
@@ -946,7 +946,7 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_invalid_code_generation_handling(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     monkeypatch,
 ):
     """
@@ -960,11 +960,11 @@ async def test_invalid_code_generation_handling(
     # Mock the LLM to return valid code initially, then invalid code for the implementation
     mock_llm = AsyncMock()
     mock_llm.side_effect = [initial_code, invalid_code]
-    monkeypatch.setattr("unity.planner.hierarchical_planner.llm_call", mock_llm)
+    monkeypatch.setattr("unity.actor.hierarchical_actor.llm_call", mock_llm)
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("A plan that will fail code generation.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("A plan that will fail code generation.")
     result = await plan.result()
 
     # --- Assert ---
@@ -978,7 +978,7 @@ async def test_invalid_code_generation_handling(
 
 @pytest.mark.asyncio
 async def test_failed_course_correction_triggers_rollback(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -1006,17 +1006,17 @@ async def course_correction_main():
 
     # Mock the various generation steps
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_initial_plan",
         AsyncMock(return_value=initial_code),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_perform_plan_surgery",
         AsyncMock(return_value=modified_code),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_course_correction_script",
         AsyncMock(return_value=correction_script),
     )
@@ -1030,11 +1030,11 @@ async def course_correction_main():
             )
         return VerificationAssessment(status="ok", reason="OK")
 
-    monkeypatch.setattr(planner, "_check_state_against_goal", mock_check_state)
+    monkeypatch.setattr(actor, "_check_state_against_goal", mock_check_state)
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("A plan with a failing course correction.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("A plan with a failing course correction.")
     await asyncio.sleep(0.1)  # Let the plan start
 
     modification_result = await plan.modify_plan(
@@ -1059,7 +1059,7 @@ async def course_correction_main():
 
 @pytest.mark.asyncio
 async def test_dynamic_implementation_relies_on_cache(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -1100,17 +1100,17 @@ async def step_B_stub():
     # Mock the LLM calls to provide the initial plan, then the implementation.
     mock_llm = AsyncMock()
     mock_llm.side_effect = [initial_code, implemented_step_b]
-    monkeypatch.setattr("unity.planner.hierarchical_planner.llm_call", mock_llm)
+    monkeypatch.setattr("unity.actor.hierarchical_actor.llm_call", mock_llm)
 
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("A plan that tests the cache hit on restart.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("A plan that tests the cache hit on restart.")
     await plan.result()
 
     # --- Assert ---
@@ -1137,7 +1137,7 @@ async def step_B_stub():
 
 @pytest.mark.asyncio
 async def test_skip_cache_lifecycle(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -1184,31 +1184,31 @@ async def main_plan():
     # The mock side effect is on the handle.
     mock_action_provider.browser_act.side_effect = act_side_effect
 
-    # Mock the planner's dependencies
+    # Mock the actor's dependencies
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_initial_plan",
         AsyncMock(return_value=initial_code),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_perform_plan_surgery",
         AsyncMock(return_value=modified_code),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_course_correction_script",
         AsyncMock(return_value=None),
     )
 
     # --- Act 1: Initial Run & Caching ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("Test caching.")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("Test caching.")
     await asyncio.wait_for(plan_is_paused_event.wait(), timeout=5)
     await asyncio.sleep(0.1)
 
@@ -1233,14 +1233,14 @@ async def main_plan():
 
 
 @pytest.mark.asyncio
-async def test_planner_reuses_skills_from_function_manager(
-    planner: HierarchicalPlanner,
+async def test_actor_reuses_skills_from_function_manager(
+    actor: HierarchicalActor,
     mock_function_manager: MagicMock,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
     """
-    Objective: Verify that the planner retrieves an existing, relevant skill
+    Objective: Verify that the actor retrieves an existing, relevant skill
     from the FunctionManager and uses it in the generated plan.
     """
     # --- Arrange ---
@@ -1286,29 +1286,29 @@ async def main_plan():
         return '{"status": "ok", "reason": "OK"}'
 
     monkeypatch.setattr(
-        "unity.planner.hierarchical_planner.llm_call",
+        "unity.actor.hierarchical_actor.llm_call",
         AsyncMock(side_effect=mock_llm_call),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_dynamic_implement",
         AsyncMock(
             return_value="@verify\nasync def check_messages(): return 'Test complete.'",
         ),
     )
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute(goal)
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute(goal)
     await plan.result()
 
     # --- Assert ---
-    # 1. The planner should have searched for relevant skills.
+    # 1. The actor should have searched for relevant skills.
     mock_function_manager.search_functions_by_similarity.assert_called_once_with(
         query=goal,
         n=5,
@@ -1327,7 +1327,7 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_sandbox_supports_pydantic_classes(
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
     mock_action_provider: MagicMock,
     monkeypatch,
 ):
@@ -1500,14 +1500,14 @@ async def main_plan():
 
     # Mock the LLM to return our test plan
     monkeypatch.setattr(
-        planner,
+        actor,
         "_generate_initial_plan",
         AsyncMock(return_value=plan_code),
     )
 
     # Mock verification to always succeed
     monkeypatch.setattr(
-        planner,
+        actor,
         "_check_state_against_goal",
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
@@ -1516,8 +1516,8 @@ async def main_plan():
     mock_action_provider.browser_observe.return_value = "Mock observation result"
 
     # --- Act ---
-    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
-    plan = await planner.execute("Test that sandbox supports all class constructs")
+    monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
+    plan = await actor.execute("Test that sandbox supports all class constructs")
     result = await plan.result()
 
     # --- Assert ---

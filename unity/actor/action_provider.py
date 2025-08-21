@@ -18,8 +18,8 @@ from unity.common.llm_helpers import methods_to_tool_dict
 
 class ActionProvider:
     """
-    Provides a library of high-level, agentic actions for the HierarchicalPlanner.
-    Each public method is a tool that the planner can incorporate into its generated code.
+    Provides a library of high-level, agentic actions for the HierarchicalActor.
+    Each public method is a tool that the actor can incorporate into its generated code.
     """
 
     def __init__(

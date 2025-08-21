@@ -36,7 +36,7 @@ load_dotenv()
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.common.llm_helpers import SteerableToolHandle
-from unity.actor.simulated import SimulatedPlanner
+from unity.actor.simulated import SimulatedActor
 from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
@@ -130,9 +130,9 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
     using :class:`ScenarioBuilder`.  Falls back to the fixed seed on any error.
     """
     global _DEFAULT_SIM_STEPS, _DEFAULT_SIM_TIMEOUT
-    # Apply current defaults to the scheduler's planner so later 'start' calls inherit them
+    # Apply current defaults to the scheduler's actor so later 'start' calls inherit them
     ts = TaskScheduler(
-        planner=SimulatedPlanner(
+        actor=SimulatedActor(
             steps=_DEFAULT_SIM_STEPS,
             timeout=_DEFAULT_SIM_TIMEOUT,
         ),
@@ -263,7 +263,7 @@ async def _dispatch_with_context(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
 
-    # For 'start' requests, peel off optional simulation controls and inject a per-call planner
+    # For 'start' requests, peel off optional simulation controls and inject a per-call actor
     if intent.action == "update":
         handle = await ts.update(
             raw,
@@ -274,7 +274,7 @@ async def _dispatch_with_context(
         parsed = _parse_simulation_config(raw)
         # Mask only steps/timeout control phrases; pass the remaining text as-is
         core_text = parsed.core_text if parsed.core_text != "" else raw
-        # Build a one-off planner using extracted controls falling back to defaults
+        # Build a one-off actor using extracted controls falling back to defaults
         eff_steps = parsed.steps if parsed.steps is not None else _DEFAULT_SIM_STEPS
         eff_timeout = (
             parsed.timeout_seconds
@@ -318,31 +318,31 @@ async def _dispatch_with_context(
         except Exception:
             pass
 
-        # Swap the planner on the instance and keep it until the task completes.
+        # Swap the actor on the instance and keep it until the task completes.
         # We cannot restore immediately after returning the outer handle because the
         # inner ActiveTask is only created when the LLM later calls the by-id tool.
-        original_planner = getattr(ts, "_planner", None)
-        override_planner = SimulatedPlanner(steps=eff_steps, timeout=eff_timeout)
-        setattr(ts, "_planner", override_planner)
+        original_actor = getattr(ts, "_actor", None)
+        override_actor = SimulatedActor(steps=eff_steps, timeout=eff_timeout)
+        setattr(ts, "_actor", override_actor)
         handle = await ts.execute_task(
             core_text,
             parent_chat_context=parent_chat_context,
         )
 
-        async def _restore_planner_when_done():
+        async def _restore_actor_when_done():
             try:
                 await handle.result()
             except Exception:
                 # Restore even if the call was stopped/cancelled/errored
                 pass
             try:
-                if original_planner is not None:
-                    setattr(ts, "_planner", original_planner)
+                if original_actor is not None:
+                    setattr(ts, "_actor", original_actor)
             except Exception:
                 pass
 
         # Fire-and-forget restoration
-        asyncio.create_task(_restore_planner_when_done())
+        asyncio.create_task(_restore_actor_when_done())
     else:  # ask
         handle = await ts.ask(
             raw,

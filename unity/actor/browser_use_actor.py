@@ -12,11 +12,11 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
 )
-from .base import BaseActiveTask, BasePlanner
+from .base import BaseActiveTask, BaseActor
 from unify import AsyncUnify
 import unify
 
-__all__ = ["BrowserUsePlanner"]
+__all__ = ["BrowserUseActor"]
 
 logger = logging.getLogger(__name__)
 if not logger.hasHandlers():
@@ -26,7 +26,7 @@ if not logger.hasHandlers():
     )
 
 
-class _BrowserPlannerState(enum.Enum):
+class _BrowserActorState(enum.Enum):
     IDLE = enum.auto()
     RUNNING = enum.auto()
     PAUSED = enum.auto()
@@ -37,7 +37,7 @@ class _BrowserPlannerState(enum.Enum):
 
 class BrowserUsePlan(BaseActiveTask):
     """
-    Represents an active plan being executed by the BrowserUsePlanner.
+    Represents an active plan being executed by the BrowserUseActor.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.
     """
 
@@ -63,7 +63,7 @@ class BrowserUsePlan(BaseActiveTask):
             clarification_down_q or asyncio.Queue()
         )
 
-        self._state: _BrowserPlannerState = _BrowserPlannerState.IDLE
+        self._state: _BrowserActorState = _BrowserActorState.IDLE
         self._loop_handle: Optional[SteerableToolHandle] = None
         self._result_str: Optional[str] = None
         self._error_str: Optional[str] = None
@@ -94,7 +94,7 @@ class BrowserUsePlan(BaseActiveTask):
                     f"BrowserUsePlan {self._task_id}: Could not get running event loop and none was provided: {e}",
                     exc_info=True,
                 )
-                self._state = _BrowserPlannerState.ERROR
+                self._state = _BrowserActorState.ERROR
                 self._error_str = f"Initialization failed: no event loop. {e}"
                 self._overall_plan_completion_event.set()
                 return
@@ -140,20 +140,20 @@ class BrowserUsePlan(BaseActiveTask):
         """
         current_task_description = self._initial_task_description
         current_parent_chat_context = None
-        self._state = _BrowserPlannerState.IDLE
+        self._state = _BrowserActorState.IDLE
 
         try:
             while True:
                 if (
-                    self._state == _BrowserPlannerState.STOPPED
-                    or self._state == _BrowserPlannerState.ERROR
+                    self._state == _BrowserActorState.STOPPED
+                    or self._state == _BrowserActorState.ERROR
                 ):
                     logger.info(
                         f"BrowserUsePlan {self._task_id}: Execution manager exiting due to state {self._state.name}",
                     )
                     break
 
-                self._state = _BrowserPlannerState.RUNNING
+                self._state = _BrowserActorState.RUNNING
                 logger.info(
                     f"BrowserUsePlan {self._task_id}: Starting/Resuming internal loop with description: '{current_task_description}'",
                 )
@@ -182,17 +182,17 @@ class BrowserUsePlan(BaseActiveTask):
 
                 try:
                     loop_result_str = await self._loop_handle.result()
-                    if self._state == _BrowserPlannerState.RUNNING:
-                        self._state = _BrowserPlannerState.COMPLETED
+                    if self._state == _BrowserActorState.RUNNING:
+                        self._state = _BrowserActorState.COMPLETED
                         self._result_str = loop_result_str
                         logger.info(
                             f"BrowserUsePlan {self._task_id}: Internal loop COMPLETED. Result: {self._result_str}",
                         )
-                    elif self._state == _BrowserPlannerState.PAUSED:
+                    elif self._state == _BrowserActorState.PAUSED:
                         logger.info(
                             f"BrowserUsePlan {self._task_id}: Internal loop stopped for PAUSE.",
                         )
-                    elif self._state == _BrowserPlannerState.STOPPED:
+                    elif self._state == _BrowserActorState.STOPPED:
                         logger.info(
                             f"BrowserUsePlan {self._task_id}: Internal loop stopped for STOP.",
                         )
@@ -203,8 +203,8 @@ class BrowserUsePlan(BaseActiveTask):
                     logger.info(
                         f"BrowserUsePlan {self._task_id}: Internal loop task was cancelled. Current state: {self._state.name}",
                     )
-                    if self._state == _BrowserPlannerState.RUNNING:
-                        self._state = _BrowserPlannerState.STOPPED
+                    if self._state == _BrowserActorState.RUNNING:
+                        self._state = _BrowserActorState.STOPPED
                     if self._result_str is None:
                         self._result_str = f"Plan {self._task_id} was {self._state.name.lower()} (cancelled)."
                 except Exception as e:
@@ -212,19 +212,19 @@ class BrowserUsePlan(BaseActiveTask):
                         f"BrowserUsePlan {self._task_id}: Internal loop failed: {e}",
                         exc_info=True,
                     )
-                    self._state = _BrowserPlannerState.ERROR
+                    self._state = _BrowserActorState.ERROR
                     self._error_str = str(e)
                     self._result_str = f"Task failed with error: {self._error_str}"
 
                 self._loop_handle = None
 
-                if self._state == _BrowserPlannerState.PAUSED:
+                if self._state == _BrowserActorState.PAUSED:
                     logger.info(
                         f"BrowserUsePlan {self._task_id}: Execution PAUSED, awaiting resume signal.",
                     )
                     await self._resume_requested_event.wait()
                     self._resume_requested_event.clear()
-                    if self._state == _BrowserPlannerState.STOPPED:
+                    if self._state == _BrowserActorState.STOPPED:
                         logger.info(
                             f"BrowserUsePlan {self._task_id}: Stop called while paused. Terminating.",
                         )
@@ -246,11 +246,11 @@ class BrowserUsePlan(BaseActiveTask):
                 exc_info=True,
             )
             if self._state not in [
-                _BrowserPlannerState.ERROR,
-                _BrowserPlannerState.COMPLETED,
-                _BrowserPlannerState.STOPPED,
+                _BrowserActorState.ERROR,
+                _BrowserActorState.COMPLETED,
+                _BrowserActorState.STOPPED,
             ]:
-                self._state = _BrowserPlannerState.ERROR
+                self._state = _BrowserActorState.ERROR
             if self._error_str is None:
                 self._error_str = str(e)
             if self._result_str is None:
@@ -290,23 +290,23 @@ class BrowserUsePlan(BaseActiveTask):
         """Checks if a control method is valid in the current plan state."""
         if name == "stop":
             return self._state in (
-                _BrowserPlannerState.RUNNING,
-                _BrowserPlannerState.PAUSED,
-                _BrowserPlannerState.IDLE,
+                _BrowserActorState.RUNNING,
+                _BrowserActorState.PAUSED,
+                _BrowserActorState.IDLE,
             )
         if name == "pause":
-            return self._state == _BrowserPlannerState.RUNNING
+            return self._state == _BrowserActorState.RUNNING
         if name == "resume":
-            return self._state == _BrowserPlannerState.PAUSED
+            return self._state == _BrowserActorState.PAUSED
         if name == "interject":
             return (
-                self._state == _BrowserPlannerState.RUNNING
+                self._state == _BrowserActorState.RUNNING
                 and self._loop_handle is not None
             )
         if name == "ask":
             return self._state in (
-                _BrowserPlannerState.RUNNING,
-                _BrowserPlannerState.PAUSED,
+                _BrowserActorState.RUNNING,
+                _BrowserActorState.PAUSED,
             )
         return False
 
@@ -323,20 +323,20 @@ class BrowserUsePlan(BaseActiveTask):
             f"BrowserUsePlan {self._task_id}: Stopping. Current state: {self._state.name}",
         )
         previous_state = self._state
-        self._state = _BrowserPlannerState.STOPPED
+        self._state = _BrowserActorState.STOPPED
         self._result_str = (
             f"Plan {self._task_id} was stopped."
             if not reason
             else f"Plan {self._task_id} was stopped: {reason}"
         )
 
-        if previous_state == _BrowserPlannerState.PAUSED:
+        if previous_state == _BrowserActorState.PAUSED:
             self._resume_requested_event.set()
 
         if self._loop_handle and not self._loop_handle.done():
             self._loop_handle.stop(reason)
         elif (
-            previous_state == _BrowserPlannerState.IDLE
+            previous_state == _BrowserActorState.IDLE
             and not self._overall_plan_completion_event.is_set()
         ):
             logger.warning(
@@ -358,7 +358,7 @@ class BrowserUsePlan(BaseActiveTask):
         logger.info(
             f"BrowserUsePlan {self._task_id}: Pausing. Current state: {self._state.name}",
         )
-        self._state = _BrowserPlannerState.PAUSED
+        self._state = _BrowserActorState.PAUSED
 
         if self._plan_client and self._plan_client.messages:
             self._parent_chat_context_on_pause = copy.deepcopy(
@@ -401,7 +401,7 @@ class BrowserUsePlan(BaseActiveTask):
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> str:
         if not self._is_valid_method("interject"):
-            if self._state != _BrowserPlannerState.RUNNING:
+            if self._state != _BrowserActorState.RUNNING:
                 return f"Error: Plan {self._task_id} is not in RUNNING state (current: {self._state.name}), cannot interject."
             if not self._loop_handle:
                 return f"Error: Plan {self._task_id} is RUNNING but has no active internal loop to interject."
@@ -425,13 +425,13 @@ class BrowserUsePlan(BaseActiveTask):
             )
             current_context_to_share = []
             if (
-                self._state == _BrowserPlannerState.RUNNING
+                self._state == _BrowserActorState.RUNNING
                 and self._plan_client
                 and self._plan_client.messages
             ):
                 current_context_to_share = copy.deepcopy(self._plan_client.messages)
             elif (
-                self._state == _BrowserPlannerState.PAUSED
+                self._state == _BrowserActorState.PAUSED
                 and self._parent_chat_context_on_pause
             ):
                 current_context_to_share = copy.deepcopy(
@@ -482,7 +482,7 @@ class BrowserUsePlan(BaseActiveTask):
         return tools
 
 
-class BrowserUsePlanner(BasePlanner):
+class BrowserUseActor(BaseActor):
     def __init__(
         self,
         headless: bool = True,
@@ -513,11 +513,11 @@ class BrowserUsePlanner(BasePlanner):
         try:
             self._main_event_loop = asyncio.get_running_loop()
             logger.info(
-                f"BrowserUsePlanner captured event loop: {self._main_event_loop}",
+                f"BrowserUseActor captured event loop: {self._main_event_loop}",
             )
         except RuntimeError as e:
             logger.error(
-                "BrowserUsePlanner initialized outside of a running asyncio event loop. "
+                "BrowserUseActor initialized outside of a running asyncio event loop. "
                 "This may cause issues if plans are created from non-async contexts or threads "
                 "without explicit loop management. Error: %s",
                 e,
@@ -679,16 +679,16 @@ class BrowserUsePlanner(BasePlanner):
         """
         Initiates a new plan for the given task description using browser_use tools.
         """
-        logger.info(f"BrowserUsePlanner: Planning task: '{task_description}'")
+        logger.info(f"BrowserUseActor: Planning task: '{task_description}'")
         if not self._main_event_loop:
             try:
                 self._main_event_loop = asyncio.get_running_loop()
                 logger.info(
-                    f"BrowserUsePlanner._execute_task_and_return_handle captured event loop: {self._main_event_loop}",
+                    f"BrowserUseActor._execute_task_and_return_handle captured event loop: {self._main_event_loop}",
                 )
             except RuntimeError:
                 logger.error(
-                    "BrowserUsePlanner._execute_task_and_return_handle: No running event loop to pass to BrowserUsePlan.",
+                    "BrowserUseActor._execute_task_and_return_handle: No running event loop to pass to BrowserUsePlan.",
                 )
 
         try:
@@ -701,18 +701,18 @@ class BrowserUsePlanner(BasePlanner):
                 main_event_loop=self._main_event_loop,
             )
         except Exception as e:
-            logger.error(f"BrowserUsePlanner: Error creating plan: {e}", exc_info=True)
+            logger.error(f"BrowserUseActor: Error creating plan: {e}", exc_info=True)
             raise e
         return plan
 
     async def close(self):
         try:
             """Closes the browser and associated resources."""
-            logger.info("BrowserUsePlanner: Closing browser...")
+            logger.info("BrowserUseActor: Closing browser...")
             if hasattr(self, "_browser_context") and self._browser_context:
                 await self._browser_context.close()
             if hasattr(self, "_browser") and self._browser:
                 await self._browser.close()
         except Exception as e:
-            logger.error(f"BrowserUsePlanner: Error during close: {e}", exc_info=True)
+            logger.error(f"BrowserUseActor: Error during close: {e}", exc_info=True)
             raise e

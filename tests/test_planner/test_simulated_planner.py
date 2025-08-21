@@ -4,7 +4,7 @@ import functools
 import unify
 
 from unity.common.llm_helpers import start_async_tool_use_loop
-from unity.actor.simulated import SimulatedPlanner, SimulatedActiveTask
+from unity.actor.simulated import SimulatedActor, SimulatedActiveTask
 from tests.helpers import _handle_project, _get_unity_test_env_var
 
 
@@ -25,7 +25,7 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
     """
     Test that the outer loop can ask questions to the simulated plan via the dynamic _ask_ helper.
     """
-    planner = SimulatedPlanner(steps=1)
+    actor = SimulatedActor(steps=1)
     # Count how many times ask is invoked
     ask_called = {"count": 0}
     original_ask = SimulatedActiveTask.ask
@@ -47,7 +47,7 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="begin",
-        tools={"execute": planner.execute},
+        tools={"execute": actor.execute},
         max_steps=20,
         timeout=120,
     )
@@ -65,7 +65,7 @@ async def test_interject_simulated_plan(monkeypatch):
     """
     Test that the outer loop can interject instructions into the simulated plan via the `_interject_` helper.
     """
-    planner = SimulatedPlanner(steps=1)
+    actor = SimulatedActor(steps=1)
     interjected = {"count": 0, "msgs": []}
     original_interject = SimulatedActiveTask.interject
 
@@ -87,7 +87,7 @@ async def test_interject_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="kickoff",
-        tools={"execute": planner.execute},
+        tools={"execute": actor.execute},
         max_steps=20,
         timeout=120,
     )
@@ -106,7 +106,7 @@ async def test_pause_and_resume_simulated_plan(monkeypatch):
     """
     Test that the outer loop can pause and resume the simulated plan via `_pause_` and `_resume_` helpers.
     """
-    planner = SimulatedPlanner(steps=2)
+    actor = SimulatedActor(steps=2)
     counts = {"pause": 0, "resume": 0}
     original_pause = SimulatedActiveTask.pause
 
@@ -136,7 +136,7 @@ async def test_pause_and_resume_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="run",
-        tools={"execute": planner.execute},
+        tools={"execute": actor.execute},
         max_steps=30,
         timeout=180,
     )
@@ -158,7 +158,7 @@ async def test_stop_simulated_plan(monkeypatch):
     """
     Test that the outer loop can stop the simulated plan via `_stop_` helper.
     """
-    planner = SimulatedPlanner(steps=1)
+    actor = SimulatedActor(steps=1)
     stopped = {"count": 0}
     original_stop = SimulatedActiveTask.stop
 
@@ -179,7 +179,7 @@ async def test_stop_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="begin",
-        tools={"execute": planner.execute},
+        tools={"execute": actor.execute},
         max_steps=20,
         timeout=120,
     )
@@ -194,16 +194,16 @@ async def test_stop_simulated_plan(monkeypatch):
 @_handle_project
 async def test_plan_requests_clarification():
     """
-    The planner should send a clarification question over `clarification_up_q`
+    The actor should send a clarification question over `clarification_up_q`
     and wait for the reply on `clarification_down_q` before finishing.
     """
-    planner = SimulatedPlanner(steps=1, _requests_clarification=True)
+    actor = SimulatedActor(steps=1, _requests_clarification=True)
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
     # start a plan that needs clarification
-    active_task = await planner.execute(
+    active_task = await actor.execute(
         "Compile the quarterly report",
         clarification_up_q=up_q,
         clarification_down_q=down_q,

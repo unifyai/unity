@@ -2,7 +2,7 @@ from typing import Any, Type
 from unity.common.llm_helpers import (
     SteerableToolHandle,
 )
-from unity.actor.tool_loop_planner import ToolLoopPlanner
+from unity.actor.tool_loop_actor import ToolLoopActor
 from .browser_backends import (
     BrowserBackend,
     LegacyBrowserBackend,
@@ -77,10 +77,10 @@ class Browser:
                 "multi_step method is only supported with the legacy browser backend.",
             )
 
-        sub_planner = ToolLoopPlanner(
+        sub_actor = ToolLoopActor(
             controller=self.backend.controller,
         )
-        active_task_handle = await sub_planner.execute(description)
+        active_task_handle = await sub_actor.execute(description)
         return active_task_handle
 
     async def reason(self, query: str) -> str:

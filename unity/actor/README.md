@@ -1,23 +1,23 @@
-# Planner Module
+# Actor Module
 
-This directory contains different "planner" implementations, which are responsible for taking a high-level user goal and breaking it down into a series of actions to be executed. Each planner offers a different approach to task decomposition and execution.
+This directory contains different "actor" implementations, which are responsible for taking a high-level user goal and breaking it down into a series of actions to be executed. Each actor offers a different approach to task decomposition and execution.
 
-## Planner Design Philosophies
+## Actor Design Philosophies
 
-There are two primary design philosophies represented here: **Conversational Planners** and a **Programmatic Planner**.
+There are two primary design philosophies represented here: **Conversational Actors** and a **Programmatic Actor**.
 
-### 1. Conversational Planners (`ToolLoopPlanner`, `BrowserUsePlanner`)
+### 1. Conversational Actors (`ToolLoopActor`, `BrowserUseActor`)
 
-These planners operate in a reactive, turn-based loop. They maintain a chat history with an LLM and, at each step, decide which "tool" (a Python function) to call next based on the user's goal and the history of previous actions.
+These actors operate in a reactive, turn-based loop. They maintain a chat history with an LLM and, at each step, decide which "tool" (a Python function) to call next based on the user's goal and the history of previous actions.
 
 -   **Plan Representation**: The "plan" is implicit and exists only as the conversation history. There is no persistent, machine-readable plan object.
 -   **State Management**: State is managed by the sequence of tool calls and their results in the chat history.
 -   **Correction**: To correct a mistake, one typically "interjects" with a message like "That was wrong, try doing this instead," which influences the LLM's next tool choice.
 -   **Execution Model**: `LLM -> Tool Call -> LLM -> Tool Call ...`
 
-### 2. Programmatic Planner (`HierarchicalPlanner`)
+### 2. Programmatic Actor (`HierarchicalActor`)
 
-This planner takes a more proactive, code-first approach. It generates a complete, executable Python script that represents the entire plan. This script is then executed, and it has the ability to debug, verify, and modify itself at runtime.
+This actor takes a more proactive, code-first approach. It generates a complete, executable Python script that represents the entire plan. This script is then executed, and it has the ability to debug, verify, and modify itself at runtime.
 
 -   **Plan Representation**: The plan is an explicit, well-structured Python script containing functions decorated with `@verify`.
 -   **State Management**: State is managed explicitly within the Python execution context, including a function call stack.
@@ -26,7 +26,7 @@ This planner takes a more proactive, code-first approach. It generates a complet
 
 ## Key Differences
 
-| Feature                 | ToolLoopPlanner (TLP)                                      | BrowserUsePlanner (BUP)                                  | HierarchicalPlanner (HP)                                                                                              |
+| Feature                 | ToolLoopActor (TLP)                                      | BrowserUseActor (BUP)                                  | HierarchicalActor (HP)                                                                                              |
 | ----------------------- | ---------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | **Planning Paradigm** | Conversational / Tool-Use                                  | Conversational / Tool-Use                                | Programmatic / Code-First                                                                                             |
 | **Underlying Controller** | `unity.controller.Controller`                              | `browser_use.controller.Service`                         | `unity.controller.Controller`                                                                                         |
@@ -36,7 +36,7 @@ This planner takes a more proactive, code-first approach. It generates a complet
 | **Self-Correction** | Reactive (requires user/LLM interjection).                 | Reactive (requires user/LLM interjection).               | Proactive (Built-in verification, tactical/strategic replanning, and dynamic implementation of stubbed functions). |
 | **Modifiability** | Can be steered by interjection.                            | Can be steered by interjection.                          | The entire plan source code can be surgically modified at runtime, with automated "course correction."              |
 
-## How to Run a Planner
+## How to Run a Actor
 
 First, ensure you have the necessary setup:
 
@@ -45,9 +45,9 @@ First, ensure you have the necessary setup:
 3.  **Dependencies**: Install all required packages (`pip install -r requirements.txt`).
 4.  **Playwright**: Install browser binaries with `playwright install`.
 
-You can run any of the planners using the simple scripts below.
+You can run any of the actors using the simple scripts below.
 
-### 1. Run the HierarchicalPlanner (HP)
+### 1. Run the HierarchicalActor (HP)
 
 Create `run_hp.py` and execute it with `python run_hp.py`.
 
@@ -55,7 +55,7 @@ Create `run_hp.py` and execute it with `python run_hp.py`.
 # run_hp.py
 import asyncio
 import unify
-from unity.planner.hierarchical_planner import HierarchicalPlanner
+from unity.actor.hierarchical_actor import HierarchicalActor
 import logging
 import sys
 from dotenv import load_dotenv
@@ -72,10 +72,10 @@ if not root_logger.handlers:
 
 
 async def main():
-    """Initializes and runs the HierarchicalPlanner for a browser task."""
+    """Initializes and runs the HierarchicalActor for a browser task."""
     unify.activate("hp_demo")
 
-    planner = HierarchicalPlanner(
+    actor = HierarchicalActor(
         headless=True,
     )
 
@@ -85,12 +85,12 @@ async def main():
 
     print(f"Executing task: {task}")
 
-    active_task = await planner.execute(task)
+    active_task = await actor.execute(task)
 
     print("\n=== FINAL RESULT ===")
     print(await active_task.result())
 
-    await planner.close()
+    await actor.close()
     controller.join(timeout=2)
 
 
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### 2. Run the ToolLoopPlanner (TLP)
+### 2. Run the ToolLoopActor (TLP)
 
 Create `run_tlp.py` and execute it with `python run_tlp.py`.
 
@@ -106,7 +106,7 @@ Create `run_tlp.py` and execute it with `python run_tlp.py`.
 # run_tlp.py
 import asyncio
 import unify
-from unity.planner.tool_loop_planner import ToolLoopPlanner
+from unity.actor.tool_loop_actor import ToolLoopActor
 import logging
 import sys
 from dotenv import load_dotenv
@@ -123,27 +123,27 @@ if not root_logger.handlers:
 
 
 async def main():
-    """Initializes and runs the ToolLoopPlanner for a browser task."""
+    """Initializes and runs the ToolLoopActor for a browser task."""
     unify.activate("tlp_demo")
 
-    planner = ToolLoopPlanner(headless=False)
+    actor = ToolLoopActor(headless=False)
 
     task = "Go to google.com, search for 'latest news on AI agents', and return the title of the first result."
     print(f"Executing task: {task}")
 
-    active_task = await planner.execute(task)
+    active_task = await actor.execute(task)
 
     print("\n=== FINAL RESULT ===")
     print(await active_task.result())
 
-    await planner.close()
+    await actor.close()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### 3. Run the BrowserUsePlanner (BUP)
+### 3. Run the BrowserUseActor (BUP)
 
 Create `run_bup.py` and execute it with `python run_bup.py`.
 
@@ -151,7 +151,7 @@ Create `run_bup.py` and execute it with `python run_bup.py`.
 # run_bup.py
 import asyncio
 import unify
-from unity.planner.browser_use_planner import BrowserUsePlanner
+from unity.actor.browser_use_actor import BrowserUseActor
 import logging
 import sys
 from dotenv import load_dotenv
@@ -168,20 +168,20 @@ if not root_logger.handlers:
 
 
 async def main():
-    """Initializes and runs the BrowserUsePlanner for a browser task."""
+    """Initializes and runs the BrowserUseActor for a browser task."""
     unify.activate("bup_demo")
 
-    planner = BrowserUsePlanner(headless=False)
+    actor = BrowserUseActor(headless=False)
 
     task = "Go to google.com, search for 'latest news on AI agents', and return the title of the first result."
     print(f"Executing task: {task}")
 
-    active_task = await planner.execute(task)
+    active_task = await actor.execute(task)
 
     print("\n=== FINAL RESULT ===")
     print(await active_task.result())
 
-    await planner.close()
+    await actor.close()
 
 
 if __name__ == "__main__":

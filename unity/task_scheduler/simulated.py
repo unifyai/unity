@@ -615,7 +615,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     )
 
     # ------------------------------------------------------------------ #
-    #  execite_task – delegate to SimulatedPlanner.execute                     #
+    #  execite_task – delegate to SimulatedActor.execute                     #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseTaskScheduler.execute_task, updated=())
     async def execute_task(
@@ -633,7 +633,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         The implementation pretends that the supplied *text* uniquely
         identifies the task – no attempt is made to reconcile with a real data
-        store.  A new :class:`unity.planner.simulated.SimulatedPlan` is spun up
+        store.  A new :class:`unity.actor.simulated.SimulatedPlan` is spun up
         and its handle returned.
         """
         should_log = self._log_events or log_events
@@ -651,13 +651,13 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         task_description = f"{text} (simulated)"
         # Local import to avoid circular import with actor.simulated which re-exports SimulatedActiveTask
-        from ..actor.simulated import SimulatedPlanner
+        from ..actor.simulated import SimulatedActor
 
-        planner = SimulatedPlanner(
+        actor = SimulatedActor(
             timeout=10,
             _requests_clarification=_requests_clarification,
         )
-        handle = await planner.execute(
+        handle = await actor.execute(
             task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
