@@ -56,6 +56,7 @@ class SimulatedActorHandle:
         self._action_thread: threading.Thread | None = None
         self._pause_event = threading.Event()
         self._stop_event = threading.Event()
+        self._monitor_thread: threading.Thread | None = None
 
         self._start()
 
@@ -122,6 +123,30 @@ class SimulatedActorHandle:
             daemon=True,
         )
         self._action_thread.start()
+        # Start a periodic monitor that prints remaining duration every 5 seconds
+        if self._duration is not None:
+
+            def _monitor():
+                try:
+                    while not self._done_event.is_set():
+                        rem = self.get_remaining_duration_seconds()
+                        if rem is not None:
+                            try:
+                                print(
+                                    f"⏳ SimulatedActor Duration remaining: {max(0.0, rem):.1f}s",
+                                )
+                            except Exception:
+                                pass
+                        # Sleep in small chunks to be responsive to done-event
+                        for _ in range(50):
+                            if self._done_event.is_set():
+                                break
+                            time.sleep(0.1)
+                finally:
+                    return
+
+            self._monitor_thread = threading.Thread(target=_monitor, daemon=True)
+            self._monitor_thread.start()
 
     def _complete(self, message: str) -> None:
         if not self._done_event.is_set():
@@ -136,11 +161,24 @@ class SimulatedActorHandle:
                 and _th.current_thread() is not self._action_thread
             ):
                 self._action_thread.join(timeout=1)
+            # Best-effort join of the monitor thread
+            try:
+                if self._monitor_thread and self._monitor_thread.is_alive():
+                    self._monitor_thread.join(timeout=1)
+            except Exception:
+                pass
 
     def simulate_step(self):
         if not self._done_event.is_set():
             with self._step_lock:
                 self._steps_taken += 1
+            # Print steps remaining after each user-visible interaction that consumes a step
+            try:
+                if self._steps is not None:
+                    remaining = max(0, int(self._steps) - int(self._steps_taken))
+                    print(f"🪜 SimulatedActor Steps remaining: {remaining}")
+            except Exception:
+                pass
 
     async def result(self) -> str:
         await asyncio.to_thread(self._done_event.wait)
@@ -218,6 +256,31 @@ class SimulatedActorHandle:
         else:
             available[self.pause.__name__] = self.pause
         return available
+
+    # ------------------------
+    # Status query helpers
+    # ------------------------
+    def get_remaining_duration_seconds(self) -> float | None:
+        """Return the current wall-clock seconds remaining until auto-completion, or None.
+
+        When paused, this returns the frozen remaining amount. When running, it
+        subtracts the elapsed time since the last start/resume.
+        """
+        if self._remaining_duration is None:
+            return None
+        if self._last_started_at is None:
+            return max(0.0, float(self._remaining_duration))
+        elapsed = time.monotonic() - self._last_started_at
+        return max(0.0, float(self._remaining_duration) - float(elapsed))
+
+    def get_remaining_steps(self) -> int | None:
+        """Return remaining steps until auto-completion, or None if unlimited."""
+        if self._steps is None:
+            return None
+        try:
+            return max(0, int(self._steps) - int(self._steps_taken))
+        except Exception:
+            return None
 
 
 class SimulatedActor(BaseActor):
