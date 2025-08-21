@@ -179,9 +179,11 @@ class SimulatedContactManager(BaseContactManager):
         *,
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
+        simulation_guidance: Optional[str] = None,
     ) -> None:
         self._description = description
         self._log_events = log_events
+        self._simulation_guidance = simulation_guidance
 
         # Shared, *stateful* **asynchronous** LLM
         self._llm = unify.AsyncUnify(
