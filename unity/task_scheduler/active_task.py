@@ -1,7 +1,10 @@
 import functools
+import asyncio
 from typing import Optional, Dict, Callable, TYPE_CHECKING
 
 from .base import BaseActiveTask
+from ..actor.base import BaseActor
+from unity.common.llm_helpers import SteerableToolHandle
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
@@ -10,44 +13,68 @@ if TYPE_CHECKING:
 class ActiveTask(BaseActiveTask):
     def __init__(
         self,
-        active_task: BaseActiveTask,
+        actor_handle: SteerableToolHandle,
         *,
         task_id: Optional[int] = None,
         instance_id: Optional[int] = None,
         scheduler: Optional["TaskScheduler"] = None,
     ):
         """
-        Thin wrapper that:
-        • exposes the underlying plan's steer-controls and\
-        • **optionally** keeps the task table in sync when a *scheduler* is supplied.
+        Thin wrapper around an actor-backed active plan handle, keeping the
+        corresponding Tasks row in sync when a scheduler is provided.
 
-        Parameters
-        ----------
-        description
-            Human-readable task description (passed straight to the actor).
-        actor
-            The concrete actor implementation responsible for spawning an active task.
-        task_id, instance_id, scheduler
-            When provided, every lifecycle transition (pause/resume/stop/finish)
-            is mirrored back into the task list via ``scheduler._update_task_status``.
+        Use ``ActiveTask.create(...)`` to construct an instance from a
+        ``BaseActor`` and a task description.
         """
-        self._active_task = active_task
+        self._actor_handle = actor_handle
         self._scheduler: Optional["TaskScheduler"] = scheduler
         self._task_id: Optional[int] = task_id
         self._instance_id: Optional[int] = instance_id
         self._was_stopped: bool = False
 
+    @classmethod
+    async def create(
+        cls,
+        actor: BaseActor,
+        *,
+        task_description: str,
+        parent_chat_context: Optional[list[dict]] = None,
+        clarification_up_q: Optional["asyncio.Queue[str]"] = None,
+        clarification_down_q: Optional["asyncio.Queue[str]"] = None,
+        task_id: Optional[int] = None,
+        instance_id: Optional[int] = None,
+        scheduler: Optional["TaskScheduler"] = None,
+    ) -> "ActiveTask":
+        """
+        Create an ActiveTask by starting work on the provided ``actor``.
+
+        This is the preferred constructor: it ensures the underlying active
+        handle is running before returning an instance.
+        """
+        actor_steerable_handle = await actor.act(
+            task_description,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+        return cls(
+            actor_steerable_handle,  # type: ignore[arg-type]
+            task_id=task_id,
+            instance_id=instance_id,
+            scheduler=scheduler,
+        )
+
     @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(self, message: str) -> str:
-        return await self._active_task.ask(message)
+        return await self._actor_handle.ask(message)
 
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> None:
-        await self._active_task.interject(message)
+        await self._actor_handle.interject(message)
 
     @functools.wraps(BaseActiveTask.stop, updated=())
     def stop(self, reason: Optional[str] = None) -> Optional[str]:
-        ret = self._active_task.stop(reason)  # type: ignore[call-arg]
+        ret = self._actor_handle.stop(reason)  # type: ignore[call-arg]
         self._was_stopped = True
         self._mirror_status("cancelled")
         # Optionally reinstate the task back into its prior queue position
@@ -67,23 +94,23 @@ class ActiveTask(BaseActiveTask):
 
     @functools.wraps(BaseActiveTask.pause, updated=())
     def pause(self) -> Optional[str]:
-        ret = self._active_task.pause()
+        ret = self._actor_handle.pause()
         self._mirror_status("paused")
         return ret
 
     @functools.wraps(BaseActiveTask.resume, updated=())
     def resume(self) -> Optional[str]:
-        return self._active_task.resume()
+        return self._actor_handle.resume()
 
     @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
-        ret = self._active_task.done()
+        ret = self._actor_handle.done()
         self._mirror_status("active")
         return ret
 
     @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
-        ret = await self._active_task.result()
+        ret = await self._actor_handle.result()
         # If the task wasn't explicitly cancelled/failed, mark as completed.
         if self._scheduler and self._task_id is not None and not self._was_stopped:
             row = self._scheduler._filter_tasks(  # type: ignore[attr-defined]
@@ -130,7 +157,7 @@ class ActiveTask(BaseActiveTask):
             self.stop.__name__: self.stop,
         }
         # Reflect paused state from the underlying task handle when available.
-        paused_flag = getattr(self._active_task, "_paused", False)
+        paused_flag = getattr(self._actor_handle, "_paused", False)
         if paused_flag:
             tools[self.resume.__name__] = self.resume
         else:

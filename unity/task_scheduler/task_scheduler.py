@@ -652,17 +652,13 @@ class TaskScheduler(BaseTaskScheduler):
             execution_scope=execution_scope,
         )
 
-        # Build the active plan
-        plan_handle = await self._actor.act(
-            task_row["description"],
+        # Build the active plan via the actor and wrap it so the task table stays in sync
+        handle = await ActiveTask.create(
+            self._actor,
+            task_description=task_row["description"],
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
-        )
-
-        # Wrap the plan so the task table stays in sync
-        handle = ActiveTask(
-            plan_handle,
             task_id=task_id,
             instance_id=task_row["instance_id"],
             scheduler=self,

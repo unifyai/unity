@@ -18,7 +18,7 @@ import pytest
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor
-from unity.task_scheduler.simulated import SimulatedActiveTask
+from unity.actor.simulated import SimulatedActorHandle
 
 #  The helper used in the existing test‑suite – applies project‑level monkey‐
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -72,14 +72,14 @@ async def test_execute_task_ask(monkeypatch):
 
     calls: Dict[str, int] = {"ask": 0}
 
-    original_ask = SimulatedActiveTask.ask
+    original_ask = SimulatedActorHandle.ask
 
     @functools.wraps(original_ask)
     async def spy_ask(self, question: str) -> str:  # type: ignore[override]
         calls["ask"] += 1
         return await original_ask(self, question)
 
-    monkeypatch.setattr(SimulatedActiveTask, "ask", spy_ask, raising=True)
+    monkeypatch.setattr(SimulatedActorHandle, "ask", spy_ask, raising=True)
 
     _scheduler, task = await _make_scheduler_with_task(
         "Analyse new product launch performance.",
@@ -106,14 +106,14 @@ async def test_execute_task_interject(monkeypatch):
 
     calls: Dict[str, int] = {"interject": 0}
 
-    original_interject = SimulatedActiveTask.interject
+    original_interject = SimulatedActorHandle.interject
 
     @functools.wraps(original_interject)
     async def spy_interject(self, instruction: str) -> str:  # type: ignore[override]
         calls["interject"] += 1
         return await original_interject(self, instruction)
 
-    monkeypatch.setattr(SimulatedActiveTask, "interject", spy_interject, raising=True)
+    monkeypatch.setattr(SimulatedActorHandle, "interject", spy_interject, raising=True)
 
     _scheduler, task = await _make_scheduler_with_task(
         "Investigate competitor pricing.",
@@ -142,8 +142,8 @@ async def test_execute_task_pause_resume(monkeypatch):
 
     counts: Dict[str, int] = {"pause": 0, "resume": 0}
 
-    orig_pause = SimulatedActiveTask.pause
-    orig_resume = SimulatedActiveTask.resume
+    orig_pause = SimulatedActorHandle.pause
+    orig_resume = SimulatedActorHandle.resume
 
     @functools.wraps(orig_pause)
     def spy_pause(self) -> str:  # type: ignore[override]
@@ -155,8 +155,8 @@ async def test_execute_task_pause_resume(monkeypatch):
         counts["resume"] += 1
         return orig_resume(self)
 
-    monkeypatch.setattr(SimulatedActiveTask, "pause", spy_pause, raising=True)
-    monkeypatch.setattr(SimulatedActiveTask, "resume", spy_resume, raising=True)
+    monkeypatch.setattr(SimulatedActorHandle, "pause", spy_pause, raising=True)
+    monkeypatch.setattr(SimulatedActorHandle, "resume", spy_resume, raising=True)
 
     _scheduler, task = await _make_scheduler_with_task(
         "Run SEO audit for the website.",
@@ -186,14 +186,14 @@ async def test_execute_task_stop(monkeypatch):
 
     called = {"stop": 0}
 
-    orig_stop = SimulatedActiveTask.stop
+    orig_stop = SimulatedActorHandle.stop
 
     @functools.wraps(orig_stop)
     def spy_stop(self, reason: str | None = None) -> str:  # type: ignore[override]
         called["stop"] += 1
         return orig_stop(self, reason=reason)
 
-    monkeypatch.setattr(SimulatedActiveTask, "stop", spy_stop, raising=True)
+    monkeypatch.setattr(SimulatedActorHandle, "stop", spy_stop, raising=True)
 
     _scheduler, task = await _make_scheduler_with_task(
         "Extract sentiment from reviews.",
@@ -204,7 +204,7 @@ async def test_execute_task_stop(monkeypatch):
     result = await task.result()
 
     assert called["stop"] == 1, "stop must be invoked exactly once"
-    assert "stopped task" in result.lower()
+    assert "stopped" in result.lower()
     assert task.done(), "`done()` should report True after stopping"
 
 
@@ -227,7 +227,7 @@ async def test_execute_task_result_and_done():
     await task.interject("Provide initial outline first.")
     result = await task.result()
 
-    assert "completed task" in result.lower()
+    assert "completed" in result.lower()
     assert task.done(), "`done()` must return True after natural completion"
 
 
