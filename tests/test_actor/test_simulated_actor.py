@@ -13,7 +13,7 @@ from tests.helpers import _handle_project
 @_handle_project
 async def test_start_and_act_simulated_actor():
     actor = SimulatedActor(timeout=0.1)
-    handle = await actor.act("Perform a quick demo task.")
+    handle = await actor.act("Perform a quick demo.")
     result = await handle.result()
     assert isinstance(result, str) and result.strip(), "Result should be non-empty"
 
@@ -30,7 +30,7 @@ async def test_actor_stateful_memory_serial_asks():
     """
     actor = SimulatedActor(steps=1)
 
-    h1 = await actor.act("Start a short research task.")
+    h1 = await actor.act("Start some new research.")
     code = await h1.ask("Invent a unique codename. Reply with only the codename.")
     code = code.strip()
     assert code, "Codename should not be empty"
@@ -83,7 +83,7 @@ async def test_handle_stop(monkeypatch):
     handle = await actor.act("Generate a long report.")
     await asyncio.sleep(0.05)
     stop_msg = handle.stop("Not needed")
-    assert "stopped task" in stop_msg.lower()
+    assert "stopped" in stop_msg.lower()
     result = await handle.result()
     assert isinstance(result, str) and result.strip()
     assert handle.done(), "Handle should report done after stop()"
@@ -163,9 +163,9 @@ async def test_handle_pause_and_resume(monkeypatch):
     tools_paused = handle.valid_tools
     assert "resume" in tools_paused and "pause" not in tools_paused
 
-    res_task = asyncio.create_task(handle.result())
+    res = asyncio.create_task(handle.result())
     await asyncio.sleep(0.1)
-    assert not res_task.done(), "result() must wait while paused"
+    assert not res.done(), "result() must wait while paused"
 
     resume_reply = handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
@@ -173,7 +173,7 @@ async def test_handle_pause_and_resume(monkeypatch):
     tools_running = handle.valid_tools
     assert "pause" in tools_running and "resume" not in tools_running
 
-    answer = await asyncio.wait_for(res_task, timeout=60)
+    answer = await asyncio.wait_for(res, timeout=60)
     assert isinstance(answer, str) and answer.strip()
     assert counts == {"pause": 1, "resume": 1}
 
