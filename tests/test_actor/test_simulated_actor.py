@@ -4,7 +4,8 @@ import functools
 import unify
 
 from unity.common.llm_helpers import start_async_tool_use_loop
-from unity.actor.simulated import SimulatedActor, SimulatedActiveTask
+from unity.actor.simulated import SimulatedActor
+from unity.task_scheduler.simulated import SimulatedActiveTask
 from tests.helpers import _handle_project, _get_unity_test_env_var
 
 
