@@ -8,6 +8,7 @@ import json
 import os
 
 import unify
+import functools
 
 from typing import Callable, Dict
 
@@ -17,6 +18,7 @@ from ..common.llm_helpers import (
     ToolSpec,
 )
 from .prompt_builders import build_ask_prompt, build_request_prompt
+from .base import BaseConductor
 from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
@@ -124,6 +126,7 @@ class SimulatedConductor:
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
+    @functools.wraps(BaseConductor.ask, updated=())
     async def ask(
         self,
         text: str,
@@ -215,6 +218,7 @@ class SimulatedConductor:
     #  request  (write-capable)                                          #
     # ------------------------------------------------------------------ #
 
+    @functools.wraps(BaseConductor.request, updated=())
     async def request(
         self,
         text: str,
