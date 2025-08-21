@@ -608,6 +608,7 @@ def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
                 char = msvcrt.getche().decode("utf-8")
                 if char == "\r":  # Enter key
                     print()  # Move to next line after Enter
+                    # Return the typed characters exactly as entered (no trimming)
                     return True, "".join(input_chars)
                 input_chars.append(char)
 
@@ -618,7 +619,11 @@ def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
         # Unix implementation using select
         rlist, _, _ = select.select([sys.stdin], [], [], timeout)
         if rlist:
-            return True, sys.stdin.readline().strip()
+            # Preserve user input exactly as typed, removing only the trailing newline
+            line = sys.stdin.readline()
+            if line.endswith("\n"):
+                line = line[:-1]
+            return True, line
         return False, None
 
 
@@ -1231,13 +1236,26 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
 
     while not handle.done():
         txt = input_now(poll * 2)  # same cadence as old versions
-        if txt:
-            stripped = txt.strip()
+        if txt is not None and txt != "":
+            # Use a left-trimmed view only for recognizing commands, but keep the original text intact
+            working = txt.lstrip()
             # Command mode with leading '/'
-            if stripped.startswith("/"):
-                parts = stripped[1:].split(maxsplit=1)
-                cmd = parts[0].lower()
-                arg = parts[1].strip() if len(parts) > 1 else ""
+            if working.startswith("/"):
+                # Parse command token while preserving the raw argument text
+                cmd_line = working[1:]
+                # Find first whitespace separating command and argument
+                space_idx = -1
+                for i, ch in enumerate(cmd_line):
+                    if ch.isspace():
+                        space_idx = i
+                        break
+                if space_idx == -1:
+                    cmd = cmd_line.lower()
+                    arg = ""
+                else:
+                    cmd = cmd_line[:space_idx].lower()
+                    # Preserve the argument exactly as typed (post-separator substring)
+                    arg = cmd_line[space_idx + 1 :]
 
                 if cmd in {"stop", "cancel", "s", "c"}:
                     print("stopping…")
@@ -1279,10 +1297,11 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         print(f"⚠️  Resume failed: {exc}")
                     continue
                 if cmd in {"i", "interject"}:
-                    if not arg:
+                    if not arg.strip():
                         print("Usage: /i <text>")
                     else:
                         print(f"interjecting: {arg}")
+                        # Forward the user's text exactly as provided
                         run_in_loop(handle.interject(arg))
                         print("✅ Interjection sent.")
                         if enable_voice_steering:
@@ -1293,11 +1312,12 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             print(HELP_TEXT)
                     continue
                 if cmd in {"ask", "?"}:
-                    if not arg:
+                    if not arg.strip():
                         print("Usage: /ask <question>")
                     else:
                         try:
                             print(f"asking question: {arg}")
+                            # Forward the question exactly as provided
                             nested = await handle.ask(arg)
                             ans = await nested.result()
                             print(f"[ask] → {ans}")
@@ -1316,8 +1336,8 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         audio = record_until_enter_interruptible(lambda: handle.done())
                         if audio is None:
                             continue
-                        transcript = transcribe_deepgram(audio).strip()
-                        if not transcript:
+                        transcript = transcribe_deepgram(audio)
+                        if not transcript or transcript.strip() == "":
                             print("⚠️  Empty transcript – ignoring")
                             continue
                         should_break = await _route_freeform_and_apply(
@@ -1332,7 +1352,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         print(f"⚠️  Voice steering failed: {exc}")
                     continue
                 if cmd in {"freeform", "f"}:
-                    if not arg:
+                    if not arg.strip():
                         print("Usage: /freeform <text>")
                         continue
                     should_break = await _route_freeform_and_apply(
@@ -1359,8 +1379,9 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     print(HELP_TEXT)
                     continue
                 # Unknown command → treat as interjection without the '/'
-                print(f"interjecting: {stripped[1:]}")
-                run_in_loop(handle.interject(stripped[1:]))
+                unknown_text = working[1:]
+                print(f"interjecting: {unknown_text}")
+                run_in_loop(handle.interject(unknown_text))
                 print("✅ Interjection sent.")
                 if enable_voice_steering:
                     speak("Interjection sent")
@@ -1369,9 +1390,9 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                 else:
                     print(HELP_TEXT)
             else:
-                # Plain text → interject
-                print(f"interjecting: {stripped}")
-                run_in_loop(handle.interject(stripped))
+                # Plain text → interject (forward exactly as typed)
+                print(f"interjecting: {txt}")
+                run_in_loop(handle.interject(txt))
                 print("✅ Interjection sent.")
                 if enable_voice_steering:
                     speak("Interjection sent")
