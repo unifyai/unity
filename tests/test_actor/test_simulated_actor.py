@@ -1,221 +1,197 @@
-import pytest
 import asyncio
 import functools
-import unify
+import pytest
 
-from unity.common.llm_helpers import start_async_tool_use_loop
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
-from tests.helpers import _handle_project, _get_unity_test_env_var
+from tests.helpers import _handle_project
 
 
-# Fixtures to create a real LLM client for each test
-def make_client(system_message: str):
-    client = unify.AsyncUnify(
-        "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
-    )
-    client.set_system_message(system_message)
-    return client
-
-
+# ────────────────────────────────────────────────────────────────────────────
+# 1.  Basic start-and-act                                                     #
+# ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_actor(monkeypatch):
+async def test_start_and_act_simulated_actor():
+    actor = SimulatedActor(timeout=0.1)
+    handle = await actor.act("Perform a quick demo task.")
+    result = await handle.result()
+    assert isinstance(result, str) and result.strip(), "Result should be non-empty"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 2.  Stateful memory – serial asks (via handle.ask)                          #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_actor_stateful_memory_serial_asks():
     """
-    Test that the outer loop can ask questions to the simulated actor via the dynamic _ask_ helper.
+    Two consecutive activities should share the same stateful LLM context.
+    We exercise this by asking questions via the handle's ask() method.
     """
     actor = SimulatedActor(steps=1)
-    # Count how many times ask is invoked
-    ask_called = {"count": 0}
-    original_ask = SimulatedActorHandle.ask
 
-    @functools.wraps(original_ask)
-    def ask(self, question: str) -> str:
-        ask_called["count"] += 1
-        return original_ask(self, question)
+    h1 = await actor.act("Start a short research task.")
+    code = await h1.ask("Invent a unique codename. Reply with only the codename.")
+    code = code.strip()
+    assert code, "Codename should not be empty"
 
-    monkeypatch.setattr(SimulatedActorHandle, "ask", ask, raising=True)
+    h2 = await actor.act("Continue the research.")
+    answer2 = (await h2.ask("What codename did you just suggest? ")).lower()
+    assert code.lower().split(" ")[-1] in answer2
 
-    system = (
-        "You are running inside an automated test.\n"
-        "1️⃣ Call `act` with argument task_description='perform research on a Tasty Cola Ltd.'.\n"
-        "2️⃣ When the user says 'ask', call the  `_ask_act_call_` **once**, and ask if there are any early findings already\n"
-        "3️⃣ Finally, regardless of the response to this question, just reply back to the user with exactly 'done', without calling any more tools."
-    )
-    client = make_client(system)
-    handle = start_async_tool_use_loop(
-        client=client,
-        message="begin",
-        tools={"act": actor.act},
-        max_steps=20,
-        timeout=120,
-    )
-    await asyncio.sleep(5)
-    await handle.interject("ask")
-    final = await handle.result()
-    assert "done" in final.strip().lower()
-    # ask should have been called exactly once
-    assert ask_called["count"] == 1, "._ask should be invoked exactly once"
+    # Allow both handles to complete
+    await h1.result()
+    await h2.result()
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Steerable handle tests                                                      #
+# ────────────────────────────────────────────────────────────────────────────
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 3.  Interject                                                               #
+# ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_simulated_actor(monkeypatch):
-    """
-    Test that the outer loop can interject instructions into the simulated actor via the `_interject_` helper.
-    """
+async def test_handle_interject(monkeypatch):
+    calls = {"interject": 0}
+    original = SimulatedActorHandle.interject
+
+    @functools.wraps(original)
+    async def wrapped(self, instruction: str):  # type: ignore[override]
+        calls["interject"] += 1
+        return await original(self, instruction)
+
+    monkeypatch.setattr(SimulatedActorHandle, "interject", wrapped, raising=True)
+
     actor = SimulatedActor(steps=1)
-    interjected = {"count": 0, "msgs": []}
-    original_interject = SimulatedActorHandle.interject
-
-    @functools.wraps(original_interject)
-    def interject(self, instruction: str) -> str:
-        interjected["count"] += 1
-        interjected["msgs"].append(instruction)
-        return original_interject(self, instruction)
-
-    monkeypatch.setattr(SimulatedActorHandle, "interject", interject, raising=True)
-
-    system = (
-        "You are running inside an automated test.\n"
-        "1️⃣ Call `act` with argument task='perform research on Tasty Cola Ltd.'.\n"
-        "2️⃣ When the user says 'adjust', call the helper starting with `_interject_act_call_` **once**, explaining that we want to know what their revenue is, as part of the research.\n"
-        "3️⃣ Finally, reply to the user with 'interjection sent'."
-    )
-    client = make_client(system)
-    handle = start_async_tool_use_loop(
-        client=client,
-        message="kickoff",
-        tools={"act": actor.act},
-        max_steps=20,
-        timeout=120,
-    )
-    # wait for initial scheduling
-    await asyncio.sleep(5)
-    await handle.interject("adjust")
-    final = await handle.result()
-    assert "interjection sent" in final.strip().lower()
-    assert interjected["count"] == 1, "._interject should be called exactly once"
-    assert "revenue" in interjected["msgs"][0].lower(), "Interjection payload incorrect"
+    handle = await actor.act("Show me all steps performed so far.")
+    await asyncio.sleep(0.05)
+    await handle.interject("Also consider revenue trends.")
+    await handle.result()
+    assert calls["interject"] == 1, ".interject should be invoked exactly once"
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# 4.  Stop                                                                    #
+# ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_pause_and_resume_simulated_actor(monkeypatch):
-    """
-    Test that the outer loop can pause and resume the simulated actor via `_pause_` and `_resume_` helpers.
-    """
-    actor = SimulatedActor(steps=2)
-    counts = {"pause": 0, "resume": 0}
-    original_pause = SimulatedActorHandle.pause
-
-    @functools.wraps(original_pause)
-    def pause(self) -> str:
-        counts["pause"] += 1
-        return original_pause(self)
-
-    original_resume = SimulatedActorHandle.resume
-
-    @functools.wraps(original_resume)
-    def resume(self) -> str:
-        counts["resume"] += 1
-        return original_resume(self)
-
-    monkeypatch.setattr(SimulatedActorHandle, "pause", pause, raising=True)
-    monkeypatch.setattr(SimulatedActorHandle, "resume", resume, raising=True)
-
-    system = (
-        "You are running inside an automated test.\n"
-        "1️⃣ Call `act` with argument `task_description='perform research on Tasty Cola Ltd.'`.\n"
-        "2️⃣ When the user says 'hold', call the helper starting with `_pause_act_call_`.\n"
-        "3️⃣ When the user says 'go', call the helper starting with `_resume_act_call_`.\n"
-        "4️⃣ After resume, reply with 'done'."
-    )
-    client = make_client(system)
-    handle = start_async_tool_use_loop(
-        client=client,
-        message="run",
-        tools={"act": actor.act},
-        max_steps=30,
-        timeout=180,
-    )
-    await asyncio.sleep(5)
-    await handle.interject("hold")
-    await asyncio.sleep(5)
-    await handle.interject("go")
-    final = await handle.result()
-    assert "done" in final.strip().lower()
-    assert counts == {
-        "pause": 1,
-        "resume": 1,
-    }, "pause/resume should each be called once"
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_stop_simulated_actor(monkeypatch):
-    """
-    Test that the outer loop can stop the simulated actor via `_stop_` helper.
-    """
+async def test_handle_stop(monkeypatch):
     actor = SimulatedActor(steps=1)
-    stopped = {"count": 0}
-    original_stop = SimulatedActorHandle.stop
-
-    @functools.wraps(original_stop)
-    def stop(self, reason: str | None = None) -> str:
-        stopped["count"] += 1
-        return original_stop(self, reason=reason)
-
-    monkeypatch.setattr(SimulatedActorHandle, "stop", stop, raising=True)
-
-    system = (
-        "You are running inside an automated test.\n"
-        "1️⃣ Call `act` with argument task='perform research on Tasty Cola Ltd.'.\n"
-        "2️⃣ When the user says 'stop it', call the helper starting with `_stop_act_call_`.\n"
-        "3️⃣ Finally, reply with 'stopped'."
-    )
-    client = make_client(system)
-    handle = start_async_tool_use_loop(
-        client=client,
-        message="begin",
-        tools={"act": actor.act},
-        max_steps=20,
-        timeout=120,
-    )
-    await asyncio.sleep(5)
-    await handle.interject("stop it")
-    final = await handle.result()
-    assert "stopped" in final.strip().lower()
-    assert stopped["count"] == 1, "._stop should be called exactly once"
+    handle = await actor.act("Generate a long report.")
+    await asyncio.sleep(0.05)
+    stop_msg = handle.stop("Not needed")
+    assert "stopped task" in stop_msg.lower()
+    result = await handle.result()
+    assert isinstance(result, str) and result.strip()
+    assert handle.done(), "Handle should report done after stop()"
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# 5.  Clarification handshake                                                 #
+# ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_actor_requests_clarification():
-    """
-    The actor should send a clarification question over `clarification_up_q`
-    and wait for the reply on `clarification_down_q` before finishing.
-    """
+async def test_handle_requests_clarification():
     actor = SimulatedActor(steps=1, _requests_clarification=True)
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    # start an actor that needs clarification
-    active_task = await actor.act(
+    handle = await actor.act(
         "Compile the quarterly report",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
     )
 
-    # the actor must ask a clarification question first
     question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert "clarify" in question.lower()
 
-    # provide the clarification answer
     await down_q.put("Yes, please compile the Q1 report now.")
-
-    # the final result should propagate the clarification answer
-    result = await active_task.result()
+    result = await handle.result()
+    assert isinstance(result, str) and result.strip()
     assert "q1 report" in result.lower()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 6.  Pause → Resume round-trip + valid_tools                                  #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_pause_and_resume(monkeypatch):
+    counts = {"pause": 0, "resume": 0}
+
+    orig_pause = SimulatedActorHandle.pause
+
+    @functools.wraps(orig_pause)
+    def _patched_pause(self):  # type: ignore[override]
+        counts["pause"] += 1
+        return orig_pause(self)
+
+    monkeypatch.setattr(
+        SimulatedActorHandle,
+        "pause",
+        _patched_pause,
+        raising=True,
+    )
+
+    orig_resume = SimulatedActorHandle.resume
+
+    @functools.wraps(orig_resume)
+    def _patched_resume(self):  # type: ignore[override]
+        counts["resume"] += 1
+        return orig_resume(self)
+
+    monkeypatch.setattr(
+        SimulatedActorHandle,
+        "resume",
+        _patched_resume,
+        raising=True,
+    )
+
+    actor = SimulatedActor(steps=2)
+    handle = await actor.act("Summarise all open opportunities.")
+
+    tools_initial = handle.valid_tools
+    assert "pause" in tools_initial and "resume" not in tools_initial
+
+    pause_reply = handle.pause()
+    assert "pause" in pause_reply.lower()
+
+    tools_paused = handle.valid_tools
+    assert "resume" in tools_paused and "pause" not in tools_paused
+
+    res_task = asyncio.create_task(handle.result())
+    await asyncio.sleep(0.1)
+    assert not res_task.done(), "result() must wait while paused"
+
+    resume_reply = handle.resume()
+    assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
+
+    tools_running = handle.valid_tools
+    assert "pause" in tools_running and "resume" not in tools_running
+
+    answer = await asyncio.wait_for(res_task, timeout=60)
+    assert isinstance(answer, str) and answer.strip()
+    assert counts == {"pause": 1, "resume": 1}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7.  Ask on handle                                                           #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_ask():
+    actor = SimulatedActor(steps=1)
+    handle = await actor.act("Summarize all unread messages this week.")
+
+    # Ask a follow-up while running
+    await asyncio.sleep(0.05)
+    reply = await handle.ask("What is the key point to emphasize?")
+    assert isinstance(reply, str) and reply.strip()
+
+    # The original handle should still be awaitable and produce a result
+    result = await handle.result()
+    assert isinstance(result, str) and result.strip()
