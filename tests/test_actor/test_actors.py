@@ -459,7 +459,7 @@ async def test_plan_requests_clarification(
         "After clarification, extract content for the specified product's website (assume it's productname.com)."
     )
 
-    plan_handle = await actor.execute(
+    plan_handle = await actor.act(
         task_description,
         clarification_up_q=clarification_up_q,
         clarification_down_q=clarification_down_q,

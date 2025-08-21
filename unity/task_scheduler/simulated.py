@@ -615,7 +615,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     )
 
     # ------------------------------------------------------------------ #
-    #  execite_task – delegate to SimulatedActor.execute                     #
+    #  execite_task – delegate to SimulatedActor.act                     #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseTaskScheduler.execute_task, updated=())
     async def execute_task(
@@ -657,7 +657,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             timeout=10,
             _requests_clarification=_requests_clarification,
         )
-        handle = await actor.execute(
+        handle = await actor.act(
             task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,

@@ -506,7 +506,7 @@ async def patched_execute(self, task_description: str, **kwargs):
     return await original_execute(self, task_description, **kwargs)
 
 
-HierarchicalActor.execute = patched_execute
+HierarchicalActor.act = patched_execute
 
 
 # ========== MAIN FUNCTIONALITY ==========
@@ -543,7 +543,7 @@ async def generate_plan_for_task(
 
     try:
         # Execute the task (which will just generate the plan)
-        active_task = await actor.execute(task)
+        active_task = await actor.act(task)
         plan_code = await active_task.result()
 
         # Check if the plan contains NotImplementedError

@@ -653,7 +653,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         # Build the active plan
-        plan_handle = await self._actor.execute(
+        plan_handle = await self._actor.act(
             task_row["description"],
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,

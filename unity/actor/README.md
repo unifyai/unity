@@ -85,7 +85,7 @@ async def main():
 
     print(f"Executing task: {task}")
 
-    active_task = await actor.execute(task)
+    active_task = await actor.act(task)
 
     print("\n=== FINAL RESULT ===")
     print(await active_task.result())
@@ -131,7 +131,7 @@ async def main():
     task = "Go to google.com, search for 'latest news on AI agents', and return the title of the first result."
     print(f"Executing task: {task}")
 
-    active_task = await actor.execute(task)
+    active_task = await actor.act(task)
 
     print("\n=== FINAL RESULT ===")
     print(await active_task.result())
@@ -176,7 +176,7 @@ async def main():
     task = "Go to google.com, search for 'latest news on AI agents', and return the title of the first result."
     print(f"Executing task: {task}")
 
-    active_task = await actor.execute(task)
+    active_task = await actor.act(task)
 
     print("\n=== FINAL RESULT ===")
     print(await active_task.result())

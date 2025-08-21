@@ -80,7 +80,7 @@ class Browser:
         sub_actor = ToolLoopActor(
             controller=self.backend.controller,
         )
-        active_task_handle = await sub_actor.execute(description)
+        active_task_handle = await sub_actor.act(description)
         return active_task_handle
 
     async def reason(self, query: str) -> str:
