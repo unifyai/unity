@@ -81,7 +81,7 @@ def _handle_project(
 
             try:
                 with unify.Context(ctx):
-                    EVENT_BUS.reset()
+                    EVENT_BUS.reset(delete_contexts=False)
                     # Ensure EVENT_BUS has been initialised – in case the
                     # global pytest_sessionstart hook was bypassed (e.g. when
                     # running an individual test without the full suite).
@@ -123,7 +123,7 @@ def _handle_project(
 
             try:
                 with unify.Context(ctx):
-                    EVENT_BUS.reset()
+                    EVENT_BUS.reset(delete_contexts=False)
                     # Ensure EVENT_BUS has been initialised – in case the
                     # global pytest_sessionstart hook was bypassed (e.g. when
                     # running an individual test without the full suite).
