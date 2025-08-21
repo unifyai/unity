@@ -263,6 +263,13 @@ async def _dispatch_with_context(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
 
+    # Immediate terminal confirmation of selected method
+    try:
+        _selected = "execute_task" if intent.action == "start" else intent.action
+        print(f"➡️  Selected: {_selected}")
+    except Exception:
+        pass
+
     # For 'start' requests, peel off optional simulation controls and inject a per-call actor
     if intent.action == "update":
         handle = await ts.update(
@@ -349,7 +356,7 @@ async def _dispatch_with_context(
             parent_chat_context=parent_chat_context,
             _return_reasoning_steps=show_steps,
         )
-    return intent.action, handle
+    return ("execute_task" if intent.action == "start" else intent.action), handle
 
 
 # ══════════════════════════════════  CLI  ═══════════════════════════════════
