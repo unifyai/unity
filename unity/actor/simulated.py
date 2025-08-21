@@ -309,6 +309,8 @@ class SimulatedActor(BaseActor):
         duration: float | None = None,
         _requests_clarification: bool = False,
         log_mode: "str | None" = "log",
+        # New: simulation-only guidance (does not alter TaskScheduler flow)
+        simulation_guidance: Optional[str] = None,
     ) -> None:
         """
         Initialize a simulated actor.
@@ -325,6 +327,8 @@ class SimulatedActor(BaseActor):
         self._log_mode: str | None = (
             log_mode if log_mode in ("print", "log", None) else "log"
         )
+        # Store simulation-only guidance
+        self._sim_guidance: Optional[str] = simulation_guidance
 
         # One shared, memory-retaining LLM for all activities
         self._llm = unify.AsyncUnify(
@@ -333,11 +337,19 @@ class SimulatedActor(BaseActor):
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
             stateful=True,
         )
-        self._llm.set_system_message(
+        # Compose a system message that preserves default behaviour while
+        # allowing optional simulation guidance to influence simulated responses.
+        _base_sys = (
             "You are a simulated actor and executor. "
             "Invent plausible progress and remain internally consistent "
-            "across multiple calls.",
+            "across multiple calls."
         )
+        if self._sim_guidance:
+            _base_sys += (
+                "\n\nSimulation guidance (influences the simulation only; do not reinterpret the task description):\n"
+                f"- {self._sim_guidance.strip()}"
+            )
+        self._llm.set_system_message(_base_sys)
 
     async def act(
         self,
@@ -347,6 +359,7 @@ class SimulatedActor(BaseActor):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SimulatedActorHandle:
+        # Pass the original TaskScheduler-provided description unchanged.
         return SimulatedActorHandle(
             self._llm,
             description,

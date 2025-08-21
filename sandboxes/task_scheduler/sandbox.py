@@ -62,6 +62,8 @@ class _SimConfig(BaseModel):
     core_text: str
     steps: int | None = None
     timeout_seconds: float | None = None
+    # Extra, simulation-only knob
+    simulation_guidance: str | None = None
 
 
 _SIM_PARSER_SYS = (
@@ -69,8 +71,9 @@ _SIM_PARSER_SYS = (
     "Controls to detect (may appear anywhere, any order, any phrasing):\n"
     "- steps: an integer number of steps (e.g., 'in 5 steps', 'limit to 7 steps', 'steps=3').\n"
     "- timeout: a duration with units seconds or minutes (e.g., 'in 30 seconds', 'timeout 2 min', '90s', 'timeout=1.5 minutes').\n"
+    "- simulation_guidance: optional free-form guidance that should influence the simulated behaviour only (e.g., 'if asked about timing, say there is an issue and it's taking longer').\n"
     "Return JSON with fields: core_text (the user's original request with ANY full sentence or standalone clause that expresses simulation controls REMOVED),\n"
-    "steps (int or null) and timeout_seconds (float seconds or null).\n"
+    "steps (int or null), timeout_seconds (float seconds or null), simulation_guidance (string or null).\n"
     "Rules for redaction when producing core_text:\n"
     "- Remove entire sentences that mention simulation parameters (timeout/steps) or are meta-instructions about the simulation.\n"
     "- If controls are embedded as a trailing or leading clause (e.g., '... and make it 60 seconds timeout'), remove the whole clause so the remaining sentence reads naturally.\n"
@@ -78,11 +81,13 @@ _SIM_PARSER_SYS = (
     "- Preserve the user's task wording otherwise; do not paraphrase or summarize.\n"
     "Examples:\n"
     "1) Input: 'Could you actually start researching accounted limited, right now? As for the simulation, please make this have a timeout of sixty seconds. Thanks.'\n"
-    "   core_text: 'Could you actually start researching accounted limited, right now? Thanks.' steps: null timeout_seconds: 60\n"
+    "   core_text: 'Could you actually start researching accounted limited, right now? Thanks.' steps: null timeout_seconds: 60 simulation_guidance: null\n"
     "2) Input: 'Start task 12 and in 5 steps please'\n"
-    "   core_text: 'Start task 12' steps: 5 timeout_seconds: null\n"
+    "   core_text: 'Start task 12' steps: 5 timeout_seconds: null simulation_guidance: null\n"
     "3) Input: 'Begin now, with a timeout of 90s'\n"
-    "   core_text: 'Begin now' steps: null timeout_seconds: 90\n"
+    "   core_text: 'Begin now' steps: null timeout_seconds: 90 simulation_guidance: null\n"
+    "4) Input: 'Start task 8. For the simulation, if you're asked how long it will take, say there was an issue and it's taking longer.'\n"
+    "   core_text: 'Start task 8' steps: null timeout_seconds: null simulation_guidance: 'if you're asked how long it will take, say there was an issue and it's taking longer'\n"
 )
 
 
@@ -323,6 +328,10 @@ async def _dispatch_with_context(
                         "parsed" if parsed.timeout_seconds is not None else "default"
                     )
                     print(f"   ⏱️ Timeout ({origin}): {eff_timeout}s")
+                # Show any simulation-only notes when provided
+                if parsed.simulation_guidance:
+                    print("🧪 Simulation notes:")
+                    print(f"   🧭 Guidance: {parsed.simulation_guidance}")
         except Exception:
             pass
 
@@ -330,7 +339,11 @@ async def _dispatch_with_context(
         # We cannot restore immediately after returning the outer handle because the
         # inner ActiveTask is only created when the LLM later calls the by-id tool.
         original_actor = getattr(ts, "_actor", None)
-        override_actor = SimulatedActor(steps=eff_steps, duration=eff_timeout)
+        override_actor = SimulatedActor(
+            steps=eff_steps,
+            duration=eff_timeout,
+            simulation_guidance=parsed.simulation_guidance,
+        )
         setattr(ts, "_actor", override_actor)
         handle = await ts.execute_task(
             core_text,
