@@ -412,26 +412,26 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """Navigates the browser using the dedicated /nav endpoint."""
         print(f"🐍 PYTHON: Navigating to URL: {url}")
 
-        # response = await self._request(
-        #     "POST",
-        #     "/act",
-        #     {"task": f"Go to the page: {url}"},
-        # )
-        # return response.get("status", "success")
+        response = await self._request(
+            "POST",
+            "/act",
+            {"task": f"Go to the page: {url}"},
+        )
+        return response.get("status", "success")
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = await self._request("POST", "/nav", {"url": url})
-                return response.get("status", "success")
-            except BrowserAgentError as e:
-                if "Target page" in str(e) and attempt < max_retries - 1:
-                    print(
-                        f"⚠️ Navigation failed due to closed page, retrying (attempt {attempt + 1}/{max_retries})...",
-                    )
-                    await asyncio.sleep(2)
-                    continue
-                raise
+        # max_retries = 3
+        # for attempt in range(max_retries):
+        #     try:
+        #         response = await self._request("POST", "/nav", {"url": url})
+        #         return response.get("status", "success")
+        #     except BrowserAgentError as e:
+        #         if "Target page" in str(e) and attempt < max_retries - 1:
+        #             print(
+        #                 f"⚠️ Navigation failed due to closed page, retrying (attempt {attempt + 1}/{max_retries})...",
+        #             )
+        #             await asyncio.sleep(2)
+        #             continue
+        #         raise
 
     def stop(self):
         """Stops the Node.js service subprocess."""
