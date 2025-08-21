@@ -16,6 +16,7 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
     start_async_tool_use_loop,
     ToolSpec,
+    TOOL_LOOP_LINEAGE,
 )
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
@@ -191,6 +192,7 @@ class Conductor(BaseConductor):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
             preprocess_msgs=self._inject_broader_context,
@@ -275,6 +277,7 @@ class Conductor(BaseConductor):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
             preprocess_msgs=self._inject_broader_context,

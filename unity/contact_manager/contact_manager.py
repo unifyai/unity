@@ -20,6 +20,7 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
     inject_broader_context,
     make_request_clarification_tool,
+    TOOL_LOOP_LINEAGE,
 )
 from ..events.event_bus import EVENT_BUS, Event
 from ..events.manager_event_logging import log_manager_call
@@ -748,6 +749,7 @@ class ContactManager(BaseContactManager):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             tool_policy=self._default_ask_tool_policy,
             preprocess_msgs=inject_broader_context,
@@ -836,6 +838,7 @@ class ContactManager(BaseContactManager):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             preprocess_msgs=inject_broader_context,
