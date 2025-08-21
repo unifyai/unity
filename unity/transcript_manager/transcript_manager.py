@@ -129,6 +129,24 @@ class TranscriptManager(BaseTranscriptManager):
                 context=self._transcripts_ctx,
             )
 
+        # Ensure a private `_metadata` column exists (dict, mutable) irrespective of context creation path
+        try:
+            existing_fields = unify.get_fields(context=self._transcripts_ctx)
+            if "_metadata" not in existing_fields:
+                unify.create_fields(
+                    {
+                        "_metadata": {
+                            "type": "dict",
+                            "mutable": True,
+                            "description": "Internal, non user-facing metadata for infrastructure.",
+                        },
+                    },
+                    context=self._transcripts_ctx,
+                )
+        except Exception:
+            # Non-fatal; logging will still work without the helper if backend creates implicitly
+            pass
+
         # ── Async logging (mirrors EventBus) ────────────────────────────────
         # Using a dedicated logger means log_create() returns immediately,
         # leaving the actual network I/O to an internal worker thread.
@@ -397,12 +415,16 @@ class TranscriptManager(BaseTranscriptManager):
 
         # ── 2. Normalise each input payload into Message objects ───────────
         normalised_messages: List[Message] = []
+        per_message_metadata: List[Optional[Dict[str, Any]]] = []
         for raw in messages:
             # Convert to dict early so we can mutate fields easily
             if isinstance(raw, Message):
                 payload: Dict[str, Any] = raw.model_dump(mode="python")
+                meta_val = None
             else:  # assume mapping
                 payload = dict(raw)
+                # Extract optional private metadata without letting it leak into the model
+                meta_val = payload.pop("_metadata", None)
 
             # Ensure required keys exist
             if "receiver_ids" not in payload:
@@ -416,9 +438,19 @@ class TranscriptManager(BaseTranscriptManager):
 
             # Re-instantiate Message model for validation
             normalised_messages.append(Message(**payload))
+            per_message_metadata.append(meta_val)
 
         # ── 3. Dump POST-ready JSON for each message ──────────────────────
         msg_entries = [m.to_post_json() for m in normalised_messages]
+
+        # Attach metadata payloads to corresponding entries (column ensured in __init__)
+        if any(pm is not None for pm in per_message_metadata):
+            for idx, meta_val in enumerate(per_message_metadata):
+                if meta_val is not None:
+                    try:
+                        msg_entries[idx]["_metadata"] = meta_val
+                    except Exception:
+                        pass
 
         # ── 4. Persist messages and publish EventBus notifications ───────
         from ..events.event_bus import EVENT_BUS, Event  # local import to avoid cycles
