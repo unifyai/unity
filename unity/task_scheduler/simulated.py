@@ -153,8 +153,8 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         )
         follow_up_prompt = "\n\n---\n\n".join(
             [q_msg]
-            + [self._initial]
-            + self._extra_msgs
+            + [self._initial_text]
+            + self._interjections
             + [f"Question to answer (as a reminder!): {question}"],
         )
 
