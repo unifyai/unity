@@ -14,7 +14,24 @@ from tests.helpers import _handle_project
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 1.  Basic start-and-ask                                                    #
+# 1.  Doc-string inheritance                                                 #
+# ────────────────────────────────────────────────────────────────────────────
+def test_simulated_tm_docstrings_match_base():
+    """
+    Public methods in SimulatedTranscriptManager should copy the real
+    BaseTranscriptManager doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.transcript_manager.base import BaseTranscriptManager
+    from unity.transcript_manager.simulated import SimulatedTranscriptManager
+
+    assert (
+        BaseTranscriptManager.ask.__doc__.strip()
+        in SimulatedTranscriptManager.ask.__doc__.strip()
+    ), ".store doc-string was not copied correctly"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 2.  Basic start-and-ask                                                    #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
@@ -26,11 +43,46 @@ async def test_start_and_ask_simulated_tm():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 2.  Interject                                                             #
+# 3.  Stateful memory – serial asks                                         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_simulated_tm(monkeypatch):
+async def test_tm_stateful_memory_serial_asks():
+    """
+    Two consecutive .ask() calls should share the same conversation context
+    because the manager's LLM is stateful.
+    """
+    tm = SimulatedTranscriptManager()
+
+    # 1) Ask for a unique codename – expect a non-empty answer
+    handle1 = await tm.ask(
+        "Please invent a unique project codename for our upcoming initiative. "
+        "Respond with *only* the codename.",
+    )
+    codename = (await handle1.result()).strip()
+    assert codename, "Codename should not be empty"
+
+    # 2) Ask the LLM to recall what it just said
+    handle2 = await tm.ask("Great. What codename did you suggest earlier?")
+    answer2 = (await handle2.result()).lower()
+
+    # The second answer should mention the same codename exactly
+    assert (
+        codename.lower().split(" ")[-1] in answer2
+    ), "LLM should recall the previous codename"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Steerable handle tests                                                     #
+# ────────────────────────────────────────────────────────────────────────────
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 4.  Interject                                                             #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_interject(monkeypatch):
     counts = {"interject": 0}
     original_interject = _SimulatedTranscriptHandle.interject
 
@@ -58,11 +110,11 @@ async def test_interject_simulated_tm(monkeypatch):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 3.  Stop                                                                  #
+# 5.  Stop                                                                  #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_simulated_tm():
+async def test_handle_stop():
     tm = SimulatedTranscriptManager()
     handle = await tm.ask("Produce a full export of all messages.")
     await asyncio.sleep(0.05)
@@ -75,11 +127,11 @@ async def test_stop_simulated_tm():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 4.  Clarification handshake                                               #
+# 6.  Clarification handshake                                               #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_tm_requests_clarification():
+async def test_handle_requests_clarification():
     tm = SimulatedTranscriptManager()
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
@@ -104,58 +156,11 @@ async def test_tm_requests_clarification():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 5.  Stateful memory across serial asks                                     #
+# 7.  Pause → Resume round-trip + valid_tools                                #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_tm_stateful_memory():
-    """
-    Two consecutive .ask() calls should share the same conversation context
-    because the manager's LLM is stateful.
-    """
-    tm = SimulatedTranscriptManager()
-
-    # 1) Ask for a unique codename – expect a non-empty answer
-    handle1 = await tm.ask(
-        "Please invent a unique project codename for our upcoming initiative. "
-        "Respond with *only* the codename.",
-    )
-    codename = (await handle1.result()).strip()
-    assert codename, "Codename should not be empty"
-
-    # 2) Ask the LLM to recall what it just said
-    handle2 = await tm.ask("Great. What codename did you suggest earlier?")
-    answer2 = (await handle2.result()).lower()
-
-    # The second answer should mention the same codename exactly
-    assert (
-        codename.lower().split(" ")[-1] in answer2
-    ), "LLM should recall the previous codename"
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 7.  Doc-string inheritance                                                 #
-# ────────────────────────────────────────────────────────────────────────────
-def test_simulated_tm_docstrings_match_base():
-    """
-    Public methods in SimulatedTranscriptManager should copy the real
-    BaseTranscriptManager doc-strings one-for-one (via functools.wraps).
-    """
-    from unity.transcript_manager.base import BaseTranscriptManager
-    from unity.transcript_manager.simulated import SimulatedTranscriptManager
-
-    assert (
-        BaseTranscriptManager.ask.__doc__.strip()
-        in SimulatedTranscriptManager.ask.__doc__.strip()
-    ), ".store doc-string was not copied correctly"
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 8.  Pause → Resume round-trip + valid_tools                                #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_pause_and_resume_simulated_tm(monkeypatch):
+async def test_handle_pause_and_resume(monkeypatch):
     """
     Ensure a `_SimulatedTranscriptHandle` can be paused and resumed and that
     `valid_tools` flips correctly between the two states.
@@ -226,3 +231,38 @@ async def test_pause_and_resume_simulated_tm(monkeypatch):
         "pause": 1,
         "resume": 1,
     }, "pause/resume should each be called once"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 8.  Nested ask on handle                                                   #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_ask():
+    """
+    The internal handle returned by SimulatedTranscriptManager.ask exposes a
+    dynamic ask() method that should produce a nested handle whose result can
+    be awaited independently of the parent.
+    """
+    tm = SimulatedTranscriptManager()
+
+    # Start an initial ask to obtain the live handle
+    handle = await tm.ask("Summarize all unread messages this week.")
+
+    # Add extra context to ensure nested prompt includes it
+    handle.interject("Focus on European enterprise accounts.")
+
+    # Invoke the dynamic ask on the running handle
+    nested = await handle.ask("What is the key point to emphasize?")
+
+    nested_answer = await nested.result()
+    assert isinstance(nested_answer, str) and nested_answer.strip(), (
+        "Nested ask() should yield a non-empty string answer",
+    )
+    assert "europe" in nested_answer.lower()
+
+    # The original handle should still be awaitable and produce an answer
+    handle_answer = await handle.result()
+    assert isinstance(handle_answer, str) and handle_answer.strip(), (
+        "Handle should still yield a non-empty answer after nested ask",
+    )
