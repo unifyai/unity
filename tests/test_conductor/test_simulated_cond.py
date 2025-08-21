@@ -13,11 +13,32 @@ from tests.helpers import _handle_project
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1.  Basic start-and-ask                                                    #
+# 1.  Doc-string inheritance                                                 #
+# ─────────────────────────────────────────────────────────────────────────────
+def test_simulated_cond_docstrings_match_base():
+    """
+    Public methods in SimulatedConductor should copy the real BaseConductor
+    doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.conductor.base import BaseConductor
+    from unity.conductor.simulated import SimulatedConductor
+
+    assert (
+        BaseConductor.ask.__doc__.strip() in SimulatedConductor.ask.__doc__.strip()
+    ), ".ask doc-string was not copied correctly"
+
+    assert (
+        BaseConductor.request.__doc__.strip()
+        in SimulatedConductor.request.__doc__.strip()
+    ), ".request doc-string was not copied correctly"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2.  Basic start-and-ask                                                    #
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_conductor():
+async def test_start_and_ask_simulated_cond():
     cond = SimulatedConductor(
         description=(
             "Operations assistant for Acme Real Estate handling listings, client follow-ups, "
@@ -32,11 +53,80 @@ async def test_start_and_ask_simulated_conductor():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2.  Interject                                                             #
+# 3.  Reasoning steps toggle (ask + request)                                 #
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_simulated_conductor(monkeypatch):
+async def test_reasoning_steps_toggle_ask_and_request():
+    cond = SimulatedConductor(
+        description=(
+            "Account management assistant summarizing priorities across active opportunities and customers."
+        ),
+    )
+
+    # ask() – request hidden messages tuple
+    h1 = await cond.ask(
+        "List top priorities across active opportunities and existing customers.",
+        _return_reasoning_steps=True,
+    )
+    ans1, msgs1 = await h1.result()
+    assert isinstance(ans1, str) and ans1.strip()
+    assert isinstance(msgs1, list) and len(msgs1) >= 1
+
+    # request() – also return (answer, messages)
+    h2 = await cond.request(
+        (
+            "Create a high-priority task to call Bob tomorrow at 09:00 and log it against the "
+            "'Renewal – Contoso' account."
+        ),
+        _return_reasoning_steps=True,
+    )
+    ans2, msgs2 = await h2.result()
+    assert isinstance(ans2, str) and ans2.strip()
+    assert isinstance(msgs2, list) and len(msgs2) >= 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4.  Write (request) then Read (ask) – state carries via sub-managers        #
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_cond_request_then_ask_stateful():
+    """
+    A `request()` that (likely) touches the TaskScheduler should influence a
+    subsequent `ask()` routed to the same sub-manager (stateful LLM behind it).
+    """
+    cond = SimulatedConductor(
+        description=(
+            "Project management assistant coordinating FY26 planning tasks and priorities."
+        ),
+    )
+    task_name = "Draft Budget FY26"
+
+    # 1) Request creation of a high-priority task
+    h_upd = await cond.request(
+        f"Please create a new task called '{task_name}' with high priority.",
+    )
+    await h_upd.result()
+
+    # 2) Ask about high-priority tasks – the answer should reference our task
+    h_q = await cond.ask("Which tasks are high priority right now?")
+    answer = (await h_q.result()).lower()
+
+    assert "budget" in answer, "Answer should reference the task added via request()"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Steerable handle tests                                                     #
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5.  Interject                                                             #
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_interject(monkeypatch):
     calls = {"interject": 0}
     orig = AsyncToolUseLoopHandle.interject
 
@@ -64,11 +154,11 @@ async def test_interject_simulated_conductor(monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3.  Stop                                                                  #
+# 6.  Stop                                                                  #
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_simulated_conductor():
+async def test_handle_stop():
     cond = SimulatedConductor(
         description=(
             "Data team sprint planning assistant summarizing backlog, PRs, and stakeholder requests."
@@ -86,11 +176,11 @@ async def test_stop_simulated_conductor():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4.  Optional clarification channels (best-effort)                         #
+# 7.  Clarification handshake                                                 #
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_supports_optional_clarification_channels():
+async def test_cond_supports_optional_clarification_channels():
     """
     Conductor provides an optional `request_clarification` tool to the loop when
     caller supplies duplex queues. We do not enforce that the LLM must use it,
@@ -143,11 +233,11 @@ async def test_conductor_supports_optional_clarification_channels():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5.  Pause → Resume round-trip                                             #
+# 8.  Pause → Resume round-trip                                             #
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_pause_and_resume_simulated_conductor(monkeypatch):
+async def test_handle_pause_and_resume(monkeypatch):
     counts = {"pause": 0, "resume": 0}
 
     original_pause = AsyncToolUseLoopHandle.pause
@@ -209,75 +299,16 @@ async def test_pause_and_resume_simulated_conductor(monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6.  Reasoning steps toggle (ask + request)                                 #
+# 9.  Nested ask on handle                                                   #
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_reasoning_steps_toggle_ask_and_request():
-    cond = SimulatedConductor(
-        description=(
-            "Account management assistant summarizing priorities across active opportunities and customers."
-        ),
-    )
-
-    # ask() – request hidden messages tuple
-    h1 = await cond.ask(
-        "List top priorities across active opportunities and existing customers.",
-        _return_reasoning_steps=True,
-    )
-    ans1, msgs1 = await h1.result()
-    assert isinstance(ans1, str) and ans1.strip()
-    assert isinstance(msgs1, list) and len(msgs1) >= 1
-
-    # request() – also return (answer, messages)
-    h2 = await cond.request(
-        (
-            "Create a high-priority task to call Bob tomorrow at 09:00 and log it against the "
-            "'Renewal – Contoso' account."
-        ),
-        _return_reasoning_steps=True,
-    )
-    ans2, msgs2 = await h2.result()
-    assert isinstance(ans2, str) and ans2.strip()
-    assert isinstance(msgs2, list) and len(msgs2) >= 1
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 7.  Write (request) then Read (ask) – state carries via sub-managers        #
-# ─────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_conductor_request_then_ask_stateful():
+async def test_handle_ask():
     """
-    A `request()` that (likely) touches the TaskScheduler should influence a
-    subsequent `ask()` routed to the same sub-manager (stateful LLM behind it).
+    The internal handle returned by SimulatedConductor.request exposes a
+    dynamic ask() method that should produce a nested handle whose result can
+    be awaited independently of the parent.
     """
-    cond = SimulatedConductor(
-        description=(
-            "Project management assistant coordinating FY26 planning tasks and priorities."
-        ),
-    )
-    task_name = "Draft Budget FY26"
-
-    # 1) Request creation of a high-priority task
-    h_upd = await cond.request(
-        f"Please create a new task called '{task_name}' with high priority.",
-    )
-    await h_upd.result()
-
-    # 2) Ask about high-priority tasks – the answer should reference our task
-    h_q = await cond.ask("Which tasks are high priority right now?")
-    answer = (await h_q.result()).lower()
-
-    assert "budget" in answer, "Answer should reference the task added via request()"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 8.  Nested ask() on a running loop                                         #
-# ─────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_nested_ask_on_running_conductor_loop():
     cond = SimulatedConductor(
         description=(
             "Task triage assistant for today's workload across engineering and support."
@@ -294,3 +325,7 @@ async def test_nested_ask_on_running_conductor_loop():
     nested_answer = await nested.result()
 
     assert isinstance(nested_answer, str) and nested_answer.strip()
+
+    # The original handle should still be awaitable and produce an answer
+    parent_answer = await handle.result()
+    assert isinstance(parent_answer, str) and parent_answer.strip()
