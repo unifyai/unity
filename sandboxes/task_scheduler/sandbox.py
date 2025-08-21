@@ -172,6 +172,30 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
             )
         except Exception:
             pass
+        # Also print immediately to the terminal so users see what was captured
+        try:
+            if parsed.steps is None and parsed.timeout_seconds is None:
+                print(
+                    "🧭 No scenario-level simulation guidance detected – defaults unchanged.",
+                )
+            else:
+                print("🧭 Scenario-level simulation guidance detected:")
+                if parsed.steps is not None:
+                    print(f"   🔢 Steps: {parsed.steps}")
+                if parsed.timeout_seconds is not None:
+                    print(f"   ⏱️ Timeout: {parsed.timeout_seconds}s")
+
+            # Show non-None defaults only
+            if _DEFAULT_SIM_STEPS is None and _DEFAULT_SIM_TIMEOUT is None:
+                print("⚙️ Defaults now: none set (no step limit, no timeout)")
+            else:
+                print("⚙️ Defaults now:")
+                if _DEFAULT_SIM_STEPS is not None:
+                    print(f"   🔢 Steps: {_DEFAULT_SIM_STEPS}")
+                if _DEFAULT_SIM_TIMEOUT is not None:
+                    print(f"   ⏱️ Timeout: {_DEFAULT_SIM_TIMEOUT}s")
+        except Exception:
+            pass
     except Exception:
         description_core = description
 
@@ -267,6 +291,30 @@ async def _dispatch_with_context(
                 eff_timeout,
                 core_text,
             )
+        except Exception:
+            pass
+        # Print immediately so the user sees what was captured and what will be used
+        try:
+            if (
+                parsed.steps is None
+                and parsed.timeout_seconds is None
+                and eff_steps is None
+                and eff_timeout is None
+            ):
+                print(
+                    "🧭 No simulation guidance detected – using defaults (no step limit, no timeout)",
+                )
+            else:
+                print("🧭 Simulation controls:")
+                # Only show values that will be used; annotate source
+                if eff_steps is not None:
+                    origin = "parsed" if parsed.steps is not None else "default"
+                    print(f"   🔢 Steps ({origin}): {eff_steps}")
+                if eff_timeout is not None:
+                    origin = (
+                        "parsed" if parsed.timeout_seconds is not None else "default"
+                    )
+                    print(f"   ⏱️ Timeout ({origin}): {eff_timeout}s")
         except Exception:
             pass
 
