@@ -94,6 +94,16 @@ def _parse_simulation_config(text: str) -> _SimConfig:
         )
         # Trust the LLM for sentence/phrase removal per system prompt guidance.
         core = (parsed.core_text or text).strip()
+        try:
+            LG.info(
+                "[sim-config/parser] raw=%r -> core_text=%r, steps=%s, timeout_seconds=%s",
+                text,
+                core,
+                parsed.steps,
+                parsed.timeout_seconds,
+            )
+        except Exception:
+            pass
         return _SimConfig(
             core_text=core,
             steps=parsed.steps,
@@ -101,6 +111,13 @@ def _parse_simulation_config(text: str) -> _SimConfig:
         )
     except Exception:
         # Fallback – no parsing; keep text as-is
+        try:
+            LG.info(
+                "[sim-config/parser] raw=%r -> PARSE FAILED; defaulting to steps=None, timeout_seconds=None",
+                text,
+            )
+        except Exception:
+            pass
         return _SimConfig(core_text=text, steps=None, timeout_seconds=None)
 
 
@@ -145,6 +162,16 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
         if parsed.timeout_seconds is not None:
             _DEFAULT_SIM_TIMEOUT = float(parsed.timeout_seconds)
         description_core = parsed.core_text.strip() or description
+        try:
+            LG.info(
+                "[sim-config/seed] parsed steps=%s, timeout_seconds=%s; defaults now steps=%s, timeout_seconds=%s",
+                parsed.steps,
+                parsed.timeout_seconds,
+                _DEFAULT_SIM_STEPS,
+                _DEFAULT_SIM_TIMEOUT,
+            )
+        except Exception:
+            pass
     except Exception:
         description_core = description
 
@@ -231,21 +258,43 @@ async def _dispatch_with_context(
             else _DEFAULT_SIM_TIMEOUT
         )
 
-        # Swap the planner on the instance for this call only
-        original_planner = getattr(ts, "_planner", None)
         try:
-            setattr(
-                ts,
-                "_planner",
-                SimulatedPlanner(steps=eff_steps, timeout=eff_timeout),
-            )
-            handle = await ts.execute_task(
+            LG.info(
+                "[sim-config/start] parsed steps=%s, timeout_seconds=%s; effective steps=%s, timeout_seconds=%s; core_text=%r",
+                parsed.steps,
+                parsed.timeout_seconds,
+                eff_steps,
+                eff_timeout,
                 core_text,
-                parent_chat_context=parent_chat_context,
             )
-        finally:
-            if original_planner is not None:
-                setattr(ts, "_planner", original_planner)
+        except Exception:
+            pass
+
+        # Swap the planner on the instance and keep it until the task completes.
+        # We cannot restore immediately after returning the outer handle because the
+        # inner ActiveTask is only created when the LLM later calls the by-id tool.
+        original_planner = getattr(ts, "_planner", None)
+        override_planner = SimulatedPlanner(steps=eff_steps, timeout=eff_timeout)
+        setattr(ts, "_planner", override_planner)
+        handle = await ts.execute_task(
+            core_text,
+            parent_chat_context=parent_chat_context,
+        )
+
+        async def _restore_planner_when_done():
+            try:
+                await handle.result()
+            except Exception:
+                # Restore even if the call was stopped/cancelled/errored
+                pass
+            try:
+                if original_planner is not None:
+                    setattr(ts, "_planner", original_planner)
+            except Exception:
+                pass
+
+        # Fire-and-forget restoration
+        asyncio.create_task(_restore_planner_when_done())
     else:  # ask
         handle = await ts.ask(
             raw,
