@@ -5,7 +5,7 @@ import json
 import os
 import functools
 import threading
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import unify
 from .base import BaseKnowledgeManager
@@ -177,10 +177,12 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         *,
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
+        simulation_guidance: Optional[str] = None,
     ) -> None:
         self._description = description
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self._simulation_guidance = simulation_guidance
 
         # One shared, memory-retaining LLM
         self._llm = unify.AsyncUnify(

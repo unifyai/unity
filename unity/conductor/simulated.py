@@ -47,6 +47,7 @@ class SimulatedConductor:
         *,
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
+        simulation_guidance: Optional[str] = None,
     ) -> None:
         """
         Args:
@@ -55,27 +56,32 @@ class SimulatedConductor:
         """
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self._simulation_guidance = simulation_guidance
 
         # ── Simulated façade (pure-LLM back-ends) ────────────────────
         self._contact_manager = SimulatedContactManager(
             description=description,
             log_events=log_events,
             rolling_summary_in_prompts=rolling_summary_in_prompts,
+            simulation_guidance=simulation_guidance,
         )
         self._transcript_manager = SimulatedTranscriptManager(
             description=description,
             log_events=log_events,
             rolling_summary_in_prompts=rolling_summary_in_prompts,
+            simulation_guidance=simulation_guidance,
         )
         self._knowledge_manager = SimulatedKnowledgeManager(
             description=description,
             log_events=log_events,
             rolling_summary_in_prompts=rolling_summary_in_prompts,
+            simulation_guidance=simulation_guidance,
         )
         self._task_scheduler = SimulatedTaskScheduler(
             description=description,
             log_events=log_events,
             rolling_summary_in_prompts=rolling_summary_in_prompts,
+            simulation_guidance=simulation_guidance,
         )
 
         #  Run-time state & tool-dict helpers

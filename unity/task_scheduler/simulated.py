@@ -181,10 +181,12 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         *,
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
+        simulation_guidance: Optional[str] = None,
     ) -> None:
         self._description = description
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self._simulation_guidance = simulation_guidance
 
         # One shared, *stateful* LLM for *everything*
         self._llm = unify.AsyncUnify(
@@ -395,6 +397,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         actor = SimulatedActor(
             duration=10,
             _requests_clarification=_requests_clarification,
+            simulation_guidance=self._simulation_guidance,
         )
         handle = await actor.act(
             task_description,
