@@ -157,7 +157,9 @@ const browserOptions: BrowserOptions = {
           "--disable-features=IsolateOrigins,site-per-process",
           // "--enable-features=WebRtcV4L2VideoCapture",
           "--auto-select-window-capture-source-by-title=Google",
-      ],
+        ],
+        downloadsPath: "/home/browser/Downloads",
+        // tracesDir: "/home/browser/traces",
     },
 };
 
