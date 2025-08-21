@@ -12,7 +12,7 @@ from tests.helpers import _handle_project
 @pytest.mark.asyncio
 @_handle_project
 async def test_start_and_act_simulated_actor():
-    actor = SimulatedActor(timeout=0.1)
+    actor = SimulatedActor(duration=0.1)
     handle = await actor.act("Perform a quick demo.")
     result = await handle.result()
     assert isinstance(result, str) and result.strip(), "Result should be non-empty"

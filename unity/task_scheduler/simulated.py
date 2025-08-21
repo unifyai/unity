@@ -393,7 +393,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         from ..actor.simulated import SimulatedActor
 
         actor = SimulatedActor(
-            timeout=10,
+            duration=10,
             _requests_clarification=_requests_clarification,
         )
         handle = await actor.act(

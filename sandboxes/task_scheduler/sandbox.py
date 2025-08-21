@@ -134,7 +134,7 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
     ts = TaskScheduler(
         actor=SimulatedActor(
             steps=_DEFAULT_SIM_STEPS,
-            timeout=_DEFAULT_SIM_TIMEOUT,
+            duration=_DEFAULT_SIM_TIMEOUT,
         ),
     )
 
@@ -322,7 +322,7 @@ async def _dispatch_with_context(
         # We cannot restore immediately after returning the outer handle because the
         # inner ActiveTask is only created when the LLM later calls the by-id tool.
         original_actor = getattr(ts, "_actor", None)
-        override_actor = SimulatedActor(steps=eff_steps, timeout=eff_timeout)
+        override_actor = SimulatedActor(steps=eff_steps, duration=eff_timeout)
         setattr(ts, "_actor", override_actor)
         handle = await ts.execute_task(
             core_text,

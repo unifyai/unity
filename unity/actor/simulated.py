@@ -29,7 +29,7 @@ class SimulatedActorHandle:
         description: str,
         *,
         steps: int | None,
-        timeout: float | None = None,
+        duration: float | None = None,
         parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
@@ -38,7 +38,7 @@ class SimulatedActorHandle:
         self._llm = llm
         self._description = description
         self._steps = steps
-        self._timeout = timeout
+        self._duration = duration
         self._parent_chat_context = parent_chat_context
         self._clarification_up_q = clarification_up_q
         self._clarification_down_q = clarification_down_q
@@ -46,7 +46,9 @@ class SimulatedActorHandle:
 
         self._steps_taken = 0
         self._step_lock = threading.Lock()
-        self._start_time: float | None = None
+        # Track remaining time (freezes while paused)
+        self._remaining_duration: float | None = duration
+        self._last_started_at: float | None = None
 
         self._done_event = threading.Event()
         self._result_str: str | None = None
@@ -86,12 +88,13 @@ class SimulatedActorHandle:
                 if self._stop_event.is_set():
                     return
                 if (
-                    self._timeout is not None
-                    and self._start_time is not None
-                    and (time.monotonic() - self._start_time) >= self._timeout
+                    self._remaining_duration is not None
+                    and self._last_started_at is not None
+                    and (time.monotonic() - self._last_started_at)
+                    >= self._remaining_duration
                 ):
                     self._complete(
-                        f"Completed '{description}' after {self._timeout}\u2009s timeout.",
+                        f"Completed '{description}' after {self._duration}\u2009s duration.",
                     )
                     return
                 if self._steps is not None and self._steps_taken >= (self._steps or 0):
@@ -112,7 +115,7 @@ class SimulatedActorHandle:
         self._paused = False
         self._pause_event.set()
         self._stop_event.clear()
-        self._start_time = time.monotonic()
+        self._last_started_at = time.monotonic()
         self._action_thread = threading.Thread(
             target=self._run_actions,
             args=(self._description,),
@@ -167,6 +170,11 @@ class SimulatedActorHandle:
             return "Actor is already paused."
         self._paused = True
         self._pause_event.clear()
+        # Freeze clock by reducing remaining duration and clearing start marker
+        if self._remaining_duration is not None and self._last_started_at is not None:
+            elapsed = time.monotonic() - self._last_started_at
+            self._remaining_duration = max(0.0, self._remaining_duration - elapsed)
+            self._last_started_at = None
         self.simulate_step()
         return f"Paused '{self._description}'."
 
@@ -177,6 +185,9 @@ class SimulatedActorHandle:
             return "Actor is already running."
         self._paused = False
         self._pause_event.set()
+        # Restart the clock from now (remaining duration preserved)
+        if self._remaining_duration is not None:
+            self._last_started_at = time.monotonic()
         self.simulate_step()
         return f"Resumed '{self._description}'."
 
@@ -214,7 +225,7 @@ class SimulatedActor(BaseActor):
         self,
         *,
         steps: int | None = None,
-        timeout: float | None = None,
+        duration: float | None = None,
         _requests_clarification: bool = False,
     ) -> None:
         """
@@ -223,11 +234,11 @@ class SimulatedActor(BaseActor):
         Args:
             steps:      *(Optional)* Maximum tool steps each activity should run
                         before auto-completion.
-            timeout:    *(Optional)* Maximum wall-clock seconds before an activity
-                        auto-completes.
+            duration:   *(Optional)* Maximum wall-clock seconds before an activity
+                        auto-completes. Pauses do not count toward this limit.
         """
         self._steps = steps
-        self._timeout = timeout
+        self._duration = duration
         self._requests_clarification = _requests_clarification
 
         # One shared, memory-retaining LLM for all activities
@@ -255,7 +266,7 @@ class SimulatedActor(BaseActor):
             self._llm,
             description,
             steps=self._steps,
-            timeout=self._timeout,
+            duration=self._duration,
             parent_chat_context=parent_chat_context,
             _requests_clarification=self._requests_clarification,
             clarification_up_q=clarification_up_q,
