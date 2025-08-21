@@ -140,7 +140,7 @@ class TaskScheduler(BaseTaskScheduler):
         ----------
         actor : BaseActor | None, default ``None``
             Actor used to execute the steps of an active task. When ``None``, a
-            ``SimulatedActor(timeout=20)`` is used.
+            ``SimulatedActor(duration=20)`` is used.
         rolling_summary_in_prompts : bool, default ``True``
             Whether to inject the rolling activity summary into system prompts sent to the LLM.
 
@@ -196,7 +196,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # active task
         if actor is None:
-            self._actor = SimulatedActor(timeout=20)
+            self._actor = SimulatedActor(duration=20)
         else:
             self._actor = actor
 
