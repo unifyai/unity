@@ -94,6 +94,7 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
     Populate the task scheduler with sample data **through the official tools**
     using :class:`ScenarioBuilder`.  Falls back to the fixed seed on any error.
     """
+    global _DEFAULT_SIM_STEPS, _DEFAULT_SIM_TIMEOUT
     # Apply current defaults to the scheduler's planner so later 'start' calls inherit them
     ts = TaskScheduler(
         planner=SimulatedPlanner(
@@ -121,7 +122,6 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
     try:
         parsed = _parse_simulation_config(description)
         # Update global defaults if provided
-        global _DEFAULT_SIM_STEPS, _DEFAULT_SIM_TIMEOUT
         if parsed.steps is not None:
             _DEFAULT_SIM_STEPS = int(parsed.steps)
         if parsed.timeout_seconds is not None:
