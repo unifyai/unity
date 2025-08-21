@@ -4,7 +4,7 @@ Tests for `TaskScheduler.execute_task` which returns an `ActiveTask` handle.
 These largely mirror *test_active_task.py* but go through the full
 `TaskScheduler` surface so that we cover the integration layer that
 retrieves the task from storage, wraps it in `ActiveTask`, and wires the
-planner‐instance into the scheduler.
+actor‐instance into the scheduler.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 import pytest
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.actor.simulated import SimulatedPlanner, SimulatedActiveTask
+from unity.actor.simulated import SimulatedActor, SimulatedActiveTask
 
 #  The helper used in the existing test‑suite – applies project‑level monkey‐
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -31,8 +31,8 @@ from tests.helpers import _handle_project
 
 async def _make_scheduler_with_task(description: str, *, steps: int = 1):
     """Return *(scheduler, handle)* where *handle* is the active task."""
-    planner = SimulatedPlanner(steps=steps)
-    scheduler = TaskScheduler(planner=planner)
+    actor = SimulatedActor(steps=steps)
+    scheduler = TaskScheduler(actor=actor)
 
     task_id = scheduler._create_task(name=description, description=description)[
         "details"
@@ -242,8 +242,8 @@ async def test_execute_task_invokes_ask_when_id_missing(monkeypatch):
 
     description = "prepare the monthly analytics dashboard."
 
-    planner = SimulatedPlanner(steps=0)
-    ts = TaskScheduler(planner=planner)
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
 
     # Seed one queued task (the one we'll start)
     _ = ts._create_task(name=description, description=description)
@@ -283,8 +283,8 @@ async def test_execute_task_creates_new_task_and_executes(monkeypatch):
 
     description = "Organise annual security audit report."
 
-    planner = SimulatedPlanner(steps=0)
-    ts = TaskScheduler(planner=planner)
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
 
     # ---- spy on update -----------------------------------------------------
     calls: Dict[str, int] = {"update": 0}
@@ -331,8 +331,8 @@ async def test_execute_task_requests_clarification_for_unknown_id(monkeypatch):
     internal `request_clarification` helper (i.e. push a question onto the
     clarification_up_q)."""
 
-    planner = SimulatedPlanner(steps=0)
-    ts = TaskScheduler(planner=planner)
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
 
     # Provide queues so the tool can ask for clarification.
     clarification_up_q: asyncio.Queue[str] = asyncio.Queue()
@@ -370,8 +370,8 @@ async def test_execute_task_requests_clarification_for_unknown_id(monkeypatch):
 async def test_execute_task_sets_activated_by_explicit():
     """Starting a task explicitly via execute_task should set activated_by='explicit'."""
 
-    planner = SimulatedPlanner(steps=0)
-    ts = TaskScheduler(planner=planner)
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
 
     # Seed a simple queued task
     name = "Simple queued task"
@@ -391,8 +391,8 @@ async def test_execute_task_sets_activated_by_explicit():
 async def test_update_status_cannot_force_active_and_does_not_set_activation_metadata():
     """Direct status updates cannot set 'active' and should not set 'activated_by'."""
 
-    planner = SimulatedPlanner(steps=0)
-    ts = TaskScheduler(planner=planner)
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
 
     # Create a normal queued task
     label = "Cannot force active"
@@ -419,8 +419,8 @@ async def test_update_status_cannot_force_active_and_does_not_set_activation_met
 async def test_tasks_table_has_activated_by_column():
     """The Tasks context should include the activated_by column based on the Task model."""
 
-    planner = SimulatedPlanner(steps=0)
-    ts = TaskScheduler(planner=planner)
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
 
     # Create any task to ensure context exists
     title = "Column presence check"
@@ -448,8 +448,8 @@ async def test_execute_task_isolate_detaches_entirely(monkeypatch):
     preserved/propagated, and B's schedule cleared.
     """
 
-    planner = SimulatedPlanner(steps=0)
-    ts = TaskScheduler(planner=planner)
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
 
     # Build queue A->B->C with start_at on A
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
@@ -481,8 +481,8 @@ async def test_execute_task_isolate_detaches_entirely(monkeypatch):
 async def test_execute_task_isolate_when_head_moves_start_at_to_second(monkeypatch):
     """Branch A (head case): If activated task was head, next becomes head and inherits start_at."""
 
-    planner = SimulatedPlanner(steps=0)
-    ts = TaskScheduler(planner=planner)
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
 
     x, y = await _make_ordered_queue(ts, ["X", "Y"])  # type: ignore[misc]
 
@@ -512,8 +512,8 @@ async def test_execute_task_chain_keeps_followers(monkeypatch):
     next pointer to C, and C.prev_task=B, with only the head owning start_at.
     """
 
-    planner = SimulatedPlanner(steps=0)
-    ts = TaskScheduler(planner=planner)
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
 
     a, b, c = await _make_ordered_queue(ts, ["A2", "B2", "C2"])  # type: ignore[misc]
 

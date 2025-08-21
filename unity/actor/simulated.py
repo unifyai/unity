@@ -3,12 +3,12 @@ import os
 import json
 
 import unify
-from .base import BasePlanner
+from .base import BaseActor
 from typing import Optional
 from ..task_scheduler.simulated import SimulatedActiveTask
 
 
-class SimulatedPlanner(BasePlanner):
+class SimulatedActor(BaseActor):
     def __init__(
         self,
         *,
@@ -17,7 +17,7 @@ class SimulatedPlanner(BasePlanner):
         _requests_clarification: bool = False,
     ) -> None:
         """
-        Initialize a simulated planner.
+        Initialize a simulated actor.
 
         Args:
             steps:      *(Optional)* Maximum tool steps each plan should run
@@ -38,7 +38,7 @@ class SimulatedPlanner(BasePlanner):
             stateful=True,
         )
         self._llm.set_system_message(
-            "You are a *simulated* planner and executor. "
+            "You are a *simulated* actor and executor. "
             "Invent plausible task progress and remain internally consistent "
             "across multiple plans and calls.",
         )

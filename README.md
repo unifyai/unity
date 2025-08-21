@@ -47,6 +47,6 @@ Check out various logs in the "Assistants" project in the [Unity Interface](http
 
 `bash desktop.sh`
 
-4. Access the virtual desktop through the address below. It can now be used with the planner and the Magnitude controller.
+4. Access the virtual desktop through the address below. It can now be used with the actor and the Magnitude controller.
 
 `http://localhost:6080/vnc.html?resize=scale&autoconnect=1`

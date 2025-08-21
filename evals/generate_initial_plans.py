@@ -1,5 +1,5 @@
 """
-Generate initial HierarchicalPlanner plans for WebVoyager benchmark tasks.
+Generate initial HierarchicalActor plans for WebVoyager benchmark tasks.
 
 This script:
 1. Monkey patches HP to return initial plan code without execution
@@ -31,8 +31,8 @@ import unify
 
 unify.activate("web_voyager_eval", overwrite=True)
 
-from unity.actor import HierarchicalPlanner
-from unity.actor.hierarchical_planner import HierarchicalPlan, _HierarchicalPlanState
+from unity.actor import HierarchicalActor
+from unity.actor.hierarchical_actor import HierarchicalPlan, _HierarchicalPlanState
 import unity.actor.prompt_builders as prompt_builders
 import logging
 
@@ -211,7 +211,7 @@ def patched_build_initial_plan_prompt(
         async def main_plan():
             # In the main plan, we call the functions in order.
             # Notice there is NO try...except block here.
-            # The planner is designed to automatically catch the NotImplementedError from
+            # The actor is designed to automatically catch the NotImplementedError from
             # scrape_user_dashboard, implement that function, and then resume the plan.
             await login_to_portal()
             dashboard_data = await scrape_user_dashboard()
@@ -364,7 +364,7 @@ def post_process_generated_code(code: str) -> str:
         "import re",
         "from pydantic import BaseModel, Field",
         "from typing import List, Optional",
-        "from unity.planner.action_provider import ActionProvider",
+        "from unity.actor.action_provider import ActionProvider",
     ]
 
     # Check which imports are missing
@@ -389,10 +389,10 @@ def post_process_generated_code(code: str) -> str:
                 # Check if typing imports exist
                 if "from typing import" not in existing_imports_text:
                     imports_to_add.append(imp)
-            elif imp == "from unity.planner.action_provider import ActionProvider":
+            elif imp == "from unity.actor.action_provider import ActionProvider":
                 # Check if ActionProvider import exists
                 if (
-                    "from unity.planner.action_provider import ActionProvider"
+                    "from unity.actor.action_provider import ActionProvider"
                     not in existing_imports_text
                 ):
                     imports_to_add.append(imp)
@@ -456,7 +456,7 @@ class MockHierarchicalPlan(HierarchicalPlan):
             self._state = _HierarchicalPlanState.RUNNING
 
             # Generate the initial plan
-            self.plan_source_code = await self.planner._generate_initial_plan(
+            self.plan_source_code = await self.actor._generate_initial_plan(
                 self.goal,
                 self.exploration_summary,
             )
@@ -474,14 +474,14 @@ class MockHierarchicalPlan(HierarchicalPlan):
             self._set_final_result(f"ERROR: Plan generation failed: {e}")
 
 
-# 3. Patch the planner to use our mock plan
-original_execute_task = HierarchicalPlanner._execute_task_and_return_handle
+# 3. Patch the actor to use our mock plan
+original_execute_task = HierarchicalActor._execute_task_and_return_handle
 
 
 async def patched_execute_task(self, task_description: str, **kwargs):
     """Return our mock plan instead of the real one."""
     return MockHierarchicalPlan(
-        planner=self,
+        actor=self,
         goal=task_description,
         parent_chat_context=kwargs.get("parent_chat_context"),
         clarification_up_q=kwargs.get("clarification_up_q"),
@@ -491,10 +491,10 @@ async def patched_execute_task(self, task_description: str, **kwargs):
     )
 
 
-HierarchicalPlanner._execute_task_and_return_handle = patched_execute_task
+HierarchicalActor._execute_task_and_return_handle = patched_execute_task
 
 # 4. Also patch the execute method to bypass the active task check for batch processing
-original_execute = HierarchicalPlanner.execute
+original_execute = HierarchicalActor.execute
 
 
 async def patched_execute(self, task_description: str, **kwargs):
@@ -506,7 +506,7 @@ async def patched_execute(self, task_description: str, **kwargs):
     return await original_execute(self, task_description, **kwargs)
 
 
-HierarchicalPlanner.execute = patched_execute
+HierarchicalActor.execute = patched_execute
 
 
 # ========== MAIN FUNCTIONALITY ==========
@@ -516,7 +516,7 @@ async def generate_plan_for_task(
     task: str,
     task_id: str,
     output_dir: Path,
-    planner: HierarchicalPlanner,
+    actor: HierarchicalActor,
 ) -> Dict[str, Any]:
     """
     Generate a plan for a single task and save it to a file.
@@ -525,7 +525,7 @@ async def generate_plan_for_task(
         task: The task description
         task_id: Unique identifier for the task
         output_dir: Directory to save the generated plan
-        planner: The HierarchicalPlanner instance
+        actor: The HierarchicalActor instance
 
     Returns:
         Dict with task_id, success status, and any error message
@@ -543,7 +543,7 @@ async def generate_plan_for_task(
 
     try:
         # Execute the task (which will just generate the plan)
-        active_task = await planner.execute(task)
+        active_task = await actor.execute(task)
         plan_code = await active_task.result()
 
         # Check if the plan contains NotImplementedError
@@ -640,8 +640,8 @@ async def process_jsonl_file(
 
     logger.info(f"Loaded {len(tasks)} tasks from {jsonl_path}")
 
-    # Initialize planner once for all tasks
-    planner = HierarchicalPlanner(
+    # Initialize actor once for all tasks
+    actor = HierarchicalActor(
         headless=True,
         max_local_retries=2,
         max_escalations=1,
@@ -655,11 +655,11 @@ async def process_jsonl_file(
             logger.info(f"Processing task {i+1}/{len(tasks)}")
             logger.info(f"{'='*60}")
 
-            result = await generate_plan_for_task(task, task_id, output_dir, planner)
+            result = await generate_plan_for_task(task, task_id, output_dir, actor)
             results.append(result)
 
             # Clear the active task after each plan completes
-            planner.clear_active_task()
+            actor.clear_active_task()
 
             # Save intermediate results
             with open(summary_file, "w") as f:
@@ -677,7 +677,7 @@ async def process_jsonl_file(
             await asyncio.sleep(1)
 
     finally:
-        await planner.close()
+        await actor.close()
         await asyncio.sleep(0.5)
 
     # Final summary
@@ -696,7 +696,7 @@ async def process_jsonl_file(
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="Generate initial HierarchicalPlanner plans. Supports multiple JSONL formats including WebVoyager tasks.",
+        description="Generate initial HierarchicalActor plans. Supports multiple JSONL formats including WebVoyager tasks.",
     )
     parser.add_argument(
         "input",
@@ -732,7 +732,7 @@ async def main():
         task = args.input
         task_id = args.task_id or f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-        planner = HierarchicalPlanner(
+        actor = HierarchicalActor(
             headless=True,
             max_local_retries=2,
             max_escalations=1,
@@ -740,7 +740,7 @@ async def main():
         )
 
         try:
-            result = await generate_plan_for_task(task, task_id, output_dir, planner)
+            result = await generate_plan_for_task(task, task_id, output_dir, actor)
 
             if result["success"]:
                 print(f"\n✅ Successfully generated plan → {result['output_file']}")
@@ -750,7 +750,7 @@ async def main():
                 print(f"\n❌ Failed to generate plan: {result['error']}")
 
         finally:
-            await planner.close()
+            await actor.close()
             await asyncio.sleep(0.5)
 
 

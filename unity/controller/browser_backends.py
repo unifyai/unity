@@ -285,7 +285,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     ) as resp:
                         if resp.status >= 400:
                             try:
-                                from ..actor.hierarchical_planner import (
+                                from ..actor.hierarchical_actor import (
                                     ReplanFromParentException,
                                 )
 

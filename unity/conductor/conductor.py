@@ -23,8 +23,8 @@ from ..transcript_manager.base import BaseTranscriptManager
 from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.base import BaseKnowledgeManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
-from ..actor.base import BasePlanner
-from ..actor.tool_loop_planner import ToolLoopPlanner
+from ..actor.base import BaseActor
+from ..actor.tool_loop_actor import ToolLoopActor
 from ..task_scheduler.base import BaseTaskScheduler
 from .base import BaseConductor
 from ..task_scheduler.task_scheduler import TaskScheduler
@@ -57,7 +57,7 @@ class Conductor(BaseConductor):
         transcript_manager: Optional[BaseTranscriptManager] = None,
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
-        planner: Optional[BasePlanner] = None,
+        actor: Optional[BaseActor] = None,
         rolling_summary_in_prompts: bool = True,
     ) -> None:
         """
@@ -74,7 +74,7 @@ class Conductor(BaseConductor):
                              If None, will create default based on simulated flag.
             task_scheduler: Optional custom task scheduler implementation.
                           If None, will create default based on simulated flag.
-            planner: Optional custom planner implementation.
+            actor: Optional custom actor implementation.
                     If None, will create default based on simulated flag.
         """
 
@@ -99,9 +99,9 @@ class Conductor(BaseConductor):
         if task_scheduler is not None:
             self._task_scheduler = task_scheduler
         else:
-            if planner is None:
-                planner = ToolLoopPlanner()
-            self._task_scheduler = TaskScheduler(planner=planner)
+            if actor is None:
+                actor = ToolLoopActor()
+            self._task_scheduler = TaskScheduler(actor=actor)
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None

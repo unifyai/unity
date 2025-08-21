@@ -31,7 +31,7 @@ from unity.common.llm_helpers import (
 from unity.function_manager.function_manager import FunctionManager
 from unity.actor.base import (
     BaseActiveTask,
-    BasePlanner,
+    BaseActor,
 )
 from unity.actor.action_provider import ActionProvider
 import unity.actor.prompt_builders as prompt_builders
@@ -48,7 +48,7 @@ class PlanRuntime:
         self._pause_event = asyncio.Event()
         self._pause_event.set()
         self._checkpoint_event = asyncio.Event()
-        self._waiting_for_planner = False
+        self._waiting_for_actor = False
 
         self.action_counter = 0
         self.cache_miss_counter = 0
@@ -57,23 +57,23 @@ class PlanRuntime:
     async def checkpoint(self, label: str = ""):
         """
         A cooperative yield point. It yields control, honors pauses,
-        and then signals the planner and waits for release.
+        and then signals the actor and waits for release.
         """
         await asyncio.sleep(0)
         await self._pause_event.wait()
 
-        self._waiting_for_planner = True
+        self._waiting_for_actor = True
         self._checkpoint_event.set()
         try:
-            while self._waiting_for_planner:
+            while self._waiting_for_actor:
                 await asyncio.sleep(0.01)
                 await self._pause_event.wait()
         finally:
             self._checkpoint_event.clear()
 
     def _release_from_checkpoint(self):
-        """Called by the planner to allow the plan to continue to the next checkpoint."""
-        self._waiting_for_planner = False
+        """Called by the actor to allow the plan to continue to the next checkpoint."""
+        self._waiting_for_actor = False
 
     def pause(self):
         """Pauses the plan's execution at the next checkpoint."""
@@ -705,9 +705,9 @@ class _SteerableToolHandleProxy:
         async def async_method_wrapper(*args, **kwargs):
             self._plan.runtime.action_counter += 1
             tool_name = f"{self._handle_name}:{self._handle_id}.{name}"
-            call_repr = f"{self._handle_name}[{self._handle_id[:8]}].{name}({self._plan.planner._serialize_args(args, kwargs)})"
+            call_repr = f"{self._handle_name}[{self._handle_id[:8]}].{name}({self._plan.actor._serialize_args(args, kwargs)})"
 
-            cache_key = self._plan.planner._generate_cache_key(
+            cache_key = self._plan.actor._generate_cache_key(
                 self._plan,
                 tool_name,
                 args,
@@ -744,9 +744,9 @@ class _SteerableToolHandleProxy:
         def sync_method_wrapper(*args, **kwargs):
             self._plan.runtime.action_counter += 1
             tool_name = f"{self._handle_name}:{self._handle_id}.{name}"
-            call_repr = f"{self._handle_name}[{self._handle_id[:8]}].{name}({self._plan.planner._serialize_args(args, kwargs)})"
+            call_repr = f"{self._handle_name}[{self._handle_id[:8]}].{name}({self._plan.actor._serialize_args(args, kwargs)})"
 
-            cache_key = self._plan.planner._generate_cache_key(
+            cache_key = self._plan.actor._generate_cache_key(
                 self._plan,
                 tool_name,
                 args,
@@ -811,11 +811,9 @@ class _ActionProviderProxy:
             interactions_log = self._plan.interaction_stack[-1]
             self._plan.runtime.action_counter += 1
             tool_name = f"action_provider.{name}"
-            call_repr = (
-                f"{tool_name}({self._plan.planner._serialize_args(args, kwargs)})"
-            )
+            call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs)})"
 
-            cache_key = self._plan.planner._generate_cache_key(
+            cache_key = self._plan.actor._generate_cache_key(
                 self._plan,
                 tool_name,
                 args,
@@ -896,11 +894,9 @@ class _ActionProviderProxy:
             interactions_log = self._plan.interaction_stack[-1]
             self._plan.runtime.action_counter += 1
             tool_name = f"action_provider.{name}"
-            call_repr = (
-                f"{tool_name}({self._plan.planner._serialize_args(args, kwargs)})"
-            )
+            call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs)})"
 
-            cache_key = self._plan.planner._generate_cache_key(
+            cache_key = self._plan.actor._generate_cache_key(
                 self._plan,
                 tool_name,
                 args,
@@ -988,7 +984,7 @@ class HierarchicalPlan(BaseActiveTask):
 
     def __init__(
         self,
-        planner: "HierarchicalPlanner",
+        actor: "HierarchicalActor",
         goal: Optional[str] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
@@ -1000,7 +996,7 @@ class HierarchicalPlan(BaseActiveTask):
         Initializes the Hierarchical Plan active task.
 
         Args:
-            planner: The parent HierarchicalPlanner instance.
+            actor: The parent HierarchicalActor instance.
             goal: The high-level user goal for this plan.
             clarification_up_q: Queue for sending clarification questions to the user.
             clarification_down_q: Queue for receiving answers from the user.
@@ -1008,7 +1004,7 @@ class HierarchicalPlan(BaseActiveTask):
             max_escalations: Max number of strategic replans before pausing.
             max_local_retries: Max number of tactical retries for a function.
         """
-        self.planner = planner
+        self.actor = actor
         self.goal = goal
         self.is_teaching_session = goal is None
         self.plan_source_code: Optional[str] = None
@@ -1105,7 +1101,7 @@ class HierarchicalPlan(BaseActiveTask):
 
                 if self.plan_source_code is None:
                     self.action_log.append("Generating new plan from goal...")
-                    self.plan_source_code = await self.planner._generate_initial_plan(
+                    self.plan_source_code = await self.actor._generate_initial_plan(
                         plan=self,
                         goal=self.goal,
                     )
@@ -1133,12 +1129,12 @@ class HierarchicalPlan(BaseActiveTask):
                     self.action_log.append(
                         "Starting goal-less session. Awaiting user instruction.",
                     )
-                    await self.planner._prepare_execution_environment(self)
+                    await self.actor._prepare_execution_environment(self)
                     return
                 else:
                     self._set_state(_HierarchicalPlanState.RUNNING)
 
-            await self.planner._prepare_execution_environment(self)
+            await self.actor._prepare_execution_environment(self)
             await self._start_main_execution_loop()
         except Exception as e:
             logger.error(f"Plan initialization failed: {e}", exc_info=True)
@@ -1221,7 +1217,7 @@ class HierarchicalPlan(BaseActiveTask):
             f"IMPLEMENTATION CONTEXT for '{function_name}': {reason}",
         )
 
-        decision = await self.planner._dynamic_implement(
+        decision = await self.actor._dynamic_implement(
             plan=self,
             function_name=function_name,
             **kwargs,
@@ -1404,7 +1400,7 @@ class HierarchicalPlan(BaseActiveTask):
             ast.fix_missing_locations(final_tree)
 
             self.plan_source_code = ast.unparse(final_tree)
-            self.planner._load_plan_module(self)
+            self.actor._load_plan_module(self)
 
         except (SyntaxError, ValueError, RuntimeError) as e:
             logger.error(
@@ -1584,7 +1580,7 @@ class HierarchicalPlan(BaseActiveTask):
             refactor_prompt = prompt_builders.build_refactor_prompt(
                 monolithic_code=monolithic_code,
                 generalization_request=decision.generalization_context,
-                tools=self.planner.tools,
+                tools=self.actor.tools,
             )
 
             refactored_script = await llm_call(
@@ -1602,11 +1598,11 @@ class HierarchicalPlan(BaseActiveTask):
             self.replay_keys = list(self.execution_key_log)
             self.execution_key_log.clear()
 
-            self.plan_source_code = self.planner._sanitize_code(
+            self.plan_source_code = self.actor._sanitize_code(
                 clean_refactored_script,
                 self,
             )
-            self.planner._load_plan_module(self)
+            self.actor._load_plan_module(self)
 
             if self._execution_task and not self._execution_task.done():
                 self._execution_task.cancel()
@@ -1632,20 +1628,20 @@ class HierarchicalPlan(BaseActiveTask):
                         )
 
                     original_tab_index = (
-                        await self.planner.action_provider.browser_observe(
+                        await self.actor.action_provider.browser_observe(
                             "What is the index of the current tab?",
                             response_format=TabState,
                         )
                     )
                     original_url = (
-                        await self.planner.action_provider.browser.get_current_url()
+                        await self.actor.action_provider.browser.get_current_url()
                     )
                 except Exception as e:
                     self.action_log.append(f"SANDBOX: Could not record tab state: {e}")
                     original_tab_index = 0
 
                 self.action_log.append("SANDBOX: Opening new tab for exploration")
-                await self.planner.action_provider.browser_act(
+                await self.actor.action_provider.browser_act(
                     f"Open a new tab navigating to the url {original_url}",
                     expectation=f"A new tab should be open and active and the url should be {original_url}",
                 )
@@ -1654,7 +1650,7 @@ class HierarchicalPlan(BaseActiveTask):
                     f"SANDBOX: Starting sub-plan for goal: '{decision.new_goal}'",
                 )
                 sandbox_plan = HierarchicalPlan(
-                    planner=self.planner,
+                    actor=self.actor,
                     goal=decision.new_goal,
                     parent_chat_context=self.parent_chat_context,
                     clarification_up_q=self.clarification_up_q,
@@ -1715,7 +1711,7 @@ class HierarchicalPlan(BaseActiveTask):
             finally:
                 self.action_log.append("SANDBOX: Returning to original tab")
                 try:
-                    await self.planner.action_provider.browser_act(
+                    await self.actor.action_provider.browser_act(
                         f"Switch to tab {original_tab_index} which was on the url {original_url}",
                         expectation="Should be back on the original tab",
                     )
@@ -1844,7 +1840,7 @@ class HierarchicalPlan(BaseActiveTask):
 
         try:
             try:
-                browser_context = await self.planner.action_provider.browser.observe(
+                browser_context = await self.actor.action_provider.browser.observe(
                     "Analyze the current page state and provide a structured summary of visible headings, links, and interactive elements.",
                     response_format=PageAnalysis,
                 )
@@ -1923,11 +1919,11 @@ class HierarchicalPlan(BaseActiveTask):
         return tools
 
 
-class HierarchicalPlanner(BasePlanner):
+class HierarchicalActor(BaseActor):
     """
     Orchestrates task execution by generating and managing Python code.
 
-    This planner takes a high-level goal, generates a Python script representing
+    This actor takes a high-level goal, generates a Python script representing
     the plan, and then executes it in a controlled, self-correcting manner.
     """
 
@@ -1942,7 +1938,7 @@ class HierarchicalPlanner(BasePlanner):
         browser_mode: str = "magnitude",
     ):
         """
-        Initializes the HierarchicalPlanner.
+        Initializes the HierarchicalActor.
 
         Args:
             function_manager: Manages a library of reusable functions.
@@ -2041,7 +2037,7 @@ class HierarchicalPlanner(BasePlanner):
             An active handle to the running HierarchicalPlan.
         """
         return HierarchicalPlan(
-            planner=self,
+            actor=self,
             goal=task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
@@ -2068,7 +2064,7 @@ class HierarchicalPlanner(BasePlanner):
         # Goal: {plan.goal}
         # Last Updated: {timestamp}
         #
-        # This script is auto-generated and executed by the HierarchicalPlanner.
+        # This script is auto-generated and executed by the HierarchicalActor.
         # It is updated dynamically during the execution lifecycle.
 
         """,
@@ -3274,7 +3270,7 @@ class HierarchicalPlanner(BasePlanner):
 import asyncio
 import textwrap
 
-# The 'action_provider' is injected into the execution namespace by the planner.
+# The 'action_provider' is injected into the execution namespace by the actor.
 
 async def course_correction_plan():
     # This is a sequence of actions to restore the state.
@@ -3301,7 +3297,7 @@ async def course_correction_plan():
         await correction_func()
 
     async def close(self):
-        """Shuts down the planner and its associated resources gracefully."""
+        """Shuts down the actor and its associated resources gracefully."""
         if self._active_task and not self._active_task.done():
             if hasattr(self._active_task, "_cleanup_temp_file"):
                 self._active_task._cleanup_temp_file()

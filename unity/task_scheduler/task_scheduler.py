@@ -44,8 +44,8 @@ from .prompt_builders import (
     build_execute_task_prompt,
 )
 from .base import BaseTaskScheduler
-from ..actor.base import BasePlanner
-from ..actor.simulated import SimulatedPlanner
+from ..actor.base import BaseActor
+from ..actor.simulated import SimulatedActor
 from .active_task import ActiveTask
 import json
 
@@ -130,7 +130,7 @@ class TaskScheduler(BaseTaskScheduler):
     def __init__(
         self,
         *,
-        planner: Optional[BasePlanner] = None,
+        actor: Optional[BaseActor] = None,
         rolling_summary_in_prompts: bool = True,
     ) -> None:
         """
@@ -138,9 +138,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         Parameters
         ----------
-        planner : BasePlanner | None, default ``None``
-            Planner used to execute the steps of an active task. When ``None``, a
-            ``SimulatedPlanner(timeout=20)`` is used.
+        actor : BaseActor | None, default ``None``
+            Actor used to execute the steps of an active task. When ``None``, a
+            ``SimulatedActor(timeout=20)`` is used.
         rolling_summary_in_prompts : bool, default ``True``
             Whether to inject the rolling activity summary into system prompts sent to the LLM.
 
@@ -195,10 +195,10 @@ class TaskScheduler(BaseTaskScheduler):
         }
 
         # active task
-        if planner is None:
-            self._planner = SimulatedPlanner(timeout=20)
+        if actor is None:
+            self._actor = SimulatedActor(timeout=20)
         else:
-            self._planner = planner
+            self._actor = actor
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
@@ -602,7 +602,7 @@ class TaskScheduler(BaseTaskScheduler):
             Identifier of the task to start. Must resolve to a single, non‑terminal,
             non‑active instance.
         parent_chat_context : list[dict] | None, default ``None``
-            Prior messages to seed the conversation used for the planner execution.
+            Prior messages to seed the conversation used for the actor execution.
         clarification_up_q : asyncio.Queue[str] | None, default ``None``
             Queue used to bubble clarification questions to the caller. Must be provided
             together with ``clarification_down_q`` for interactive sessions.
@@ -653,7 +653,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         # Build the active plan
-        plan_handle = await self._planner.execute(
+        plan_handle = await self._actor.execute(
             task_row["description"],
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,

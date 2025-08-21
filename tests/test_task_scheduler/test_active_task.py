@@ -1,7 +1,7 @@
 """
 Tests for the thin `ActiveTask` → `BasePlan` wrapper.
 
-The structure mirrors *test_simulated_planner.py* but talks directly to the
+The structure mirrors *test_simulated_actor.py* but talks directly to the
 `ActiveTask` handle instead of orchestrating the outer tool–use loop.
 """
 
@@ -14,7 +14,7 @@ from typing import Dict
 import pytest
 
 from unity.task_scheduler.active_task import ActiveTask
-from unity.actor.simulated import SimulatedPlanner, SimulatedActiveTask
+from unity.actor.simulated import SimulatedActor, SimulatedActiveTask
 
 #  The helper used in the existing test-suite – applies project-level monkey-
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -32,7 +32,7 @@ async def test_active_task_ask(monkeypatch):
     """
     `ActiveTask.ask` should forward to the wrapped plan exactly once.
     """
-    planner = SimulatedPlanner(steps=1)
+    actor = SimulatedActor(steps=1)
     calls: Dict[str, int] = {"ask": 0}
 
     original_ask = SimulatedActiveTask.ask
@@ -44,7 +44,7 @@ async def test_active_task_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedActiveTask, "ask", spy_ask, raising=True)
 
-    plan_handle = await planner.execute("Analyse new product launch performance.")
+    plan_handle = await actor.execute("Analyse new product launch performance.")
     task = ActiveTask(plan_handle)
 
     # Trigger a single ask call that should propagate to the active task.
@@ -67,7 +67,7 @@ async def test_active_task_interject(monkeypatch):
     """
     `ActiveTask.interject` should forward to the wrapped plan exactly once.
     """
-    planner = SimulatedPlanner(steps=2)
+    actor = SimulatedActor(steps=2)
     calls: Dict[str, int] = {"interject": 0}
 
     original_interject = SimulatedActiveTask.interject
@@ -79,7 +79,7 @@ async def test_active_task_interject(monkeypatch):
 
     monkeypatch.setattr(SimulatedActiveTask, "interject", spy_interject, raising=True)
 
-    plan_handle = await planner.execute("Investigate competitor pricing.")
+    plan_handle = await actor.execute("Investigate competitor pricing.")
     task = ActiveTask(plan_handle)
 
     await task.interject("First gather public filings.")
@@ -103,7 +103,7 @@ async def test_active_task_pause_resume(monkeypatch):
     """
     The wrapper should transparently forward `pause` and `resume`.
     """
-    planner = SimulatedPlanner(steps=2)
+    actor = SimulatedActor(steps=2)
     counts: Dict[str, int] = {"pause": 0, "resume": 0}
 
     orig_pause = SimulatedActiveTask.pause
@@ -122,7 +122,7 @@ async def test_active_task_pause_resume(monkeypatch):
     monkeypatch.setattr(SimulatedActiveTask, "pause", spy_pause, raising=True)
     monkeypatch.setattr(SimulatedActiveTask, "resume", spy_resume, raising=True)
 
-    plan_handle = await planner.execute("Run SEO audit for the website.")
+    plan_handle = await actor.execute("Run SEO audit for the website.")
     task = ActiveTask(plan_handle)
     # Pause, wait a moment to ensure the thread blocks, then resume.
     task.pause()
@@ -146,7 +146,7 @@ async def test_active_task_stop(monkeypatch):
     """
     Calling `ActiveTask.stop` should proxy to the plan and mark it done.
     """
-    planner = SimulatedPlanner(steps=5)  # value doesn't matter, we stop early
+    actor = SimulatedActor(steps=5)  # value doesn't matter, we stop early
     called = {"stop": 0}
 
     orig_stop = SimulatedActiveTask.stop
@@ -158,7 +158,7 @@ async def test_active_task_stop(monkeypatch):
 
     monkeypatch.setattr(SimulatedActiveTask, "stop", spy_stop, raising=True)
 
-    plan_handle = await planner.execute("Extract sentiment from reviews.")
+    plan_handle = await actor.execute("Extract sentiment from reviews.")
     task = ActiveTask(plan_handle)
     task.stop()
     result = await task.result()
@@ -179,8 +179,8 @@ async def test_active_task_result_and_done():
     """
     A normal workflow should complete once enough steps have been taken.
     """
-    planner = SimulatedPlanner(steps=1)  # finishes after a single steering op
-    plan_handle = await planner.execute("Compile coverage metrics.")
+    actor = SimulatedActor(steps=1)  # finishes after a single steering op
+    plan_handle = await actor.execute("Compile coverage metrics.")
     task = ActiveTask(plan_handle)
 
     # One interjection increments the internal step counter to fulfil `_steps`.

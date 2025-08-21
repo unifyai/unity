@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "BaseActiveTask",
-    "BasePlanner",
+    "BaseActor",
     "PhoneCallHandle",
     "BrowserSessionHandle",
     "ComsManager",
@@ -53,15 +53,15 @@ class BaseActiveTask(SteerableToolHandle, ABC):
 
 
 # --------------------------------------------------------------------------- #
-# BasePlanner
+# BaseActor
 # --------------------------------------------------------------------------- #
 
 
-class BasePlanner(ABC):
+class BaseActor(ABC):
     """
-    Abstract contract that every concrete *planner* must satisfy.
+    Abstract contract that every concrete *actor* must satisfy.
 
-    A planner is a *factory* that spawns exactly one *active* plan at a time
+    A actor is a *factory* that spawns exactly one *active* plan at a time
     (for now).  It keeps a reference to that plan so that external callers
     can query its status or steer it later.
     """
@@ -111,7 +111,7 @@ class BasePlanner(ABC):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> BaseActiveTask:
         """
-        Concrete planner must build **and start** an active task implementation
+        Concrete actor must build **and start** an active task implementation
         (e.g. ``SimulatedActiveTask``) and return it.
         """
 

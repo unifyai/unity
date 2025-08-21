@@ -11,7 +11,7 @@ from unity.task_scheduler.simulated import (
     _SimulatedTaskScheduleHandle,
 )
 
-# helper used by the simulated-planner tests – keeps each test in its own
+# helper used by the simulated-actor tests – keeps each test in its own
 # temporary Unify project / trace context
 from tests.helpers import _handle_project
 

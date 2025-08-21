@@ -24,9 +24,9 @@ class ActiveTask(BaseActiveTask):
         Parameters
         ----------
         description
-            Human-readable task description (passed straight to the planner).
-        planner
-            The concrete planner implementation responsible for spawning an active task.
+            Human-readable task description (passed straight to the actor).
+        actor
+            The concrete actor implementation responsible for spawning an active task.
         task_id, instance_id, scheduler
             When provided, every lifecycle transition (pause/resume/stop/finish)
             is mirrored back into the task list via ``scheduler._update_task_status``.

@@ -238,10 +238,10 @@ class CommsAgent:
                 ]
 
             elif tool == "browser":
-                from unity.actor.hierarchical_planner import HierarchicalPlanner
+                from unity.actor.hierarchical_actor import HierarchicalActor
 
-                self.planner = HierarchicalPlanner()
-                tools_list += [self.planner.execute]
+                self.actor = HierarchicalActor()
+                tools_list += [self.actor.execute]
 
         self.enabled_tools = methods_to_tool_dict(*tools_list)
 

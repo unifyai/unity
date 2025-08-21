@@ -14,7 +14,7 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
 )
-from .base import BaseActiveTask, BasePlanner
+from .base import BaseActiveTask, BaseActor
 from unity.controller.controller import Controller, ActionFailedError
 from unify import AsyncUnify
 import unify
@@ -176,7 +176,7 @@ JSON
 
 class ToolLoopPlan(BaseActiveTask):
     """
-    Represents an active plan being executed by the ToolLoopPlanner.
+    Represents an active plan being executed by the ToolLoopActor.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.
     """
 
@@ -590,7 +590,7 @@ class ToolLoopPlan(BaseActiveTask):
         return tools
 
 
-class ToolLoopPlanner(BasePlanner):
+class ToolLoopActor(BaseActor):
     def __init__(
         self,
         session_connect_url: Optional[str] = None,
@@ -610,7 +610,7 @@ class ToolLoopPlanner(BasePlanner):
             self._main_event_loop = asyncio.get_running_loop()
         except RuntimeError:
             logger.warning(
-                "ToolLoopPlanner initialized outside of a running asyncio event loop.",
+                "ToolLoopActor initialized outside of a running asyncio event loop.",
             )
 
     def _get_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
@@ -620,13 +620,13 @@ class ToolLoopPlanner(BasePlanner):
 
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         async def act(action: str, expectation: str) -> str:
-            logger.info(f"Planner: Calling Controller.act with '{action}'")
+            logger.info(f"Actor: Calling Controller.act with '{action}'")
             try:
                 result = await self._controller.act(action, expectation=expectation)
                 return result
             except ActionFailedError as e:
                 logger.warning(
-                    f"ActionFailedError caught and handled within ToolLoopPlanner: {e.reason}",
+                    f"ActionFailedError caught and handled within ToolLoopActor: {e.reason}",
                 )
 
                 error_message = (
@@ -643,7 +643,7 @@ class ToolLoopPlanner(BasePlanner):
             Asks a question about the current state of the browser page.
             To get a structured response, provide a valid JSON Schema in the 'response_schema' argument.
             """
-            logger.info(f"Planner: Calling Controller.observe with query '{query}'.")
+            logger.info(f"Actor: Calling Controller.observe with query '{query}'.")
 
             response_format = str
             if response_schema:
@@ -745,17 +745,17 @@ class ToolLoopPlanner(BasePlanner):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         **kwargs,
     ) -> ToolLoopPlan:
-        logger.info(f"ToolLoopPlanner: Planning task: '{task_description}'")
+        logger.info(f"ToolLoopActor: Planning task: '{task_description}'")
 
         if not self._main_event_loop:
             try:
                 self._main_event_loop = asyncio.get_running_loop()
                 logger.info(
-                    f"ToolLoopPlanner._make_plan captured event loop: {self._main_event_loop}",
+                    f"ToolLoopActor._make_plan captured event loop: {self._main_event_loop}",
                 )
             except RuntimeError:
                 logger.error(
-                    "ToolLoopPlanner._make_plan: No running event loop to pass to ToolLoopPlan.",
+                    "ToolLoopActor._make_plan: No running event loop to pass to ToolLoopPlan.",
                 )
 
         plan = ToolLoopPlan(
@@ -769,6 +769,6 @@ class ToolLoopPlanner(BasePlanner):
         return plan
 
     async def close(self):
-        logger.info("ToolLoopPlanner: Closing resources...")
+        logger.info("ToolLoopActor: Closing resources...")
         if self._controller:
             self._controller.stop()

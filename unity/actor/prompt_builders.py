@@ -68,7 +68,7 @@ def _build_initial_plan_rules_and_examples(
         3.  **Use `browser_observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `browser_observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
         4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
         5.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
-        6.  **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The planner automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
+        6.  **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The actor automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
         7. **Default Search Engine:** Prefer DuckDuckGo (https://duckduckgo.com) for searches unless the user specifies otherwise.
         ---
         """,
@@ -437,7 +437,7 @@ def _build_initial_plan_rules_and_examples(
 
                 except Exception as e:
                     print(f"Failed to send SMS to {{appt['phone']}}: {{e}}")
-                    # RULE 10: Re-raise to let planner handle
+                    # RULE 10: Re-raise to let actor handle
                     raise
 
             return confirmations
@@ -806,7 +806,7 @@ def _build_initial_plan_rules_and_examples(
             # Navigate to the sales report page
             await action_provider.browser_navigate("https://example.com/sales-report")
 
-            # The result of this step will be cached by the planner
+            # The result of this step will be cached by the actor
             raw_data = await extract_sales_data_from_page()
 
             # If the plan is modified and restarts after this point,
@@ -868,7 +868,7 @@ def _build_dynamic_implement_rules_and_examples(
         3.  **Use `browser_observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `browser_observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
         4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
         5.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
-        6.  **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The planner automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
+        6.  **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The actor automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
         ---
         """,
     )
@@ -1321,13 +1321,13 @@ def _build_dynamic_implement_rules_and_examples(
 
         **Example 5: Isolating Pure Logic for Efficiency**
         This demonstrates how to implement a function that separates browser interaction from complex data processing.
-        The planner will cache results of each function, so separating pure logic ensures it won't be re-executed.
+        The actor will cache results of each function, so separating pure logic ensures it won't be re-executed.
         ```python
         async def analyze_competitor_pricing(product_name: str) -> dict:
             "\"\"\Analyzes competitor pricing data for a specific product.
 
             This function demonstrates the pattern of isolating pure computation
-            from browser interaction to leverage the planner's caching system.
+            from browser interaction to leverage the actor's caching system.
 
             Args:
                 product_name: The product to analyze pricing for
@@ -1383,7 +1383,7 @@ def _build_dynamic_implement_rules_and_examples(
             "\"\"\Performs detailed statistical analysis on pricing data.
 
             This is a separate function containing only pure Python logic.
-            The planner caches its result, so it won't re-execute if the plan restarts.
+            The actor caches its result, so it won't re-execute if the plan restarts.
             \"\"\"
             import statistics
             import asyncio
@@ -1468,7 +1468,7 @@ def build_initial_plan_prompt(
     tools: Dict[str, Callable],
 ) -> str:
     """
-    Dynamically builds the system prompt for the Hierarchical Planner.
+    Dynamically builds the system prompt for the Hierarchical Actor.
     """
     formatted_functions = _format_existing_functions(existing_functions)
 
@@ -1953,7 +1953,7 @@ def build_interjection_prompt(
 
     **Question 4: Is the request a direct modification, a new step, or a correction for the *current* task?**
     - Example: The plan is researching on a website, and the user says, "No, use my LinkedIn profile for this research," or "Now, put those findings into a presentation."
-    - If YES, choose the `modify_task` action. For `modification_request`, rephrase the user's instruction as a clear, actionable request for the planner to implement. For `target_function`, identify the most relevant function from the call stack to modify.
+    - If YES, choose the `modify_task` action. For `modification_request`, rephrase the user's instruction as a clear, actionable request for the actor to implement. For `target_function`, identify the most relevant function from the call stack to modify.
     - If NO, proceed to Question 5.
 
     **Question 5: Is the request a temporary, exploratory side-quest that doesn't alter the main goal?**
@@ -2129,7 +2129,7 @@ def build_sandbox_merge_prompt(
     ### Your Task
     1.  Analyze the sandbox result in the context of the main goal.
     2.  Does the sandbox result provide information or a completed sub-task that makes the main plan more efficient or more likely to succeed?
-    3.  If yes, set `modification_needed` to `true` and formulate a `modification_request` that clearly instructs the planner on how to alter the main plan.
+    3.  If yes, set `modification_needed` to `true` and formulate a `modification_request` that clearly instructs the actor on how to alter the main plan.
     4.  If no, set `modification_needed` to `false`.
 
     Respond ONLY with a JSON object matching the `SandboxMergeDecision` schema.
@@ -2149,7 +2149,7 @@ def build_refactor_prompt(
     Args:
         monolithic_code: The source code of the current single-function plan.
         generalization_request: The user's request to generalize the logic.
-        tools: The available tools for the planner.
+        tools: The available tools for the actor.
 
     Returns:
         The complete prompt string for the refactoring LLM call.
