@@ -1,12 +1,216 @@
 import asyncio
 import os
 import json
+import threading
+import time
 
 import unify
 from .base import BaseActor
 from typing import Optional
 
-from ..task_scheduler.simulated import SimulatedActiveTask
+
+class SimulatedActorHandle:
+    """
+    A lightweight, actor-scoped handle for simulating execution of a task.
+
+    This mirrors the public surface expected by higher layers/tests:
+    - ask(question) -> str
+    - interject(instruction) -> None
+    - pause() / resume() -> str
+    - stop(reason) -> str
+    - result() -> str (async)
+    - done() -> bool
+    - valid_tools (property)
+
+    Behavior intentionally matches the existing SimulatedActiveTask so that
+    step-driven completion, pause gating, and clarification handshakes behave
+    identically when the actor is used in isolation.
+    """
+
+    def __init__(
+        self,
+        llm: unify.AsyncUnify,
+        task: str,
+        *,
+        steps: int | None,
+        timeout: float | None = None,
+        parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> None:
+        self._llm = llm
+        self._task = task
+        self._steps = steps
+        self._timeout = timeout
+        self._parent_chat_context = parent_chat_context
+        self._clarification_up_q = clarification_up_q
+        self._clarification_down_q = clarification_down_q
+        self._requests_clarification = _requests_clarification
+
+        self._steps_taken = 0
+        self._step_lock = threading.Lock()
+        self._start_time: float | None = None
+
+        self._done_event = threading.Event()
+        self._result_str: str | None = None
+        self._paused = None
+        self._task_thread: threading.Thread | None = None
+        self._pause_event = threading.Event()
+        self._stop_event = threading.Event()
+
+        self._start()
+
+    @property
+    def clarification_up_q(self) -> Optional[asyncio.Queue[str]]:
+        return self._clarification_up_q
+
+    @property
+    def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
+        return self._clarification_down_q
+
+    def _run_task(self, task: str) -> None:
+        try:
+            while True:
+                if self._requests_clarification:
+                    try:
+                        self._clarification_up_q.put_nowait(
+                            "Can you please clarify what exactly you'd like me to do?",
+                        )
+                    except asyncio.QueueFull:
+                        pass
+                    while True:
+                        try:
+                            answer: str = self._clarification_down_q.get_nowait()
+                            break
+                        except asyncio.QueueEmpty:
+                            time.sleep(0.05)
+                    self._complete(f"Clarification received: {answer}")
+                    return
+                if self._stop_event.is_set():
+                    return
+                if (
+                    self._timeout is not None
+                    and self._start_time is not None
+                    and (time.monotonic() - self._start_time) >= self._timeout
+                ):
+                    self._complete(
+                        f"Completed task '{task}' after {self._timeout}\u2009s timeout.",
+                    )
+                    return
+                if self._steps is not None and self._steps_taken >= (self._steps or 0):
+                    self._complete(
+                        f"Completed task '{task}' in {self._steps} steps.",
+                    )
+                    return
+                self._pause_event.wait()
+                time.sleep(0.1)
+        finally:
+            self._task = None
+            self._paused = None
+            self._task_thread = None
+            self._pause_event.set()
+            self._stop_event.clear()
+
+    def _start(self):
+        self._paused = False
+        self._pause_event.set()
+        self._stop_event.clear()
+        self._start_time = time.monotonic()
+        self._task_thread = threading.Thread(
+            target=self._run_task,
+            args=(self._task,),
+            daemon=True,
+        )
+        self._task_thread.start()
+
+    def _complete(self, message: str) -> None:
+        if not self._done_event.is_set():
+            self._stop_event.set()
+            self._result_str = message
+            self._done_event.set()
+            import threading as _th
+
+            if (
+                self._task_thread
+                and self._task_thread.is_alive()
+                and _th.current_thread() is not self._task_thread
+            ):
+                self._task_thread.join(timeout=1)
+
+    def simulate_step(self):
+        if not self._done_event.is_set():
+            with self._step_lock:
+                self._steps_taken += 1
+
+    async def result(self) -> str:
+        await asyncio.to_thread(self._done_event.wait)
+        return self._result_str  # type: ignore
+
+    def stop(self, reason: Optional[str] = None) -> str:
+        if not self._task:
+            raise Exception("No tasks are currently being performed.")
+        msg = f"Stopped task '{self._task}' for reason: {reason}"
+        self._complete(msg)
+        return msg
+
+    async def interject(self, instruction: str) -> None:
+        if not self._task:
+            raise Exception("No tasks are currently being performed.")
+        self.simulate_step()
+        prompt = (
+            f"Current simulated task:\n{self._task}\n\n"
+            f"User instruction to adjust the plan:\n{instruction}"
+        )
+        await self._llm.generate(prompt)
+
+    def pause(self) -> str:
+        if not self._task:
+            raise Exception("No task is running, so nothing to pause.")
+        if self._paused:
+            return "Task is already paused."
+        self._paused = True
+        self._pause_event.clear()
+        self.simulate_step()
+        return f"Paused task '{self._task}'."
+
+    def resume(self) -> str:
+        if not self._task:
+            raise Exception("No task is running, so nothing to resume.")
+        if not self._paused:
+            return "Task is already running."
+        self._paused = False
+        self._pause_event.set()
+        self.simulate_step()
+        return f"Resumed task '{self._task}'."
+
+    async def ask(self, question: str) -> str:
+        if not self._task:
+            raise Exception("No tasks are currently being performed.")
+        self.simulate_step()
+        prompt = (
+            f"You are working on the simulated task:\n{self._task}\n\n"
+            f"User asks: {question}"
+        )
+        return await self._llm.generate(prompt)
+
+    def done(self) -> bool:
+        return self._done_event.is_set()
+
+    @property
+    def valid_tools(self):
+        if self._task is None:
+            return {}
+        available = {
+            self.stop.__name__: self.stop,
+            self.interject.__name__: self.interject,
+            self.ask.__name__: self.ask,
+        }
+        if self._paused:
+            available[self.resume.__name__] = self.resume
+        else:
+            available[self.pause.__name__] = self.pause
+        return available
 
 
 class SimulatedActor(BaseActor):
@@ -50,8 +254,8 @@ class SimulatedActor(BaseActor):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> SimulatedActiveTask:
-        return SimulatedActiveTask(
+    ) -> SimulatedActorHandle:
+        return SimulatedActorHandle(
             self._llm,
             description,
             steps=self._steps,
