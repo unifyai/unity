@@ -100,7 +100,9 @@ class ActiveTask(BaseActiveTask):
 
     @functools.wraps(BaseActiveTask.resume, updated=())
     def resume(self) -> Optional[str]:
-        return self._actor_handle.resume()
+        ret = self._actor_handle.resume()
+        self._mirror_status("active")
+        return ret
 
     @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
