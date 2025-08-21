@@ -10,7 +10,7 @@ from typing import List, Optional
 import unify
 
 from ..common.llm_helpers import SteerableToolHandle
-from ..actor.base import BaseActiveTask
+from .base import BaseActiveTask
 from .base import BaseTaskScheduler
 from .prompt_builders import (
     build_ask_prompt,
