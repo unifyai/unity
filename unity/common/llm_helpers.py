@@ -29,6 +29,7 @@ import unify
 from ..constants import LOGGER
 from dataclasses import dataclass
 from ..events.event_bus import Event, EVENT_BUS
+from contextvars import ContextVar
 
 
 def short_id(length=4):
@@ -37,6 +38,9 @@ def short_id(length=4):
 
 
 TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
+
+# Hierarchical lineage of nested async tool loops (propagates via contextvars)
+TOOL_LOOP_LINEAGE: ContextVar[list[str]] = ContextVar("TOOL_LOOP_LINEAGE", default=[])
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Image-handling helpers
@@ -569,6 +573,7 @@ async def _async_tool_use_loop_inner(
     tools: Dict[str, Union[Callable, ToolSpec]],
     *,
     loop_id: Optional[str] = None,
+    lineage: Optional[list[str]] = None,
     interject_queue: asyncio.Queue[str],
     cancel_event: asyncio.Event,
     stop_event: asyncio.Event | None = None,
@@ -696,8 +701,12 @@ async def _async_tool_use_loop_inner(
         The assistant's final plain-text reply *after* every tool result has
         been fed back into the conversation.
     """
-    # unique id
+    # unique id / lineage
     loop_id = loop_id if loop_id is not None else short_id()
+    _parent_lineage = TOOL_LOOP_LINEAGE.get([])
+    _lineage = list(lineage) if lineage is not None else [*_parent_lineage, loop_id]
+    _token = TOOL_LOOP_LINEAGE.set(_lineage)
+    log_label = " -> ".join(_lineage) if _lineage else (loop_id or "")
 
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
@@ -749,10 +758,10 @@ async def _async_tool_use_loop_inner(
     if log_steps:
         if parent_chat_context:
             LOGGER.info(
-                f"⬇️ [{loop_id}] Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
+                f"⬇️ [{log_label}] Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
             )
-        LOGGER.info(f"📋 [{loop_id}] System Message: {client.system_message}\n")
-        LOGGER.info(f"🧑‍💻 [{loop_id}] User Message: {message}\n")
+        LOGGER.info(f"📋 [{log_label}] System Message: {client.system_message}\n")
+        LOGGER.info(f"🧑‍💻 [{log_label}] User Message: {message}\n")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
@@ -798,6 +807,8 @@ async def _async_tool_use_loop_inner(
                     payload={
                         "message": message,
                         "method": loop_id,
+                        "hierarchy": list(_lineage),
+                        "hierarchy_label": log_label,
                     },
                 ),
             )
@@ -1024,7 +1035,7 @@ async def _async_tool_use_loop_inner(
             result = traceback.format_exc()
             if log_steps:
                 LOGGER.error(
-                    f"❌ [{loop_id}] Error: {name} failed "
+                    f"❌ [{log_label}] Error: {name} failed "
                     f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
                 )
                 # Additional debug context: show the exact tool schema and arguments
@@ -1039,7 +1050,7 @@ async def _async_tool_use_loop_inner(
                         "raw_arguments_json": info.get("raw_arguments_json"),
                     }
                     LOGGER.error(
-                        f"🧩 [{loop_id}] FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
+                        f"🧩 [{log_label}] FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
                     )
                 except Exception:
                     pass
@@ -1090,12 +1101,12 @@ async def _async_tool_use_loop_inner(
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
         if log_steps:
-            LOGGER.info(f"🛠️ [{loop_id}] {json.dumps(tool_msg, indent=4)}\n")
+            LOGGER.info(f"🛠️ [{log_label}] {json.dumps(tool_msg, indent=4)}\n")
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures >= max_consecutive_failures:
             if log_steps:
-                LOGGER.error(f"🚨 [{loop_id}] Aborting: too many tool failures.")
+                LOGGER.error(f"🚨 [{log_label}] Aborting: too many tool failures.")
             raise RuntimeError(
                 "Aborted after too many consecutive tool failures.",
             )
@@ -1512,7 +1523,7 @@ async def _async_tool_use_loop_inner(
         }
         await _append_msgs([notice])
         if log_steps:
-            LOGGER.info(f"⏹️ [{loop_id}] Early exit – {reason}")
+            LOGGER.info(f"⏹️ [{log_label}] Early exit – {reason}")
         return notice["content"]
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
@@ -2295,7 +2306,7 @@ async def _async_tool_use_loop_inner(
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
-                LOGGER.info(f"🔄 [{loop_id}] LLM thinking…")
+                LOGGER.info(f"🔄 [{log_label}] LLM thinking…")
 
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
@@ -2397,10 +2408,10 @@ async def _async_tool_use_loop_inner(
 
             if log_steps:
                 try:
-                    LOGGER.info(f"🤖 [{loop_id}] {json.dumps(msg, indent=4)}\n")
+                    LOGGER.info(f"🤖 [{log_label}] {json.dumps(msg, indent=4)}\n")
                 except Exception:
                     LOGGER.info(
-                        f"🤖 [{loop_id}] Assistant message appended (unserializable)",
+                        f"🤖 [{log_label}] Assistant message appended (unserializable)",
                     )
 
             # ── timeout guard (post-LLM) ───────────────────────────────
@@ -2986,6 +2997,11 @@ async def _async_tool_use_loop_inner(
             t.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
         raise
+    finally:
+        try:
+            TOOL_LOOP_LINEAGE.reset(_token)
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3370,6 +3386,7 @@ def start_async_tool_use_loop(
     tools: Dict[str, Callable],
     *,
     loop_id: Optional[str] = None,
+    parent_lineage: Optional[list[str]] = None,
     max_consecutive_failures: int = 3,
     prune_tool_duplicates=True,
     interrupt_llm_with_interjections: bool = True,
@@ -3404,12 +3421,19 @@ def start_async_tool_use_loop(
     # to call ``_adopt`` on the *real* outer handle once it exists.
     outer_handle_container: list = [None]
 
+    # Determine lineage for this loop start (inherit from context when not provided)
+    _parent = (
+        parent_lineage if parent_lineage is not None else TOOL_LOOP_LINEAGE.get([])
+    )
+    _lineage = [*_parent, loop_id]
+
     task = asyncio.create_task(
         _async_tool_use_loop_inner(
             client,
             message,
             tools,
             loop_id=loop_id,
+            lineage=_lineage,
             interject_queue=interject_queue,
             cancel_event=cancel_event,
             stop_event=stop_event,
@@ -3446,6 +3470,12 @@ def start_async_tool_use_loop(
         ),
         persist=persist,
     )
+
+    # Attach lineage to handle for optional external inspection
+    try:
+        handle._lineage = list(_lineage)  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     # Let the inner coroutine discover the outer handle so it can switch
     # steering when a nested handle requests pass-through behaviour.
