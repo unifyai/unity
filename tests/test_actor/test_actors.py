@@ -6,7 +6,8 @@ import unify
 import os
 
 from unity.common.llm_helpers import start_async_tool_use_loop
-from unity.actor.base import BaseActor, BaseActiveTask
+from unity.actor.base import BaseActor
+from unity.task_scheduler.base import BaseActiveTask
 from unity.actor.browser_use_actor import BrowserUseActor, BrowserUsePlan
 from unity.actor.tool_loop_actor import ToolLoopActor, ToolLoopPlan
 from tests.helpers import _handle_project, _get_unity_test_env_var

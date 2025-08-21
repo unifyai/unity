@@ -30,9 +30,9 @@ from unity.common.llm_helpers import (
 )
 from unity.function_manager.function_manager import FunctionManager
 from unity.actor.base import (
-    BaseActiveTask,
     BaseActor,
 )
+from unity.task_scheduler.base import BaseActiveTask
 from unity.actor.action_provider import ActionProvider
 import unity.actor.prompt_builders as prompt_builders
 

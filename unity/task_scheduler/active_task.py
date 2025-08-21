@@ -1,7 +1,7 @@
 import functools
 from typing import Optional, Dict, Callable, TYPE_CHECKING
 
-from ..actor.base import BaseActiveTask
+from .base import BaseActiveTask
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler

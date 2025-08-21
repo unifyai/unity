@@ -2,10 +2,37 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 
 from ..common.llm_helpers import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+
+
+class BaseActiveTask(SteerableToolHandle, ABC):
+    """
+    Abstract contract that every concrete active activity must satisfy.
+
+    An active activity represents a long‑running operation that can be steered
+    at runtime (pause / resume / interject / ask / stop) and that ultimately
+    resolves to a single result string.
+
+    Sub‑classes must provide concrete implementations of all abstract members
+    below and expose them via ``valid_tools`` so that higher‑level agents (or
+    the UI) can discover the currently available controls.
+    """
+
+    # Public API
+    @abstractmethod
+    async def ask(self, question: str) -> str:
+        """Ask any question about the live (ongoing and active) activity being worked on."""
+
+    @property
+    @abstractmethod
+    def valid_tools(self) -> Dict[str, Callable]:
+        """
+        Map of public‑name → callable for the user‑accessible controls that are
+        currently valid in the activity's lifecycle state.
+        """
 
 
 class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):

@@ -12,7 +12,8 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
 )
-from .base import BaseActiveTask, BaseActor
+from ..task_scheduler.base import BaseActiveTask
+from .base import BaseActor
 from unify import AsyncUnify
 import unify
 
