@@ -45,7 +45,7 @@ async def test_active_task_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedActiveTask, "ask", spy_ask, raising=True)
 
-    plan_handle = await actor.execute("Analyse new product launch performance.")
+    plan_handle = await actor.act("Analyse new product launch performance.")
     task = ActiveTask(plan_handle)
 
     # Trigger a single ask call that should propagate to the active task.
@@ -80,7 +80,7 @@ async def test_active_task_interject(monkeypatch):
 
     monkeypatch.setattr(SimulatedActiveTask, "interject", spy_interject, raising=True)
 
-    plan_handle = await actor.execute("Investigate competitor pricing.")
+    plan_handle = await actor.act("Investigate competitor pricing.")
     task = ActiveTask(plan_handle)
 
     await task.interject("First gather public filings.")
@@ -123,7 +123,7 @@ async def test_active_task_pause_resume(monkeypatch):
     monkeypatch.setattr(SimulatedActiveTask, "pause", spy_pause, raising=True)
     monkeypatch.setattr(SimulatedActiveTask, "resume", spy_resume, raising=True)
 
-    plan_handle = await actor.execute("Run SEO audit for the website.")
+    plan_handle = await actor.act("Run SEO audit for the website.")
     task = ActiveTask(plan_handle)
     # Pause, wait a moment to ensure the thread blocks, then resume.
     task.pause()
@@ -159,7 +159,7 @@ async def test_active_task_stop(monkeypatch):
 
     monkeypatch.setattr(SimulatedActiveTask, "stop", spy_stop, raising=True)
 
-    plan_handle = await actor.execute("Extract sentiment from reviews.")
+    plan_handle = await actor.act("Extract sentiment from reviews.")
     task = ActiveTask(plan_handle)
     task.stop()
     result = await task.result()
@@ -181,7 +181,7 @@ async def test_active_task_result_and_done():
     A normal workflow should complete once enough steps have been taken.
     """
     actor = SimulatedActor(steps=1)  # finishes after a single steering op
-    plan_handle = await actor.execute("Compile coverage metrics.")
+    plan_handle = await actor.act("Compile coverage metrics.")
     task = ActiveTask(plan_handle)
 
     # One interjection increments the internal step counter to fulfil `_steps`.

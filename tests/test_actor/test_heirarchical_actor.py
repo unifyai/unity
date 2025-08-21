@@ -113,7 +113,7 @@ async def sign_in():
     monkeypatch.setattr("unity.actor.hierarchical_actor.llm_call", mock_llm)
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
     # --- Act ---
-    plan = await actor.execute(
+    plan = await actor.act(
         "Sign in to the website. Once signed in, respond **only** with 'Signed in successfully.'",
     )
     await plan.result()
@@ -203,7 +203,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("Find the company email.")
+    plan = await actor.act("Find the company email.")
     await plan.result()
 
     # --- Assert ---
@@ -283,7 +283,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute(
+    plan = await actor.act(
         "Execute a plan with a flawed child task.",
     )
 
@@ -389,7 +389,7 @@ async def course_correction_main():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("Go to site A and click B.")
+    plan = await actor.act("Go to site A and click B.")
 
     # Wait until the first 'act' call completes. This ensures the plan is
     # now running and paused inside the second 'act' call, waiting on our event.
@@ -457,7 +457,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("Do the original task.")
+    plan = await actor.act("Do the original task.")
     await asyncio.sleep(0.5)  # Let it start
 
     modification_result = await plan.modify_plan("This modification will fail.")
@@ -513,7 +513,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("Test fatal error handling.")
+    plan = await actor.act("Test fatal error handling.")
     await plan.result()
 
     # --- Assert ---
@@ -561,7 +561,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute(
+    plan = await actor.act(
         "A task that will fail and escalate.",
     )
     # The plan will escalate and pause, so we get the message. This waits for the *entire*
@@ -654,7 +654,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=True))
-    plan = await actor.execute(goal)
+    plan = await actor.act(goal)
     queue_holder["up_q"] = plan.clarification_up_q
     queue_holder["down_q"] = plan.clarification_down_q
 
@@ -708,7 +708,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("A long running plan to stop.")
+    plan = await actor.act("A long running plan to stop.")
     await asyncio.sleep(0.1)  # Ensure the plan has started and is waiting
     assert not plan.done()
 
@@ -751,7 +751,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("A long running plan to pause.")
+    plan = await actor.act("A long running plan to pause.")
     await asyncio.sleep(0.1)
     assert plan._state == _HierarchicalPlanState.RUNNING
 
@@ -834,7 +834,7 @@ async def child_task():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("Execute a plan with nested stubs.")
+    plan = await actor.act("Execute a plan with nested stubs.")
     final_result = await plan.result()
 
     # --- Assert ---
@@ -914,7 +914,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("A plan to be modified while paused.")
+    plan = await actor.act("A plan to be modified while paused.")
     await asyncio.sleep(0.1)  # Let the plan start and hit the waiting act()
 
     # Pause the running plan
@@ -964,7 +964,7 @@ async def test_invalid_code_generation_handling(
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("A plan that will fail code generation.")
+    plan = await actor.act("A plan that will fail code generation.")
     result = await plan.result()
 
     # --- Assert ---
@@ -1034,7 +1034,7 @@ async def course_correction_main():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("A plan with a failing course correction.")
+    plan = await actor.act("A plan with a failing course correction.")
     await asyncio.sleep(0.1)  # Let the plan start
 
     modification_result = await plan.modify_plan(
@@ -1110,7 +1110,7 @@ async def step_B_stub():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("A plan that tests the cache hit on restart.")
+    plan = await actor.act("A plan that tests the cache hit on restart.")
     await plan.result()
 
     # --- Assert ---
@@ -1208,7 +1208,7 @@ async def main_plan():
 
     # --- Act 1: Initial Run & Caching ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("Test caching.")
+    plan = await actor.act("Test caching.")
     await asyncio.wait_for(plan_is_paused_event.wait(), timeout=5)
     await asyncio.sleep(0.1)
 
@@ -1304,7 +1304,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute(goal)
+    plan = await actor.act(goal)
     await plan.result()
 
     # --- Assert ---
@@ -1517,7 +1517,7 @@ async def main_plan():
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
-    plan = await actor.execute("Test that sandbox supports all class constructs")
+    plan = await actor.act("Test that sandbox supports all class constructs")
     result = await plan.result()
 
     # --- Assert ---
