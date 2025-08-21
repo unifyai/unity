@@ -5,6 +5,7 @@ import threading
 import time
 
 import unify
+from ..constants import LOGGER
 from .base import BaseActor
 from typing import Optional
 
@@ -34,6 +35,7 @@ class SimulatedActorHandle:
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_mode: "str | None" = "log",
     ) -> None:
         self._llm = llm
         self._description = description
@@ -43,6 +45,9 @@ class SimulatedActorHandle:
         self._clarification_up_q = clarification_up_q
         self._clarification_down_q = clarification_down_q
         self._requests_clarification = _requests_clarification
+        self._log_mode: str | None = (
+            log_mode if log_mode in ("print", "log", None) else "log"
+        )
 
         self._steps_taken = 0
         self._step_lock = threading.Lock()
@@ -123,7 +128,7 @@ class SimulatedActorHandle:
             daemon=True,
         )
         self._action_thread.start()
-        # Start a periodic monitor that prints remaining duration every 5 seconds
+        # Start a periodic monitor that emits remaining duration every 5 seconds
         if self._duration is not None:
 
             def _monitor():
@@ -131,12 +136,9 @@ class SimulatedActorHandle:
                     while not self._done_event.is_set():
                         rem = self.get_remaining_duration_seconds()
                         if rem is not None:
-                            try:
-                                print(
-                                    f"⏳ SimulatedActor Duration remaining: {max(0.0, rem):.1f}s",
-                                )
-                            except Exception:
-                                pass
+                            self._emit_status(
+                                f"⏳ Duration remaining: {max(0.0, rem):.1f}s",
+                            )
                         # Sleep in small chunks to be responsive to done-event
                         for _ in range(50):
                             if self._done_event.is_set():
@@ -172,11 +174,11 @@ class SimulatedActorHandle:
         if not self._done_event.is_set():
             with self._step_lock:
                 self._steps_taken += 1
-            # Print steps remaining after each user-visible interaction that consumes a step
+            # Emit steps remaining after each user-visible interaction that consumes a step
             try:
                 if self._steps is not None:
                     remaining = max(0, int(self._steps) - int(self._steps_taken))
-                    print(f"🪜 SimulatedActor Steps remaining: {remaining}")
+                    self._emit_status(f"🪜 Steps remaining: {remaining}")
             except Exception:
                 pass
 
@@ -260,6 +262,22 @@ class SimulatedActorHandle:
     # ------------------------
     # Status query helpers
     # ------------------------
+    def _emit_status(self, message: str) -> None:
+        """Emit a status line according to configured log mode: print | log | None."""
+        try:
+            if self._log_mode == "print":
+                print(message)
+            elif self._log_mode == "log":
+                try:
+                    LOGGER.info(message)
+                except Exception:
+                    pass
+            else:
+                # None ⇒ suppressed
+                pass
+        except Exception:
+            pass
+
     def get_remaining_duration_seconds(self) -> float | None:
         """Return the current wall-clock seconds remaining until auto-completion, or None.
 
@@ -290,6 +308,7 @@ class SimulatedActor(BaseActor):
         steps: int | None = None,
         duration: float | None = None,
         _requests_clarification: bool = False,
+        log_mode: "str | None" = "log",
     ) -> None:
         """
         Initialize a simulated actor.
@@ -303,6 +322,9 @@ class SimulatedActor(BaseActor):
         self._steps = steps
         self._duration = duration
         self._requests_clarification = _requests_clarification
+        self._log_mode: str | None = (
+            log_mode if log_mode in ("print", "log", None) else "log"
+        )
 
         # One shared, memory-retaining LLM for all activities
         self._llm = unify.AsyncUnify(
@@ -334,4 +356,5 @@ class SimulatedActor(BaseActor):
             _requests_clarification=self._requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
+            log_mode=self._log_mode,
         )
