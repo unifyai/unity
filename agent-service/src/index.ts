@@ -158,7 +158,7 @@ const browserOptions: BrowserOptions = {
           // "--enable-features=WebRtcV4L2VideoCapture",
           "--auto-select-window-capture-source-by-title=Google",
         ],
-        downloadsPath: "/home/browser/Downloads",
+        downloadsPath: "/home/desktop/Downloads",
         // tracesDir: "/home/browser/traces",
     },
 };
@@ -188,6 +188,7 @@ startBrowserAgent({
   browser: {
     launchOptions: {
       headless: false,
+      downloadsPath: "/home/browser/Downloads",
     }
   }})
 
