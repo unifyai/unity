@@ -3,6 +3,7 @@ import json
 import random
 import pytest
 from datetime import datetime, UTC
+import unify
 
 from unity.transcript_manager.types.message import Message, VALID_MEDIA
 from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -286,3 +287,44 @@ async def test_filter_messages_contacts_table_output():
     assert referenced_ids.issubset(
         contact_ids_from_table,
     ), "All participant ids must be included in contacts table"
+
+
+@pytest.mark.unit
+@_handle_project
+def test_metadata_private_column_roundtrip():
+    tm = TranscriptManager()
+
+    unique_exchange = 8642001
+    meta = {"foo": "bar", "n": 1}
+
+    tm.log_messages(
+        {
+            "medium": "email",
+            "sender_id": 0,
+            "receiver_ids": [1],
+            "timestamp": datetime.now(UTC),
+            "content": "Metadata test message",
+            "exchange_id": unique_exchange,
+            "_metadata": meta,
+        },
+    )
+    tm.join_published()
+
+    # 1) Column exists in the Transcripts context (private column with leading underscore)
+    fields = unify.get_fields(context=tm._transcripts_ctx)
+    assert "_metadata" in fields, "_metadata column should exist in Transcripts"
+
+    # 2) Raw log entry contains the metadata payload
+    rows = unify.get_logs(
+        context=tm._transcripts_ctx,
+        filter=f"exchange_id == {unique_exchange}",
+        limit=1,
+    )
+    assert rows and isinstance(rows, list)
+    raw = rows[0].entries
+    assert raw.get("_metadata") == meta
+
+    # 3) Manager retrieval excludes private fields → _metadata should not appear
+    msgs = tm._filter_messages(filter=f"exchange_id == {unique_exchange}")
+    assert len(msgs) == 1
+    assert getattr(msgs[0], "_metadata", None) is None
