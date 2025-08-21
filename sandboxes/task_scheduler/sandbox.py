@@ -88,6 +88,8 @@ _SIM_PARSER_SYS = (
     "   core_text: 'Begin now' steps: null timeout_seconds: 90 simulation_guidance: null\n"
     "4) Input: 'Start task 8. For the simulation, if you're asked how long it will take, say there was an issue and it's taking longer.'\n"
     "   core_text: 'Start task 8' steps: null timeout_seconds: null simulation_guidance: 'if you're asked how long it will take, say there was an issue and it's taking longer'\n"
+    "5) Input: 'Start the task immediately, and whenever we ask for a progress update in the simulation, say it's taking longer than expected and should be done soon.'\n"
+    "   core_text: 'Start the task immediately' steps: null timeout_seconds: null simulation_guidance: 'whenever we ask for a progress update in the simulation, say it's taking longer than expected and should be done soon'\n"
 )
 
 
@@ -113,6 +115,7 @@ def _parse_simulation_config(text: str) -> _SimConfig:
             core_text=core,
             steps=parsed.steps,
             timeout_seconds=parsed.timeout_seconds,
+            simulation_guidance=parsed.simulation_guidance,
         )
     except Exception:
         # Fallback – no parsing; keep text as-is
@@ -190,6 +193,8 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
                     print(f"   🔢 Steps: {parsed.steps}")
                 if parsed.timeout_seconds is not None:
                     print(f"   ⏱️ Timeout: {parsed.timeout_seconds}s")
+                if getattr(parsed, "simulation_guidance", None):
+                    print(f"   🧭 Guidance: {parsed.simulation_guidance}")
 
             # Show non-None defaults only
             if _DEFAULT_SIM_STEPS is None and _DEFAULT_SIM_TIMEOUT is None:
@@ -308,30 +313,24 @@ async def _dispatch_with_context(
             pass
         # Print immediately so the user sees what was captured and what will be used
         try:
+            print("🧭 Simulation:")
+            # Always show the exact text that will be sent to execute_task
+            print(f"   📝 Parsed text: {core_text}")
+            # Only show values that will be used; annotate source
+            if eff_steps is not None:
+                origin = "parsed" if parsed.steps is not None else "default"
+                print(f"   🔢 Steps ({origin}): {eff_steps}")
+            if eff_timeout is not None:
+                origin = "parsed" if parsed.timeout_seconds is not None else "default"
+                print(f"   ⏱️ Timeout ({origin}): {eff_timeout}s")
+            if parsed.simulation_guidance:
+                print(f"   🧠 Guidance: {parsed.simulation_guidance}")
             if (
-                parsed.steps is None
-                and parsed.timeout_seconds is None
-                and eff_steps is None
+                eff_steps is None
                 and eff_timeout is None
+                and not parsed.simulation_guidance
             ):
-                print(
-                    "🧭 No simulation guidance detected – using defaults (no step limit, no timeout)",
-                )
-            else:
-                print("🧭 Simulation controls:")
-                # Only show values that will be used; annotate source
-                if eff_steps is not None:
-                    origin = "parsed" if parsed.steps is not None else "default"
-                    print(f"   🔢 Steps ({origin}): {eff_steps}")
-                if eff_timeout is not None:
-                    origin = (
-                        "parsed" if parsed.timeout_seconds is not None else "default"
-                    )
-                    print(f"   ⏱️ Timeout ({origin}): {eff_timeout}s")
-                # Show any simulation-only notes when provided
-                if parsed.simulation_guidance:
-                    print("🧪 Simulation notes:")
-                    print(f"   🧭 Guidance: {parsed.simulation_guidance}")
+                print("   ℹ️ No step limit, no timeout, no guidance")
         except Exception:
             pass
 
@@ -343,6 +342,7 @@ async def _dispatch_with_context(
             steps=eff_steps,
             duration=eff_timeout,
             simulation_guidance=parsed.simulation_guidance,
+            log_mode="print",
         )
         setattr(ts, "_actor", override_actor)
         handle = await ts.execute_task(
