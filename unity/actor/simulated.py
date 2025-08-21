@@ -11,7 +11,7 @@ from typing import Optional
 
 class SimulatedActorHandle:
     """
-    A lightweight, actor-scoped handle for simulating execution of a task.
+    A lightweight, actor-scoped handle for simulating execution of a series of actions.
 
     This mirrors the public surface expected by higher layers/tests:
     - ask(question) -> str
@@ -21,16 +21,12 @@ class SimulatedActorHandle:
     - result() -> str (async)
     - done() -> bool
     - valid_tools (property)
-
-    Behavior intentionally matches the existing SimulatedActiveTask so that
-    step-driven completion, pause gating, and clarification handshakes behave
-    identically when the actor is used in isolation.
     """
 
     def __init__(
         self,
         llm: unify.AsyncUnify,
-        task: str,
+        description: str,
         *,
         steps: int | None,
         timeout: float | None = None,
@@ -40,7 +36,7 @@ class SimulatedActorHandle:
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> None:
         self._llm = llm
-        self._task = task
+        self._description = description
         self._steps = steps
         self._timeout = timeout
         self._parent_chat_context = parent_chat_context
@@ -55,7 +51,7 @@ class SimulatedActorHandle:
         self._done_event = threading.Event()
         self._result_str: str | None = None
         self._paused = None
-        self._task_thread: threading.Thread | None = None
+        self._action_thread: threading.Thread | None = None
         self._pause_event = threading.Event()
         self._stop_event = threading.Event()
 
@@ -69,7 +65,7 @@ class SimulatedActorHandle:
     def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
         return self._clarification_down_q
 
-    def _run_task(self, task: str) -> None:
+    def _run_actions(self, description: str) -> None:
         try:
             while True:
                 if self._requests_clarification:
@@ -95,20 +91,20 @@ class SimulatedActorHandle:
                     and (time.monotonic() - self._start_time) >= self._timeout
                 ):
                     self._complete(
-                        f"Completed task '{task}' after {self._timeout}\u2009s timeout.",
+                        f"Completed '{description}' after {self._timeout}\u2009s timeout.",
                     )
                     return
                 if self._steps is not None and self._steps_taken >= (self._steps or 0):
                     self._complete(
-                        f"Completed task '{task}' in {self._steps} steps.",
+                        f"Completed '{description}' in {self._steps} steps.",
                     )
                     return
                 self._pause_event.wait()
                 time.sleep(0.1)
         finally:
-            self._task = None
+            self._description = None
             self._paused = None
-            self._task_thread = None
+            self._action_thread = None
             self._pause_event.set()
             self._stop_event.clear()
 
@@ -117,12 +113,12 @@ class SimulatedActorHandle:
         self._pause_event.set()
         self._stop_event.clear()
         self._start_time = time.monotonic()
-        self._task_thread = threading.Thread(
-            target=self._run_task,
-            args=(self._task,),
+        self._action_thread = threading.Thread(
+            target=self._run_actions,
+            args=(self._description,),
             daemon=True,
         )
-        self._task_thread.start()
+        self._action_thread.start()
 
     def _complete(self, message: str) -> None:
         if not self._done_event.is_set():
@@ -132,11 +128,11 @@ class SimulatedActorHandle:
             import threading as _th
 
             if (
-                self._task_thread
-                and self._task_thread.is_alive()
-                and _th.current_thread() is not self._task_thread
+                self._action_thread
+                and self._action_thread.is_alive()
+                and _th.current_thread() is not self._action_thread
             ):
-                self._task_thread.join(timeout=1)
+                self._action_thread.join(timeout=1)
 
     def simulate_step(self):
         if not self._done_event.is_set():
@@ -148,48 +144,48 @@ class SimulatedActorHandle:
         return self._result_str  # type: ignore
 
     def stop(self, reason: Optional[str] = None) -> str:
-        if not self._task:
-            raise Exception("No tasks are currently being performed.")
-        msg = f"Stopped task '{self._task}' for reason: {reason}"
+        if not self._description:
+            raise Exception("No actions are currently being performed.")
+        msg = f"Stopped '{self._description}' for reason: {reason}"
         self._complete(msg)
         return msg
 
     async def interject(self, instruction: str) -> None:
-        if not self._task:
-            raise Exception("No tasks are currently being performed.")
+        if not self._description:
+            raise Exception("No actions are currently being performed.")
         self.simulate_step()
         prompt = (
-            f"Current simulated task:\n{self._task}\n\n"
+            f"Current simulated actions:\n{self._description}\n\n"
             f"User instruction to adjust the plan:\n{instruction}"
         )
         await self._llm.generate(prompt)
 
     def pause(self) -> str:
-        if not self._task:
-            raise Exception("No task is running, so nothing to pause.")
+        if not self._description:
+            raise Exception("The actor is not running, so nothing to pause.")
         if self._paused:
-            return "Task is already paused."
+            return "Actor is already paused."
         self._paused = True
         self._pause_event.clear()
         self.simulate_step()
-        return f"Paused task '{self._task}'."
+        return f"Paused '{self._description}'."
 
     def resume(self) -> str:
-        if not self._task:
-            raise Exception("No task is running, so nothing to resume.")
+        if not self._description:
+            raise Exception("No actor is running, so nothing to resume.")
         if not self._paused:
-            return "Task is already running."
+            return "Actor is already running."
         self._paused = False
         self._pause_event.set()
         self.simulate_step()
-        return f"Resumed task '{self._task}'."
+        return f"Resumed '{self._description}'."
 
     async def ask(self, question: str) -> str:
-        if not self._task:
-            raise Exception("No tasks are currently being performed.")
+        if not self._description:
+            raise Exception("No actions are currently being performed.")
         self.simulate_step()
         prompt = (
-            f"You are working on the simulated task:\n{self._task}\n\n"
+            f"You are working on simulating these actions:\n{self._description}\n\n"
             f"User asks: {question}"
         )
         return await self._llm.generate(prompt)
@@ -199,7 +195,7 @@ class SimulatedActorHandle:
 
     @property
     def valid_tools(self):
-        if self._task is None:
+        if self._description is None:
             return {}
         available = {
             self.stop.__name__: self.stop,
