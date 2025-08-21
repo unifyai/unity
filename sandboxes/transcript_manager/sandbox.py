@@ -191,24 +191,24 @@ async def _main_async() -> None:
                 _wait_tts_end()
             if args.voice:
                 # Voice mode prompt with 'r' option
-                raw = input("command ('r' to record)> ").strip()
-                if raw.lower() == "r":
+                raw = input("command ('r' to record)> ")
+                if raw.strip().lower() == "r":
                     audio = _record_until_enter()
-                    raw = _transcribe_deepgram(audio).strip()
-                    if not raw:
+                    raw = _transcribe_deepgram(audio)
+                    if not raw or raw.strip() == "":
                         continue
                     print(f"▶️  {raw}")
             else:
-                raw = input("command> ").strip()
+                raw = input("command> ")
 
             # Show help table
-            if raw.lower() in {"help", "h", "?"}:
+            if raw.strip().lower() in {"help", "h", "?"}:
                 _explain_commands()
                 continue
 
-            if raw.lower() in {"quit", "exit"}:
+            if raw.strip().lower() in {"quit", "exit"}:
                 break
-            if not raw:
+            if raw.strip() == "":
                 continue
 
             # ─────────────── save project snapshot ────────────────
@@ -223,7 +223,8 @@ async def _main_async() -> None:
                 continue
 
             # ─────────────── scenario (re)seeding commands ────────────────
-            parts = raw.split(maxsplit=1)
+            working = raw.strip()
+            parts = working.split(maxsplit=1)
             cmd_lower = parts[0].lower()
 
             if cmd_lower in {"us", "update_scenario"}:
@@ -292,7 +293,7 @@ async def _main_async() -> None:
                 continue  # back to REPL
 
             # Ignore steering commands when no request is running
-            if raw.startswith("/"):
+            if raw.lstrip().startswith("/"):
                 print(
                     "(no active request) Steering commands are only available while a call is running.",
                 )
