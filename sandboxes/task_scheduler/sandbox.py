@@ -135,6 +135,7 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
         actor=SimulatedActor(
             steps=_DEFAULT_SIM_STEPS,
             duration=_DEFAULT_SIM_TIMEOUT,
+            log_mode="print",
         ),
     )
 
@@ -398,7 +399,7 @@ async def _main_async() -> None:
     )
     LG.setLevel(logging.INFO)
 
-    ts = TaskScheduler()
+    ts = TaskScheduler(actor=SimulatedActor(log_mode="print"))
     if args.traced:
         ts = unify.traced(ts)
 
