@@ -238,7 +238,7 @@ class CommsAgent:
                 ]
 
             elif tool == "browser":
-                from unity.planner.hierarchical_planner import HierarchicalPlanner
+                from unity.actor.hierarchical_planner import HierarchicalPlanner
 
                 self.planner = HierarchicalPlanner()
                 tools_list += [self.planner.execute]
@@ -427,7 +427,7 @@ class CommsAgent:
 
                 self.inflight_events = self.pending_events.copy()
                 self.current_llm_run = asyncio.create_task(
-                    self.run(call_mode=call_mode)
+                    self.run(call_mode=call_mode),
                 )
                 self.current_llm_run.add_done_callback(self.on_run_end)
 

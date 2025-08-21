@@ -31,9 +31,9 @@ import unify
 
 unify.activate("web_voyager_eval", overwrite=True)
 
-from unity.planner import HierarchicalPlanner
-from unity.planner.hierarchical_planner import HierarchicalPlan, _HierarchicalPlanState
-import unity.planner.prompt_builders as prompt_builders
+from unity.actor import HierarchicalPlanner
+from unity.actor.hierarchical_planner import HierarchicalPlan, _HierarchicalPlanState
+import unity.actor.prompt_builders as prompt_builders
 import logging
 
 # Configure logging

@@ -44,8 +44,8 @@ from .prompt_builders import (
     build_execute_task_prompt,
 )
 from .base import BaseTaskScheduler
-from ..planner.base import BasePlanner
-from ..planner.simulated import SimulatedPlanner
+from ..actor.base import BasePlanner
+from ..actor.simulated import SimulatedPlanner
 from .active_task import ActiveTask
 import json
 

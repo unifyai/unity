@@ -2,7 +2,7 @@ from typing import Any, Type
 from unity.common.llm_helpers import (
     SteerableToolHandle,
 )
-from unity.planner.tool_loop_planner import ToolLoopPlanner
+from unity.actor.tool_loop_planner import ToolLoopPlanner
 from .browser_backends import (
     BrowserBackend,
     LegacyBrowserBackend,

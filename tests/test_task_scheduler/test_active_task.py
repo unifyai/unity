@@ -14,7 +14,7 @@ from typing import Dict
 import pytest
 
 from unity.task_scheduler.active_task import ActiveTask
-from unity.planner.simulated import SimulatedPlanner, SimulatedActiveTask
+from unity.actor.simulated import SimulatedPlanner, SimulatedActiveTask
 
 #  The helper used in the existing test-suite – applies project-level monkey-
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
