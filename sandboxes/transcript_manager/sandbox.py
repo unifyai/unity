@@ -99,15 +99,40 @@ async def _dispatch_with_context(
     *,
     show_steps: bool,
     parent_chat_context: List[Dict[str, str]],
-) -> Tuple[str, SteerableToolHandle]:
-    """Always route *raw* to `ask`, forwarding parent chat context."""
+    clarifications_enabled: bool,
+    enable_voice: bool,
+) -> Tuple[
+    str,
+    SteerableToolHandle,
+    Optional[asyncio.Queue[str]],
+    Optional[asyncio.Queue[str]],
+]:
+    """Route *raw* to `ask`, optionally enabling clarification channels.
+
+    Returns (kind, handle, clar_up_q, clar_down_q).
+    """
+
+    clar_up_q: Optional[asyncio.Queue[str]] = None
+    clar_down_q: Optional[asyncio.Queue[str]] = None
+    if clarifications_enabled:
+        clar_up_q = asyncio.Queue()
+        clar_down_q = asyncio.Queue()
 
     handle = await tm.ask(
         raw,
         parent_chat_context=parent_chat_context,
         _return_reasoning_steps=show_steps,
+        clarification_up_q=clar_up_q,
+        clarification_down_q=clar_down_q,
     )
-    return "ask", handle
+
+    if enable_voice:
+        try:
+            _speak("Working on it.")
+        except Exception:
+            pass
+
+    return "ask", handle, clar_up_q, clar_down_q
 
 
 # ══════════════════════════════════  CLI  ═══════════════════════════════════
@@ -301,28 +326,30 @@ async def _main_async() -> None:
                 continue
 
             # ───────────── remember the user's utterance before dispatch ──────
-            _kind, result = await _dispatch_with_context(
+            _kind, _handle, _clar_up, _clar_down = await _dispatch_with_context(
                 tm,
                 raw,
                 show_steps=args.debug,
                 parent_chat_context=list(chat_history),
+                clarifications_enabled=not args.no_clarifications,
+                enable_voice=bool(args.voice),
             )
             chat_history.append({"role": "user", "content": raw})
             if args.voice:
                 _speak("Let me take a look, give me a moment")
                 _wait_tts_end()
 
-            # ───────────── process result (handle or immediate string) ─────────
-            if isinstance(result, SteerableToolHandle):
-                print(_steer_hint())
-                answer = await _await_with_interrupt(
-                    result,
-                    enable_voice_steering=bool(args.voice),
-                )
-                if isinstance(answer, tuple):  # reasoning steps requested
-                    answer, _steps = answer
-            else:  # already a string (unlikely path)
-                answer = result
+            # ───────────── process result with interactive steering ─────────
+            print(_steer_hint(voice_enabled=bool(args.voice)))
+            answer = await _await_with_interrupt(
+                _handle,
+                enable_voice_steering=bool(args.voice),
+                clarification_up_q=_clar_up,
+                clarification_down_q=_clar_down,
+                clarifications_enabled=not args.no_clarifications,
+            )
+            if isinstance(answer, tuple):  # reasoning steps requested
+                answer, _steps = answer
 
             if args.voice:
                 _speak("Okay, that's all done")
