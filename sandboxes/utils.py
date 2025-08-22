@@ -1722,6 +1722,56 @@ def run_in_loop(coro: Coroutine[Any, Any, Any]):
 
 
 # ===========================================================================
+# Helper to invoke manager methods with optional clarification channels
+# ===========================================================================
+
+
+async def call_manager_with_optional_clarifications(
+    fn: Any,
+    text: str,
+    *,
+    parent_chat_context: list[dict],
+    return_reasoning_steps: bool = False,
+    clarifications_enabled: bool = True,
+):
+    """
+    Call a manager method (e.g., ask/update) with context and, when supported,
+    attach clarification queues automatically.
+
+    Returns a tuple: (handle, clarification_up_q, clarification_down_q).
+    """
+    import inspect as _inspect
+    import asyncio as _asyncio
+
+    clar_up_q: Optional[asyncio.Queue[str]] = None  # type: ignore[name-defined]
+    clar_down_q: Optional[asyncio.Queue[str]] = None  # type: ignore[name-defined]
+
+    kwargs: Dict[str, Any] = {
+        "parent_chat_context": parent_chat_context,
+        "_return_reasoning_steps": return_reasoning_steps,
+    }
+
+    try:
+        sig = _inspect.signature(fn)
+    except Exception:
+        sig = None
+
+    if (
+        clarifications_enabled
+        and sig is not None
+        and "clarification_up_q" in sig.parameters
+        and "clarification_down_q" in sig.parameters
+    ):
+        clar_up_q = _asyncio.Queue()
+        clar_down_q = _asyncio.Queue()
+        kwargs["clarification_up_q"] = clar_up_q
+        kwargs["clarification_down_q"] = clar_down_q
+
+    handle = await fn(text, **kwargs)
+    return handle, clar_up_q, clar_down_q
+
+
+# ===========================================================================
 # Synthetic transcript generation helper
 # ===========================================================================
 
