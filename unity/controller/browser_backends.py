@@ -365,47 +365,27 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 except Exception as e:
                     print(f"Warning: Could not restore {path_key}: {e}")
 
-            # 2) For each file entry, download its bytes and write to local /home/install
-            # for entry in listing:
-            #     try:
-            #         if entry.get("type") != "file":
-            #             continue
-            #         rel_name = entry.get("name") or entry.get("path") or entry.get("filename")
-            #         if not rel_name:
-            #             continue
-            #         # Request the file as binary
-            #         fr = requests.get(
-            #             endpoint,
-            #             params={
-            #                 "user_id": user_id,
-            #                 "project": project,
-            #                 "filename": rel_name,
-            #                 "as": "binary",
-            #             },
-            #             timeout=60,
-            #         )
-            #         if fr.status_code >= 400:
-            #             print(f"Warning: Failed to fetch {rel_name}: {fr.status_code} {fr.text[:200]}")
-            #             continue
-            #         local_path = os.path.join(install_root, rel_name)
-            #         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            #         with open(local_path, "wb") as f:
-            #             f.write(fr.content)
-            #     except Exception as e:
-            #         print(f"Warning: Could not restore file '{entry}': {e}")
-
         except Exception as e:
             print(f"Warning: Could not query remote files for persistence: {e}")
 
         # Optionally install packages recorded in apt-manual.txt if present
-        # try:
-        #     if os.path.exists("/home/install/apt-manual.txt"):
-        #         subprocess.run(
-        #             ["xargs", "-a", "/home/install/apt-manual.txt", "apt-get", "install", "-y"],
-        #             check=True,
-        #         )
-        # except Exception as e:
-        #     print(f"Warning: Could not execute apt-get install from apt-manual.txt: {e}")
+        try:
+            if os.path.exists("/home/install/apt-manual.txt"):
+                subprocess.run(
+                    [
+                        "xargs",
+                        "-a",
+                        "/home/install/apt-manual.txt",
+                        "apt-get",
+                        "install",
+                        "-y",
+                    ],
+                    check=True,
+                )
+        except Exception as e:
+            print(
+                f"Warning: Could not execute apt-get install from apt-manual.txt: {e}",
+            )
 
     def _save_persistent_data(self):
         """
