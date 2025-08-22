@@ -224,7 +224,7 @@ async def _dispatch_with_context(
     # Speak an acknowledgement if voice mode is on so users know work began
     if enable_voice:
         try:
-            _speak("Working on it. If I need clarification, I'll ask.")
+            _speak("Working on it.")
         except Exception:
             pass
     return intent.action, handle, clar_up_q, clar_down_q
@@ -287,7 +287,6 @@ async def _main_async() -> None:
         "│ us  {description}     – update_scenario (text)           │\n"
         "│ usv                   – update_scenario_vocally          │\n"
         "│ r / free text         – freeform ask / update (auto)     │\n"
-        "│ Clarifications        – /c <answer>, /cr (voice), /cs    │\n"
         "│ save_project | sp     – save project snapshot            │\n"
         "│ help | h              – show this help                   │\n"
         "└──────────────────────────────────────────────────────────┘\n"
@@ -457,7 +456,7 @@ async def _main_async() -> None:
                 _speak("Let me take a look, give me a moment")
                 _wait_tts_end()
 
-            print(_steer_hint())
+            print(_steer_hint(voice_enabled=bool(args.voice)))
             answer = await _await_with_interrupt(
                 _handle,
                 enable_voice_steering=bool(args.voice),

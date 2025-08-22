@@ -1060,12 +1060,40 @@ def input_now(timeout: float = 0.1) -> Optional[str]:
     return txt if has_input else None
 
 
-def steering_controls_hint() -> str:
-    """Return a one-line hint with available in-flight steering commands."""
-    return (
-        "Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /r (record voice), "
-        "/c <answer> (clarify), /cr (record clarify), /cs (skip), /stop, /help"
-    )
+def steering_controls_hint(
+    pending_clarification: bool = False,
+    *,
+    voice_enabled: bool = False,
+) -> str:
+    """Return a one-line hint with available in-flight steering commands.
+
+    Clarification controls are included only when a clarification is pending.
+    Clarification-related commands are emphasized in bold to stand out.
+    """
+    base_parts: list[str] = [
+        "/i <text>",
+        "/pause",
+        "/resume",
+        "/ask <q>",
+        "/freeform <text>",
+    ]
+    if voice_enabled:
+        base_parts.append("/r (record voice)")
+    base_parts.extend(["/stop", "/help"])
+
+    hint = "Controls: " + ", ".join(base_parts)
+
+    if pending_clarification:
+        B = "\u001b[1m"
+        R = "\u001b[0m"
+        clar_parts = [
+            f"{B}/c <answer> (clarify){R}",
+            f"{B}/rc (record clarification){R}" if voice_enabled else None,
+        ]
+        clar_parts = [p for p in clar_parts if p is not None]
+        hint = hint + ", " + ", ".join(clar_parts)
+
+    return hint
 
 
 # Shared steering intent model and router system prompt
@@ -1242,8 +1270,6 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
 
     import asyncio  # local to avoid widening the public surface
 
-    HELP_TEXT = steering_controls_hint()
-
     # State for handling a single pending clarification at a time
     pending_clar_q: Optional[str] = None
     has_clar_channels = bool(
@@ -1262,14 +1288,21 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     print(
                         "Reply with: /c <your answer> or just type your answer and press ↵. "
                         + (
-                            "Use /cr to record by voice, /cs to skip."
+                            "Use /rc to record by voice."
                             if enable_voice_steering
-                            else "Use /cs to skip."
+                            else ""
                         ),
                     )
                     if enable_voice_steering:
                         speak(f"Clarification requested. {pending_clar_q}")
                         _wait_for_tts_end()
+                    # After announcing the clarification, print dynamic controls with clar commands visible
+                    print(
+                        steering_controls_hint(
+                            pending_clarification=True,
+                            voice_enabled=enable_voice_steering,
+                        ),
+                    )
             except Exception:
                 pass
 
@@ -1295,19 +1328,33 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     # Preserve the argument exactly as typed (post-separator substring)
                     arg = cmd_line[space_idx + 1 :]
 
-                if cmd in {"stop", "cancel", "s", "c"}:
+                if cmd in {"stop", "cancel", "s"}:
                     print("stopping…")
                     handle.stop()
                     print("✅ Stop sent.")
                     if enable_voice_steering:
                         speak("Stop sent")
                         _wait_for_tts_end()
-                        print(HELP_TEXT)
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     else:
-                        print(HELP_TEXT)
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     break
                 # Clarification commands (handled irrespective of other state if channels exist)
-                if has_clar_channels and cmd in {"c", "clarify"}:
+                if (
+                    has_clar_channels
+                    and (pending_clar_q is not None)
+                    and cmd in {"c", "clarify"}
+                ):
                     arg_to_send = arg if arg != "" else ""
                     if not arg_to_send.strip():
                         print("Usage: /c <answer>")
@@ -1319,13 +1366,37 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             if enable_voice_steering:
                                 speak("Clarification sent")
                                 _wait_for_tts_end()
-                                print(HELP_TEXT)
+                                print(
+                                    steering_controls_hint(
+                                        pending_clarification=False,
+                                        voice_enabled=enable_voice_steering,
+                                    ),
+                                )
                             else:
-                                print(HELP_TEXT)
+                                print(
+                                    steering_controls_hint(
+                                        pending_clarification=False,
+                                        voice_enabled=enable_voice_steering,
+                                    ),
+                                )
                         except Exception as exc:
                             print(f"⚠️  Failed to send clarification: {exc}")
                     continue
-                if has_clar_channels and cmd in {"cr"} and enable_voice_steering:
+                if (
+                    has_clar_channels
+                    and (pending_clar_q is None)
+                    and cmd in {"c", "clarify"}
+                ):
+                    print(
+                        "(no clarification pending) These commands are only available when a tool has requested clarification.",
+                    )
+                    continue
+                if (
+                    has_clar_channels
+                    and (pending_clar_q is not None)
+                    and cmd in {"rc"}
+                    and enable_voice_steering
+                ):
                     try:
                         print(
                             "🎙️  Clarification – press ↵ to start, ↵ again to send, 'c'+↵ to cancel",
@@ -1342,24 +1413,27 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         pending_clar_q = None
                         speak("Clarification sent")
                         _wait_for_tts_end()
-                        print(HELP_TEXT)
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=False,
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     except Exception as exc:
                         print(f"⚠️  Voice clarification failed: {exc}")
                     continue
-                if has_clar_channels and cmd in {"cs"}:
-                    try:
-                        await clarification_down_q.put("Sorry, I cannot clarify right now.")  # type: ignore[union-attr]
-                        print("⏭️  Skipped clarification.")
-                        pending_clar_q = None
-                        if enable_voice_steering:
-                            speak("Skipped clarification")
-                            _wait_for_tts_end()
-                            print(HELP_TEXT)
-                        else:
-                            print(HELP_TEXT)
-                    except Exception as exc:
-                        print(f"⚠️  Failed to skip clarification: {exc}")
+                if (
+                    has_clar_channels
+                    and (pending_clar_q is None)
+                    and cmd in {"rc"}
+                    and enable_voice_steering
+                ):
+                    print(
+                        "(no clarification pending) These commands are only available when a tool has requested clarification.",
+                    )
                     continue
+                # '/cs' (skip) removed – user can type a message if they wish not to clarify
+                # '/cs' (skip) removed – ignore when no clarification is pending
                 if cmd in {"pause", "p"}:
                     try:
                         print("pausing…")
@@ -1368,9 +1442,19 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         if enable_voice_steering:
                             speak("Paused")
                             _wait_for_tts_end()
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=(pending_clar_q is not None),
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                         else:
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=(pending_clar_q is not None),
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                     except Exception as exc:
                         print(f"⚠️  Pause failed: {exc}")
                     continue
@@ -1382,9 +1466,19 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         if enable_voice_steering:
                             speak("Resumed")
                             _wait_for_tts_end()
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=(pending_clar_q is not None),
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                         else:
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=(pending_clar_q is not None),
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                     except Exception as exc:
                         print(f"⚠️  Resume failed: {exc}")
                     continue
@@ -1399,9 +1493,19 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         if enable_voice_steering:
                             speak("Interjection sent")
                             _wait_for_tts_end()
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=(pending_clar_q is not None),
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                         else:
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=(pending_clar_q is not None),
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                     continue
                 if cmd in {"ask", "?"}:
                     if not arg.strip():
@@ -1416,7 +1520,14 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             if enable_voice_steering:
                                 speak(str(ans))
                                 _wait_for_tts_end()
-                                print(HELP_TEXT)
+                                print(
+                                    steering_controls_hint(
+                                        pending_clarification=(
+                                            pending_clar_q is not None
+                                        ),
+                                        voice_enabled=enable_voice_steering,
+                                    ),
+                                )
                         except Exception as exc:
                             print(f"⚠️  Ask failed: {exc}")
                     continue
@@ -1436,7 +1547,10 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             handle,
                             transcript,
                             enable_voice_steering,
-                            HELP_TEXT,
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
                         )
                         if should_break:
                             break
@@ -1451,7 +1565,10 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         handle,
                         arg,
                         enable_voice_steering,
-                        HELP_TEXT,
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
                     )
                     if should_break:
                         break
@@ -1463,12 +1580,27 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     if enable_voice_steering:
                         speak(f"Status: {state}")
                         _wait_for_tts_end()
-                        print(HELP_TEXT)
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     else:
-                        print(HELP_TEXT)
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     continue
                 if cmd in {"help", "h"}:
-                    print(HELP_TEXT)
+                    print(
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                    )
                     continue
                 # Unknown command → treat as interjection without the '/'
                 unknown_text = working[1:]
@@ -1478,9 +1610,19 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                 if enable_voice_steering:
                     speak("Interjection sent")
                     _wait_for_tts_end()
-                    print(HELP_TEXT)
+                    print(
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                    )
                 else:
-                    print(HELP_TEXT)
+                    print(
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                    )
             else:
                 # Plain text: if a clarification is pending and channels exist, treat as clarification answer
                 if has_clar_channels and pending_clar_q is not None:
@@ -1491,9 +1633,19 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         if enable_voice_steering:
                             speak("Clarification sent")
                             _wait_for_tts_end()
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=False,
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                         else:
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=False,
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                     except Exception as exc:
                         print(f"⚠️  Failed to send clarification: {exc}")
                 else:
@@ -1504,9 +1656,19 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     if enable_voice_steering:
                         speak("Interjection sent")
                         _wait_for_tts_end()
-                        print(HELP_TEXT)
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     else:
-                        print(HELP_TEXT)
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
         await asyncio.sleep(poll)
 
     # Task completed: cancel any ongoing TTS immediately and return result
