@@ -495,7 +495,6 @@ class BrowserUseActor(BaseActor):
             BrowserContext as BrowserUseBrowserContext,
         )
 
-        super().__init__()
         self._browser = Browser(
             config=BrowserConfig(
                 disable_security=disable_browser_security,
@@ -668,9 +667,9 @@ class BrowserUseActor(BaseActor):
             tools[action_name] = _make_tool_wrapper
         return tools
 
-    async def _execute_task_and_return_handle(
+    async def act(
         self,
-        task_description: str,
+        description: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -680,21 +679,21 @@ class BrowserUseActor(BaseActor):
         """
         Initiates a new plan for the given task description using browser_use tools.
         """
-        logger.info(f"BrowserUseActor: Planning task: '{task_description}'")
+        logger.info(f"BrowserUseActor: Starting work on: '{description}'")
         if not self._main_event_loop:
             try:
                 self._main_event_loop = asyncio.get_running_loop()
                 logger.info(
-                    f"BrowserUseActor._execute_task_and_return_handle captured event loop: {self._main_event_loop}",
+                    f"BrowserUseActor.act captured event loop: {self._main_event_loop}",
                 )
             except RuntimeError:
                 logger.error(
-                    "BrowserUseActor._execute_task_and_return_handle: No running event loop to pass to BrowserUsePlan.",
+                    "BrowserUseActor.act: No running event loop to pass to BrowserUsePlan.",
                 )
 
         try:
             plan = BrowserUsePlan(
-                task_description=task_description,
+                task_description=description,
                 tools=self._get_tools(),
                 parent_chat_context=parent_chat_context,
                 clarification_up_q=clarification_up_q,

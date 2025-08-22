@@ -87,6 +87,12 @@ class ToolSpec:
 
     fn: Callable
     max_concurrent: Optional[int] = None  # «None» ⇒ unlimited
+    # Hidden per-loop quota: when set, the tool will only be callable
+    # `max_total_calls` times within a single async tool-use loop. Once
+    # exhausted, the tool is silently hidden from the exposed schema and
+    # any additional invocations are minimally acknowledged without
+    # revealing quota details to the LLM.
+    max_total_calls: Optional[int] = None
 
     # Let a ToolSpec be invoked like the underlying callable (nice for tests)
     def __call__(self, *a, **kw):  # pragma: no cover
@@ -594,6 +600,7 @@ async def _async_tool_use_loop_inner(
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
+    max_parallel_tool_calls: Optional[int] = None,
     persist: bool = False,
 ) -> str:
     r"""
@@ -1101,7 +1108,16 @@ async def _async_tool_use_loop_inner(
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
         if log_steps:
-            LOGGER.info(f"🛠️ [{log_label}] {json.dumps(tool_msg, indent=4)}\n")
+            # Create a clean version of tool_msg for logging (strip image data)
+            tool_msg_for_logging = tool_msg.copy()
+            if isinstance(tool_msg_for_logging.get("content"), list):
+                # Filter out image_url items and keep only text content
+                tool_msg_for_logging["content"] = [
+                    item
+                    for item in tool_msg_for_logging["content"]
+                    if item.get("type") != "image_url"
+                ]
+            LOGGER.info(f"🛠️ [{loop_id}] {json.dumps(tool_msg_for_logging, indent=4)}\n")
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures >= max_consecutive_failures:
@@ -1143,6 +1159,16 @@ async def _async_tool_use_loop_inner(
     def _can_offer_tool(t_name: str) -> bool:
         lim = norm_tools[t_name].max_concurrent
         return lim is None or _active_count(t_name) < lim
+
+    # Per-tool hidden total-call quotas (counted per loop instance)
+    call_counts: Dict[str, int] = {}
+
+    def _quota_count(t_name: str) -> int:
+        return call_counts.get(t_name, 0)
+
+    def _quota_ok(t_name: str) -> bool:
+        lim = norm_tools[t_name].max_total_calls
+        return lim is None or _quota_count(t_name) < lim
 
     # Helper: scan transcript for assistant messages that have tool_calls with
     # missing tool replies (before the next assistant message).
@@ -1226,6 +1252,47 @@ async def _async_tool_use_loop_inner(
 
         return created
 
+    # Remove any tool_calls in an assistant message that would exceed the
+    # hidden per-tool total-call quota. Operates in-place on asst_msg.
+    def _prune_over_quota_tool_calls(asst_msg: dict) -> None:
+        try:
+            tool_calls = asst_msg.get("tool_calls") or []
+            if not isinstance(tool_calls, list) or not tool_calls:
+                return
+
+            # Compute remaining budget per base tool (in this loop instance)
+            remaining: Dict[str, int] = {}
+            for name, spec in norm_tools.items():
+                lim = spec.max_total_calls
+                if lim is None:
+                    continue
+                remaining[name] = max(0, lim - call_counts.get(name, 0))
+
+            kept: list = []
+            for call in tool_calls:
+                try:
+                    fn_name = call.get("function", {}).get("name")
+                except Exception:
+                    fn_name = None
+
+                # Only enforce quota on base tools that define a limit
+                if fn_name in remaining:
+                    if remaining[fn_name] > 0:
+                        kept.append(call)
+                        remaining[fn_name] -= 1
+                    else:
+                        # drop this over-quota call silently
+                        continue
+                else:
+                    kept.append(call)
+
+            # In-place update only if changed
+            if len(kept) != len(tool_calls):
+                asst_msg["tool_calls"] = kept
+        except Exception:
+            # Defensive: never let pruning break the loop
+            pass
+
     # Helper: detect helper-tool names (continue_/stop_/pause_/resume_/clarify_/interject_)
     def _is_helper_tool(name: str) -> bool:
         return (
@@ -1302,6 +1369,15 @@ async def _async_tool_use_loop_inner(
             return
 
         fn = norm_tools[name].fn
+
+        # Enforce hidden per-tool total call quota: should be pre-pruned from
+        # the assistant message, but guard here as well and simply skip.
+        try:
+            lim = norm_tools[name].max_total_calls
+            if lim is not None and call_counts.get(name, 0) >= lim:
+                return
+        except Exception:
+            pass
 
         # Build extra kwargs (chat context, interject/clarification/pause)
         extra_kwargs: dict = {}
@@ -1397,6 +1473,12 @@ async def _async_tool_use_loop_inner(
             "raw_arguments_json": args_json,
         }
 
+        # Increment hidden quota counter only once scheduling succeeds
+        try:
+            call_counts[name] = call_counts.get(name, 0) + 1
+        except Exception:
+            pass
+
         if clar_up_q is not None:
             clarification_channels[call_id] = (
                 clar_up_q,
@@ -1483,6 +1565,8 @@ async def _async_tool_use_loop_inner(
             # backfill for all such assistant messages (oldest → newest)
             for entry in unreplied:
                 amsg = entry["assistant_msg"]
+                # Before scheduling, drop any over-quota tool calls in this message
+                _prune_over_quota_tool_calls(amsg)
                 missing_ids = set(entry["missing"])
                 await _schedule_missing_for_message(amsg, missing_ids)
     except Exception:
@@ -1921,7 +2005,7 @@ async def _async_tool_use_loop_inner(
             visible_base_tools_schema = [
                 method_to_schema(spec.fn, name)
                 for name, spec in policy_tools_norm.items()
-                if _concurrency_ok(name)
+                if _concurrency_ok(name) and _quota_ok(name)
             ]
 
             # Inject `final_answer` tool automatically whenever a `response_format` is
@@ -2311,13 +2395,17 @@ async def _async_tool_use_loop_inner(
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
                 # ➊ start the LLM step …
+                _gen_kwargs = {
+                    "return_full_completion": True,
+                    "tools": tmp_tools,
+                    "tool_choice": tool_choice_mode,
+                    "stateful": True,
+                }
+                if max_parallel_tool_calls is not None:
+                    _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
+
                 llm_task = asyncio.create_task(
-                    _generate_with_preprocess(
-                        return_full_completion=True,
-                        tools=tmp_tools,
-                        tool_choice=tool_choice_mode,
-                        stateful=True,
-                    ),
+                    _generate_with_preprocess(**_gen_kwargs),
                     name="LLMGenerate",
                 )
                 interject_w = asyncio.create_task(
@@ -2392,12 +2480,16 @@ async def _async_tool_use_loop_inner(
             else:
                 # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
                 try:
-                    await _generate_with_preprocess(
-                        return_full_completion=True,
-                        tools=tmp_tools,
-                        tool_choice=tool_choice_mode,
-                        stateful=True,
-                    )
+                    _gen_kwargs = {
+                        "return_full_completion": True,
+                        "tools": tmp_tools,
+                        "tool_choice": tool_choice_mode,
+                        "stateful": True,
+                    }
+                    if max_parallel_tool_calls is not None:
+                        _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
+
+                    await _generate_with_preprocess(**_gen_kwargs)
                 except Exception:
                     raise Exception(
                         f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
@@ -2442,6 +2534,14 @@ async def _async_tool_use_loop_inner(
                 if len(unique_calls) != len(msg["tool_calls"]):
                     # mutate in-place so history never contains duplicates
                     msg["tool_calls"] = unique_calls
+
+                # After deduplication, prune any calls exceeding hidden quotas
+                _prune_over_quota_tool_calls(msg)
+
+            # Always ensure over-quota tool calls are removed regardless of
+            # deduplication settings, before any scheduling occurs.
+            if msg.get("tool_calls"):
+                _prune_over_quota_tool_calls(msg)
 
             # ── E.  Launch any new tool calls  ──────────────────────────────
             # NOTE: The model returned `tool_calls`.  For *each* call we:
@@ -2774,6 +2874,14 @@ async def _async_tool_use_loop_inner(
                         await _insert_after_assistant(msg, tool_msg)
 
                         continue  # nothing else to schedule
+
+                    # Respect hidden per-tool total-call quotas (pre-pruned); guard
+                    if (
+                        name in norm_tools
+                        and norm_tools[name].max_total_calls is not None
+                        and call_counts.get(name, 0) >= norm_tools[name].max_total_calls
+                    ):
+                        continue
 
                     # Respect *per-tool* concurrency limits  ────────────────
                     if (
@@ -3433,6 +3541,7 @@ def start_async_tool_use_loop(
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,
+    max_parallel_tool_calls: Optional[int] = None,
     persist: bool = False,
 ) -> AsyncToolUseLoopHandle:
     """
@@ -3483,6 +3592,7 @@ def start_async_tool_use_loop(
             preprocess_msgs=preprocess_msgs,
             outer_handle_container=outer_handle_container,
             response_format=response_format,
+            max_parallel_tool_calls=max_parallel_tool_calls,
             persist=persist,
         ),
         name="ToolUseLoop",

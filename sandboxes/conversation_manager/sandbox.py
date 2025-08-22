@@ -12,6 +12,8 @@ import signal
 import time
 import os
 from dotenv import load_dotenv
+
+load_dotenv(override=True)
 import logging, unify
 import unity.conversation_manager
 from sandboxes.utils import build_cli_parser
@@ -26,8 +28,6 @@ from sandboxes.utils import (
 )
 
 LG = logging.getLogger("contact_sandbox")
-
-load_dotenv(override=True)
 
 
 # Graceful shutdown handler

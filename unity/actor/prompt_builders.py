@@ -49,6 +49,289 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
     return "\n\n".join(handle_docs)
 
 
+def _build_code_act_rules_and_examples(action_provider) -> str:
+    """Builds the reusable block of core rules and examples for CodeActActor."""
+    all_tools = {}
+
+    browser_tools = {
+        "browser_navigate": action_provider.browser_navigate,
+        "browser_act": action_provider.browser_act,
+        "browser_observe": action_provider.browser_observe,
+    }
+    all_tools.update(browser_tools)
+
+    comm_tools = {
+        "send_sms_message": action_provider.send_sms_message,
+        "send_email": action_provider.send_email,
+        "send_whatsapp_message": action_provider.send_whatsapp_message,
+        "start_call": action_provider.start_call,
+        "join_meet": action_provider.join_meet,
+    }
+    all_tools.update(comm_tools)
+
+    if hasattr(action_provider, "reason"):
+        all_tools["reason"] = action_provider.reason
+
+    tool_reference = _build_tool_signatures(all_tools)
+    handle_apis = _build_handle_apis(all_tools)
+
+    instructions_and_rules = textwrap.dedent(
+        """
+        ### 🎯 CRITICAL RULES FOR CODE EXECUTION
+
+        1. **ALWAYS USE execute_python_code TOOL**: Your ENTIRE response must be a tool call to `execute_python_code`. Never provide text responses without using this tool.
+           ```json
+           {
+             "tool_calls": [{
+               "name": "execute_python_code",
+               "arguments": { "code": "# Your Python code here" }
+             }]
+           }
+           ```
+
+        2. **Stateful Execution**: Your code is executed in a persistent, stateful REPL-like environment. Variables, functions, and imports defined in one turn are available in all subsequent turns.
+
+        3. **Use `await`**: The execution sandbox is asynchronous. You **MUST** use the `await` keyword for any action_provider operations:
+           ```python
+           # ✅ CORRECT: Using await
+           await action_provider.browser_navigate("https://example.com")
+           result = await action_provider.browser_observe("What is the heading?")
+
+           # ❌ WRONG: Missing await
+           action_provider.browser_navigate("https://example.com")
+           ```
+
+        4. **Imports Inside Code**: All necessary imports must be included in the code you provide:
+           ```python
+           # ✅ CORRECT: Import inside the code execution
+           from pydantic import BaseModel, Field
+           from typing import Optional, List
+           ```
+
+        5. **Pydantic for Structured Observation**: When using `action_provider.browser_observe` to extract structured data:
+           ```python
+           from pydantic import BaseModel, Field
+
+           class PageInfo(BaseModel):
+               title: str = Field(description="Page title")
+               products: list[str] = Field(description="List of product names")
+
+           # CRITICAL: Call model_rebuild() after defining nested models
+           PageInfo.model_rebuild()
+
+           result = await action_provider.browser_observe(
+               "Extract page information",
+               response_format=PageInfo
+           )
+           ```
+
+        6. **Error Handling**: If your code produces an error, the traceback will be returned. Read it carefully, correct your code, and try again.
+
+        7. **Browser State Feedback**: After browser actions, you'll automatically receive:
+           - The current URL
+           - A screenshot of the page
+           - Any output from your code
+
+        8. **Communication Tools with Handles**: When using communication tools, they return handle objects for interaction:
+           ```python
+           # Send SMS and interact with handle
+           sms_handle = await action_provider.send_sms_message(
+               "Send John Doe a reminder about tomorrow's meeting"
+           )
+
+           # Check status
+           status = await sms_handle.status()
+           print(f"SMS Status: {status}")
+
+           # Modify if needed
+           await sms_handle.modify("Actually, make it for 3 PM instead")
+
+           # Confirm sending
+           await sms_handle.confirm()
+           ```
+
+        9. **Think → Code → Observe → Repeat**: Your workflow should be:
+           - Think about what you need to do
+           - Write code to execute the action
+           - Observe the results (output, screenshots, errors)
+           - Continue with the next step or correct errors
+
+        10. **Final Answer**: In your final response, you can provide a direct answer without using tools only after you've completed all necessary actions.
+        """,
+    )
+
+    strategy_principles = textwrap.dedent(
+        """
+        ### Strategic Principles for Code-Based Web Automation
+
+        1. **Trust the Agent's Autonomy**: The `browser_act` tool is autonomous. Give it high-level goals:
+           ```python
+           # ✅ GOOD: High-level action
+           await action_provider.browser_act(
+               "Log in with username 'test' and password 'pass123'",
+               expectation="Dashboard page is displayed with user profile"
+           )
+
+           # ❌ AVOID: Multiple low-level steps
+           await action_provider.browser_act("Click username field", expectation="...")
+           await action_provider.browser_act("Type 'test'", expectation="...")
+           # ... etc
+           ```
+
+        2. **Combine Action and Verification**: Use the `expectation` parameter effectively:
+           ```python
+           await action_provider.browser_act(
+               "Add the blue shirt to cart",
+               expectation="Cart icon shows '1' item and total price is displayed"
+           )
+           ```
+
+        3. **Use browser_observe for Complex Data**: Extract structured information before acting:
+           ```python
+           from pydantic import BaseModel
+
+           class ProductInfo(BaseModel):
+               name: str
+               price: float
+               in_stock: bool
+
+           ProductInfo.model_rebuild()
+
+           products = await action_provider.browser_observe(
+               "Extract all product information",
+               response_format=ProductInfo
+           )
+           ```
+
+        4. **Describe Visually**: Describe elements by their visible characteristics:
+           ```python
+           # ✅ GOOD: Visual description
+           await action_provider.browser_act(
+               "Click the large green 'Checkout' button at the bottom",
+               expectation="Checkout form is displayed"
+           )
+
+           # ❌ AVOID: Technical selectors
+           await action_provider.browser_act("Click button#checkout-btn", expectation="...")
+           ```
+
+        5. **Default Search Engine**: Use DuckDuckGo unless specified otherwise:
+           ```python
+           await action_provider.browser_navigate("https://duckduckgo.com")
+           await action_provider.browser_act(
+               "Search for 'Python asyncio tutorial'",
+               expectation="Search results are displayed"
+           )
+           ```
+
+        6. **Handle Communication Gracefully**: When sending messages, use the handle pattern:
+           ```python
+           # Email with handle interaction
+           email_handle = await action_provider.send_email(
+               "Email the team about the project update with the latest metrics"
+           )
+
+           # Review the draft
+           draft = await email_handle.get_draft()
+           print(f"Draft email: {draft}")
+
+           # Modify if needed
+           if "deadline" not in draft:
+               await email_handle.modify("Add that the deadline is next Friday")
+
+           # Send it
+           await email_handle.confirm()
+           ```
+        """,
+    )
+
+    examples = textwrap.dedent(
+        """
+        ### Complete Examples for Code Execution
+
+        **Example 1: Web Navigation and Data Extraction**
+        *User Request*: "Find the top news headline on BBC"
+
+        *Tool Call*:
+        ```json
+        {
+          "tool_calls": [{
+            "name": "execute_python_code",
+            "arguments": {
+              "code": "# Navigate to BBC News\\nawait action_provider.browser_navigate('https://www.bbc.com/news')\\n\\n# Extract the main headline\\nfrom pydantic import BaseModel, Field\\n\\nclass NewsInfo(BaseModel):\\n    headline: str = Field(description='The main headline')\\n    summary: str = Field(description='Brief summary if available')\\n\\nNewsInfo.model_rebuild()\\n\\nnews = await action_provider.browser_observe(\\n    'What is the main headline and its summary?',\\n    response_format=NewsInfo\\n)\\n\\nprint(f'Top headline: {news.headline}')\\nif news.summary:\\n    print(f'Summary: {news.summary}')"
+            }
+          }]
+        }
+        ```
+
+        **Example 2: Multi-Step E-commerce Task**
+        *User Request*: "Add a wireless mouse to cart on Amazon and check the total"
+
+        *Tool Call 1 - Search*:
+        ```json
+        {
+          "tool_calls": [{
+            "name": "execute_python_code",
+            "arguments": {
+              "code": "# Navigate to Amazon\\nawait action_provider.browser_navigate('https://www.amazon.com')\\n\\n# Search for wireless mouse\\nawait action_provider.browser_act(\\n    'Search for wireless mouse',\\n    expectation='Search results showing various wireless mice are displayed'\\n)"
+            }
+          }]
+        }
+        ```
+
+        *Tool Call 2 - Extract and Select*:
+        ```json
+        {
+          "tool_calls": [{
+            "name": "execute_python_code",
+            "arguments": {
+              "code": "from pydantic import BaseModel, Field\\nfrom typing import List\\n\\nclass Product(BaseModel):\\n    name: str\\n    price: str\\n    rating: float = Field(default=0.0)\\n\\nclass ProductList(BaseModel):\\n    products: List[Product]\\n\\nProductList.model_rebuild()\\n\\n# Get product list\\nresults = await action_provider.browser_observe(\\n    'Extract the first 5 wireless mouse products with names, prices and ratings',\\n    response_format=ProductList\\n)\\n\\n# Display options\\nfor i, product in enumerate(results.products[:5], 1):\\n    print(f'{i}. {product.name} - {product.price} - Rating: {product.rating}')\\n\\n# Select the first well-rated product\\nawait action_provider.browser_act(\\n    'Click on the first wireless mouse product with rating above 4 stars',\\n    expectation='Product detail page is displayed with Add to Cart button'\\n)"
+            }
+          }]
+        }
+        ```
+
+        **Example 3: Communication with Handle**
+        *User Request*: "Send John an SMS about the meeting change"
+
+        *Tool Call*:
+        ```json
+        {
+          "tool_calls": [{
+            "name": "execute_python_code",
+            "arguments": {
+              "code": "# Send SMS with natural language description\\nsms_handle = await action_provider.send_sms_message(\\n    'Send John Smith an SMS letting him know the meeting has been moved to 3 PM tomorrow in Conference Room B'\\n)\\n\\n# Check the draft\\ndraft = await sms_handle.get_draft()\\nprint(f'SMS Draft: {draft}')\\n\\n# Get status\\nstatus = await sms_handle.status()\\nprint(f'Current status: {status}')\\n\\n# Confirm and send\\nif 'Conference Room B' in draft and '3 PM' in draft:\\n    await sms_handle.confirm()\\n    print('SMS sent successfully!')\\nelse:\\n    await sms_handle.modify('Make sure to mention 3 PM tomorrow in Conference Room B')\\n    await sms_handle.confirm()\\n    print('SMS modified and sent!')"
+            }
+          }]
+        }
+        ```
+        """,
+    )
+
+    return f"""
+{instructions_and_rules}
+
+---
+{strategy_principles}
+
+---
+### Tools Reference
+Within your code execution, you have access to a global `action_provider` object with these methods:
+```json
+{tool_reference}
+```
+
+---
+### Handle APIs
+Some tools return "handle" objects for ongoing interaction. Available methods:
+
+{handle_apis}
+
+---
+{examples}
+"""
+
+
 def _build_initial_plan_rules_and_examples(
     tools: Dict[str, Callable],
     strategy_instruction: str,

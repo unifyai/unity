@@ -17,6 +17,7 @@ import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple, Set
 import typing
 import types
+import weakref
 import pydantic
 import unify
 from pydantic import BaseModel, Field
@@ -1774,8 +1775,6 @@ class HierarchicalPlan(BaseActiveTask):
         if not self._is_complete:
             self._set_state(_HierarchicalPlanState.STOPPED)
             result_str = final_result or "Plan was stopped."
-            if self.main_loop_handle and not self.main_loop_handle.done():
-                self.main_loop_handle.stop()
             if self._execution_task and not self._execution_task.done():
                 self._execution_task.cancel()
 
@@ -1950,21 +1949,25 @@ class HierarchicalActor(BaseActor):
             timeout: Default timeout for plan execution.
             browser_mode: The browser mode to use. Can be "legacy" or "magnitude".
         """
-        super().__init__()
         self.function_manager = function_manager or FunctionManager()
         self.action_provider = ActionProvider(
             session_connect_url=session_connect_url,
             headless=headless,
             browser_mode=browser_mode,
         )
-        self.tools = {
-            name: attr
-            for name, attr in inspect.getmembers(self.action_provider)
-            if not name.startswith("_") and callable(attr)
-        }
+        self.tools = {}
+        for name in dir(self.action_provider):
+            if not name.startswith("_"):
+                attr_descriptor = getattr(type(self.action_provider), name, None)
+                if isinstance(attr_descriptor, property):
+                    continue
+                attr = getattr(self.action_provider, name)
+                if callable(attr):
+                    self.tools[name] = attr
         self.max_escalations = max_escalations or 2
         self.max_local_retries = max_local_retries or 3
         self.timeout = timeout
+        self._plan_handles: weakref.WeakSet = weakref.WeakSet()
 
     def _sanitize_code(self, code: str, plan: HierarchicalPlan) -> str:
         """
@@ -2016,9 +2019,9 @@ class HierarchicalActor(BaseActor):
 
         return (call_stack_tuple, execution_path_tuple, tool_name, serialized_args)
 
-    async def _execute_task_and_return_handle(
+    async def act(
         self,
-        task_description: str,
+        description: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -2028,7 +2031,7 @@ class HierarchicalActor(BaseActor):
         Creates and starts a new HierarchicalPlan active task.
 
         Args:
-            task_description: The high-level goal for the task.
+            description: The high-level goal for the task.
             parent_chat_context: Chat context from a parent process.
             clarification_up_q: Queue for sending clarification questions.
             clarification_down_q: Queue for receiving clarification answers.
@@ -2036,15 +2039,17 @@ class HierarchicalActor(BaseActor):
         Returns:
             An active handle to the running HierarchicalPlan.
         """
-        return HierarchicalPlan(
+        plan_handle = HierarchicalPlan(
             actor=self,
-            goal=task_description,
+            goal=description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             max_escalations=self.max_escalations,
             max_local_retries=self.max_local_retries,
         )
+        self._plan_handles.add(plan_handle)
+        return plan_handle
 
     def _load_plan_module(self, plan: HierarchicalPlan):
         """
@@ -3298,8 +3303,7 @@ async def course_correction_plan():
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
-        if self._active_task and not self._active_task.done():
-            if hasattr(self._active_task, "_cleanup_temp_file"):
-                self._active_task._cleanup_temp_file()
-            await self._active_task.stop()
+        for plan in self._plan_handles:
+            if hasattr(plan, "_cleanup_temp_file"):
+                plan._cleanup_temp_file()
         self.action_provider.browser.stop()

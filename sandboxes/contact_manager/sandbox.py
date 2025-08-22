@@ -23,9 +23,11 @@ from datetime import datetime
 # Always enable detailed request logging for sandbox runs BEFORE importing unify
 os.environ["UNIFY_REQUESTS_DEBUG"] = "true"
 
-import unify
-
 from dotenv import load_dotenv
+
+load_dotenv()
+
+import unify
 from pydantic import BaseModel, Field
 from sandboxes.scenario_builder import ScenarioBuilder
 
@@ -33,8 +35,6 @@ from sandboxes.scenario_builder import ScenarioBuilder
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-load_dotenv()
 
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.contact_manager.contact_manager import ContactManager

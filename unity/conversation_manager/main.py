@@ -51,7 +51,10 @@ class EventManager:
             await self.servers["call"].serve_forever()
 
     def update_topics_to_subs(
-        self, user_number: str, user_whatsapp_number: str, user_email: str
+        self,
+        user_number: str,
+        user_whatsapp_number: str,
+        user_email: str,
     ):
         self.topic_to_subs[user_number] = self.topic_to_subs["tool_use"]
         self.topic_to_subs[user_whatsapp_number] = self.topic_to_subs["tool_use"]
@@ -79,7 +82,7 @@ class EventManager:
                     # handle messages going to the call process
                     # like gen
                     self.writers["call"].write(
-                        (json.dumps(event) + "\n").encode("utf-8")
+                        (json.dumps(event) + "\n").encode("utf-8"),
                     )
                     await self.writers["call"].drain()
                 else:
@@ -256,7 +259,7 @@ async def main(
             os.getenv("USER_EMAIL", ""),
             "tool_use",
             "startup",
-        ]
+        ],
     )
 
     # Initialize Redis connection (waits for Redis to be ready)

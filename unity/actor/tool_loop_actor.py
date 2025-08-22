@@ -191,11 +191,16 @@ class ToolLoopPlan(BaseActiveTask):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
+        timeout: Optional[float] = 1000,
+        persist: bool = False,
+        custom_system_prompt: str | None = None,
+        tool_policy: Optional[Callable] = None,
     ):
         self._initial_task_description = task_description
-
         self._tools = tools
         self._parent_chat_context_on_pause: Optional[List[dict]] = parent_chat_context
+        self._chat_history: List[Dict[str, Any]] = []
+        self._custom_system_prompt = custom_system_prompt
 
         self._clar_up_q_internal: asyncio.Queue[str] = (
             clarification_up_q or asyncio.Queue()
@@ -214,6 +219,9 @@ class ToolLoopPlan(BaseActiveTask):
 
         self._task_id = str(uuid.uuid4())
         self._main_event_loop = main_event_loop
+        self._timeout = timeout
+        self._persist = persist
+        self._tool_policy = tool_policy
 
         self._plan_client = AsyncUnify(
             "o4-mini@openai",
@@ -247,6 +255,13 @@ class ToolLoopPlan(BaseActiveTask):
             self._manage_plan_execution(),
             self._main_event_loop,
         )
+
+    @property
+    def chat_history(self) -> List[Dict[str, Any]]:
+        """Returns a copy of the internal chat history of the tool loop."""
+        if self._loop_handle and self._loop_handle._client:
+            return list(self._loop_handle._client.messages)
+        return list(self._chat_history)
 
     def _get_internal_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         current_tools = self._tools.copy()
@@ -293,7 +308,13 @@ class ToolLoopPlan(BaseActiveTask):
 
                 self._plan_client.reset_messages()
                 self._plan_client.reset_system_message()
-                self._plan_client.set_system_message(TOOL_LOOP_SYSTEM_PROMPT)
+
+                system_prompt = (
+                    self._custom_system_prompt
+                    if self._custom_system_prompt
+                    else TOOL_LOOP_SYSTEM_PROMPT
+                )
+                self._plan_client.set_system_message(system_prompt)
 
                 if current_parent_chat_context:
                     self._plan_client.append_messages(current_parent_chat_context)
@@ -308,8 +329,11 @@ class ToolLoopPlan(BaseActiveTask):
                     loop_id=f"{self.__class__.__name__}.{self._manage_plan_execution.__name__}",
                     propagate_chat_context=True,
                     interrupt_llm_with_interjections=True,
-                    log_steps=False,
+                    log_steps=True,
                     max_steps=self.MAX_STEPS,
+                    timeout=self._timeout,
+                    persist=self._persist,
+                    tool_policy=self._tool_policy,
                 )
 
                 try:
@@ -346,6 +370,9 @@ class ToolLoopPlan(BaseActiveTask):
                     self._state = _PlanState.ERROR
                     self._error_str = str(e)
                     self._result_str = f"Task failed with error: {self._error_str}"
+
+                if self._loop_handle and self._loop_handle._client:
+                    self._chat_history = list(self._loop_handle._client.messages)
 
                 self._loop_handle = None
 
@@ -429,7 +456,11 @@ class ToolLoopPlan(BaseActiveTask):
         if name == "resume":
             return self._state == _PlanState.PAUSED
         if name == "interject":
-            return self._state == _PlanState.RUNNING and self._loop_handle is not None
+            return self._state in (
+                _PlanState.RUNNING,
+                _PlanState.PAUSED,
+                _PlanState.IDLE,
+            )
         if name == "ask":
             return self._state in (_PlanState.RUNNING, _PlanState.PAUSED)
         return False
@@ -522,10 +553,21 @@ class ToolLoopPlan(BaseActiveTask):
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> str:
         if not self._is_valid_method("interject"):
-            if self._state != _PlanState.RUNNING:
-                return f"Error: Plan {self._task_id} is not in RUNNING state (current: {self._state.name}), cannot interject."
+            if self.done():
+                return f"Error: Plan {self._task_id} is already done, cannot interject."
+            return f"Error: Plan {self._task_id} is in state {self._state.name}, cannot interject."
+
+        if not self._loop_handle:
+            logger.info(
+                f"ToolLoopPlan {self._task_id}: Interject called before loop handle was created. Waiting briefly.",
+            )
+            for _ in range(5):
+                if self._loop_handle:
+                    break
+                await asyncio.sleep(1)
+
             if not self._loop_handle:
-                return f"Error: Plan {self._task_id} is RUNNING but has no active internal loop to interject."
+                return f"Error: Plan {self._task_id} did not initialize in time for interjection."
 
         logger.info(
             f"ToolLoopPlan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
@@ -598,7 +640,6 @@ class ToolLoopActor(BaseActor):
         headless: bool = False,
         controller: Controller = None,
     ):
-        super().__init__()
         self._controller = controller or Controller(
             session_connect_url=session_connect_url,
             headless=headless,
@@ -737,35 +778,37 @@ class ToolLoopActor(BaseActor):
             "get_screenshots_for_action": get_screenshots_for_action,
         }
 
-    async def _execute_task_and_return_handle(
+    async def act(
         self,
-        task_description: str,
+        description: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         **kwargs,
     ) -> ToolLoopPlan:
-        logger.info(f"ToolLoopActor: Planning task: '{task_description}'")
+        logger.info(f"ToolLoopActor: Starting work on: '{description}'")
 
         if not self._main_event_loop:
             try:
                 self._main_event_loop = asyncio.get_running_loop()
                 logger.info(
-                    f"ToolLoopActor._make_plan captured event loop: {self._main_event_loop}",
+                    f"ToolLoopActor.act captured event loop: {self._main_event_loop}",
                 )
             except RuntimeError:
                 logger.error(
-                    "ToolLoopActor._make_plan: No running event loop to pass to ToolLoopPlan.",
+                    "ToolLoopActor.act: No running event loop to pass to ToolLoopPlan.",
                 )
 
         plan = ToolLoopPlan(
-            task_description=task_description,
+            task_description=description,
             tools=self._get_tools(),
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             main_event_loop=self._main_event_loop,
+            persist=kwargs.get("persist", False),
+            tool_policy=kwargs.get("tool_policy"),
         )
         return plan
 
