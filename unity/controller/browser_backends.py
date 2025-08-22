@@ -215,7 +215,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         self._start_output_readers()
         atexit.register(self.stop)
 
-        # self._load_persistent_data()
+        self._load_persistent_data()
 
         deadline = time.time() + 30
         url = f"{MagnitudeBrowserBackend._agent_base_url}/screenshot"
@@ -316,109 +316,131 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """
         Load all files and folders in the assistant's data directory from a remote endpoint.
         """
-        # List and keep a reference of all current file names in /usr and /var
-        self._usr_files = []
-        self._var_files = []
+        # list all files in /home/install through the endpoint, then for each file, save in local /home/install
         try:
-            import os
+            base_url = MagnitudeBrowserBackend._agent_base_url
+            endpoint = f"{base_url}/codesandbox/file"
 
-            for root, dirs, files in os.walk("/usr"):
-                for file in files:
-                    self._usr_files.append(os.path.join(root, file))
-            for root, dirs, files in os.walk("/var"):
-                for file in files:
-                    self._var_files.append(os.path.join(root, file))
+            user_id = os.environ.get("USER_ID", "default")
+            project = f"Assistants/{os.environ.get('ASSISTANT_NAME', 'assistant')}"
+
+            # 1) Get recursive listing from the remote project
+            resp = requests.get(
+                endpoint,
+                params={
+                    "user_id": user_id,
+                    "project": project,
+                    "isDirectory": "true",
+                },
+                timeout=30,
+            )
+            resp.raise_for_status()
+            listing = resp.json().get("files", [])
+
+            install_root = "/home/install"
+            os.makedirs(install_root, exist_ok=True)
+
+            print("listing:", listing)
+
+            # 2) For each file entry, download its bytes and write to local /home/install
+            # for entry in listing:
+            #     try:
+            #         if entry.get("type") != "file":
+            #             continue
+            #         rel_name = entry.get("name") or entry.get("path") or entry.get("filename")
+            #         if not rel_name:
+            #             continue
+            #         # Request the file as binary
+            #         fr = requests.get(
+            #             endpoint,
+            #             params={
+            #                 "user_id": user_id,
+            #                 "project": project,
+            #                 "filename": rel_name,
+            #                 "as": "binary",
+            #             },
+            #             timeout=60,
+            #         )
+            #         if fr.status_code >= 400:
+            #             print(f"Warning: Failed to fetch {rel_name}: {fr.status_code} {fr.text[:200]}")
+            #             continue
+            #         local_path = os.path.join(install_root, rel_name)
+            #         os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            #         with open(local_path, "wb") as f:
+            #             f.write(fr.content)
+            #     except Exception as e:
+            #         print(f"Warning: Could not restore file '{entry}': {e}")
+
         except Exception as e:
-            print(f"Warning: Could not list files in /usr or /var: {e}")
+            print(f"Warning: Could not query remote files for persistence: {e}")
 
-        print(self._usr_files)
-        print(self._var_files)
+        # Optionally install packages recorded in apt-manual.txt if present
+        # try:
+        #     if os.path.exists("/home/install/apt-manual.txt"):
+        #         subprocess.run(
+        #             ["xargs", "-a", "/home/install/apt-manual.txt", "apt-get", "install", "-y"],
+        #             check=True,
+        #         )
+        # except Exception as e:
+        #     print(f"Warning: Could not execute apt-get install from apt-manual.txt: {e}")
 
     def _save_persistent_data(self):
         """
         Save all files and folders in the assistant's data directory by sending them
         to a remote endpoint for persistence.
         """
-        # Before saving, delete the existing directory first
-        # try:
-        #     user_id = os.environ.get("USER_ID")
-        #     project = "Assistants"
-        #     path = ""  # root of the data directory
-        #     isDirectory = True
-        #     endpoint = os.environ.get("NEXTAUTH_URL", "https://console.redesign.staging.internal.saas.unify.ai") + "/api/code/file"
-        #     headers = {"apiKey": os.environ.get("UNIFY_KEY")}
-        #     payload = {
-        #         "user_id": user_id,
-        #         "project": project,
-        #         "filename": path,
-        #         "isDirectory": isDirectory,
-        #     }
-        #     res = requests.delete(endpoint, headers=headers, data=json.dumps(payload))
-        #     try:
-        #         json_resp = res.json()
-        #     except Exception:
-        #         json_resp = {}
-        #     if not res.ok:
-        #         raise Exception(json_resp.get("detail") or "Network error")
-        # except Exception as e:
-        #     print(f"Failed to delete existing directory before saving: {e}")
-
-        # Walk and get new files
-        new_files = []
         try:
-            import os
-
-            for root, dirs, files in os.walk("/usr"):
-                for file in files:
-                    path = os.path.join(root, file)
-                    if path not in self._usr_files:
-                        new_files.append(path)
-            for root, dirs, files in os.walk("/var"):
-                for file in files:
-                    path = os.path.join(root, file)
-                    if path not in self._var_files:
-                        new_files.append(path)
+            subprocess.run(
+                ["apt-mark", "showmanual"],
+                check=True,
+                stdout=open("/home/install/apt-manual.txt", "w"),
+            )
+            # Now sort the file in place
+            with open("/home/install/apt-manual.txt", "r") as f:
+                lines = f.readlines()
+            lines.sort()
+            with open("/home/install/apt-manual.txt", "w") as f:
+                f.writelines(lines)
         except Exception as e:
-            print(f"Warning: Could not list files in /usr or /var: {e}")
+            print(f"Warning: Could not save apt manual package list: {e}")
 
-        print(new_files)
+        # save files in /home/install folder with the endpoint
+        try:
+            install_root = "/home/install"
+            os.makedirs(install_root, exist_ok=True)
 
-        # Recursively walk through all files in the data directory
-        # for root, dirs, files in os.walk("/home"):
-        #     for filename in files:
-        #         file_path = os.path.join(root, filename)
-        #         try:
-        #             with open(file_path, "rb") as f:
-        #                 content = f.read()
-        #             # Prepare relative path for storage
-        #             rel_path = os.path.relpath(file_path, "/home")
-        #             # Prepare payload
-        #             payload = {
-        #                 "user_id": os.environ.get("USER_ID"),
-        #                 "project": "Assistants",
-        #                 "filename": rel_path,
-        #                 "content": content.decode("utf-8", errors="replace"),
-        #             }
+            base_url = MagnitudeBrowserBackend._agent_base_url
+            endpoint = f"{base_url}/codesandbox/file"
+            user_id = os.environ.get("USER_ID", "default")
+            project = f"Assistants/{os.environ.get('ASSISTANT_NAME', 'assistant')}"
 
-        #             # Endpoint URL and API key
-        #             endpoint = (
-        #                 os.environ.get("NEXTAUTH_URL", "http://localhost:8000")
-        #                 + "/api/code/file"
-        #             )
-        #             headers = {"apiKey": os.environ.get("UNIFY_KEY")}
-        #             res = requests.post(
-        #                 endpoint,
-        #                 headers=headers,
-        #                 data=json.dumps(payload),
-        #             )
-        #             try:
-        #                 json_resp = res.json()
-        #             except Exception:
-        #                 json_resp = {}
-        #             if not res.ok:
-        #                 raise Exception(json_resp.get("detail") or "Network error")
-        #         except Exception as e:
-        #             print(f"Failed to save {file_path}: {e}")
+            for root, _, files in os.walk(install_root):
+                for fname in files:
+                    fpath = os.path.join(root, fname)
+                    # rel = os.path.relpath(fpath, project)
+                    params = {
+                        "user_id": user_id,
+                        "project": project,
+                        "filename": fpath,
+                    }
+                    print("save data:", params)
+                    # try:
+                    #     with open(fpath, "rb") as fp:
+                    #         r = requests.post(
+                    #             endpoint,
+                    #             params=params,
+                    #             data=fp.read(),
+                    #             headers={"Content-Type": "application/octet-stream"},
+                    #             timeout=30,
+                    #         )
+                    #     if r.status_code >= 400:
+                    #         print(
+                    #             f"Warning: Failed to persist {fpath}: {r.status_code} {r.text[:200]}"
+                    #         )
+                    # except Exception as e:
+                    #     print(f"Warning: Could not persist {fpath}: {e}")
+        except Exception as e:
+            print(f"Warning: Could not enumerate /home/install for persistence: {e}")
 
     async def act(self, instruction: str, expectation: str = "") -> str:
         """
