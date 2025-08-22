@@ -173,11 +173,20 @@ class CommsAgent:
         if "conductor" in self.enabled_tools:
             # # if conductor is enabled, add its methods only as it has all other tools
             # from unity.conductor.conductor import Conductor
+            from unity.transcript_manager.transcript_manager import TranscriptManager
+
+            if self.transcript_manager is None and self.contact_manager is None:
+                try:
+                    self.transcript_manager = TranscriptManager()
+                except AssertionError as e:
+                    # only needed temporarily until we move init to the start anyway
+                    print("Assertion error in transcript manager", e)
 
             # self.conductor = Conductor()
             self.enabled_tools = methods_to_tool_dict(
                 # self.conductor.ask,
                 # self.conductor.request,
+                self.transcript_manager.ask,
                 self._start_screen_share,
                 self._stop_screen_share,
                 self._send_call,
@@ -797,18 +806,29 @@ class CommsAgent:
         """
         await _send_sms_message_via_number(self.current_user["user_number"], message)
 
-    async def _send_email(self, subject: str, message: str):
+    async def _send_email(self, subject: str, message: str, message_id: str = None):
         """
-        Sends an email from the assistant's email address to the current user's email address.
+        Sends an email from the assistant's email address to the current user's email
+        address.
+
+        If you are asked to reply to an email rather than sending a new email,
+        use the transcript manager to get the message id for the email you want to reply
+        to.
+
+        You should ask the transcript manager based on the contents of the original
+        mail, and get the message_id from the "_metadata" field of that transcript and
+        pass that as the message_id to this tool.
 
         Args:
             subject (str): The subject of the email.
             message (str): The message of the email.
+            message_id (str): The message id of the email to reply to.
         """
         await _send_email_via_address(
             self.current_user["user_email"],
             subject,
             message,
+            message_id,
         )
 
     async def _send_whatsapp(self, message: str, reply_to_user: bool = False):
@@ -1023,7 +1043,6 @@ class CommsAgent:
             import unity
             from unity.contact_manager.contact_manager import ContactManager
             from unity.transcript_manager.transcript_manager import TranscriptManager
-            from unity.transcript_manager.types.message import Message
             from unity.events.event_bus import EVENT_BUS
 
             try:
@@ -1083,13 +1102,16 @@ class CommsAgent:
             try:
                 bus_event = Event.from_dict(event["event"]).to_bus_event()
                 bus_event.payload.pop("api_key", None)
+                message_id = bus_event.payload.pop("message_id", None)
                 self.loop.create_task(EVENT_BUS.publish(bus_event))
                 if event["event"]["event_name"] in [
                     "PhoneUtteranceEvent",
                     "WhatsappMessageSentEvent",
                     "SMSMessageSentEvent",
+                    "EmailSentEvent",
                     "WhatsappMessageRecievedEvent",
                     "SMSMessageRecievedEvent",
+                    "EmailRecievedEvent",
                 ]:
                     event_name = event["event"]["event_name"].lower()
                     role = event["event"]["payload"]["role"]
@@ -1099,7 +1121,11 @@ class CommsAgent:
                         "phone_call"
                         if "phone" in event_name
                         else (
-                            "sms_message" if "sms" in event_name else "whatsapp_message"
+                            "sms_message"
+                            if "sms" in event_name
+                            else (
+                                "email" if "email" in event_name else "whatsapp_message"
+                            )
                         )
                     )
                     sender_id, receiver_ids = "", [""]
@@ -1118,14 +1144,18 @@ class CommsAgent:
                         else:
                             sender_id = 0
                             receiver_ids = [user_contact_id]
+                    metadata = None
+                    if medium == "email":
+                        metadata = {"message_id": message_id}
                     self.transcript_manager.log_messages(
-                        Message(
-                            medium=medium,
-                            sender_id=sender_id,
-                            receiver_ids=receiver_ids,
-                            timestamp=timestamp,
-                            content=content,
-                        ),
+                        {
+                            "medium": medium,
+                            "sender_id": sender_id,
+                            "receiver_ids": receiver_ids,
+                            "timestamp": timestamp,
+                            "content": content,
+                            "_metadata": metadata,
+                        }
                     )
             except Exception as e:
                 print(f"Error handling logging: {e}")
