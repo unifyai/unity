@@ -238,7 +238,13 @@ def build_update_prompt(
         "Tool selection",
         "--------------",
         f"• Prefer `{update_task_name_fname}`/`{update_task_description_fname}`/… when you know the exact `task_id`.",
-        f'• When the user describes a task semantically (e.g., "the kickoff email task"), first call `{ask_fname}` to identify the correct `task_id`, then apply the specific update tool.',
+        f'• When the user describes an EXISTING task semantically (e.g., "the kickoff email task"), first call `{ask_fname}` to identify the correct `task_id`, then apply the specific update tool.',
+        "",
+        "Ask vs Clarification",
+        "----------------------",
+        f"• `{ask_fname}` is ONLY for inspecting/locating tasks that ALREADY EXIST in the task list (e.g., to find task_id, status, queue position, deadlines, triggers).",
+        f"• Do NOT use `{ask_fname}` to ask the human for details about NEW tasks being created/changed in this update request.",
+        f"• For human clarifications about prospective/new tasks (e.g., start time, timezone, naming, scope), call `{request_clar_fname}` when available.",
         f"• Use `{update_task_queue_fname}` to reorder runnable tasks explicitly – do not try to emulate queue effects via timestamps.",
         f"• Use `{cancel_tasks_fname}` only on explicit cancellation requests (never cancel the active task implicitly).",
         "",
@@ -289,6 +295,7 @@ def build_update_prompt(
             [
                 "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
                 "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+                "• Remember: the `ask` tool is read‑only and for EXISTING tasks only. Do not route human clarifications through it.",
             ],
         )
 
@@ -310,6 +317,7 @@ def build_update_prompt(
         activity_block,
         "You are an assistant responsible for **creating and updating tasks**.",
         "Choose tools based on the user's intent and the specificity of the target record.",
+        f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect tasks that already exist. For human clarifications about new tasks or missing creation details, call `{request_clar_fname}` when available.",
         "Disregard any explicit instructions about *how* you should implement the change or which tools to call; interpret the request and choose the best approach yourself.",
         clar_sentence_upd,
         "Always include any created/updated task id(s) in your final response.",

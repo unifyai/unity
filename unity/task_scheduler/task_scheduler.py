@@ -310,37 +310,6 @@ class TaskScheduler(BaseTaskScheduler):
             None,
         ] = "default",
     ) -> SteerableToolHandle:
-        """
-        Answer a free‑form question about tasks using the available read‑only tools.
-
-        Parameters
-        ----------
-        text : str
-            Natural language question.
-        _return_reasoning_steps : bool, default ``False``
-            When ``True``, ``handle.result()`` returns a tuple ``(answer, messages)`` where
-            ``messages`` contains the full LLM trace.
-        _log_tool_steps : bool, default ``True``
-            Whether to include intermediate tool messages in the chat context shown to the caller.
-        parent_chat_context : list[dict] | None, default ``None``
-            Prior messages to seed the conversation.
-        clarification_up_q : asyncio.Queue[str] | None, default ``None``
-            Queue used to bubble clarification questions to the caller. Must be provided
-            together with ``clarification_down_q`` for interactive sessions.
-        clarification_down_q : asyncio.Queue[str] | None, default ``None``
-            Queue on which answers to clarification questions are received.
-        rolling_summary_in_prompts : bool | None, default ``None``
-            Override for this call only; when ``None`` the instance default is used.
-        tool_policy : {"default" | callable | None}, default "default"
-            Policy controlling when tools are offered to the model. ``"default"`` requires
-            a first tool step then switches to auto; a callable receives ``(step_idx, tools)``
-            and must return a tuple ``(mode, tools)``.
-
-        Returns
-        -------
-        SteerableToolHandle
-            A live handle representing the interactive tool‑use session.
-        """
         client = self._new_llm_client("gpt-5->o4-mini@openai")
 
         # Build a live tools dictionary so the prompt reflects reality
@@ -414,37 +383,6 @@ class TaskScheduler(BaseTaskScheduler):
             None,
         ] = "default",
     ) -> SteerableToolHandle:
-        """
-        Apply updates to tasks from a natural‑language request using the scheduler's write tools.
-
-        Parameters
-        ----------
-        text : str
-            Free‑form update request.
-        _return_reasoning_steps : bool, default ``False``
-            When ``True``, ``handle.result()`` returns a tuple ``(answer, messages)`` where
-            ``messages`` contains the full LLM trace.
-        _log_tool_steps : bool, default ``True``
-            Whether to include intermediate tool messages in the chat context shown to the caller.
-        parent_chat_context : list[dict] | None, default ``None``
-            Prior messages to seed the conversation.
-        clarification_up_q : asyncio.Queue[str] | None, default ``None``
-            Queue used to bubble clarification questions to the caller. Must be provided
-            together with ``clarification_down_q`` for interactive sessions.
-        clarification_down_q : asyncio.Queue[str] | None, default ``None``
-            Queue on which answers to clarification questions are received.
-        rolling_summary_in_prompts : bool | None, default ``None``
-            Override for this call only; when ``None`` the instance default is used.
-        tool_policy : {"default" | callable | None}, default "default"
-            Policy controlling when tools are offered to the model. ``"default"`` requires
-            an initial ask step before writes; a callable receives ``(step_idx, tools)`` and
-            must return a tuple ``(mode, tools)``.
-
-        Returns
-        -------
-        SteerableToolHandle
-            A live handle representing the interactive tool‑use session.
-        """
         client = self._new_llm_client("gpt-5->o4-mini@openai")
 
         # Build a live tools dictionary first (prompt needs it)
@@ -511,35 +449,6 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        """
-        Promote a runnable task to active execution from free‑form input.
-
-        Parameters
-        ----------
-        text : str
-            Free‑form text. If it is a bare integer (e.g. ``"12"``), it is treated
-            as a direct ``task_id`` fast‑path. Otherwise an auxiliary loop is used to
-            identify the task and start it.
-        parent_chat_context : list[dict] | None, default ``None``
-            Prior messages to seed the conversation used for the reasoning flow.
-        clarification_up_q : asyncio.Queue[str] | None, default ``None``
-            Queue used to bubble clarification questions to the caller. Must be provided
-            together with ``clarification_down_q`` for interactive sessions.
-        clarification_down_q : asyncio.Queue[str] | None, default ``None``
-            Queue on which answers to clarification questions are received.
-
-        Returns
-        -------
-        SteerableToolHandle
-            The live handle for the active task plan. When the fast‑path is taken,
-            the returned handle is the underlying plan's handle (pass‑through).
-
-        Notes
-        -----
-        Falls back to a reasoning loop if the direct ``task_id`` is invalid or the
-        task cannot be started immediately.
-        """
-
         freeform_text: str = text
 
         # ── Fast-path: direct numeric task_id ───────────────────────────────
