@@ -29,7 +29,7 @@ python -m sandboxes.transcript_manager.sandbox --voice
 ```
 
 CLI flags
-~~~~~~~~~
+---------
 `sandbox.py` re-uses the common helper in `sandboxes/utils.py`, so it shares a standard set of options:
 
 ```
@@ -46,7 +46,7 @@ CLI flags
 ```
 
 Interactive commands inside the REPL
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+------------------------------------
 Once the sandbox starts you will see a prompt and a small help table.  The most important commands are:
 
 * `us {description}`    Build **synthetic transcripts** through the official public tools using `ScenarioBuilder` + `TranscriptGenerator`.
@@ -113,7 +113,7 @@ Logging and debugging
 - A dedicated Unify Request log file is also written to `.logs_unify_requests.txt`.
 
 Example session (text mode)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+---------------------------
 ```text
 $ python -m sandboxes.transcript_manager.sandbox -d
 TranscriptManager sandbox – type commands below …
