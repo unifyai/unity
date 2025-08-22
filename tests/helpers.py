@@ -9,6 +9,9 @@ from os import sep
 from typing import Any, Callable
 from unity.events.event_bus import EVENT_BUS
 
+# Contexts that were pre-created during collection;
+PRECREATED_CONTEXTS: set[str] = set()
+
 TESTS_DEFAULT_ENV_VARS = {
     "UNIFY_TRACED": "true",
     "UNIFY_CACHE": "true",
@@ -30,6 +33,13 @@ def _get_unity_test_env_var(name):
     return json.loads(os.environ.get(name, TESTS_DEFAULT_ENV_VARS.get(name, "false")))
 
 
+# ---------- helper -------------------------------------------------
+def _ctx_name(fn: Callable, fn_name: str) -> str:
+    file_path = fn.__code__.co_filename
+    test_path = "/".join(file_path.split(f"{sep}tests{sep}")[1].split(sep))[:-3]
+    return f"tests/{test_path}/{fn_name}" if test_path else fn_name
+
+
 def _handle_project(
     test_fn: Callable | None = None,
     *,
@@ -44,12 +54,6 @@ def _handle_project(
             try_reuse_prev_ctx=try_reuse_prev_ctx,
             delete_ctx_on_exit=delete_ctx_on_exit,
         )
-
-    # ---------- helper -------------------------------------------------
-    def _ctx_name(fn: Callable, fn_name: str) -> str:
-        file_path = fn.__code__.co_filename
-        test_path = "/".join(file_path.split(f"{sep}tests{sep}")[1].split(sep))[:-3]
-        return f"tests/{test_path}/{fn_name}" if test_path else fn_name
 
     async def _call(fn: Callable, *a: Any, **kw: Any):
         """Call *fn* and await it if it returns an awaitable."""
@@ -72,12 +76,14 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
+            ctx_is_created = ctx in PRECREATED_CONTEXTS
 
-            if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
-                unify.delete_context(ctx)
+            if not ctx_is_created:
+                if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
+                    unify.delete_context(ctx)
 
             try:
-                unify.set_context(ctx, relative=False)
+                unify.set_context(ctx, relative=False, skip_create=ctx_is_created)
                 EVENT_BUS.reset(delete_contexts=False)
                 # Ensure EVENT_BUS has been initialised – in case the
                 # global pytest_sessionstart hook was bypassed (e.g. when
@@ -110,12 +116,14 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
+            ctx_is_created = ctx in PRECREATED_CONTEXTS
 
-            if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
-                unify.delete_context(ctx)
+            if not ctx_is_created:
+                if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
+                    unify.delete_context(ctx)
 
             try:
-                unify.set_context(ctx, relative=False)
+                unify.set_context(ctx, relative=False, skip_create=ctx_is_created)
                 EVENT_BUS.reset(delete_contexts=False)
                 # Ensure EVENT_BUS has been initialised – in case the
                 # global pytest_sessionstart hook was bypassed (e.g. when

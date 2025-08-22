@@ -29,7 +29,11 @@ import random
 import string
 import unify
 
-from tests.helpers import _get_unity_test_env_var, TESTS_DEFAULT_ENV_VARS
+from tests.helpers import (
+    _get_unity_test_env_var,
+    TESTS_DEFAULT_ENV_VARS,
+    PRECREATED_CONTEXTS,
+)
 
 
 def pytest_report_header(config):
@@ -1556,3 +1560,48 @@ def _close_httpx_clients_at_session_end():
                 pass
     loop.run_until_complete(loop.shutdown_asyncgens())
     loop.close()
+
+
+def _compute_context_for_item(item):
+    """Compute the unify context path for a collected pytest item using the same logic as tests.helpers._ctx_name."""
+    original_name = item.originalname or item.name
+
+    # Append normalized parametrization suffix if available
+    normalized = _normalize_pytest_nodeid(item.nodeid)
+
+    func_name = original_name
+    if normalized is not None:
+        func_name = f"{original_name}/{normalized}"
+
+    path = item._nodeid.split(".py")[0]
+    return f"{path}/{func_name}"
+
+
+async def _pretest_context_create(ctx: str, remote_ctxs: list[str]):
+    try:
+        if ctx in remote_ctxs:
+            return
+
+        # Create main context + required sub-contexts for EventBus
+        await asyncio.to_thread(unify.create_context, f"{ctx}/Events/_callbacks")
+        PRECREATED_CONTEXTS.add(ctx)
+    except Exception:
+        pass
+
+
+async def _pretest_ctx_handler(contexts: list[str]):
+    remote_ctxs = unify.get_contexts()
+    coros = [_pretest_context_create(ctx, remote_ctxs) for ctx in contexts]
+    await asyncio.gather(*coros)
+
+
+def pytest_collection_finish(session):
+    # Compute all contexts and fire off background creation tasks
+    contexts: set[str] = set()
+    for item in session.items:
+        ctx = _compute_context_for_item(item)
+        contexts.add(ctx)
+
+    loop = asyncio.get_event_loop()
+
+    loop.run_until_complete(_pretest_ctx_handler(list(contexts)))
