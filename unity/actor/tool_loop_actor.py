@@ -191,6 +191,10 @@ class ToolLoopPlan(BaseActiveTask):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
+        timeout: Optional[float] = 1000,
+        persist: bool = False,
+        custom_system_prompt: str | None = None,  
+        tool_policy: Optional[Callable] = None,  
     ):
         self._initial_task_description = task_description
 
@@ -214,6 +218,9 @@ class ToolLoopPlan(BaseActiveTask):
 
         self._task_id = str(uuid.uuid4())
         self._main_event_loop = main_event_loop
+        self._timeout = timeout
+        self._persist = persist
+        self._tool_policy = tool_policy  
 
         self._plan_client = AsyncUnify(
             "o4-mini@openai",
@@ -310,6 +317,9 @@ class ToolLoopPlan(BaseActiveTask):
                     interrupt_llm_with_interjections=True,
                     log_steps=False,
                     max_steps=self.MAX_STEPS,
+                    timeout=self._timeout,
+                    persist=self._persist,
+                    tool_policy=self._tool_policy,  
                 )
 
                 try:
@@ -765,6 +775,8 @@ class ToolLoopActor(BaseActor):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             main_event_loop=self._main_event_loop,
+            persist=kwargs.get("persist", False),
+            tool_policy=kwargs.get("tool_policy"),  
         )
         return plan
 
