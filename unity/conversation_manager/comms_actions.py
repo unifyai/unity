@@ -242,7 +242,7 @@ async def _send_whatsapp_message_via_number(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            publish_event(
+            await publish_event(
                 {
                     "topic": to_number,
                     "event": WhatsappMessageSentEvent(
@@ -285,7 +285,7 @@ async def _send_sms_message_via_number(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            publish_event(
+            await publish_event(
                 {
                     "topic": to_number,
                     "event": SMSMessageSentEvent(
@@ -334,7 +334,7 @@ async def _send_email_via_address(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            publish_event(
+            await publish_event(
                 {
                     "topic": to_email,
                     "event": EmailSentEvent(
