@@ -657,7 +657,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         ctx = f"{self._ctx}/{name}"
         unify.create_context(
             ctx,
-            unique_keys={unique_key_name: "counting"},
+            unique_keys={unique_key_name: "int"},
+            auto_counting={unique_key_name: None},
             description=description,
         )
 

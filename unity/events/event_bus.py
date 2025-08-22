@@ -292,7 +292,8 @@ class EventBus:
         if self._callbacks_ctx not in upstream_ctxs:
             unify.create_context(
                 self._callbacks_ctx,
-                unique_keys={"row_id": "counting"},
+                unique_keys={"row_id": "int"},
+                auto_counting={"row_id": None},
             )
         ctxs = unify.get_contexts(prefix=f"{self._global_ctx}/")
         self._window_sizes: Dict[str, int] = {
