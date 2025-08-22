@@ -232,7 +232,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 f"Magnitude BrowserAgent failed to become ready within 30 seconds on port {port}",
             )
 
-        self._load_persistent_data()
+        # self._load_persistent_data()
 
     def _start_output_readers(self):
         """Start threads to read stdout/stderr to prevent buffer blocking."""
@@ -319,10 +319,11 @@ class MagnitudeBrowserBackend(BrowserBackend):
         # list all files in /home/install through the endpoint, then for each file, save in local /home/install
         try:
             orchestra_url = os.getenv("UNIFY_BASE_URL")
-            endpoint = f"{orchestra_url}/file"
+            endpoint = f"{orchestra_url}/admin/file"
 
             user_id = os.environ.get("USER_ID", "default")
-            project = f"Assistants/{os.environ.get('ASSISTANT_NAME', 'assistant')}"
+            assistant_name = os.environ.get("ASSISTANT_NAME", "assistant")
+            project = "Assistants"
 
             headers = {
                 "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
@@ -346,25 +347,23 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 return
             files_map = resp.json() or {}
 
-            print("files_map:", files_map)
+            install_root = "/home/install"
+            os.makedirs(install_root, exist_ok=True)
 
-            # install_root = "/home/install"
-            # os.makedirs(install_root, exist_ok=True)
-
-            # # 2) Write each file under /home/install, stripping the user/project prefix
-            # prefix = f"{user_id}/{project}/"
-            # for path_key, content in files_map.items():
-            #     try:
-            #         if not isinstance(path_key, str):
-            #             continue
-            #         rel = path_key[len(prefix):] if path_key.startswith(prefix) else path_key
-            #         local_path = os.path.join(install_root, rel)
-            #         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            #         data = content if isinstance(content, str) else str(content)
-            #         with open(local_path, "wb") as f:
-            #             f.write(data.encode("utf-8", errors="ignore"))
-            #     except Exception as e:
-            #         print(f"Warning: Could not restore {path_key}: {e}")
+            # 2) Write each file for this assistant under /home/install
+            prefix = f"{user_id}/{project}/{assistant_name}/"
+            for path_key, content in files_map.items():
+                try:
+                    if not isinstance(path_key, str) or not path_key.startswith(prefix):
+                        continue
+                    rel = path_key[len(prefix) :]
+                    local_path = os.path.join(install_root, rel)
+                    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                    data = content if isinstance(content, str) else str(content)
+                    with open(local_path, "wb") as f:
+                        f.write(data.encode("utf-8", errors="ignore"))
+                except Exception as e:
+                    print(f"Warning: Could not restore {path_key}: {e}")
 
             # 2) For each file entry, download its bytes and write to local /home/install
             # for entry in listing:
@@ -437,9 +436,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
             for root, _, files in os.walk(install_root):
                 for fname in files:
                     fpath = os.path.join(root, fname)
-                    rel_path = os.path.relpath(
+                    rel_path = os.path.join(
+                        os.getenv("ASSISTANT_NAME", "assistant"),
                         fpath,
-                        f'/{os.getenv("ASSISTANT_NAME", "assistant")}',
                     )
                     try:
                         with open(fpath, "rb") as fp:
@@ -454,31 +453,36 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
             print("files_map:", files_map)
 
-            # if files_map:
-            #     orchestra_url = os.getenv("UNIFY_BASE_URL")
-            #     endpoint = f"{orchestra_url}/admin/file"
+            if files_map:
+                orchestra_url = os.getenv("UNIFY_BASE_URL")
+                endpoint = f"{orchestra_url}/admin/file"
 
-            #     user_id = os.environ.get("USER_ID", "default")
-            #     project = f"Assistants/{os.environ.get('ASSISTANT_NAME', 'assistant')}"
-            #     headers = {
-            #         "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
-            #         "Content-Type": "application/json",
-            #     }
-            #     payload = {
-            #         "user_id": user_id,
-            #         "project": project,
-            #         "files": files_map,
-            #         "staging": "staging" in orchestra_url,
-            #     }
+                user_id = os.environ.get("USER_ID", "default")
+                project = f"Assistants"
+                headers = {
+                    "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "user_id": user_id,
+                    "project": project,
+                    "files": files_map,
+                    "staging": "staging" in orchestra_url,
+                }
 
-            #     try:
-            #         r = requests.post(endpoint, json=payload, headers=headers, timeout=120)
-            #         if r.status_code >= 400:
-            #             print(
-            #                 f"Warning: Orchestra persist failed: {r.status_code} {r.text[:200]}"
-            #             )
-            #     except Exception as e:
-            #         print(f"Warning: Could not reach Orchestra to persist files: {e}")
+                try:
+                    r = requests.post(
+                        endpoint,
+                        json=payload,
+                        headers=headers,
+                        timeout=120,
+                    )
+                    if r.status_code >= 400:
+                        print(
+                            f"Warning: Orchestra persist failed: {r.status_code} {r.text[:200]}",
+                        )
+                except Exception as e:
+                    print(f"Warning: Could not reach Orchestra to persist files: {e}")
         except Exception as e:
             print(f"Warning: Could not enumerate /home/install for persistence: {e}")
 
