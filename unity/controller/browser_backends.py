@@ -348,23 +348,22 @@ class MagnitudeBrowserBackend(BrowserBackend):
             files_map = resp.json() or {}
             print("files_map:", files_map)
 
-            # install_root = "/home/install"
-            # os.makedirs(install_root, exist_ok=True)
+            install_root = "/home/install"
+            os.makedirs(install_root, exist_ok=True)
 
-            # # 2) Write each file for this assistant under /home/install
-            # prefix = f"{user_id}/{project}/{assistant_name}/"
-            # for path_key, content in files_map.items():
-            #     try:
-            #         if not isinstance(path_key, str) or not path_key.startswith(prefix):
-            #             continue
-            #         rel = path_key[len(prefix) :]
-            #         local_path = os.path.join(install_root, rel)
-            #         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            #         data = content if isinstance(content, str) else str(content)
-            #         with open(local_path, "wb") as f:
-            #             f.write(data.encode("utf-8", errors="ignore"))
-            #     except Exception as e:
-            #         print(f"Warning: Could not restore {path_key}: {e}")
+            # 2) Write each file for this assistant under /home/install
+            for path_key, content in files_map.items():
+                try:
+                    if not isinstance(path_key, str) or not path_key.startswith(
+                        assistant_name,
+                    ):
+                        continue
+                    rel = path_key[len(assistant_name) :]
+                    data = content if isinstance(content, str) else str(content)
+                    with open(rel, "wb") as f:
+                        f.write(data.encode("utf-8", errors="ignore"))
+                except Exception as e:
+                    print(f"Warning: Could not restore {path_key}: {e}")
 
             # 2) For each file entry, download its bytes and write to local /home/install
             # for entry in listing:
