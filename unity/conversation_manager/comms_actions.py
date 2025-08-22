@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from typing import Dict, Optional, Any
 from pydantic import BaseModel
 from enum import EnumType
@@ -9,11 +10,14 @@ import json
 import ast
 from dotenv import load_dotenv
 from unity.conversation_manager.events import (
+    EmailSentEvent,
     Event,
     PhoneUtteranceEvent,
     PhoneCallInitiatedEvent,
     PhoneCallStopEvent,
     InterruptEvent,
+    SMSMessageSentEvent,
+    WhatsappMessageSentEvent,
 )
 from unity.conversation_manager.prompt_builders import (
     build_call_ask_prompt,
@@ -238,6 +242,16 @@ async def _send_whatsapp_message_via_number(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
+            publish_event(
+                {
+                    "topic": to_number,
+                    "event": WhatsappMessageSentEvent(
+                        content=message,
+                        role="Assistant",
+                        timestamp=datetime.now().isoformat(),
+                    ).to_dict(),
+                }
+            )
             return response_text
 
 
@@ -271,6 +285,16 @@ async def _send_sms_message_via_number(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
+            publish_event(
+                {
+                    "topic": to_number,
+                    "event": SMSMessageSentEvent(
+                        content=message,
+                        role="Assistant",
+                        timestamp=datetime.now().isoformat(),
+                    ).to_dict(),
+                }
+            )
             return response_text
 
 
@@ -278,6 +302,7 @@ async def _send_email_via_address(
     to_email: str,
     subject: str,
     content: str,
+    message_id: str,
 ) -> str:
     """
     Send an SMS message using the SMS provider API.
@@ -286,6 +311,7 @@ async def _send_email_via_address(
         to_email: The email address to send the email to
         subject: The subject of the email
         content: The message content to send
+        message_id: The message ID of the email to reply to
 
     Returns:
         str: The response from the email API
@@ -302,11 +328,23 @@ async def _send_email_via_address(
                 "to": to_email,
                 "subject": subject,
                 "body": content,
+                "in_reply_to": message_id,
             },
         ) as response:
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
+            publish_event(
+                {
+                    "topic": to_email,
+                    "event": EmailSentEvent(
+                        content=content,
+                        role="Assistant",
+                        timestamp=datetime.now().isoformat(),
+                        message_id=message_id,
+                    ).to_dict(),
+                }
+            )
             return response_text
 
 

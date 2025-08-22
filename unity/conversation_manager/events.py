@@ -200,6 +200,15 @@ class EmailSentEvent(_Message):
     platform = "Email"
     direction = "Sent"
 
+    def __init__(self, **kwargs):
+        self.message_id = kwargs.pop("message_id", None)
+        super().__init__(**kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({"message_id": self.message_id})
+        return base_dict
+
 
 class WhatsappMessageRecievedEvent(_Message):
     platform = "Whatsapp"
@@ -214,6 +223,15 @@ class SMSMessageRecievedEvent(_Message):
 class EmailRecievedEvent(_Message):
     platform = "Email"
     direction = "Recieved"
+
+    def __init__(self, **kwargs):
+        self.message_id = kwargs.pop("message_id", None)
+        super().__init__(**kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({"message_id": self.message_id})
+        return base_dict
 
 
 # this should be either done by user or assistant, should
