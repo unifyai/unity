@@ -141,9 +141,26 @@ def build_ask_prompt(
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
+    else:
+        usage_examples = "\n".join(
+            [
+                usage_examples,
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+            ],
+        )
 
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
+
+    # Conditional guidance about asking questions in final responses
+    clar_sentence = (
+        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
+        if request_clar_fname
+        else (
+            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
+        )
+    )
 
     return "\n".join(
         [
@@ -151,6 +168,7 @@ def build_ask_prompt(
             "You are an assistant specialised in **querying and analysing communication transcripts**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
+            clar_sentence,
             "Use the tools to gather missing context before asking the user for clarifications.",
             "",
             f"There are currently {num_messages} messages stored in the Transcripts table.",

@@ -116,14 +116,33 @@ def build_ask_prompt(
         ],
     )
 
+    if not clarification_block:
+        usage_examples = "\n".join(
+            [
+                usage_examples,
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+            ],
+        )
+
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
+
+    # Conditional guidance about asking questions in final responses
+    clar_sentence = (
+        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
+        if request_clar_fname
+        else (
+            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
+        )
+    )
 
     parts: list[str] = [
         activity_block,
         "You are an assistant specialising in **answering questions about the task list**.",
         "Work strictly through the tools provided.",
         "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
+        clar_sentence,
         "Please always mention the relevant task id(s) in your response.",
         f"If the question refers to another person (e.g., comms‑oriented tasks), call `{contact_ask_fname}` first for context. If a task refers to one or more contact_id values (e.g., in a trigger), also query `{contact_ask_fname}` to learn more about those contacts.",
         "",
@@ -265,16 +284,34 @@ def build_update_prompt(
         ],
     )
 
+    if not clarification_block:
+        usage_examples_lines.extend(
+            [
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+            ],
+        )
+
     usage_examples = "\n".join(usage_examples_lines)
 
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
+
+    # Conditional guidance about asking questions in final responses
+    clar_sentence_upd = (
+        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
+        if request_clar_fname
+        else (
+            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
+        )
+    )
 
     parts: list[str] = [
         activity_block,
         "You are an assistant responsible for **creating and updating tasks**.",
         "Choose tools based on the user's intent and the specificity of the target record.",
         "Disregard any explicit instructions about *how* you should implement the change or which tools to call; interpret the request and choose the best approach yourself.",
+        clar_sentence_upd,
         "Always include any created/updated task id(s) in your final response.",
         "",
         f"There are currently {num_tasks} tasks stored in the Tasks table with the following columns:",
@@ -329,6 +366,7 @@ def build_execute_task_prompt(
         "  exist in the task list.",
         "",
         "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
+        "Do not ask the user questions in your final response. If no clarification tool is available in this outer loop, make a best‑guess attempt using sensible defaults and state your assumptions; if an inner tool asks questions, inform it that no clarification channel exists and provide defaults/best guesses.",
         "Use the tools below, step-by-step, following these rules:",
         "",
         "A. If the request contains a *numeric task_id*:",
@@ -371,9 +409,9 @@ def build_execute_task_prompt(
     else:
         lines.extend(
             [
-                "      • **Multiple / ambiguous** matches → ask the user to disambiguate in your final response.",
+                "      • **Multiple / ambiguous** matches → do not ask questions in your final response; proceed with sensible defaults or best‑guess identification, and state your assumptions.",
                 "      • **No match**:",
-                f"          – If it's ambiguous whether a task should be created/updated → ask for clarification in your final response.",
+                f"          – If it's ambiguous whether a task should be created/updated → do not ask questions; make a best‑guess decision, state assumptions, and continue.",
                 f"          – If it is obvious we need to *create* a new task or *update* an existing one → call `{update_fname}` to create/update the task, **then** call `{execute_by_id_fname}` with the returned/newly discovered id.",
             ],
         )
