@@ -360,8 +360,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         continue
                     rel = path_key[len(assistant_name) :]
                     data = content if isinstance(content, str) else str(content)
-                    with open(rel, "wb") as f:
-                        f.write(data.encode("utf-8", errors="ignore"))
+                    with open(rel, "w") as f:
+                        f.write(data)
                 except Exception as e:
                     print(f"Warning: Could not restore {path_key}: {e}")
 
@@ -441,11 +441,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         fpath.lstrip("/"),
                     )
                     try:
-                        with open(fpath, "rb") as fp:
-                            import base64
-
-                            b64 = base64.b64encode(fp.read()).decode("utf-8")
-                        files_map[rel_path] = b64
+                        with open(fpath, "r") as fp:
+                            files_map[rel_path] = fp.read()
                     except Exception as e:
                         print(
                             f"Warning: Could not read {rel_path} for persistence: {e}",
