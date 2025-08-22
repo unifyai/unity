@@ -1957,11 +1957,15 @@ class HierarchicalActor(BaseActor):
             headless=headless,
             browser_mode=browser_mode,
         )
-        self.tools = {
-            name: attr
-            for name, attr in inspect.getmembers(self.action_provider)
-            if not name.startswith("_") and callable(attr)
-        }
+        self.tools = {}
+        for name in dir(self.action_provider):
+            if not name.startswith("_"):
+                attr_descriptor = getattr(type(self.action_provider), name, None)
+                if isinstance(attr_descriptor, property):
+                    continue
+                attr = getattr(self.action_provider, name)
+                if callable(attr):
+                    self.tools[name] = attr
         self.max_escalations = max_escalations or 2
         self.max_local_retries = max_local_retries or 3
         self.timeout = timeout
