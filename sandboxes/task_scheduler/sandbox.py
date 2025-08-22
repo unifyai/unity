@@ -49,6 +49,7 @@ from sandboxes.utils import (
     activate_project,
     _wait_for_tts_end as _wait_tts_end,
     configure_sandbox_logging,
+    call_manager_with_optional_clarifications,
 )
 
 LG = logging.getLogger("task_scheduler_sandbox")
@@ -298,12 +299,14 @@ async def _dispatch_with_context(
         clar_down_q = asyncio.Queue()
 
     if intent.action == "update":
-        handle = await ts.update(
-            raw,
-            parent_chat_context=parent_chat_context,
-            _return_reasoning_steps=show_steps,
-            clarification_up_q=clar_up_q,
-            clarification_down_q=clar_down_q,
+        handle, clar_up_q, clar_down_q = (
+            await call_manager_with_optional_clarifications(
+                ts.update,
+                raw,
+                parent_chat_context=parent_chat_context,
+                return_reasoning_steps=show_steps,
+                clarifications_enabled=clarifications_enabled,
+            )
         )
     elif intent.action == "start":
         parsed = _parse_simulation_config(raw)
@@ -384,12 +387,14 @@ async def _dispatch_with_context(
         # Fire-and-forget restoration
         asyncio.create_task(_restore_actor_when_done())
     else:  # ask
-        handle = await ts.ask(
-            raw,
-            parent_chat_context=parent_chat_context,
-            _return_reasoning_steps=show_steps,
-            clarification_up_q=clar_up_q,
-            clarification_down_q=clar_down_q,
+        handle, clar_up_q, clar_down_q = (
+            await call_manager_with_optional_clarifications(
+                ts.ask,
+                raw,
+                parent_chat_context=parent_chat_context,
+                return_reasoning_steps=show_steps,
+                clarifications_enabled=clarifications_enabled,
+            )
         )
 
     # Speak an acknowledgement if voice mode is on so users know work began

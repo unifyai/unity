@@ -50,6 +50,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     activate_project,
     _wait_for_tts_end as _wait_tts_end,
     configure_sandbox_logging,
+    call_manager_with_optional_clarifications,
 )
 
 LG = logging.getLogger("transcript_sandbox")
@@ -112,18 +113,12 @@ async def _dispatch_with_context(
     Returns (kind, handle, clar_up_q, clar_down_q).
     """
 
-    clar_up_q: Optional[asyncio.Queue[str]] = None
-    clar_down_q: Optional[asyncio.Queue[str]] = None
-    if clarifications_enabled:
-        clar_up_q = asyncio.Queue()
-        clar_down_q = asyncio.Queue()
-
-    handle = await tm.ask(
+    handle, clar_up_q, clar_down_q = await call_manager_with_optional_clarifications(
+        tm.ask,
         raw,
         parent_chat_context=parent_chat_context,
-        _return_reasoning_steps=show_steps,
-        clarification_up_q=clar_up_q,
-        clarification_down_q=clar_down_q,
+        return_reasoning_steps=show_steps,
+        clarifications_enabled=clarifications_enabled,
     )
 
     if enable_voice:

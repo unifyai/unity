@@ -17,7 +17,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict
 from datetime import datetime
 
 # Always enable detailed request logging for sandbox runs BEFORE importing unify
@@ -50,6 +50,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     activate_project,
     _wait_for_tts_end as _wait_tts_end,
     configure_sandbox_logging,
+    call_manager_with_optional_clarifications,
 )
 
 LG = logging.getLogger("contact_sandbox")
@@ -82,75 +83,14 @@ async def _build_scenario(
         "They can deal with complex multi-step requests just fine."
     )
 
-    # Wrap tools so they can surface clarifications to the user
-    async def _ask_tool(
-        text: str,
-        *,
-        parent_chat_context: Optional[List[Dict[str, str]]] = None,
-        _return_reasoning_steps: bool = False,
-        **_: Dict[str, Any],
-    ) -> Any:
-        if not clarifications_enabled:
-            handle = await cm.ask(
-                text,
-                parent_chat_context=parent_chat_context,
-                _return_reasoning_steps=_return_reasoning_steps,
-            )
-            return await handle.result()
-        clar_up_q: asyncio.Queue[str] = asyncio.Queue()
-        clar_down_q: asyncio.Queue[str] = asyncio.Queue()
-        handle = await cm.ask(
-            text,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clar_up_q,
-            clarification_down_q=clar_down_q,
-            _return_reasoning_steps=_return_reasoning_steps,
-        )
-        return await _await_with_interrupt(
-            handle,
-            enable_voice_steering=enable_voice,
-            clarification_up_q=clar_up_q,
-            clarification_down_q=clar_down_q,
-            clarifications_enabled=clarifications_enabled,
-        )
-
-    async def _update_tool(
-        text: str,
-        *,
-        parent_chat_context: Optional[List[Dict[str, str]]] = None,
-        _return_reasoning_steps: bool = False,
-        **_: Dict[str, Any],
-    ) -> Any:
-        if not clarifications_enabled:
-            handle = await cm.update(
-                text,
-                parent_chat_context=parent_chat_context,
-                _return_reasoning_steps=_return_reasoning_steps,
-            )
-            return await handle.result()
-        clar_up_q: asyncio.Queue[str] = asyncio.Queue()
-        clar_down_q: asyncio.Queue[str] = asyncio.Queue()
-        handle = await cm.update(
-            text,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clar_up_q,
-            clarification_down_q=clar_down_q,
-            _return_reasoning_steps=_return_reasoning_steps,
-        )
-        return await _await_with_interrupt(
-            handle,
-            enable_voice_steering=enable_voice,
-            clarification_up_q=clar_up_q,
-            clarification_down_q=clar_down_q,
-            clarifications_enabled=clarifications_enabled,
-        )
-
     builder = ScenarioBuilder(
         description=description,
         tools={  # expose only the public surface
-            "update": _update_tool,
-            "ask": _ask_tool,  # allows the LLM to check for duplicates if it wishes
+            "update": cm.update,
+            "ask": cm.ask,  # allows the LLM to check for duplicates if it wishes
         },
+        enable_voice=enable_voice,
+        clarifications_enabled=clarifications_enabled,
     )
 
     try:
@@ -209,17 +149,12 @@ async def _dispatch_with_context(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
     fn = cm.update if intent.action == "update" else cm.ask
-    clar_up_q: Optional[asyncio.Queue[str]] = None
-    clar_down_q: Optional[asyncio.Queue[str]] = None
-    if clarifications_enabled:
-        clar_up_q = asyncio.Queue()
-        clar_down_q = asyncio.Queue()
-    handle = await fn(
-        raw,  # pass the original text unchanged
+    handle, clar_up_q, clar_down_q = await call_manager_with_optional_clarifications(
+        fn,
+        raw,
         parent_chat_context=parent_chat_context,
-        _return_reasoning_steps=show_steps,
-        clarification_up_q=clar_up_q,
-        clarification_down_q=clar_down_q,
+        return_reasoning_steps=show_steps,
+        clarifications_enabled=clarifications_enabled,
     )
     # Speak an acknowledgement if voice mode is on so users know work began
     if enable_voice:
