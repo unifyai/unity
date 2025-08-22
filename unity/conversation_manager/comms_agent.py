@@ -784,6 +784,7 @@ class CommsAgent:
     ):
         """
         Sends a call from the assistant's number to the current user's number.
+        This tool is particularly used when you need to send a "DIRECT" call.
 
         Args:
             to_number (str): The number to call prefixed with +.
@@ -800,6 +801,7 @@ class CommsAgent:
     async def _send_sms(self, message: str):
         """
         Sends an SMS message from the assistant's number to the current user's number.
+        This tool is particularly used when you need to send a "DIRECT" SMS.
 
         Args:
             message (str): The message to send.
@@ -810,6 +812,7 @@ class CommsAgent:
         """
         Sends an email from the assistant's email address to the current user's email
         address.
+        This tool is particularly used when you need to send a "DIRECT" email.
 
         Args:
             subject (str): The subject of the email.
@@ -834,6 +837,7 @@ class CommsAgent:
     async def _send_whatsapp(self, message: str, reply_to_user: bool = False):
         """
         Sends a WhatsApp message from the assistant's number to the current user's number.
+        This tool is particularly used when you need to send a "DIRECT" WhatsApp message.
 
         Args:
             message (str): The message to send.
@@ -853,8 +857,8 @@ class CommsAgent:
         task_context: Dict[str, str] = None,
     ):
         """
-        Sends a call from the assistant's number to a third party. Only use this tool
-        if the user is asking you to call someone other than themselves.
+        Sends a call from the assistant's number to a third party.
+        This tool is particularly used when you need to send a "THIRD PARTY" call.
 
         Args:
             to_number (str): The number to call prefixed with +.
@@ -874,9 +878,8 @@ class CommsAgent:
         parent_chat_context: list[dict] | None = None,
     ):
         """
-        Sends an SMS message from the assistant's number to a third party. Only use this
-        tool if the user is asking you to send an SMS message to someone other than
-        themselves (not when replying to the current user's message).
+        Sends an SMS message from the assistant's number to a third party.
+        This tool is particularly used when you need to send a "THIRD PARTY" SMS.
 
         Args:
             description (str): The description of the contact and content of the SMS message.
@@ -890,9 +893,8 @@ class CommsAgent:
         parent_chat_context: list[dict] | None = None,
     ):
         """
-        Sends an email from the assistant's email address to a third party. Only use
-        this tool if the user is asking you to send an email to someone other than
-        themselves (not when replying to the current user's email).
+        Sends an email from the assistant's email address to a third party.
+        This tool is particularly used when you need to send a "THIRD PARTY" email.
 
         Args:
             description (str): The description of the contact and content of the email.
@@ -907,9 +909,8 @@ class CommsAgent:
     ):
         """
         Sends a WhatsApp message from the assistant's number to a third party.
-        Only use this tool if the user is asking you to send a WhatsApp message
-        to someone other than themselves (not when replying to the current user's
-        WhatsApp message).
+        This tool is particularly used when you need to send a "THIRD PARTY" WhatsApp
+        message.
 
         Args:
             description (str): The description of the WhatsApp message.
