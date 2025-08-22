@@ -600,6 +600,7 @@ async def _async_tool_use_loop_inner(
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
+    max_parallel_tool_calls: Optional[int] = None,
     persist: bool = False,
 ) -> str:
     r"""
@@ -2394,13 +2395,17 @@ async def _async_tool_use_loop_inner(
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
                 # ➊ start the LLM step …
+                _gen_kwargs = {
+                    "return_full_completion": True,
+                    "tools": tmp_tools,
+                    "tool_choice": tool_choice_mode,
+                    "stateful": True,
+                }
+                if max_parallel_tool_calls is not None:
+                    _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
+
                 llm_task = asyncio.create_task(
-                    _generate_with_preprocess(
-                        return_full_completion=True,
-                        tools=tmp_tools,
-                        tool_choice=tool_choice_mode,
-                        stateful=True,
-                    ),
+                    _generate_with_preprocess(**_gen_kwargs),
                     name="LLMGenerate",
                 )
                 interject_w = asyncio.create_task(
@@ -2475,12 +2480,16 @@ async def _async_tool_use_loop_inner(
             else:
                 # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
                 try:
-                    await _generate_with_preprocess(
-                        return_full_completion=True,
-                        tools=tmp_tools,
-                        tool_choice=tool_choice_mode,
-                        stateful=True,
-                    )
+                    _gen_kwargs = {
+                        "return_full_completion": True,
+                        "tools": tmp_tools,
+                        "tool_choice": tool_choice_mode,
+                        "stateful": True,
+                    }
+                    if max_parallel_tool_calls is not None:
+                        _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
+
+                    await _generate_with_preprocess(**_gen_kwargs)
                 except Exception:
                     raise Exception(
                         f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
@@ -3532,6 +3541,7 @@ def start_async_tool_use_loop(
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,
+    max_parallel_tool_calls: Optional[int] = None,
     persist: bool = False,
 ) -> AsyncToolUseLoopHandle:
     """
@@ -3582,6 +3592,7 @@ def start_async_tool_use_loop(
             preprocess_msgs=preprocess_msgs,
             outer_handle_container=outer_handle_container,
             response_format=response_format,
+            max_parallel_tool_calls=max_parallel_tool_calls,
             persist=persist,
         ),
         name="ToolUseLoop",
