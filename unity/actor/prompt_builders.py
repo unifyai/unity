@@ -354,6 +354,7 @@ def _build_initial_plan_rules_and_examples(
         6.  **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The actor automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
         7.  **Default Search Engine:** Prefer DuckDuckGo (https://duckduckgo.com) for searches unless the user specifies otherwise.
         8.  **Prefer .deb for Linux App Installations**: When installing apps, prefer .deb packages over other formats. `.deb` files are the most common and trusted format for Linux app installations. Then, use `dpkg` to install the app with full permissions.
+        9.  **Browser Downloads**: The browser downloads directory is `/home/browser/Downloads`.
         ---
         """,
     )

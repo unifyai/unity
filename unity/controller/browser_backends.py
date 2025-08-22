@@ -9,7 +9,6 @@ from abc import ABC, abstractmethod
 from typing import Any
 import socket
 import contextlib
-import json
 
 import aiohttp
 import requests
@@ -364,42 +363,62 @@ class MagnitudeBrowserBackend(BrowserBackend):
         # except Exception as e:
         #     print(f"Failed to delete existing directory before saving: {e}")
 
-        # Recursively walk through all files in the data directory
-        for root, dirs, files in os.walk("/home"):
-            for filename in files:
-                file_path = os.path.join(root, filename)
-                try:
-                    with open(file_path, "rb") as f:
-                        content = f.read()
-                    # Prepare relative path for storage
-                    rel_path = os.path.relpath(file_path, "/home")
-                    # Prepare payload
-                    payload = {
-                        "user_id": os.environ.get("USER_ID"),
-                        "project": "Assistants",
-                        "filename": rel_path,
-                        "content": content.decode("utf-8", errors="replace"),
-                    }
+        # Walk and get new files
+        new_files = []
+        try:
+            import os
 
-                    # Endpoint URL and API key
-                    endpoint = (
-                        os.environ.get("NEXTAUTH_URL", "http://localhost:8000")
-                        + "/api/code/file"
-                    )
-                    headers = {"apiKey": os.environ.get("UNIFY_KEY")}
-                    res = requests.post(
-                        endpoint,
-                        headers=headers,
-                        data=json.dumps(payload),
-                    )
-                    try:
-                        json_resp = res.json()
-                    except Exception:
-                        json_resp = {}
-                    if not res.ok:
-                        raise Exception(json_resp.get("detail") or "Network error")
-                except Exception as e:
-                    print(f"Failed to save {file_path}: {e}")
+            for root, dirs, files in os.walk("/usr"):
+                for file in files:
+                    path = os.path.join(root, file)
+                    if path not in self._usr_files:
+                        new_files.append(path)
+            for root, dirs, files in os.walk("/var"):
+                for file in files:
+                    path = os.path.join(root, file)
+                    if path not in self._var_files:
+                        new_files.append(path)
+        except Exception as e:
+            print(f"Warning: Could not list files in /usr or /var: {e}")
+
+        print(new_files)
+
+        # Recursively walk through all files in the data directory
+        # for root, dirs, files in os.walk("/home"):
+        #     for filename in files:
+        #         file_path = os.path.join(root, filename)
+        #         try:
+        #             with open(file_path, "rb") as f:
+        #                 content = f.read()
+        #             # Prepare relative path for storage
+        #             rel_path = os.path.relpath(file_path, "/home")
+        #             # Prepare payload
+        #             payload = {
+        #                 "user_id": os.environ.get("USER_ID"),
+        #                 "project": "Assistants",
+        #                 "filename": rel_path,
+        #                 "content": content.decode("utf-8", errors="replace"),
+        #             }
+
+        #             # Endpoint URL and API key
+        #             endpoint = (
+        #                 os.environ.get("NEXTAUTH_URL", "http://localhost:8000")
+        #                 + "/api/code/file"
+        #             )
+        #             headers = {"apiKey": os.environ.get("UNIFY_KEY")}
+        #             res = requests.post(
+        #                 endpoint,
+        #                 headers=headers,
+        #                 data=json.dumps(payload),
+        #             )
+        #             try:
+        #                 json_resp = res.json()
+        #             except Exception:
+        #                 json_resp = {}
+        #             if not res.ok:
+        #                 raise Exception(json_resp.get("detail") or "Network error")
+        #         except Exception as e:
+        #             print(f"Failed to save {file_path}: {e}")
 
     async def act(self, instruction: str, expectation: str = "") -> str:
         """
@@ -537,7 +556,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 print(
                     f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
                 )
-                # self._save_persistent_data()
+
+                self._save_persistent_data()
+
                 if sys.platform != "win32":
                     import signal
 
