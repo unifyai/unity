@@ -44,7 +44,7 @@ from datetime import datetime
 import wave
 from contextlib import contextmanager
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
-from typing import List, Optional, Tuple, Any, Coroutine, cast
+from typing import List, Optional, Tuple, Any, Coroutine, cast, Dict, Literal
 from av import AudioFrame
 import pyaudio
 import math
@@ -1880,47 +1880,124 @@ class TranscriptGenerator:
                 _name_to_contact[key] = _build_contact(name, medium, details)
             return _name_to_contact[key]
 
-        def submit_conversation(
-            payload: dict,
-        ) -> str:  # noqa: C901 – complex but self-contained
-            """Parse the high-level *conversation* JSON coming from the LLM.
+        class ConversationMessage(BaseModel):
+            """Single utterance in the conversation."""
 
-            Expected schema (keys are case-sensitive):
+            sender: str = Field(..., description="Speaker display name")
+            content: str = Field(..., description="Raw message text")
 
-            {
-                "medium": "phone_call" | "sms_message" | "email" | "whatsapp_message" | "whatsapp_call",
-                "participants": {
-                    "Alice": {"phone_number": "+1…"},
-                    "Bob":   {"email_address": "bob@example.com"}
-                },
-                "conversation": [
-                    {"sender": "Alice", "content": "Hi Bob!"},
-                    {"sender": "Bob",   "content": "Hi Alice, great to hear from you."}
+        class ConversationPayload(BaseModel):
+            """Structured payload expected by `submit_conversation`.
+
+            Fields:
+            - medium: communication channel used
+            - participants: map of participant display name → arbitrary details
+              (e.g., phone_number, email_address, bio). Values are open‑schema.
+            - conversation: ordered list of messages (sender/content pairs).
+            """
+
+            medium: (
+                Literal[
+                    "phone_call",
+                    "sms_message",
+                    "email",
+                    "whatsapp_message",
+                    "whatsapp_call",
                 ]
-            }
+                | str
+            ) = Field(
+                "sms_message",
+                description=(
+                    "Channel: phone_call | sms_message | email | whatsapp_message | whatsapp_call"
+                ),
+            )
+            participants: Dict[str, Dict[str, Any]] = Field(
+                default_factory=dict,
+                description="Participant details keyed by display name",
+            )
+            conversation: List[ConversationMessage] = Field(
+                ...,
+                description="Ordered list of messages",
+            )
+
+        def submit_conversation(
+            payload: ConversationPayload | dict | str | None = None,
+            **tool_kwargs,
+        ) -> str:  # noqa: C901 – complex but self-contained
+            """Submit a complete conversation transcript for logging.
+
+            Preferred call shape (validated):
+            - payload: ConversationPayload
+
+            Tolerated fallbacks (for robustness):
+            - payload as JSON-serialisable dict or JSON string
+            - flattened kwargs: medium=..., participants=..., conversation=[...]
+
+            Extra kwargs (e.g. internal tool-loop params like parent_chat_context)
+            are accepted and ignored.
             """
 
             nonlocal transcript, last_sender_contact
 
-            # Accept either a dict *object* or a JSON *string*
-            if isinstance(payload, str):
-                import json as _json
+            # Normalise inputs → ConversationPayload
+            model_payload: ConversationPayload
+            if payload is None:
+                # Check common LLM shapes
+                if "payload" in tool_kwargs:
+                    candidate = tool_kwargs["payload"]
+                elif any(
+                    k in tool_kwargs for k in ("medium", "participants", "conversation")
+                ):
+                    candidate = {
+                        "medium": tool_kwargs.get("medium", "sms_message"),
+                        "participants": tool_kwargs.get("participants", {}),
+                        "conversation": tool_kwargs.get("conversation", []),
+                    }
+                else:
+                    raise ValueError("submit_conversation requires a payload")
 
-                try:
-                    payload = _json.loads(payload)
-                except Exception as exc:
-                    raise ValueError(
-                        "submit_conversation: string payload must be valid JSON",
-                    ) from exc
+                if isinstance(candidate, str):
+                    import json as _json
 
-            if not isinstance(payload, dict):
-                raise ValueError(
-                    "submit_conversation expects a dict or JSON string argument",
-                )
+                    try:
+                        model_payload = ConversationPayload.model_validate(
+                            _json.loads(candidate),
+                        )
+                    except Exception as exc:
+                        raise ValueError(
+                            "submit_conversation: string payload must be valid JSON matching schema",
+                        ) from exc
+                elif isinstance(candidate, dict):
+                    model_payload = ConversationPayload.model_validate(candidate)
+                elif isinstance(candidate, ConversationPayload):
+                    model_payload = candidate
+                else:
+                    raise ValueError("Unsupported payload type")
+            else:
+                if isinstance(payload, str):
+                    import json as _json
 
-            medium = str(payload.get("medium", "sms_message"))
-            participants: dict[str, Any] = payload.get("participants", {}) or {}
-            convo_raw = payload.get("conversation", [])
+                    try:
+                        model_payload = ConversationPayload.model_validate(
+                            _json.loads(payload),
+                        )
+                    except Exception as exc:
+                        raise ValueError(
+                            "submit_conversation: string payload must be valid JSON matching schema",
+                        ) from exc
+                elif isinstance(payload, dict):
+                    model_payload = ConversationPayload.model_validate(payload)
+                elif isinstance(payload, ConversationPayload):
+                    model_payload = payload
+                else:
+                    raise ValueError("Unsupported payload type")
+
+            medium = str(model_payload.medium)
+            participants: dict[str, Any] = model_payload.participants or {}
+            convo_raw = [
+                {"sender": m.sender, "content": m.content}
+                for m in model_payload.conversation
+            ]
 
             # Support dict-format conversation {sender: message, ...} or list
             if isinstance(convo_raw, dict):
