@@ -3,6 +3,7 @@ import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserO
 import { z, ZodTypeAny, ZodAny } from 'zod';
 import dotenv from 'dotenv';
 dotenv.config();
+import codesandboxRouter from './codesandbox';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // --- Helper to parse command-line arguments ---
@@ -142,6 +143,7 @@ function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new S
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
+app.use('/codesandbox', codesandboxRouter);
 
 let browserAgent: BrowserAgent | null = null;
 const port = process.env.PORT || 3000;
