@@ -15,6 +15,7 @@ x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900 \
 /usr/libexec/xdg-desktop-portal &
 /usr/libexec/xdg-desktop-portal-gtk &
 
-
+mkdir -p /home/install
+apt-get update
 DISPLAY=:99 xterm -fa 'Monospace' -fs 10 &
 websockify --web=/opt/novnc 6080 localhost:5900
