@@ -137,7 +137,10 @@ def _build_communication_rules_section(is_call: bool) -> str:
 
 
 def _build_user_details_section(
-    name: str, number: str, whatsapp_number: str, email: str
+    name: str,
+    number: str,
+    whatsapp_number: str,
+    email: str,
 ) -> str:
     title = "User Details:"
     underline = "-" * len(title)

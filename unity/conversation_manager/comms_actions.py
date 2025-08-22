@@ -250,7 +250,7 @@ async def _send_whatsapp_message_via_number(
                         role="Assistant",
                         timestamp=datetime.now().isoformat(),
                     ).to_dict(),
-                }
+                },
             )
             return response_text
 
@@ -293,7 +293,7 @@ async def _send_sms_message_via_number(
                         role="Assistant",
                         timestamp=datetime.now().isoformat(),
                     ).to_dict(),
-                }
+                },
             )
             return response_text
 
@@ -343,7 +343,7 @@ async def _send_email_via_address(
                         timestamp=datetime.now().isoformat(),
                         message_id=message_id,
                     ).to_dict(),
-                }
+                },
             )
             return response_text
 

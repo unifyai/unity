@@ -193,14 +193,14 @@ class ToolLoopPlan(BaseActiveTask):
         main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
         timeout: Optional[float] = 1000,
         persist: bool = False,
-        custom_system_prompt: str | None = None,  
-        tool_policy: Optional[Callable] = None,  
+        custom_system_prompt: str | None = None,
+        tool_policy: Optional[Callable] = None,
     ):
         self._initial_task_description = task_description
         self._tools = tools
         self._parent_chat_context_on_pause: Optional[List[dict]] = parent_chat_context
         self._chat_history: List[Dict[str, Any]] = []
-        self._custom_system_prompt = custom_system_prompt  
+        self._custom_system_prompt = custom_system_prompt
 
         self._clar_up_q_internal: asyncio.Queue[str] = (
             clarification_up_q or asyncio.Queue()
@@ -221,7 +221,7 @@ class ToolLoopPlan(BaseActiveTask):
         self._main_event_loop = main_event_loop
         self._timeout = timeout
         self._persist = persist
-        self._tool_policy = tool_policy  
+        self._tool_policy = tool_policy
 
         self._plan_client = AsyncUnify(
             "o4-mini@openai",
@@ -308,8 +308,12 @@ class ToolLoopPlan(BaseActiveTask):
 
                 self._plan_client.reset_messages()
                 self._plan_client.reset_system_message()
-                
-                system_prompt = self._custom_system_prompt if self._custom_system_prompt else TOOL_LOOP_SYSTEM_PROMPT
+
+                system_prompt = (
+                    self._custom_system_prompt
+                    if self._custom_system_prompt
+                    else TOOL_LOOP_SYSTEM_PROMPT
+                )
                 self._plan_client.set_system_message(system_prompt)
 
                 if current_parent_chat_context:
@@ -329,7 +333,7 @@ class ToolLoopPlan(BaseActiveTask):
                     max_steps=self.MAX_STEPS,
                     timeout=self._timeout,
                     persist=self._persist,
-                    tool_policy=self._tool_policy,  
+                    tool_policy=self._tool_policy,
                 )
 
                 try:
@@ -452,7 +456,11 @@ class ToolLoopPlan(BaseActiveTask):
         if name == "resume":
             return self._state == _PlanState.PAUSED
         if name == "interject":
-            return self._state in (_PlanState.RUNNING, _PlanState.PAUSED, _PlanState.IDLE)
+            return self._state in (
+                _PlanState.RUNNING,
+                _PlanState.PAUSED,
+                _PlanState.IDLE,
+            )
         if name == "ask":
             return self._state in (_PlanState.RUNNING, _PlanState.PAUSED)
         return False
@@ -551,16 +559,16 @@ class ToolLoopPlan(BaseActiveTask):
 
         if not self._loop_handle:
             logger.info(
-                f"ToolLoopPlan {self._task_id}: Interject called before loop handle was created. Waiting briefly."
+                f"ToolLoopPlan {self._task_id}: Interject called before loop handle was created. Waiting briefly.",
             )
             for _ in range(5):
                 if self._loop_handle:
                     break
                 await asyncio.sleep(1)
-            
+
             if not self._loop_handle:
                 return f"Error: Plan {self._task_id} did not initialize in time for interjection."
-        
+
         logger.info(
             f"ToolLoopPlan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
         )
@@ -800,7 +808,7 @@ class ToolLoopActor(BaseActor):
             clarification_down_q=clarification_down_q,
             main_event_loop=self._main_event_loop,
             persist=kwargs.get("persist", False),
-            tool_policy=kwargs.get("tool_policy"),  
+            tool_policy=kwargs.get("tool_policy"),
         )
         return plan
 
