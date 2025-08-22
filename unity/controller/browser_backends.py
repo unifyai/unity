@@ -215,7 +215,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         self._start_output_readers()
         atexit.register(self.stop)
 
-        self._load_persistent_data()
+        # self._load_persistent_data()
 
         deadline = time.time() + 30
         url = f"{MagnitudeBrowserBackend._agent_base_url}/screenshot"
@@ -557,7 +557,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
                 )
 
-                self._save_persistent_data()
+                # self._save_persistent_data()
 
                 if sys.platform != "win32":
                     import signal
