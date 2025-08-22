@@ -33,6 +33,7 @@ ENV DISPLAY=:99
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl wget unzip gnupg2 \
+    fuse3 libfuse2 squashfs-tools \
     xvfb x11vnc fluxbox xdotool wmctrl imagemagick tesseract-ocr \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
     libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
@@ -110,6 +111,9 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app/agent-service
 RUN npm ci
 WORKDIR /app
+
+# Install helper tools
+RUN install -m 0755 scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 
 
 # Set environment variables
