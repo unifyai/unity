@@ -902,6 +902,7 @@ class CommsAgent:
         """
         Sends an email from the assistant's email address to a third party.
         This tool is particularly used when you need to send a "THIRD PARTY" email.
+        You are the sender and the receiver is the third party.
 
         Args:
             description (str): The description of the contact and content of the email.
