@@ -119,11 +119,12 @@ class CodeExecutionSandbox:
                 elif isinstance(node, (ast.Import, ast.ImportFrom)):
                     for alias in node.names:
                         top_level_assign_targets.add(
-                            alias.asname or alias.name.split(".")[0]
+                            alias.asname or alias.name.split(".")[0],
                         )
 
                 elif isinstance(
-                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                    node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
                 ):
                     top_level_assign_targets.add(node.name)
 
@@ -215,7 +216,7 @@ class CodeActActor(BaseActor):
                 output_parts.append(f"--- ERROR ---\n{execution_result['error']}")
             if execution_result["result"] is not None:
                 output_parts.append(
-                    f"--- RESULT ---\n{repr(execution_result['result'])}"
+                    f"--- RESULT ---\n{repr(execution_result['result'])}",
                 )
 
             text_summary = "\n\n".join(output_parts)
