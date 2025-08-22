@@ -197,9 +197,10 @@ class ToolLoopPlan(BaseActiveTask):
         tool_policy: Optional[Callable] = None,  
     ):
         self._initial_task_description = task_description
-
         self._tools = tools
         self._parent_chat_context_on_pause: Optional[List[dict]] = parent_chat_context
+        self._chat_history: List[Dict[str, Any]] = []
+        self._custom_system_prompt = custom_system_prompt  
 
         self._clar_up_q_internal: asyncio.Queue[str] = (
             clarification_up_q or asyncio.Queue()
@@ -255,6 +256,13 @@ class ToolLoopPlan(BaseActiveTask):
             self._main_event_loop,
         )
 
+    @property
+    def chat_history(self) -> List[Dict[str, Any]]:
+        """Returns a copy of the internal chat history of the tool loop."""
+        if self._loop_handle and self._loop_handle._client:
+            return list(self._loop_handle._client.messages)
+        return list(self._chat_history)
+
     def _get_internal_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         current_tools = self._tools.copy()
 
@@ -300,7 +308,9 @@ class ToolLoopPlan(BaseActiveTask):
 
                 self._plan_client.reset_messages()
                 self._plan_client.reset_system_message()
-                self._plan_client.set_system_message(TOOL_LOOP_SYSTEM_PROMPT)
+                
+                system_prompt = self._custom_system_prompt if self._custom_system_prompt else TOOL_LOOP_SYSTEM_PROMPT
+                self._plan_client.set_system_message(system_prompt)
 
                 if current_parent_chat_context:
                     self._plan_client.append_messages(current_parent_chat_context)
@@ -356,6 +366,9 @@ class ToolLoopPlan(BaseActiveTask):
                     self._state = _PlanState.ERROR
                     self._error_str = str(e)
                     self._result_str = f"Task failed with error: {self._error_str}"
+
+                if self._loop_handle and self._loop_handle._client:
+                    self._chat_history = list(self._loop_handle._client.messages)
 
                 self._loop_handle = None
 
