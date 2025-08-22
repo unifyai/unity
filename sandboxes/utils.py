@@ -1784,9 +1784,10 @@ class TranscriptGenerator:
 
         from unity.contact_manager.types.contact import Contact  # local import
 
-        # Cache of *first_name → Contact* so repeated references to the same
-        # person (even if the LLM adds/changes a surname) always map to the
-        # same Contact instance.
+        # Cache of participant-label → Contact to ensure that two different
+        # people who share the same first name (e.g. "Fred Smith" and
+        # "Fred Taylor") are treated as distinct individuals during a single
+        # generation run. Labels are normalised to lower-case full strings.
         _name_to_contact: dict[str, Contact] = {}
         # Track the Contact object of the previous message to infer receiver
         last_sender_contact: Contact | None = None
@@ -1809,23 +1810,34 @@ class TranscriptGenerator:
               TranscriptManager will persist it on first use.
             """
 
-            # 1️⃣  Attempt to reuse an existing contact (sandbox rule: first names are unique)
+            # 1️⃣  Attempt to reuse an existing contact
             try:
                 cm = self._tm._contact_manager  # ContactManager instance
-                first_name = name.split(" ")[0].lower()
+                parts = name.strip().split()
+                first_name = (parts[0] if parts else "").lower()
+                surname = " ".join(parts[1:]).strip().lower() if len(parts) > 1 else ""
 
-                # Attempt 1: exact case-insensitive match
-                match = cm._filter_contacts(
-                    filter=f"first_name.lower() == '{first_name}'",
-                    limit=1,
-                )
-
-                # Attempt 2: prefix match (e.g. 'dan' → 'daniel') if nothing found
-                if not match:
+                match: list[Contact] = []
+                # Attempt 1: exact case-insensitive FULL-NAME match when a surname is present
+                if first_name and surname:
                     match = cm._filter_contacts(
-                        filter=f"first_name.lower().startswith('{first_name}')",
+                        filter=(
+                            "first_name is not None and surname is not None and "
+                            f"first_name.lower() == '{first_name}' and surname.lower() == '{surname}'"
+                        ),
                         limit=1,
                     )
+                # Attempt 2: only when NO surname provided – reuse a unique first-name match
+                if not match and first_name and not surname:
+                    match = cm._filter_contacts(
+                        filter=f"first_name.lower() == '{first_name}'",
+                        limit=1,
+                    )
+                    if not match:
+                        match = cm._filter_contacts(
+                            filter=f"first_name.lower().startswith('{first_name}')",
+                            limit=1,
+                        )
 
                 if match:
                     return match[0]
@@ -1875,7 +1887,11 @@ class TranscriptGenerator:
             medium: str,
             details: dict[str, Any] | None = None,
         ) -> Contact:  # type: ignore[valid-type]
-            key = name.split(" ")[0].lower()
+            def _norm_label(label: str) -> str:
+                # Normalise by collapsing whitespace and lower-casing the full label
+                return " ".join(label.split()).strip().lower()
+
+            key = _norm_label(name)
             if key not in _name_to_contact:
                 _name_to_contact[key] = _build_contact(name, medium, details)
             return _name_to_contact[key]
@@ -2050,7 +2066,9 @@ class TranscriptGenerator:
                     if _others:
                         receiver_c = _others[0]
                     else:
-                        receiver_c = _contact_for("Assistant", medium, {})
+                        # Use the existing assistant contact (id == 0) instead of
+                        # fabricating a new "Assistant" record.
+                        receiver_c = 0
 
                 last_sender_contact = sender_c
 
