@@ -113,7 +113,7 @@ def _build_communication_rules_section(is_call: bool) -> str:
             "- For example, if the user sends you an sms asking about something, then it's expected that you will reply with an sms through the ToolUseAction.",
             '- In the above example, there should be ALWAYS be an explicit mention of something like "DIRECT <SMS/WHATSAPP/EMAIL/CALL>:" prefixing the contents in the ToolUseAction based on the communication channel.',
             '- If it is a third-party SMS, WhatsApp or Email (i.e. to be sent to someone other than the current user), then you should also mention something like "THIRD PARTY <SMS/WHATSAPP/EMAIL/CALL>" alongside the contents in the ToolUseAction.',
-            "- The same logic applies even to cross-channel communication, i.e. if the user sends you an sms asking to send an email, then again decision about DIRECT/THIRD PARTY should be the same as if they asked to send an sms instead."
+            "- The same logic applies even to cross-channel communication, i.e. if the user sends you an sms asking to send an email, then again decision about DIRECT/THIRD PARTY should be the same as if they asked to send an sms instead.",
         ]
     lines += [
         "- Say hello to the user during the start of the conversation only, don't need to say hello everytime.",
