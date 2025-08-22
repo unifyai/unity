@@ -325,7 +325,7 @@ class ToolLoopPlan(BaseActiveTask):
                     loop_id=f"{self.__class__.__name__}.{self._manage_plan_execution.__name__}",
                     propagate_chat_context=True,
                     interrupt_llm_with_interjections=True,
-                    log_steps=False,
+                    log_steps=True,
                     max_steps=self.MAX_STEPS,
                     timeout=self._timeout,
                     persist=self._persist,
@@ -452,7 +452,7 @@ class ToolLoopPlan(BaseActiveTask):
         if name == "resume":
             return self._state == _PlanState.PAUSED
         if name == "interject":
-            return self._state == _PlanState.RUNNING and self._loop_handle is not None
+            return self._state in (_PlanState.RUNNING, _PlanState.PAUSED, _PlanState.IDLE)
         if name == "ask":
             return self._state in (_PlanState.RUNNING, _PlanState.PAUSED)
         return False
@@ -545,11 +545,22 @@ class ToolLoopPlan(BaseActiveTask):
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> str:
         if not self._is_valid_method("interject"):
-            if self._state != _PlanState.RUNNING:
-                return f"Error: Plan {self._task_id} is not in RUNNING state (current: {self._state.name}), cannot interject."
-            if not self._loop_handle:
-                return f"Error: Plan {self._task_id} is RUNNING but has no active internal loop to interject."
+            if self.done():
+                return f"Error: Plan {self._task_id} is already done, cannot interject."
+            return f"Error: Plan {self._task_id} is in state {self._state.name}, cannot interject."
 
+        if not self._loop_handle:
+            logger.info(
+                f"ToolLoopPlan {self._task_id}: Interject called before loop handle was created. Waiting briefly."
+            )
+            for _ in range(5):
+                if self._loop_handle:
+                    break
+                await asyncio.sleep(1)
+            
+            if not self._loop_handle:
+                return f"Error: Plan {self._task_id} did not initialize in time for interjection."
+        
         logger.info(
             f"ToolLoopPlan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
         )
