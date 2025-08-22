@@ -427,7 +427,7 @@ class CommsAgent:
                         ),
                     )
                     self.current_llm_run.add_done_callback(
-                        lambda t: self.on_run_end(t, call_mode)
+                        lambda t: self.on_run_end(t, call_mode),
                     )
                     self.pending_events.clear()
             except asyncio.TimeoutError:
@@ -541,7 +541,9 @@ class CommsAgent:
         )
 
     async def tool_use_handle_action(
-        self, action: ToolUseHandleAction, call_mode: bool = False
+        self,
+        action: ToolUseHandleAction,
+        call_mode: bool = False,
     ):
         """Handle tool_use handle actions asynchronously"""
         # check if the tool_use is running
@@ -1164,7 +1166,7 @@ class CommsAgent:
                             "timestamp": timestamp,
                             "content": content,
                             "_metadata": metadata,
-                        }
+                        },
                     )
             except Exception as e:
                 print(f"Error handling logging: {e}")
