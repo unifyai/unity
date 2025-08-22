@@ -23,9 +23,11 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 from datetime import datetime
 
-import unify
-
 from dotenv import load_dotenv
+
+load_dotenv()
+
+import unify
 from sandboxes.utils import TranscriptGenerator
 
 # Ensure repository root resolves for local execution
@@ -33,7 +35,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-load_dotenv()
 
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.transcript_manager.transcript_manager import TranscriptManager
