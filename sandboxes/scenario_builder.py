@@ -150,6 +150,22 @@ class ScenarioBuilder:
                         "clarification_down_q": clar_down,
                     }
 
+                # Filter out any loop-internal kwargs (e.g. pause_event, interject_queue)
+                # that the underlying tool does not support. Preserve extras only if the
+                # original callable accepts **kwargs.
+                try:
+                    has_var_kw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in __sig.parameters.values()
+                    )
+                    if not has_var_kw:
+                        kwargs = {
+                            k: v for k, v in kwargs.items() if k in __sig.parameters
+                        }
+                except Exception:
+                    # Defensive: if signature inspection fails, pass through existing kwargs
+                    pass
+
                 ret = __fn(*args, **kwargs)
                 # Await if coroutine
                 if inspect.isawaitable(ret):
@@ -165,6 +181,17 @@ class ScenarioBuilder:
                         clarifications_enabled=self._clarifications_enabled,
                     )
                 return ret
+
+            # Expose the original tool's signature and docstring so downstream
+            # tooling (schema generation, kwarg injection) sees the correct API.
+            try:
+                _wrapped.__signature__ = sig  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            try:
+                _wrapped.__doc__ = getattr(fn, "__doc__", "")
+            except Exception:
+                pass
 
             wrapped_tools[name] = _wrapped
 
