@@ -706,7 +706,7 @@ async def _async_tool_use_loop_inner(
     _parent_lineage = TOOL_LOOP_LINEAGE.get([])
     _lineage = list(lineage) if lineage is not None else [*_parent_lineage, loop_id]
     _token = TOOL_LOOP_LINEAGE.set(_lineage)
-    log_label = " -> ".join(_lineage) if _lineage else (loop_id or "")
+    log_label = "->".join(_lineage) if _lineage else (loop_id or "")
 
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
@@ -3215,10 +3215,41 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         # ----------------------------------------------------------------
 
         # 4.  Fire off a *stand-alone* read-only loop.
+        # Compose a clear loop identifier so logs show exactly which loop the
+        # question refers to, e.g. "Question(TaskScheduler.execute_task)" or
+        # "Question(TaskScheduler.execute_task->TaskScheduler.ask)" when a single
+        # nested handle is present.
+        try:
+            parent_label: str = getattr(self, "_loop_id", "unknown") or "unknown"
+        except Exception:
+            parent_label = "unknown"
+
+        # Best-effort detection of a single nested handle to enrich the label
+        child_label: str | None = None
+        try:
+            _ti = getattr(self._task, "task_info", {})  # type: ignore[attr-defined]
+            nested_ids: set[str] = set()
+            for _t, _inf in _ti.items() if isinstance(_ti, dict) else []:
+                _h = _inf.get("handle")
+                _lid = getattr(_h, "_loop_id", None)
+                if isinstance(_lid, str) and _lid:
+                    nested_ids.add(_lid)
+            if len(nested_ids) == 1:
+                child_label = next(iter(nested_ids))
+        except Exception:
+            child_label = None
+
+        if child_label:
+            loop_id_label = f"Question({parent_label}->{child_label})"
+        else:
+            loop_id_label = f"Question({parent_label})"
+
         helper_handle = start_async_tool_use_loop(
             inspection_client,
             question,
             recursive_tools,  # may be empty
+            loop_id=loop_id_label,
+            parent_lineage=[],  # keep label concise (do not prepend outer lineage)
             parent_chat_context=parent_ctx,  # ← nested context
             propagate_chat_context=False,
             prune_tool_duplicates=False,
