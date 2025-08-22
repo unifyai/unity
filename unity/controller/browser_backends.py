@@ -439,7 +439,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     fpath = os.path.join(root, fname)
                     rel_path = os.path.relpath(
                         fpath,
-                        f"/{os.getenv("ASSISTANT_NAME", "assistant")}",
+                        f'/{os.getenv("ASSISTANT_NAME", "assistant")}',
                     )
                     try:
                         with open(fpath, "rb") as fp:
