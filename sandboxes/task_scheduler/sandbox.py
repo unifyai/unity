@@ -262,7 +262,14 @@ async def _dispatch_with_context(
     *,
     show_steps: bool,
     parent_chat_context: List[Dict[str, str]],
-) -> Tuple[str, SteerableToolHandle]:
+    clarifications_enabled: bool,
+    enable_voice: bool,
+) -> Tuple[
+    str,
+    SteerableToolHandle,
+    Optional[asyncio.Queue[str]],
+    Optional[asyncio.Queue[str]],
+]:
     """
     Decide whether to call `ask`, `update` or `execute_task`, forwarding
     *parent_chat_context* to the TaskScheduler methods. Always pass the original
@@ -283,11 +290,20 @@ async def _dispatch_with_context(
         pass
 
     # For 'start' requests, peel off optional simulation controls and inject a per-call actor
+    # Prepare optional clarification channels
+    clar_up_q: Optional[asyncio.Queue[str]] = None
+    clar_down_q: Optional[asyncio.Queue[str]] = None
+    if clarifications_enabled:
+        clar_up_q = asyncio.Queue()
+        clar_down_q = asyncio.Queue()
+
     if intent.action == "update":
         handle = await ts.update(
             raw,
             parent_chat_context=parent_chat_context,
             _return_reasoning_steps=show_steps,
+            clarification_up_q=clar_up_q,
+            clarification_down_q=clar_down_q,
         )
     elif intent.action == "start":
         parsed = _parse_simulation_config(raw)
@@ -349,6 +365,8 @@ async def _dispatch_with_context(
         handle = await ts.execute_task(
             core_text,
             parent_chat_context=parent_chat_context,
+            clarification_up_q=clar_up_q,
+            clarification_down_q=clar_down_q,
         )
 
         async def _restore_actor_when_done():
@@ -370,8 +388,23 @@ async def _dispatch_with_context(
             raw,
             parent_chat_context=parent_chat_context,
             _return_reasoning_steps=show_steps,
+            clarification_up_q=clar_up_q,
+            clarification_down_q=clar_down_q,
         )
-    return ("execute_task" if intent.action == "start" else intent.action), handle
+
+    # Speak an acknowledgement if voice mode is on so users know work began
+    if enable_voice:
+        try:
+            _speak("Working on it.")
+        except Exception:
+            pass
+
+    return (
+        "execute_task" if intent.action == "start" else intent.action,
+        handle,
+        clar_up_q,
+        clar_down_q,
+    )
 
 
 # ══════════════════════════════════  CLI  ═══════════════════════════════════
@@ -561,21 +594,30 @@ async def _main_async() -> None:
                 continue
 
             # ──────────────── remember the user's utterance ────────────────
-            _kind, _handle = await _dispatch_with_context(
+            _kind, _handle, _clar_up, _clar_down = await _dispatch_with_context(
                 ts,
                 raw,
                 show_steps=args.debug,
                 parent_chat_context=list(chat_history),
+                clarifications_enabled=not args.no_clarifications,
+                enable_voice=bool(args.voice),
             )
             chat_history.append({"role": "user", "content": raw})
             if args.voice:
                 _speak("Let me take a look, give me a moment")
                 _wait_tts_end()
 
-            print(_steer_hint())
+            print(
+                _steer_hint(
+                    voice_enabled=bool(args.voice),
+                ),
+            )
             answer = await _await_with_interrupt(
                 _handle,
                 enable_voice_steering=bool(args.voice),
+                clarification_up_q=_clar_up,
+                clarification_down_q=_clar_down,
+                clarifications_enabled=not args.no_clarifications,
             )
             if args.voice:
                 _speak("Okay, that's all done")
