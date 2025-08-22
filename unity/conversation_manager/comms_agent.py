@@ -173,20 +173,20 @@ class CommsAgent:
         if "conductor" in self.enabled_tools:
             # # if conductor is enabled, add its methods only as it has all other tools
             # from unity.conductor.conductor import Conductor
-            from unity.transcript_manager.transcript_manager import TranscriptManager
+            # from unity.transcript_manager.transcript_manager import TranscriptManager
 
-            if self.transcript_manager is None and self.contact_manager is None:
-                try:
-                    self.transcript_manager = TranscriptManager()
-                except AssertionError as e:
-                    # only needed temporarily until we move init to the start anyway
-                    print("Assertion error in transcript manager", e)
+            # if self.transcript_manager is None and self.contact_manager is None:
+            #     try:
+            #         self.transcript_manager = TranscriptManager()
+            #     except AssertionError as e:
+            #         # only needed temporarily until we move init to the start anyway
+            #         print("Assertion error in transcript manager", e)
 
             # self.conductor = Conductor()
             self.enabled_tools = methods_to_tool_dict(
                 # self.conductor.ask,
                 # self.conductor.request,
-                self.transcript_manager.ask,
+                # self.transcript_manager.ask,
                 self._start_screen_share,
                 self._stop_screen_share,
                 self._send_call,
@@ -811,19 +811,19 @@ class CommsAgent:
         Sends an email from the assistant's email address to the current user's email
         address.
 
-        If you are asked to reply to an email rather than sending a new email,
-        use the transcript manager to get the message id for the email you want to reply
-        to.
-
-        You should ask the transcript manager based on the contents of the original
-        mail, and get the message_id from the "_metadata" field of that transcript and
-        pass that as the message_id to this tool.
-
         Args:
             subject (str): The subject of the email.
             message (str): The message of the email.
-            message_id (str): The message id of the email to reply to.
+            message_id (str): The message id of the email to reply to (ignore for now).
         """
+        # ToDo: Add this back to the docstring once the message_id works
+        # If you are asked to reply to an email rather than sending a new email,
+        # use the transcript manager to get the message id for the email you want to reply
+        # to.
+        #
+        # You should ask the transcript manager based on the contents of the original
+        # mail, and get the message_id from the "_metadata" field of that transcript and
+        # pass that as the message_id to this tool.
         await _send_email_via_address(
             self.current_user["user_email"],
             subject,
