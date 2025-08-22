@@ -49,8 +49,10 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any
 
-import unify
 from dotenv import load_dotenv
+
+load_dotenv()
+import unify
 
 # ───────── project-local imports ─────────
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,7 +70,6 @@ from sandboxes.utils import (
     _wait_for_tts_end as _wait_tts_end,
 )
 
-load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 LG = logging.getLogger("memory_manager_sandbox")
 
