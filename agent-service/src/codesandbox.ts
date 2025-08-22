@@ -13,10 +13,10 @@ const templateId = process.env.CODESANDBOX_TEMPLATE_ID;
 async function ensureSandbox(userId: string) {
   // Look for an existing sandbox with title === userId, otherwise clone template
   const sdk = new CodeSandbox(process.env.CODESANDBOX_API_TOKEN);
-  const list = await sdk.sandbox.list();
+  const list = await sdk.sandboxes.list();
   let sandboxId = list.sandboxes.find((s: any) => s.title === userId)?.id;
   if (!sandboxId) {
-    const sandbox = await sdk.sandbox.create({ title: userId, template: templateId });
+    const sandbox = await sdk.sandboxes.create({ title: userId, id: templateId });
     sandboxId = sandbox.id;
   }
   return sandboxId;
@@ -103,7 +103,7 @@ codesandboxRouter.post("/file", async (req: Request, res: Response) => {
 
     const sdk = new CodeSandbox(process.env.CODESANDBOX_API_TOKEN);
     const sandboxId = await ensureSandbox(userId);
-    const sandbox = await sdk.sandbox.open(sandboxId);
+    const sandbox = await (await sdk.sandboxes.resume(sandboxId)).connect();
 
     const filePath = buildFilePath(project, filename);
     await sandbox.fs.writeFile(filePath, bytesToWrite);
@@ -128,12 +128,12 @@ codesandboxRouter.delete("/file", async (req: Request, res: Response) => {
 
     const sdk = new CodeSandbox(process.env.CODESANDBOX_API_TOKEN);
     const sandboxId = await ensureSandbox(userId as string);
-    const sandbox = await sdk.sandbox.open(sandboxId);
+    const sandbox = await (await sdk.sandboxes.resume(sandboxId)).connect();
 
     const filePath = buildFilePath(project as string, filename as string | undefined);
 
     if (isDirectory) {
-      const cmd = sandbox.shells.run(`rm -rf "${filePath}"`);
+      const cmd = sandbox.commands.run(`rm -rf "${filePath}"`);
       await cmd;
     } else {
       await sandbox.fs.remove(filePath);
@@ -157,12 +157,12 @@ codesandboxRouter.put("/file", async (req: Request, res: Response) => {
 
     const sdk = new CodeSandbox(process.env.CODESANDBOX_API_TOKEN);
     const sandboxId = await ensureSandbox(userId);
-    const sandbox = await sdk.sandbox.open(sandboxId);
+    const sandbox = await (await sdk.sandboxes.resume(sandboxId)).connect();
 
     const oldPath = buildFilePath(project, old_filename);
     const newPath = buildFilePath(project, new_filename);
 
-    const cmd = sandbox.shells.run(`mv "${oldPath}" "${newPath}"`);
+    const cmd = sandbox.commands.run(`mv "${oldPath}" "${newPath}"`);
     await cmd;
 
     return res.json({ detail: "File renamed", old_path: oldPath, new_path: newPath });
@@ -188,7 +188,7 @@ codesandboxRouter.get("/file", async (req: Request, res: Response) => {
 
     const sdk = new CodeSandbox(process.env.CODESANDBOX_API_TOKEN);
     const sandboxId = await ensureSandbox(userId);
-    const sandbox = await sdk.sandbox.open(sandboxId);
+    const sandbox = await (await sdk.sandboxes.resume(sandboxId)).connect();
 
     if (isDirectory) {
       const readDirRecursive = async (currentPath: string, prefix: string, visited: Set<string>): Promise<any[]> => {
