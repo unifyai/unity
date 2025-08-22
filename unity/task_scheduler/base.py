@@ -72,31 +72,55 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Interrogate the current **task list** in natural language and obtain
-        a *live* :class:`~unify.common.llm_helpers.SteerableToolHandle`.
+        Interrogate the **existing task list** (read‑only) and obtain a live
+        :class:`SteerableToolHandle`.
+
+        Purpose
+        -------
+        Use this method to locate and inspect tasks that already exist in the
+        table: find task ids, check statuses, queue positions, schedules,
+        deadlines, triggers, or summarise/compare existing entries. This call
+        must never create, modify, delete or reorder tasks.
+
+        Clarifications
+        --------------
+        Do not use this method to ask the human questions. If the caller needs
+        clarification about a prospective/new task (e.g., start time, timezone,
+        naming, scope), route the question via a dedicated
+        ``request_clarification`` tool when available. If no clarification
+        channel exists, proceed with sensible defaults/best‑guess values and
+        state those assumptions in the outer loop's final reply.
 
         Do *not* request *how* the question should be answered; just ask the
-        question in natural language and allow the `ask` method to determine
+        question in natural language and allow this `ask` method to determine
         the best method to answer it.
+
+        Examples
+        --------
+        • Good: "Which task covers the onboarding plan?" → identify the
+          task_id so an update tool can be applied next.
+        • Bad:  "What start time should I use for the task I am about to
+          create?" → this is a human clarification; use
+          ``request_clarification`` instead.
 
         Parameters
         ----------
         text : str
-            The user's plain-English question, e.g. *"Which tasks are due
-            tomorrow?"*.
+            Plain‑English question about existing tasks, e.g. "Which tasks are
+            due tomorrow?".
         _return_reasoning_steps : bool, default ``False``
             When *True*, :pymeth:`SteerableToolHandle.result` returns
             ``(answer, messages)`` – the first element is the assistant's
-            reply, the second the hidden chain-of-thought.
+            reply, the second the hidden chain‑of‑thought.
         _log_tool_steps : bool, default ``True``
-            If *True* the task-scheduler logs every tool invocation to the
-            server-side logger.  Mainly useful for debugging.
+            If *True* the task‑scheduler logs every tool invocation to the
+            server‑side logger.
         parent_chat_context : list[dict] | None
-            Optional **read-only** conversation context to prepend to the
-            internal tool-use loop.
+            Optional read‑only conversation context to prepend to the internal
+            tool‑use loop.
         clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
-            Duplex channels enabling interactive *clarification* questions.
-            If supplied the LLM may push a follow-up question onto
+            Duplex channels enabling interactive clarification questions. If
+            supplied the LLM may push a follow‑up question onto
             *clarification_up_q* and must read the human's answer from
             *clarification_down_q*.
 
@@ -104,7 +128,8 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         -------
         SteerableToolHandle
             Await :pymeth:`SteerableToolHandle.result` for the final answer or
-            steer the interaction via ``pause()``, ``resume()``, ``interject()`` or ``stop()``.
+            steer the interaction via ``pause()``, ``resume()``, ``interject()``
+            or ``stop()``.
         """
 
     @abstractmethod
@@ -170,7 +195,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
            id is not explicitly mentioned in *text*).
         2. Internally execute the task – the implementation SHOULD expose a
            private ``_execute_task_by_id`` helper that returns a
-           :class:`~unify.common.llm_helpers.SteerableToolHandle` **and marks it
+           :class:`SteerableToolHandle` **and marks it
            for pass-through** so that the outer handle is upgraded transparently
            once the real execution begins.
 
