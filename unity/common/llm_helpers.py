@@ -1101,7 +1101,16 @@ async def _async_tool_use_loop_inner(
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
         if log_steps:
-            LOGGER.info(f"🛠️ [{log_label}] {json.dumps(tool_msg, indent=4)}\n")
+            # Create a clean version of tool_msg for logging (strip image data)
+            tool_msg_for_logging = tool_msg.copy()
+            if isinstance(tool_msg_for_logging.get("content"), list):
+                # Filter out image_url items and keep only text content
+                tool_msg_for_logging["content"] = [
+                    item
+                    for item in tool_msg_for_logging["content"]
+                    if item.get("type") != "image_url"
+                ]
+            LOGGER.info(f"🛠️ [{loop_id}] {json.dumps(tool_msg_for_logging, indent=4)}\n")
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures >= max_consecutive_failures:
