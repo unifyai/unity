@@ -23,8 +23,17 @@ class BaseActiveTask(SteerableToolHandle, ABC):
 
     # Public API
     @abstractmethod
-    async def ask(self, question: str) -> str:
-        """Ask any question about the live (ongoing and active) activity being worked on."""
+    async def ask(
+        self,
+        question: str,
+        *,
+        _return_reasoning_steps: bool = False,
+    ) -> SteerableToolHandle:
+        """Ask a read-only question about the live activity and return a handle.
+
+        Implementations should return a lightweight handle whose ``result()``
+        yields the answer string (and may optionally include reasoning when
+        ``_return_reasoning_steps`` is True)."""
 
     @property
     @abstractmethod

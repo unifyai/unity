@@ -137,7 +137,7 @@ class SimulatedActorHandle:
                         rem = self.get_remaining_duration_seconds()
                         if rem is not None:
                             self._emit_status(
-                                f"⏳ Duration remaining: {max(0.0, rem):.1f}s",
+                                f"⏳ SimulatedActor Duration remaining: {max(0.0, rem):.1f}s",
                             )
                         # Sleep in small chunks to be responsive to done-event
                         for _ in range(50):
@@ -178,7 +178,7 @@ class SimulatedActorHandle:
             try:
                 if self._steps is not None:
                     remaining = max(0, int(self._steps) - int(self._steps_taken))
-                    self._emit_status(f"🪜 Steps remaining: {remaining}")
+                    self._emit_status(f"🪜 SimulatedActor Steps remaining: {remaining}")
             except Exception:
                 pass
 
