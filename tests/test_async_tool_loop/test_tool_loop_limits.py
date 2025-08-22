@@ -430,3 +430,55 @@ async def test_policy_two_required_then_auto():
     await handle.result()
 
     assert counter["n"] == 2  # one call on step 0 and one on step 1
+
+
+@pytest.mark.skip(reason="Will only pass once we support the responses API")
+@pytest.mark.asyncio
+async def test_max_parallel_tool_calls():
+    X = 2  # allowed concurrent tool calls per LLM turn
+    Y = 5  # requested by the model
+
+    counter = {"n": 0}
+
+    @unify.traced
+    async def short(i: int) -> str:
+        counter["n"] += 1
+        await asyncio.sleep(0.01)
+        return f"ok-{i}"
+
+    short.__name__ = "short"
+    short.__qualname__ = "short"
+
+    client = new_client()
+
+    prompt = (
+        "You are part of a test. In a single assistant turn, call the tool `short(i: int)` "
+        f"exactly {Y} times in parallel with i = 1..{Y}. Make ALL tool calls in one message. "
+        "Do not make any further tool calls in later turns. If the platform limits how many "
+        "tool calls you can make per turn, issue only as many as allowed and then finish by "
+        "replying 'ok'."
+    )
+
+    handle = start_async_tool_use_loop(
+        client,
+        message=prompt,
+        tools={"short": short},
+        max_parallel_tool_calls=X,
+        prune_tool_duplicates=False,
+        timeout=30,
+        max_steps=100,
+        raise_on_limit=True,
+    )
+
+    await handle.result()
+
+    # The first assistant turn must not request more than X tool calls
+    first_asst_with_calls = next(
+        m
+        for m in client.messages
+        if m.get("role") == "assistant" and m.get("tool_calls")
+    )
+    assert 1 <= len(first_asst_with_calls["tool_calls"]) <= X
+
+    # The tool should have been invoked exactly as many times as requested in that turn
+    assert counter["n"] == len(first_asst_with_calls["tool_calls"])
