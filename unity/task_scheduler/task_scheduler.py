@@ -224,7 +224,8 @@ class TaskScheduler(BaseTaskScheduler):
         if self._ctx not in unify.get_contexts():
             unify.create_context(
                 self._ctx,
-                unique_keys={"task_id": "counting", "instance_id": "counting"},
+                unique_keys={"task_id": "int", "instance_id": "int"},
+                auto_counting={"task_id": None, "instance_id": "task_id"},
                 description=(
                     "List of all tasks with their name, description, status, "
                     "schedule, deadline, repeat pattern, priority **and** "
@@ -2133,6 +2134,17 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> Callable[[str], "asyncio.Future[str]"]:
         """Return an async tool that bubbles a question up and awaits the answer.
+
+        Behaviour and integration notes
+        --------------------------------
+        - This tool exists only when the outer TaskScheduler loop has been given
+          clarification queues. If those queues are not present, the outer loop
+          MUST NOT ask the user questions as part of its final response. It must
+          proceed using sensible defaults or best guesses and briefly state the
+          assumptions used. If an inner tool asks for clarification but this
+          outer loop lacks clarification queues, explicitly tell the inner tool
+          that no clarification channel is available and provide reasonable
+          default values or concrete best‑guess parameters instead.
 
         The returned coroutine raises RuntimeError if queues are not provided at call time.
         """

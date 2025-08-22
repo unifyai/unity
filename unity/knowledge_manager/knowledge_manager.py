@@ -278,6 +278,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
+                """Bubble a clarification question upward and await the answer.
+
+                Note: If the enclosing loop has no clarification queues, callers
+                must not ask the user questions in the final response. Proceed
+                with sensible defaults or best guesses instead.
+                """
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError(
                         "KnowledgeManager.refactor was invoked without both "
@@ -395,7 +401,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                """Query the user for more information, and wait for the reply."""
+                """Query the user for more information, and wait for the reply.
+
+                If clarification queues are not present, higher‑level logic must
+                continue with sensible defaults and should not ask questions in
+                the final response.
+                """
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError(
                         "TranscriptManager.ask was called without both "
@@ -513,7 +524,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                """Query the user for more information, and wait for the reply."""
+                """Query the user for more information, and wait for the reply.
+
+                If queues are unavailable, do not ask questions in the outer
+                response; proceed with sensible defaults or best guesses.
+                """
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError(
                         "KnowledgeManager.retrieve was called without both "
@@ -642,7 +657,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         ctx = f"{self._ctx}/{name}"
         unify.create_context(
             ctx,
-            unique_keys={unique_key_name: "counting"},
+            unique_keys={unique_key_name: "int"},
+            auto_counting={unique_key_name: None},
             description=description,
         )
 

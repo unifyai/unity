@@ -3559,6 +3559,18 @@ def make_request_clarification_tool(
 ):
     """Return an async tool that bubbles a question up and awaits the answer.
 
+    Behaviour and integration notes
+    --------------------------------
+    - This tool is only available when clarification queues are provided by the
+      outer tool loop. If those queues are not present in a given loop, that
+      loop MUST NOT ask the user questions in its final response. Instead, it
+      should proceed with sensible defaults or best guesses, and briefly state
+      those assumptions. If an inner tool (invoked by this outer loop) asks for
+      clarification but the outer loop has no clarification tool, the outer loop
+      must explicitly inform the inner tool that no clarification channel is
+      available and either (a) instruct the inner tool to use safe defaults, or
+      (b) pass down concrete, sensible best‑guess values.
+
     - Raises RuntimeError if queues are missing at call time.
     - Optionally invokes async/sync callbacks on request/answer events.
     """

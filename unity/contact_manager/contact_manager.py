@@ -80,7 +80,8 @@ class ContactManager(BaseContactManager):
         if self._ctx not in unify.get_contexts():
             unify.create_context(
                 self._ctx,
-                unique_keys={"contact_id": "counting"},
+                unique_keys={"contact_id": "int"},
+                auto_counting={"contact_id": None},
                 description="List of contacts, with all contact details stored.",
             )
             fields = model_to_fields(Contact)

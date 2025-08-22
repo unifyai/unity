@@ -34,7 +34,8 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, Any, Optional
 
 import unify
-from unity.common.llm_helpers import start_async_tool_use_loop
+from unity.common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
+from sandboxes.utils import await_with_interrupt
 
 __all__ = ["ScenarioBuilder"]
 
@@ -76,6 +77,8 @@ class ScenarioBuilder:
         endpoint: str = "gpt-5->o4-mini@openai",
         traced: bool = True,
         stateful: bool = True,
+        enable_voice: bool = False,
+        clarifications_enabled: bool = True,
     ) -> None:
         if not tools:
             raise ValueError("ScenarioBuilder requires at least one tool.")
@@ -93,6 +96,8 @@ class ScenarioBuilder:
             reasoning_effort="high",
             service_tier="priority",
         )
+        self._enable_voice = enable_voice
+        self._clarifications_enabled = clarifications_enabled
         # System prompt is rebuilt lazily in .create() so that the arg‑specs
         # reflect any monkey‑patched callables between calls.
 
@@ -121,14 +126,56 @@ class ScenarioBuilder:
         # 1️⃣  Build & inject system prompt
         self._client.set_system_message(self._build_system_prompt())
 
-        # 2️⃣  Fire up the generic tool‑loop – the **description itself** acts
-        #     as the initial *user* turn.
-        # Enforce that the LLM *must* call at least one tool (index 0) so
-        # generators like TranscriptGenerator are guaranteed to receive data.
+        # 2️⃣  Build wrappers that add clarification handling (when supported)
+        wrapped_tools: Dict[str, Callable] = {}
+        for name, fn in self._tools.items():
+            sig = inspect.signature(fn)
+
+            async def _wrapped(*args, __fn: Callable = fn, __sig: inspect.Signature = sig, **kwargs):  # type: ignore[no-redef]
+                # Inject clarification queues only when the tool supports them
+                clar_up = None
+                clar_down = None
+                if (
+                    self._clarifications_enabled
+                    and "clarification_up_q" in __sig.parameters
+                    and "clarification_down_q" in __sig.parameters
+                ):
+                    import asyncio as _asyncio  # local import
+
+                    clar_up = _asyncio.Queue()
+                    clar_down = _asyncio.Queue()
+                    kwargs = {
+                        **kwargs,
+                        "clarification_up_q": clar_up,
+                        "clarification_down_q": clar_down,
+                    }
+
+                ret = __fn(*args, **kwargs)
+                # Await if coroutine
+                if inspect.isawaitable(ret):
+                    ret = await ret  # type: ignore[assignment]
+
+                # If the tool returned a SteerableToolHandle, resolve it with our interactive helper
+                if isinstance(ret, SteerableToolHandle):
+                    return await await_with_interrupt(
+                        ret,
+                        enable_voice_steering=self._enable_voice,
+                        clarification_up_q=clar_up,
+                        clarification_down_q=clar_down,
+                        clarifications_enabled=self._clarifications_enabled,
+                    )
+                return ret
+
+            wrapped_tools[name] = _wrapped
+
+        # 3️⃣  Fire up the generic tool‑loop – the **description itself** acts
+        #     as the initial *user* turn. Enforce that the LLM *must* call
+        #     at least one tool (index 0) so generators like TranscriptGenerator
+        #     are guaranteed to receive data.
         handle = start_async_tool_use_loop(
             self._client,
             self._description,
-            self._tools,
+            wrapped_tools,
             loop_id=f"{self.__class__.__name__}.{self.create.__name__}",
             parent_chat_context=parent_chat_context,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),

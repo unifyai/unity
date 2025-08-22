@@ -173,20 +173,20 @@ class CommsAgent:
         if "conductor" in self.enabled_tools:
             # # if conductor is enabled, add its methods only as it has all other tools
             # from unity.conductor.conductor import Conductor
-            from unity.transcript_manager.transcript_manager import TranscriptManager
+            # from unity.transcript_manager.transcript_manager import TranscriptManager
 
-            if self.transcript_manager is None and self.contact_manager is None:
-                try:
-                    self.transcript_manager = TranscriptManager()
-                except AssertionError as e:
-                    # only needed temporarily until we move init to the start anyway
-                    print("Assertion error in transcript manager", e)
+            # if self.transcript_manager is None and self.contact_manager is None:
+            #     try:
+            #         self.transcript_manager = TranscriptManager()
+            #     except AssertionError as e:
+            #         # only needed temporarily until we move init to the start anyway
+            #         print("Assertion error in transcript manager", e)
 
             # self.conductor = Conductor()
             self.enabled_tools = methods_to_tool_dict(
                 # self.conductor.ask,
                 # self.conductor.request,
-                self.transcript_manager.ask,
+                # self.transcript_manager.ask,
                 self._start_screen_share,
                 self._stop_screen_share,
                 self._send_call,
@@ -308,7 +308,7 @@ class CommsAgent:
                     "WhatsappMessageRecievedEvent",
                     "SMSMessageRecievedEvent",
                     "EmailRecievedEvent",
-                ]
+                ] and new_event["payload"].get("call_mode")
                 # print("comm agent got", new_event)
                 # continue
                 if new_event["payload"]["transient"]:
@@ -426,7 +426,9 @@ class CommsAgent:
                             call_mode=call_mode,
                         ),
                     )
-                    self.current_llm_run.add_done_callback(self.on_run_end)
+                    self.current_llm_run.add_done_callback(
+                        lambda t: self.on_run_end(t, call_mode)
+                    )
                     self.pending_events.clear()
             except asyncio.TimeoutError:
                 if not self.pending_events:
@@ -468,7 +470,7 @@ class CommsAgent:
 
         return patched
 
-    async def tool_use_action(self, action: ToolUseAction):
+    async def tool_use_action(self, action: ToolUseAction, call_mode: bool = False):
         """Handle tool_use actions asynchronously"""
 
         if isinstance(self.enabled_tools, list):
@@ -514,6 +516,7 @@ class CommsAgent:
                     chat_history,
                     action.query,
                     handle_id,
+                    call_mode,
                 ).to_dict(),
             },
         )
@@ -533,11 +536,13 @@ class CommsAgent:
         self.publish(
             {
                 "topic": "tool_use",
-                "event": ToolUseEndedEvent(answer, handle_id).to_dict(),
+                "event": ToolUseEndedEvent(answer, handle_id, call_mode).to_dict(),
             },
         )
 
-    async def tool_use_handle_action(self, action: ToolUseHandleAction):
+    async def tool_use_handle_action(
+        self, action: ToolUseHandleAction, call_mode: bool = False
+    ):
         """Handle tool_use handle actions asynchronously"""
         # check if the tool_use is running
         if self.tool_use_handles is None or not self.tool_use_handles.get(
@@ -549,6 +554,7 @@ class CommsAgent:
                     f"tool_use is not running currently, "
                     "please create a new action instead",
                     action.type,
+                    call_mode,
                 ).to_dict(),
             }
         else:
@@ -575,12 +581,13 @@ class CommsAgent:
                 "event": ToolUseHandleSuccessEvent(
                     action.query,
                     action.type,
+                    call_mode,
                 ).to_dict(),
                 "to": "past",
             }
         self.publish({"topic": "tool_use", **event_data})
 
-    def on_run_end(self, t: asyncio.Task):
+    def on_run_end(self, t: asyncio.Task, call_mode: bool = False):
         try:
             t: AssistantOutput | CallAssistantOutput | None = t.result()
             # everything is fine, just run the actions and add stuff to past events
@@ -593,10 +600,10 @@ class CommsAgent:
                     print("actions", t.actions)
                     for action in t.actions:
                         if isinstance(action, ToolUseAction):
-                            asyncio.create_task(self.tool_use_action(action))
+                            asyncio.create_task(self.tool_use_action(action, call_mode))
                         elif isinstance(action, ToolUseHandleAction):
                             asyncio.create_task(
-                                self.tool_use_handle_action(action),
+                                self.tool_use_handle_action(action, call_mode),
                             )
 
         except asyncio.CancelledError:
@@ -784,6 +791,7 @@ class CommsAgent:
     ):
         """
         Sends a call from the assistant's number to the current user's number.
+        This tool is particularly used when you need to send a "DIRECT" call.
 
         Args:
             to_number (str): The number to call prefixed with +.
@@ -800,6 +808,7 @@ class CommsAgent:
     async def _send_sms(self, message: str):
         """
         Sends an SMS message from the assistant's number to the current user's number.
+        This tool is particularly used when you need to send a "DIRECT" SMS.
 
         Args:
             message (str): The message to send.
@@ -810,20 +819,21 @@ class CommsAgent:
         """
         Sends an email from the assistant's email address to the current user's email
         address.
-
-        If you are asked to reply to an email rather than sending a new email,
-        use the transcript manager to get the message id for the email you want to reply
-        to.
-
-        You should ask the transcript manager based on the contents of the original
-        mail, and get the message_id from the "_metadata" field of that transcript and
-        pass that as the message_id to this tool.
+        This tool is particularly used when you need to send a "DIRECT" email.
 
         Args:
             subject (str): The subject of the email.
             message (str): The message of the email.
-            message_id (str): The message id of the email to reply to.
+            message_id (str): The message id of the email to reply to (ignore for now).
         """
+        # ToDo: Add this back to the docstring once the message_id works
+        # If you are asked to reply to an email rather than sending a new email,
+        # use the transcript manager to get the message id for the email you want to reply
+        # to.
+        #
+        # You should ask the transcript manager based on the contents of the original
+        # mail, and get the message_id from the "_metadata" field of that transcript and
+        # pass that as the message_id to this tool.
         await _send_email_via_address(
             self.current_user["user_email"],
             subject,
@@ -834,6 +844,7 @@ class CommsAgent:
     async def _send_whatsapp(self, message: str, reply_to_user: bool = False):
         """
         Sends a WhatsApp message from the assistant's number to the current user's number.
+        This tool is particularly used when you need to send a "DIRECT" WhatsApp message.
 
         Args:
             message (str): The message to send.
@@ -853,8 +864,8 @@ class CommsAgent:
         task_context: Dict[str, str] = None,
     ):
         """
-        Sends a call from the assistant's number to a third party. Only use this tool
-        if the user is asking you to call someone other than themselves.
+        Sends a call from the assistant's number to a third party.
+        This tool is particularly used when you need to send a "THIRD PARTY" call.
 
         Args:
             to_number (str): The number to call prefixed with +.
@@ -874,9 +885,8 @@ class CommsAgent:
         parent_chat_context: list[dict] | None = None,
     ):
         """
-        Sends an SMS message from the assistant's number to a third party. Only use this
-        tool if the user is asking you to send an SMS message to someone other than
-        themselves (not when replying to the current user's message).
+        Sends an SMS message from the assistant's number to a third party.
+        This tool is particularly used when you need to send a "THIRD PARTY" SMS.
 
         Args:
             description (str): The description of the contact and content of the SMS message.
@@ -890,9 +900,9 @@ class CommsAgent:
         parent_chat_context: list[dict] | None = None,
     ):
         """
-        Sends an email from the assistant's email address to a third party. Only use
-        this tool if the user is asking you to send an email to someone other than
-        themselves (not when replying to the current user's email).
+        Sends an email from the assistant's email address to a third party.
+        This tool is particularly used when you need to send a "THIRD PARTY" email.
+        You are the sender and the receiver is the third party.
 
         Args:
             description (str): The description of the contact and content of the email.
@@ -907,9 +917,8 @@ class CommsAgent:
     ):
         """
         Sends a WhatsApp message from the assistant's number to a third party.
-        Only use this tool if the user is asking you to send a WhatsApp message
-        to someone other than themselves (not when replying to the current user's
-        WhatsApp message).
+        This tool is particularly used when you need to send a "THIRD PARTY" WhatsApp
+        message.
 
         Args:
             description (str): The description of the WhatsApp message.

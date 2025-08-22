@@ -57,7 +57,6 @@ from pydantic import BaseModel, Field
 
 # Added for direct logging of generated messages
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from sandboxes.scenario_builder import ScenarioBuilder
 
 from dotenv import load_dotenv
 
@@ -723,6 +722,11 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         help="stream logs to terminal in addition to writing .logs.txt (default is file-only)",
     )
     parser.add_argument(
+        "--no_clarifications",
+        action="store_true",
+        help="disable interactive clarification requests (both text and voice)",
+    )
+    parser.add_argument(
         "--log_tcp_port",
         type=int,
         default=-1,
@@ -1058,7 +1062,10 @@ def input_now(timeout: float = 0.1) -> Optional[str]:
 
 def steering_controls_hint() -> str:
     """Return a one-line hint with available in-flight steering commands."""
-    return "Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /r (record voice), /stop, /help"
+    return (
+        "Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /r (record voice), "
+        "/c <answer> (clarify), /cr (record clarify), /cs (skip), /stop, /help"
+    )
 
 
 # Shared steering intent model and router system prompt
@@ -1212,6 +1219,9 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
     poll: float = 0.05,
     *,
     enable_voice_steering: bool = False,
+    clarification_up_q: Optional[asyncio.Queue[str]] = None,
+    clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    clarifications_enabled: bool = True,
 ) -> str:
     """
     **Common wrapper** used by all interactive sandboxes.
@@ -1234,7 +1244,35 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
 
     HELP_TEXT = steering_controls_hint()
 
+    # State for handling a single pending clarification at a time
+    pending_clar_q: Optional[str] = None
+    has_clar_channels = bool(
+        clarifications_enabled and clarification_up_q and clarification_down_q,
+    )
+
     while not handle.done():
+        # Non-blocking check for incoming clarification questions
+        if has_clar_channels and pending_clar_q is None:
+            try:
+                # get_nowait raises when empty
+                pending_clar_q = cast(Optional[str], clarification_up_q.get_nowait())  # type: ignore[arg-type]
+                if pending_clar_q:
+                    print()
+                    print(f"❓ Clarification requested: {pending_clar_q}")
+                    print(
+                        "Reply with: /c <your answer> or just type your answer and press ↵. "
+                        + (
+                            "Use /cr to record by voice, /cs to skip."
+                            if enable_voice_steering
+                            else "Use /cs to skip."
+                        ),
+                    )
+                    if enable_voice_steering:
+                        speak(f"Clarification requested. {pending_clar_q}")
+                        _wait_for_tts_end()
+            except Exception:
+                pass
+
         txt = input_now(poll * 2)  # same cadence as old versions
         if txt is not None and txt != "":
             # Use a left-trimmed view only for recognizing commands, but keep the original text intact
@@ -1268,6 +1306,60 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     else:
                         print(HELP_TEXT)
                     break
+                # Clarification commands (handled irrespective of other state if channels exist)
+                if has_clar_channels and cmd in {"c", "clarify"}:
+                    arg_to_send = arg if arg != "" else ""
+                    if not arg_to_send.strip():
+                        print("Usage: /c <answer>")
+                    else:
+                        try:
+                            await clarification_down_q.put(arg_to_send)  # type: ignore[union-attr]
+                            print("✅ Clarification sent.")
+                            pending_clar_q = None
+                            if enable_voice_steering:
+                                speak("Clarification sent")
+                                _wait_for_tts_end()
+                                print(HELP_TEXT)
+                            else:
+                                print(HELP_TEXT)
+                        except Exception as exc:
+                            print(f"⚠️  Failed to send clarification: {exc}")
+                    continue
+                if has_clar_channels and cmd in {"cr"} and enable_voice_steering:
+                    try:
+                        print(
+                            "🎙️  Clarification – press ↵ to start, ↵ again to send, 'c'+↵ to cancel",
+                        )
+                        audio = record_until_enter_interruptible(lambda: handle.done())
+                        if audio is None:
+                            continue
+                        transcript = transcribe_deepgram(audio)
+                        if not transcript or transcript.strip() == "":
+                            print("⚠️  Empty transcript – ignoring")
+                            continue
+                        await clarification_down_q.put(transcript)  # type: ignore[union-attr]
+                        print("✅ Clarification sent.")
+                        pending_clar_q = None
+                        speak("Clarification sent")
+                        _wait_for_tts_end()
+                        print(HELP_TEXT)
+                    except Exception as exc:
+                        print(f"⚠️  Voice clarification failed: {exc}")
+                    continue
+                if has_clar_channels and cmd in {"cs"}:
+                    try:
+                        await clarification_down_q.put("Sorry, I cannot clarify right now.")  # type: ignore[union-attr]
+                        print("⏭️  Skipped clarification.")
+                        pending_clar_q = None
+                        if enable_voice_steering:
+                            speak("Skipped clarification")
+                            _wait_for_tts_end()
+                            print(HELP_TEXT)
+                        else:
+                            print(HELP_TEXT)
+                    except Exception as exc:
+                        print(f"⚠️  Failed to skip clarification: {exc}")
+                    continue
                 if cmd in {"pause", "p"}:
                     try:
                         print("pausing…")
@@ -1390,16 +1482,31 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                 else:
                     print(HELP_TEXT)
             else:
-                # Plain text → interject (forward exactly as typed)
-                print(f"interjecting: {txt}")
-                run_in_loop(handle.interject(txt))
-                print("✅ Interjection sent.")
-                if enable_voice_steering:
-                    speak("Interjection sent")
-                    _wait_for_tts_end()
-                    print(HELP_TEXT)
+                # Plain text: if a clarification is pending and channels exist, treat as clarification answer
+                if has_clar_channels and pending_clar_q is not None:
+                    try:
+                        await clarification_down_q.put(txt)  # type: ignore[union-attr]
+                        print("✅ Clarification sent.")
+                        pending_clar_q = None
+                        if enable_voice_steering:
+                            speak("Clarification sent")
+                            _wait_for_tts_end()
+                            print(HELP_TEXT)
+                        else:
+                            print(HELP_TEXT)
+                    except Exception as exc:
+                        print(f"⚠️  Failed to send clarification: {exc}")
                 else:
-                    print(HELP_TEXT)
+                    # Otherwise → interject (forward exactly as typed)
+                    print(f"interjecting: {txt}")
+                    run_in_loop(handle.interject(txt))
+                    print("✅ Interjection sent.")
+                    if enable_voice_steering:
+                        speak("Interjection sent")
+                        _wait_for_tts_end()
+                        print(HELP_TEXT)
+                    else:
+                        print(HELP_TEXT)
         await asyncio.sleep(poll)
 
     # Task completed: cancel any ongoing TTS immediately and return result
@@ -1852,6 +1959,9 @@ class TranscriptGenerator:
             prompt += contact_block
 
         prompt += f"The description is as follows:\n\n{description}."
+
+        # Local import to avoid circular dependency: utils → scenario_builder → utils
+        from sandboxes.scenario_builder import ScenarioBuilder  # noqa: WPS433
 
         builder = ScenarioBuilder(
             description=prompt,

@@ -326,6 +326,7 @@ class ToolUseStartedEvent(Event):
         chat_history: list[dict[str, str]],
         query: str,
         handle_id: int,
+        call_mode: bool = False,
         *,
         is_urgent: bool = True,
         role: str = "tool_use start",
@@ -338,10 +339,12 @@ class ToolUseStartedEvent(Event):
         kwargs.pop("role", None)
         kwargs.pop("is_urgent", None)
         kwargs.pop("stage", None)
+        kwargs.pop("call_mode", None)
 
         self.chat_history = chat_history
         self.query = query
         self.handle_id = handle_id
+        self.call_mode = call_mode
         super().__init__(is_urgent=is_urgent, role=role, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -351,6 +354,7 @@ class ToolUseStartedEvent(Event):
                 "chat_history": self.chat_history,
                 "query": self.query,
                 "handle_id": self.handle_id,
+                "call_mode": self.call_mode,
             },
         )
         return base_dict
@@ -365,6 +369,7 @@ class ToolUseEndedEvent(Event):
         self,
         query: str,
         handle_id: int,
+        call_mode: bool = False,
         *,
         is_urgent: bool = True,
         role: str = "tool_use end",
@@ -376,15 +381,21 @@ class ToolUseEndedEvent(Event):
         kwargs.pop("role", None)
         kwargs.pop("is_urgent", None)
         kwargs.pop("stage", None)
+        kwargs.pop("call_mode", None)
 
         self.query = query
         self.handle_id = handle_id
+        self.call_mode = call_mode
         super().__init__(is_urgent=is_urgent, role=role, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {"query": self.query, "handle_id": self.handle_id},
+            {
+                "query": self.query,
+                "handle_id": self.handle_id,
+                "call_mode": self.call_mode,
+            },
         )
         return base_dict
 
@@ -398,22 +409,29 @@ class ToolUseHandleSuccessEvent(Event):
         self,
         query: str,
         handle_type: str,
+        call_mode: bool = False,
         *,
         is_urgent: bool = True,
         **kwargs,
     ):
         kwargs.pop("query", None)
         kwargs.pop("handle_type", None)
+        kwargs.pop("call_mode", None)
         kwargs.pop("is_urgent", None)
 
         self.query = query
         self.handle_type = handle_type
+        self.call_mode = call_mode
         super().__init__(is_urgent=is_urgent, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {"query": self.query, "handle_type": self.handle_type},
+            {
+                "query": self.query,
+                "handle_type": self.handle_type,
+                "call_mode": self.call_mode,
+            },
         )
         return base_dict
 
@@ -423,18 +441,24 @@ class ToolUseHandleSuccessEvent(Event):
 
 
 class ToolUseHandleFailedEvent(Event):
-    def __init__(self, query: str, handle_type: str, **kwargs):
+    def __init__(self, query: str, handle_type: str, call_mode: bool = False, **kwargs):
         kwargs.pop("query", None)
         kwargs.pop("handle_type", None)
+        kwargs.pop("call_mode", None)
 
         self.query = query
         self.handle_type = handle_type
+        self.call_mode = call_mode
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {"query": self.query, "handle_type": self.handle_type},
+            {
+                "query": self.query,
+                "handle_type": self.handle_type,
+                "call_mode": self.call_mode,
+            },
         )
         return base_dict
 
