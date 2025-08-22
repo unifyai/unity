@@ -166,13 +166,13 @@ const browserOptions: BrowserOptions = {
 };
 
 // Starts desktop agent
-startBrowserAgent({
-    url: "http://localhost:6080/vnc.html?resize=scale&autoconnect=1",
-    browser: browserOptions,
-    prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the terminal, apps and browser within the virtual desktop.",
-  }).then(agent => {
-// startBrowserAgent({ browser: browserOptions })
-//   .then(agent => {
+// startBrowserAgent({
+//     url: "http://localhost:6080/vnc.html?resize=scale&autoconnect=1",
+//     browser: browserOptions,
+//     prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the terminal, apps and browser within the virtual desktop.",
+//   }).then(agent => {
+startBrowserAgent({ browser: browserOptions })
+  .then(agent => {
     browserAgent = agent;
     console.log("✅ BrowserAgent started successfully.");
     app.listen(port, () => {
@@ -185,15 +185,15 @@ startBrowserAgent({
   });
 
 // Browser to be controlled through desktop
-startBrowserAgent({
-  url: "https://www.duckduckgo.com/",
-  browser: {
-    launchOptions: {
-      headless: false,
-      downloadsPath: `/home/browser/Downloads`,
-      tracesDir: `/home/browser/traces`,
-    }
-  }})
+// startBrowserAgent({
+//   url: "https://www.duckduckgo.com/",
+//   browser: {
+//     launchOptions: {
+//       headless: false,
+//       downloadsPath: `/home/browser/Downloads`,
+//       tracesDir: `/home/browser/traces`,
+//     }
+//   }})
 
 const isAgentReady = (req: Request, res: Response, next: Function) => {
   if (!browserAgent) {
