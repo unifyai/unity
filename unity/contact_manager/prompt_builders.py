@@ -146,9 +146,27 @@ Anti‑patterns to avoid
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
+    else:
+        # No clarification tool – append conditional anti‑pattern bullets (no extra heading)
+        usage_examples = "\n".join(
+            [
+                usage_examples,
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+            ],
+        )
 
     # ─ Clarification guidance ─
     clar_section = clarification_guidance(tools)
+
+    # Conditional guidance about asking questions in final responses
+    clar_sentence = (
+        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
+        if request_clar_fname
+        else (
+            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
+        )
+    )
 
     # ─ Special contacts guidance ─
     special_contacts_block = textwrap.dedent(
@@ -168,6 +186,7 @@ Anti‑patterns to avoid
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
+            clar_sentence,
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
             "use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
             "",
@@ -239,6 +258,15 @@ Clarification
         else ""
     )
 
+    # Conditional guidance about asking questions in final responses
+    clar_sentence_upd = (
+        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
+        if request_clar_fname
+        else (
+            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
+        )
+    )
+
     usage_examples_base = f"""
 Tool selection
 --------------
@@ -306,6 +334,14 @@ Anti‑patterns to avoid
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
+    else:
+        usage_examples = "\n".join(
+            [
+                usage_examples,
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+            ],
+        )
 
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
@@ -326,6 +362,7 @@ Anti‑patterns to avoid
             "You are an assistant in charge of **creating or editing contacts**.",
             "Choose tools based on the user's intent and the specificity of the target record.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.",
+            clar_sentence_upd,
             "Prefer minimal, precise mutations to existing records identified by contact_id.",
             "When the user describes a contact semantically, resolve the id first by requesting the contact_id from the ask method, then perform the update via the contact_id.",
             "use the `ask` method to see if you can find any missing context *before* you consider asking the user for clarifications.",
