@@ -598,7 +598,6 @@ class ToolLoopActor(BaseActor):
         headless: bool = False,
         controller: Controller = None,
     ):
-        super().__init__()
         self._controller = controller or Controller(
             session_connect_url=session_connect_url,
             headless=headless,
@@ -737,30 +736,30 @@ class ToolLoopActor(BaseActor):
             "get_screenshots_for_action": get_screenshots_for_action,
         }
 
-    async def _execute_task_and_return_handle(
+    async def act(
         self,
-        task_description: str,
+        description: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         **kwargs,
     ) -> ToolLoopPlan:
-        logger.info(f"ToolLoopActor: Planning task: '{task_description}'")
+        logger.info(f"ToolLoopActor: Starting work on: '{description}'")
 
         if not self._main_event_loop:
             try:
                 self._main_event_loop = asyncio.get_running_loop()
                 logger.info(
-                    f"ToolLoopActor._make_plan captured event loop: {self._main_event_loop}",
+                    f"ToolLoopActor.act captured event loop: {self._main_event_loop}",
                 )
             except RuntimeError:
                 logger.error(
-                    "ToolLoopActor._make_plan: No running event loop to pass to ToolLoopPlan.",
+                    "ToolLoopActor.act: No running event loop to pass to ToolLoopPlan.",
                 )
 
         plan = ToolLoopPlan(
-            task_description=task_description,
+            task_description=description,
             tools=self._get_tools(),
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
