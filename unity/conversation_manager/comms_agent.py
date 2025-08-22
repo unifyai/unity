@@ -308,7 +308,7 @@ class CommsAgent:
                     "WhatsappMessageRecievedEvent",
                     "SMSMessageRecievedEvent",
                     "EmailRecievedEvent",
-                ]
+                ] and new_event["payload"].get("call_mode")
                 # print("comm agent got", new_event)
                 # continue
                 if new_event["payload"]["transient"]:
@@ -426,7 +426,9 @@ class CommsAgent:
                             call_mode=call_mode,
                         ),
                     )
-                    self.current_llm_run.add_done_callback(self.on_run_end)
+                    self.current_llm_run.add_done_callback(
+                        lambda t: self.on_run_end(t, call_mode)
+                    )
                     self.pending_events.clear()
             except asyncio.TimeoutError:
                 if not self.pending_events:
@@ -468,7 +470,7 @@ class CommsAgent:
 
         return patched
 
-    async def tool_use_action(self, action: ToolUseAction):
+    async def tool_use_action(self, action: ToolUseAction, call_mode: bool = False):
         """Handle tool_use actions asynchronously"""
 
         if isinstance(self.enabled_tools, list):
@@ -514,6 +516,7 @@ class CommsAgent:
                     chat_history,
                     action.query,
                     handle_id,
+                    call_mode,
                 ).to_dict(),
             },
         )
@@ -533,11 +536,13 @@ class CommsAgent:
         self.publish(
             {
                 "topic": "tool_use",
-                "event": ToolUseEndedEvent(answer, handle_id).to_dict(),
+                "event": ToolUseEndedEvent(answer, handle_id, call_mode).to_dict(),
             },
         )
 
-    async def tool_use_handle_action(self, action: ToolUseHandleAction):
+    async def tool_use_handle_action(
+        self, action: ToolUseHandleAction, call_mode: bool = False
+    ):
         """Handle tool_use handle actions asynchronously"""
         # check if the tool_use is running
         if self.tool_use_handles is None or not self.tool_use_handles.get(
@@ -549,6 +554,7 @@ class CommsAgent:
                     f"tool_use is not running currently, "
                     "please create a new action instead",
                     action.type,
+                    call_mode,
                 ).to_dict(),
             }
         else:
@@ -575,12 +581,13 @@ class CommsAgent:
                 "event": ToolUseHandleSuccessEvent(
                     action.query,
                     action.type,
+                    call_mode,
                 ).to_dict(),
                 "to": "past",
             }
         self.publish({"topic": "tool_use", **event_data})
 
-    def on_run_end(self, t: asyncio.Task):
+    def on_run_end(self, t: asyncio.Task, call_mode: bool = False):
         try:
             t: AssistantOutput | CallAssistantOutput | None = t.result()
             # everything is fine, just run the actions and add stuff to past events
@@ -593,10 +600,10 @@ class CommsAgent:
                     print("actions", t.actions)
                     for action in t.actions:
                         if isinstance(action, ToolUseAction):
-                            asyncio.create_task(self.tool_use_action(action))
+                            asyncio.create_task(self.tool_use_action(action, call_mode))
                         elif isinstance(action, ToolUseHandleAction):
                             asyncio.create_task(
-                                self.tool_use_handle_action(action),
+                                self.tool_use_handle_action(action, call_mode),
                             )
 
         except asyncio.CancelledError:
