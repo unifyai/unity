@@ -5,6 +5,7 @@ import unify
 from typing import Dict, Callable
 
 from unity.common.llm_helpers import start_async_tool_use_loop
+from unity.common.llm_helpers import ToolSpec
 from tests.helpers import _get_unity_test_env_var
 
 
@@ -98,6 +99,159 @@ class _ToolCallingUnify(DummyAsyncUnify):
             msg = {"role": "assistant", "content": "noop", "tool_calls": []}
         self.messages.append(msg)
         return msg
+
+
+# ── 7. pruning over-quota tool calls (hidden quotas) ────────────────────────
+class _MultiCallUnify(DummyAsyncUnify):
+    """
+    First assistant turn requests the same base tool three times.
+    Subsequent calls are inert.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._step = 0
+
+    async def generate(self, *a, **_):
+        if self._step == 0:
+            self._step += 1
+            msg = {
+                "role": "assistant",
+                "content": "run short_tool thrice",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "short_tool", "arguments": "{}"},
+                    },
+                    {
+                        "id": "c2",
+                        "type": "function",
+                        "function": {"name": "short_tool", "arguments": "{}"},
+                    },
+                    {
+                        "id": "c3",
+                        "type": "function",
+                        "function": {"name": "short_tool", "arguments": "{}"},
+                    },
+                ],
+            }
+        else:
+            self._step += 1
+            msg = {"role": "assistant", "content": "done", "tool_calls": []}
+        self.messages.append(msg)
+        return msg
+
+
+@pytest.mark.asyncio
+async def test_prunes_over_quota_tool_calls():
+    """When `max_total_calls` is 2, only two calls are scheduled; extras are pruned."""
+
+    counter = {"n": 0}
+
+    async def short_tool():
+        counter["n"] += 1
+        return "ok"
+
+    client = _MultiCallUnify()
+
+    handle = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={
+            # hidden per-loop quota of 2 total calls
+            "short_tool": ToolSpec(fn=short_tool, max_total_calls=2),
+        },
+        prune_tool_duplicates=False,  # allow multiple identical tool_calls for this test
+        timeout=5,
+        max_steps=100,
+        raise_on_limit=True,
+    )
+
+    await handle.result()
+
+    # Tool ran exactly twice
+    assert counter["n"] == 2
+
+    # The first assistant message with tool_calls was pruned to two entries
+    first_asst_with_calls = next(
+        m
+        for m in client.messages
+        if m.get("role") == "assistant" and m.get("tool_calls")
+    )
+    assert len(first_asst_with_calls["tool_calls"]) == 2
+    assert all(
+        tc.get("function", {}).get("name") == "short_tool"
+        for tc in first_asst_with_calls["tool_calls"]
+    )
+
+
+# ── 8. pruning over-quota tool calls across serial turns ────────────────────
+class _SerialCallsUnify(DummyAsyncUnify):
+    """
+    Emits three consecutive assistant turns, each requesting one call to the
+    same base tool. After that, no tool calls.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._step = 0
+
+    async def generate(self, *a, **_):
+        if self._step < 3:
+            self._step += 1
+            msg = {
+                "role": "assistant",
+                "content": f"serial call {self._step}",
+                "tool_calls": [
+                    {
+                        "id": f"s{self._step}",
+                        "type": "function",
+                        "function": {"name": "short_tool", "arguments": "{}"},
+                    },
+                ],
+            }
+        else:
+            self._step += 1
+            msg = {"role": "assistant", "content": "done", "tool_calls": []}
+        self.messages.append(msg)
+        return msg
+
+
+@pytest.mark.asyncio
+async def test_prunes_over_quota_serial_calls():
+    """When three serial turns each request a call, quota=2 prunes the third."""
+
+    counter = {"n": 0}
+
+    async def short_tool():
+        counter["n"] += 1
+        return "ok"
+
+    client = _SerialCallsUnify()
+
+    handle = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={
+            "short_tool": ToolSpec(fn=short_tool, max_total_calls=2),
+        },
+        timeout=5,
+        max_steps=100,
+        raise_on_limit=True,
+    )
+
+    await handle.result()
+
+    # Tool ran exactly twice
+    assert counter["n"] == 2
+
+    # Across all assistant messages, only two tool_calls remain after pruning
+    total_calls = 0
+    for m in client.messages:
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            total_calls += len(m["tool_calls"])
+    assert total_calls == 2
 
 
 # helper factory: returns an async tool that notes cancellation -------------
