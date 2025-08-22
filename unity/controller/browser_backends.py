@@ -215,8 +215,6 @@ class MagnitudeBrowserBackend(BrowserBackend):
         self._start_output_readers()
         atexit.register(self.stop)
 
-        self._load_persistent_data()
-
         deadline = time.time() + 30
         url = f"{MagnitudeBrowserBackend._agent_base_url}/screenshot"
 
@@ -233,6 +231,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
             raise RuntimeError(
                 f"Magnitude BrowserAgent failed to become ready within 30 seconds on port {port}",
             )
+
+        self._load_persistent_data()
 
     def _start_output_readers(self):
         """Start threads to read stdout/stderr to prevent buffer blocking."""
@@ -318,29 +318,53 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """
         # list all files in /home/install through the endpoint, then for each file, save in local /home/install
         try:
-            base_url = MagnitudeBrowserBackend._agent_base_url
-            endpoint = f"{base_url}/codesandbox/file"
+            orchestra_url = os.getenv("UNIFY_BASE_URL")
+            endpoint = f"{orchestra_url}/file"
 
             user_id = os.environ.get("USER_ID", "default")
             project = f"Assistants/{os.environ.get('ASSISTANT_NAME', 'assistant')}"
 
-            # 1) Get recursive listing from the remote project
+            headers = {
+                "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
+            }
+
+            # 1) Get all files from Orchestra (path -> content)
             resp = requests.get(
                 endpoint,
                 params={
                     "user_id": user_id,
                     "project": project,
-                    "isDirectory": "true",
+                    "staging": "staging" in orchestra_url,
                 },
-                timeout=30,
+                headers=headers,
+                timeout=60,
             )
-            resp.raise_for_status()
-            listing = resp.json().get("files", [])
+            if resp.status_code >= 400:
+                print(
+                    f"Warning: Orchestra list failed: {resp.status_code} {resp.text[:200]}",
+                )
+                return
+            files_map = resp.json() or {}
 
-            install_root = "/home/install"
-            os.makedirs(install_root, exist_ok=True)
+            print("files_map:", files_map)
 
-            print("listing:", listing)
+            # install_root = "/home/install"
+            # os.makedirs(install_root, exist_ok=True)
+
+            # # 2) Write each file under /home/install, stripping the user/project prefix
+            # prefix = f"{user_id}/{project}/"
+            # for path_key, content in files_map.items():
+            #     try:
+            #         if not isinstance(path_key, str):
+            #             continue
+            #         rel = path_key[len(prefix):] if path_key.startswith(prefix) else path_key
+            #         local_path = os.path.join(install_root, rel)
+            #         os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            #         data = content if isinstance(content, str) else str(content)
+            #         with open(local_path, "wb") as f:
+            #             f.write(data.encode("utf-8", errors="ignore"))
+            #     except Exception as e:
+            #         print(f"Warning: Could not restore {path_key}: {e}")
 
             # 2) For each file entry, download its bytes and write to local /home/install
             # for entry in listing:
@@ -407,38 +431,54 @@ class MagnitudeBrowserBackend(BrowserBackend):
         # save files in /home/install folder with the endpoint
         try:
             install_root = "/home/install"
-            os.makedirs(install_root, exist_ok=True)
 
-            base_url = MagnitudeBrowserBackend._agent_base_url
-            endpoint = f"{base_url}/codesandbox/file"
-            user_id = os.environ.get("USER_ID", "default")
-            project = f"Assistants/{os.environ.get('ASSISTANT_NAME', 'assistant')}"
-
+            # Build files mapping: relative_path -> base64 content
+            files_map: dict[str, str] = {}
             for root, _, files in os.walk(install_root):
                 for fname in files:
                     fpath = os.path.join(root, fname)
-                    # rel = os.path.relpath(fpath, project)
-                    params = {
-                        "user_id": user_id,
-                        "project": project,
-                        "filename": fpath,
-                    }
-                    print("save data:", params)
-                    # try:
-                    #     with open(fpath, "rb") as fp:
-                    #         r = requests.post(
-                    #             endpoint,
-                    #             params=params,
-                    #             data=fp.read(),
-                    #             headers={"Content-Type": "application/octet-stream"},
-                    #             timeout=30,
-                    #         )
-                    #     if r.status_code >= 400:
-                    #         print(
-                    #             f"Warning: Failed to persist {fpath}: {r.status_code} {r.text[:200]}"
-                    #         )
-                    # except Exception as e:
-                    #     print(f"Warning: Could not persist {fpath}: {e}")
+                    rel_path = os.path.relpath(
+                        fpath,
+                        f"/{os.getenv("ASSISTANT_NAME", "assistant")}",
+                    )
+                    try:
+                        with open(fpath, "rb") as fp:
+                            import base64
+
+                            b64 = base64.b64encode(fp.read()).decode("utf-8")
+                        files_map[rel_path] = b64
+                    except Exception as e:
+                        print(
+                            f"Warning: Could not read {rel_path} for persistence: {e}",
+                        )
+
+            print("files_map:", files_map)
+
+            # if files_map:
+            #     orchestra_url = os.getenv("UNIFY_BASE_URL")
+            #     endpoint = f"{orchestra_url}/admin/file"
+
+            #     user_id = os.environ.get("USER_ID", "default")
+            #     project = f"Assistants/{os.environ.get('ASSISTANT_NAME', 'assistant')}"
+            #     headers = {
+            #         "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
+            #         "Content-Type": "application/json",
+            #     }
+            #     payload = {
+            #         "user_id": user_id,
+            #         "project": project,
+            #         "files": files_map,
+            #         "staging": "staging" in orchestra_url,
+            #     }
+
+            #     try:
+            #         r = requests.post(endpoint, json=payload, headers=headers, timeout=120)
+            #         if r.status_code >= 400:
+            #             print(
+            #                 f"Warning: Orchestra persist failed: {r.status_code} {r.text[:200]}"
+            #             )
+            #     except Exception as e:
+            #         print(f"Warning: Could not reach Orchestra to persist files: {e}")
         except Exception as e:
             print(f"Warning: Could not enumerate /home/install for persistence: {e}")
 
@@ -579,7 +619,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
                 )
 
-                # self._save_persistent_data()
+                self._save_persistent_data()
 
                 if sys.platform != "win32":
                     import signal
