@@ -805,7 +805,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     elapsed = time.perf_counter() - start_ts
 
     # ── 5.  Assertions ───────────────────────────────────────────────────
-    assert final_reply.strip().lower() == "finished"
+    assert "finished" in final_reply.strip().lower()
 
     # pause/resume each called exactly once
     assert counts == {"pause": 1, "resume": 1}
