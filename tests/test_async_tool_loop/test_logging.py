@@ -91,7 +91,7 @@ async def test_nested_logging_hierarchy_labels():
         (evt.payload or {}).get("hierarchy") == ["Outer", "Inner"] for evt in events
     )
     has_outer_inner_label = any(
-        (evt.payload or {}).get("hierarchy_label") == "Outer -> Inner" for evt in events
+        (evt.payload or {}).get("hierarchy_label") == "Outer->Inner" for evt in events
     )
 
     assert has_outer_only, "No ToolLoop event recorded with hierarchy ['Outer']"
