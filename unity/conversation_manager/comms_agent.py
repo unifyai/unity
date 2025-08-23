@@ -304,16 +304,15 @@ class CommsAgent:
         while True:
             try:
                 new_event = await asyncio.wait_for(self.events_queue.get(), 1)
-                call_mode = (
-                    new_event["payload"].get("call_mode")
-                    or new_event["event_name"] in [
-                        "PhoneCallStartedEvent",
-                        "PhoneCallInitiatedEvent",
-                        "PhoneCallEndedEvent",
-                        "PhoneCallStopEvent",
-                        "PhoneUtteranceEvent",
-                    ]
-                )
+                call_mode = new_event["payload"].get("call_mode") or new_event[
+                    "event_name"
+                ] in [
+                    "PhoneCallStartedEvent",
+                    "PhoneCallInitiatedEvent",
+                    "PhoneCallEndedEvent",
+                    "PhoneCallStopEvent",
+                    "PhoneUtteranceEvent",
+                ]
                 # print("comm agent got", new_event)
                 # continue
                 if new_event["payload"]["transient"]:
