@@ -1079,7 +1079,7 @@ def steering_controls_hint(
     ]
     if voice_enabled:
         base_parts.append("/r (record voice)")
-    base_parts.extend(["/stop", "/help"])
+    base_parts.extend(["/stop [reason]", "/help"])
 
     hint = "Controls: " + ", ".join(base_parts)
 
@@ -1099,6 +1099,8 @@ def steering_controls_hint(
 # Shared steering intent model and router system prompt
 class _SteeringIntent(BaseModel):
     action: str = Field(..., pattern="^(ask|interject|pause|resume|stop|status)$")
+    # Optional free-form reason only used when action == "stop"
+    reason: Optional[str] = None
 
 
 def _steering_router_sys() -> str:
@@ -1118,11 +1120,14 @@ def _steering_router_sys() -> str:
         "- If a task is RUNNING and the user explicitly asks to pause/hold/temporarily stop, choose 'pause'.\n"
         "- If a task is PAUSED (you may infer from recent 'Paused' announcements) and the user asks to continue, choose 'resume'.\n"
         "- If the request is to update/modify/steer the currently running task (without stopping/cancelling), then choose `interject`.\n"
+        "Stop reason extraction:\n"
+        "- When choosing 'stop', also include a concise 'reason' when present in the user's wording (e.g., postponements, scheduling, no longer needed, do it later/next week/tomorrow, change of plan).\n"
+        "- The reason should be a short phrase taken from the user's message, without paraphrasing when possible. If no reason is given, set reason to null.\n"
         "Rules:\n"
-        "- Only decide the action; do not rewrite, summarize, or clean the user's text.\n"
+        "- Only decide the action and (for stop) extract an optional reason; do not rewrite, summarize, or clean the user's text.\n"
         "- Ignore pleasantries and judge the semantics.\n"
         "- When uncertain between 'ask' and 'interject', choose 'interject' (safer).\n"
-        "Return ONLY JSON matching the response schema with an 'action' field."
+        "Return ONLY JSON matching the response schema with an 'action' field and optional 'reason' (string or null)."
     )
 
 
@@ -1132,6 +1137,8 @@ async def _apply_steering_action(
     text: str,
     enable_voice_steering: bool,
     HELP_TEXT: str,
+    *,
+    reason: Optional[str] = None,
 ) -> bool:
     """Apply a routed steering action. Returns True if the caller should break (on stop)."""
     try:
@@ -1190,7 +1197,11 @@ async def _apply_steering_action(
             return False
         if action == "stop":
             print("stopping…")
-            handle.stop()
+            # Pass a reason when provided; otherwise call without argument
+            if isinstance(reason, str) and reason.strip():
+                handle.stop(reason)
+            else:
+                handle.stop()
             print("✅ Stop sent.")
             if enable_voice_steering:
                 speak("Stop sent")
@@ -1279,6 +1290,7 @@ async def _route_freeform_and_apply(
         text,
         enable_voice_steering,
         HELP_TEXT,
+        reason=getattr(intent, "reason", None),
     )
 
 
@@ -1371,7 +1383,11 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
 
                 if cmd in {"stop", "cancel", "s"}:
                     print("stopping…")
-                    handle.stop()
+                    # Allow an optional free-form reason after the command token
+                    if arg and arg.strip():
+                        handle.stop(arg)
+                    else:
+                        handle.stop()
                     print("✅ Stop sent.")
                     if enable_voice_steering:
                         speak("Stop sent")
