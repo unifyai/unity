@@ -1105,7 +1105,7 @@ def _steering_router_sys() -> str:
     return (
         "You are a router that maps a user's free-form message to one of these steering commands: "
         "'ask', 'interject', 'pause', 'resume', 'stop', or 'status'.\n"
-        "Decide based on the user's intent relative to an ONGOING task.\n"
+        "You will be given a short transcript with the latest user message at the end. Decide based on the user's intent given the conversation and whether a task is currently running.\n"
         "Definitions:\n"
         "- 'interject': Any directive that would change, add, remove, create, continue, or otherwise steer what the running task should do next. "
         "Treat polite or indirect phrasing (e.g., 'could you', 'please', 'let's', 'why don't we'), and requests containing action verbs (set/add/update/change/modify/remove/delete/replace/make/use/fill/assign/write/generate) as interjections. "
@@ -1113,6 +1113,11 @@ def _steering_router_sys() -> str:
         "- 'ask': A read-only question about the running task or its data (progress, status, what has happened/what will happen, counts, why, how long). "
         "It must NOT request any change to behaviour or data.\n"
         "- 'pause'/'resume'/'stop'/'status': Direct control commands. Map common synonyms: 'continue' ⇒ 'resume'.\n"
+        "Conversation-aware rules:\n"
+        "- If a task is RUNNING and the latest user message indicates reverting, postponing, deferring, or otherwise NOT doing the task now (e.g., 'let's do it next week', 'don't worry about it now', 'we'll do it later', 'scrap this for now'), choose 'stop'.\n"
+        "- If a task is RUNNING and the user explicitly asks to pause/hold/temporarily stop, choose 'pause'.\n"
+        "- If a task is PAUSED (you may infer from recent 'Paused' announcements) and the user asks to continue, choose 'resume'.\n"
+        "- If the request is to update/modify/steer the currently running task (without stopping/cancelling), then choose `interject`.\n"
         "Rules:\n"
         "- Only decide the action; do not rewrite, summarize, or clean the user's text.\n"
         "- Ignore pleasantries and judge the semantics.\n"
@@ -1226,12 +1231,47 @@ async def _route_freeform_and_apply(
     text: str,
     enable_voice_steering: bool,
     HELP_TEXT: str,
+    chat_context: Optional[list[dict]] = None,
+    is_task_running: Optional[bool] = None,
 ) -> bool:
     import unify as _unify
 
     judge = _unify.Unify("gpt-4o@openai", response_format=_SteeringIntent)
+
+    # Build a compact, recent-first transcript to provide conversation context
+    def _format_ctx(ctx: list[dict], limit_chars: int = 2000) -> str:
+        try:
+            lines: list[str] = []
+            total = 0
+            for msg in reversed(ctx[-20:]):  # last 20 turns max
+                role = str(msg.get("role", "")).strip() or "user"
+                content = str(msg.get("content", "")).strip()
+                line = f"{role}: {content}"
+                if total + len(line) > limit_chars:
+                    break
+                lines.append(line)
+                total += len(line)
+            return "\n".join(reversed(lines)) if lines else "(no prior context)"
+        except Exception:
+            return "(no prior context)"
+
+    ctx_block = _format_ctx(chat_context or [])
+    running_hint = (
+        "RUNNING"
+        if (is_task_running is True)
+        else ("UNKNOWN" if is_task_running is None else "NOT_RUNNING")
+    )
+
+    router_input = (
+        "Conversation (most recent last):\n"
+        f"{ctx_block}\n\n"
+        f"Task state: {running_hint}.\n"
+        "Latest user message:\n"
+        f"{text}"
+    )
+
     intent = _SteeringIntent.model_validate_json(
-        judge.set_system_message(_steering_router_sys()).generate(text),
+        judge.set_system_message(_steering_router_sys()).generate(router_input),
     )
     return await _apply_steering_action(
         handle,
@@ -1250,6 +1290,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
     clarification_up_q: Optional[asyncio.Queue[str]] = None,
     clarification_down_q: Optional[asyncio.Queue[str]] = None,
     clarifications_enabled: bool = True,
+    chat_context: Optional[list[dict]] = None,
 ) -> str:
     """
     **Common wrapper** used by all interactive sandboxes.
@@ -1551,6 +1592,8 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                 pending_clarification=(pending_clar_q is not None),
                                 voice_enabled=enable_voice_steering,
                             ),
+                            chat_context=chat_context,
+                            is_task_running=not handle.done(),
                         )
                         if should_break:
                             break
@@ -1569,6 +1612,8 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             pending_clarification=(pending_clar_q is not None),
                             voice_enabled=enable_voice_steering,
                         ),
+                        chat_context=chat_context,
+                        is_task_running=not handle.done(),
                     )
                     if should_break:
                         break
