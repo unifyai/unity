@@ -342,6 +342,7 @@ async def _main_async() -> None:
                 clarification_up_q=_clar_up,
                 clarification_down_q=_clar_down,
                 clarifications_enabled=not args.no_clarifications,
+                chat_context=list(chat_history),
             )
             if isinstance(answer, tuple):  # reasoning steps requested
                 answer, _steps = answer
