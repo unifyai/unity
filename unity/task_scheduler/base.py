@@ -43,6 +43,24 @@ class BaseActiveTask(SteerableToolHandle, ABC):
         currently valid in the activity's lifecycle state.
         """
 
+    @abstractmethod
+    def stop(
+        self,
+        *,
+        cancel: bool,
+        reason: Optional[str] = None,
+    ) -> Optional[str]:
+        """Stop the live activity with explicit intent.
+
+        Parameters
+        ----------
+        cancel : bool
+            When True, abandon the task (mark as cancelled). When False, defer and
+            reinstate it back into its prior queue/schedule position where possible.
+        reason : str | None
+            Optional human‑readable reason for logging/auditing.
+        """
+
 
 class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
     """

@@ -104,22 +104,37 @@ class ActiveTask(BaseActiveTask):
         await self._actor_handle.interject(message)
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    def stop(self, reason: Optional[str] = None) -> Optional[str]:
+    def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:
+        """Stop the running activity with explicit intent.
+
+        When ``cancel`` is True the task instance is marked cancelled. When False, the
+        task is deferred and we attempt to reinstate it to its previous queue/schedule
+        position using the stored reintegration plan (when available).
+        """
         ret = self._actor_handle.stop(reason)  # type: ignore[call-arg]
         self._was_stopped = True
-        self._mirror_status("cancelled")
-        # Optionally reinstate the task back into its prior queue position
-        try:
-            if self._scheduler and self._task_id is not None:
-                # Lightweight, synchronous decision (heuristic) – if guidance suggests
-                # resuming later or returning to the original schedule, reinsert now.
-                self._scheduler._maybe_reinstate_after_stop(  # type: ignore[attr-defined]
-                    task_id=self._task_id,
-                    reason=reason,
-                )
-        except Exception:
-            # Reinsertion is best-effort and must not interfere with stop semantics
-            pass
+
+        # Cancel → mark cancelled; Defer → try reinstatement
+        if cancel:
+            self._mirror_status("cancelled")
+        else:
+            try:
+                if self._scheduler and self._task_id is not None:
+                    # Prefer strict reinstatement using the stored plan when present.
+                    try:
+                        self._scheduler._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
+                            task_id=self._task_id,
+                        )
+                    except Exception:
+                        # If no plan exists, fall back to heuristic best-effort reinsertion.
+                        self._scheduler._maybe_reinstate_after_stop(  # type: ignore[attr-defined]
+                            task_id=self._task_id,
+                            reason=reason,
+                        )
+            except Exception:
+                # Best-effort – failure to reinstate must not break stop semantics
+                pass
+
         self._clear_active_pointer()
         return ret
 
