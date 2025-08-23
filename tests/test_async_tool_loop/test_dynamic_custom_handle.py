@@ -50,11 +50,14 @@ class CustomArgsHandle(SteerableToolHandle):
 
     def __init__(self) -> None:
         self._done_ev = asyncio.Event()
+        self._result_text: str = "inner-complete"
         self.interject_calls: List[Dict[str, Any]] = []
         self.pause_calls: List[Dict[str, Any]] = []
         self.resume_calls: List[Dict[str, Any]] = []
         self.stop_calls: List[Dict[str, Any]] = []
         self.ask_calls: List[Dict[str, Any]] = []
+        # Mark custom write-only helpers
+        self.write_only_methods = ["abort"]
 
     async def ask(
         self,
@@ -95,12 +98,20 @@ class CustomArgsHandle(SteerableToolHandle):
         self.resume_calls.append({"resume_token": resume_token})
         return "resumed"
 
+    # Write-only helper: terminate with an "aborted" result. This method is
+    # intentionally write-only (no returned value used by the loop); the loop
+    # should acknowledge and finish when the nested handle resolves.
+    def abort(self, *, reason: Optional[str] = None) -> None:
+        self._result_text = "aborted"
+        self._done_ev.set()
+        return None
+
     def done(self) -> bool:
         return self._done_ev.is_set()
 
     async def result(self) -> str:
         await self._done_ev.wait()
-        return "inner-complete"
+        return self._result_text
 
 
 @unify.traced
@@ -201,3 +212,52 @@ async def test_dynamic_helper_args_are_exposed_and_forwarded(client):
         return count
 
     assert _assistant_calls_prefix("stop_") >= 1
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_write_only_custom_abort_method_finishes_nested_handle(client):
+    """
+    End-to-end: expose a write-only custom helper `abort` on the spawned handle.
+    The model should call the helper, we acknowledge immediately, and the nested
+    handle should resolve with the "aborted" message allowing the outer loop to finish.
+    """
+
+    client.set_system_message(
+        "Call `spawn_custom_handle` to start a task that exposes dynamic helpers.",
+    )
+
+    outer = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"spawn_custom_handle": spawn_custom_handle},
+        timeout=60,
+        max_steps=20,
+    )
+
+    # Ensure the spawn tool has been requested so helpers will be exposed
+    await _wait_for_tool_request(client, "spawn_custom_handle")
+
+    # Instruct the model to call abort and then reply with 'done'
+    await outer.interject(
+        "Now, call the abort helper immediately, then respond only with: done",
+    )
+
+    final = await outer.result()
+    assert final.strip().lower() == "done"
+
+    # Verify that a tool message shows the nested handle finished with "aborted"
+    msgs = client.messages or []
+
+    def _has_aborted_tool_message(messages: List[Dict[str, Any]]) -> bool:
+        for m in messages:
+            if m.get("role") != "tool":
+                continue
+            content = m.get("content")
+            if isinstance(content, str):
+                txt = content.strip().strip('"').lower()
+                if txt == "aborted":
+                    return True
+        return False
+
+    assert _has_aborted_tool_message(msgs)
