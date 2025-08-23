@@ -98,8 +98,11 @@ def build_ask_prompt(
     clarification_block = (
         textwrap.dedent(
             f"""
-            • Ask for clarification when the user's request is underspecified
-              `{request_clar_fname}(question="Which conversation are you referring to?")`
+            Ask vs Clarification
+            --------------------
+            • `{search_messages_fname}` / `{filter_messages_fname}` are for querying **existing** transcripts only.
+            • Do NOT use `ask` to ask the human questions. For human clarifications about which conversation/date/person, call:
+              `{request_clar_fname}(question=\"Which conversation are you referring to?\")`
             """,
         ).strip()
         if request_clar_fname
@@ -147,6 +150,7 @@ def build_ask_prompt(
                 usage_examples,
                 "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
                 "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+                "• Remember: `ask` is read‑only and for EXISTING transcripts only. Do not route human clarifications through it.",
             ],
         )
 
@@ -169,6 +173,7 @@ def build_ask_prompt(
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
             clar_sentence,
+            "Please mention relevant `message_id` and/or `exchange_id` values in your response when possible.",
             "Use the tools to gather missing context before asking the user for clarifications.",
             "",
             f"There are currently {num_messages} messages stored in the Transcripts table.",
