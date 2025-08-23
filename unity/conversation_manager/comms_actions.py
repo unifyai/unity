@@ -242,16 +242,17 @@ async def _send_whatsapp_message_via_number(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            await publish_event(
-                {
-                    "topic": to_number,
-                    "event": WhatsappMessageSentEvent(
-                        content=message,
-                        role="Assistant",
-                        timestamp=datetime.now().isoformat(),
-                    ).to_dict(),
-                },
-            )
+            # await publish_event(
+            #     {
+            #         "topic": to_number,
+            #         "to": "past",
+            #         "event": WhatsappMessageSentEvent(
+            #             content=message,
+            #             role="Assistant",
+            #             timestamp=datetime.now().isoformat(),
+            #         ).to_dict(),
+            #     },
+            # )
             return response_text
 
 
@@ -285,16 +286,17 @@ async def _send_sms_message_via_number(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            await publish_event(
-                {
-                    "topic": to_number,
-                    "event": SMSMessageSentEvent(
-                        content=message,
-                        role="Assistant",
-                        timestamp=datetime.now().isoformat(),
-                    ).to_dict(),
-                },
-            )
+            # await publish_event(
+            #     {
+            #         "topic": to_number,
+            #         "to": "past",
+            #         "event": SMSMessageSentEvent(
+            #             content=message,
+            #             role="Assistant",
+            #             timestamp=datetime.now().isoformat(),
+            #         ).to_dict(),
+            #     },
+            # )
             return response_text
 
 
@@ -334,17 +336,18 @@ async def _send_email_via_address(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            await publish_event(
-                {
-                    "topic": to_email,
-                    "event": EmailSentEvent(
-                        content=content,
-                        role="Assistant",
-                        timestamp=datetime.now().isoformat(),
-                        message_id=message_id,
-                    ).to_dict(),
-                },
-            )
+            # await publish_event(
+            #     {
+            #         "topic": to_email,
+            #         "to": "past",
+            #         "event": EmailSentEvent(
+            #             content=content,
+            #             role="Assistant",
+            #             timestamp=datetime.now().isoformat(),
+            #             message_id=message_id,
+            #         ).to_dict(),
+            #     },
+            # )
             return response_text
 
 
