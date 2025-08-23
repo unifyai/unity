@@ -150,7 +150,7 @@ jobs:
         UNIFY_BASE_URL: https://api.unify.ai/v0
         UNIFY_CACHE: true
         UNIFY_TRACED: false
-        UNIFY_DELETE_CONTEXT_ON_EXIT: false
+        UNIFY_DELETE_CONTEXT_ON_EXIT: true
         UNIFY_OVERWRITE_PROJECT: true
         UNIFY_CACHE_BENCHMARK: true
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
