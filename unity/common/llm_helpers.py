@@ -542,6 +542,114 @@ async def _maybe_await(obj):
     return obj
 
 
+# Shared steering helpers – reduce duplication across dynamic helper tools
+def _adopt_signature_and_annotations(from_callable, to_wrapper) -> None:
+    """Copy signature and annotations (excluding 'self') from from_callable to to_wrapper."""
+    try:
+        import inspect as _inspect
+
+        to_wrapper.__signature__ = _inspect.signature(from_callable)
+        try:
+            ann = dict(getattr(from_callable, "__annotations__", {}))
+            ann.pop("self", None)
+            to_wrapper.__annotations__ = ann
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _normalise_kwargs_for_bound_method(bound_method, incoming_kw: dict) -> dict:
+    """Normalise kwargs for a bound method: expand nested kwargs, drop noise keys,
+    map common aliases when there is a single public param, and filter unknown keys
+    unless **kwargs is accepted."""
+    try:
+        import inspect as _inspect
+
+        sig = _inspect.signature(bound_method)
+        params = sig.parameters
+        has_varkw = any(
+            p.kind == _inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+
+        kw = dict(incoming_kw or {})
+
+        # 1) Expand nested {"kwargs": {...}}
+        if "kwargs" in kw and isinstance(kw["kwargs"], dict):
+            nested_kw = kw.pop("kwargs")
+            for k, v in nested_kw.items():
+                kw.setdefault(k, v)
+
+        # 2) Drop common placeholder noise keys when empty
+        for _noise in ("a", "kw"):
+            if _noise in kw and (kw[_noise] is None or kw[_noise] == ""):
+                kw.pop(_noise, None)
+
+        # 3) If exactly one public param, accept common aliases
+        public_params = [n for n in params if n != "self"]
+        if len(public_params) == 1 and public_params[0] not in kw:
+            for alias in (
+                "content",
+                "message",
+                "text",
+                "prompt",
+                "guidance",
+                "instruction",
+                "question",
+                "query",
+            ):
+                if alias in kw:
+                    kw[public_params[0]] = kw.pop(alias)
+                    break
+
+        # 4) Filter unknown keys unless **kwargs is accepted
+        if not has_varkw:
+            kw = {k: v for k, v in kw.items() if k in params}
+        return kw
+    except Exception:
+        # Best-effort; return original
+        return dict(incoming_kw or {})
+
+
+async def _forward_handle_call(
+    handle: Any,
+    method_name: str,
+    kwargs: dict | None,
+    *,
+    fallback_positional_keys: list[str] | tuple[str, ...] = (),
+):
+    """Invoke a steering method on a handle with robust kwargs handling.
+
+    - Filters/normalises kwargs against the bound method's signature.
+    - If the method rejects kwargs, tries positional fallback with the first
+      available key from fallback_positional_keys (e.g., reason/content).
+    - Finally falls back to calling without arguments.
+    """
+    try:
+        bound = getattr(handle, method_name)
+    except Exception:
+        return None
+
+    try:
+        normalised = _normalise_kwargs_for_bound_method(bound, kwargs or {})
+        return await _maybe_await(bound(**normalised))
+    except TypeError:
+        # Fallbacks for legacy signatures
+        for k in fallback_positional_keys:
+            if kwargs and k in kwargs:
+                try:
+                    return await _maybe_await(bound(kwargs.get(k)))  # type: ignore[misc]
+                except Exception:
+                    pass
+        try:
+            return await _maybe_await(bound())  # type: ignore[misc]
+        except Exception:
+            return None
+    except Exception:
+        # Defensive: never let steering failures crash the loop
+        return None
+
+
 def _chat_context_repr(
     parent_ctx: Optional[list[dict]],
     current_msgs: list[dict],
@@ -2135,34 +2243,12 @@ async def _async_tool_use_loop_inner(
                 ) -> Dict[str, str]:
                     # Forward stop intent to the running handle with any extra kwargs
                     if handle is not None and hasattr(handle, "stop"):
-                        try:
-                            import inspect as _inspect
-
-                            bound = getattr(handle, "stop")
-                            sig = _inspect.signature(bound)
-                            params = sig.parameters
-                            has_varkw = any(
-                                p.kind == _inspect.Parameter.VAR_KEYWORD
-                                for p in params.values()
-                            )
-                            fwd_kw = dict(_kw)
-                            # Filter unknown keys unless the handle accepts **kwargs
-                            if not has_varkw:
-                                fwd_kw = {
-                                    k: v for k, v in fwd_kw.items() if k in params
-                                }
-                            # Try to pass through extras (reason, etc.)
-                            try:
-                                await _maybe_await(bound(**fwd_kw))
-                            except TypeError:
-                                # Fallback to legacy signature with optional reason only
-                                if "reason" in fwd_kw:
-                                    await _maybe_await(bound(fwd_kw.get("reason")))  # type: ignore[misc]
-                                else:
-                                    await _maybe_await(bound())  # type: ignore[misc]
-                        except Exception:
-                            # Defensive: never let steering fail the loop
-                            pass
+                        await _forward_handle_call(
+                            handle,
+                            "stop",
+                            _kw,
+                            fallback_positional_keys=["reason"],
+                        )
                     if not _task.done():
                         _task.cancel()  # kill the waiter coroutine
                     pending.discard(_task)
@@ -2177,18 +2263,8 @@ async def _async_tool_use_loop_inner(
                 )
                 # Expose full argspec of handle.stop in the helper schema
                 try:
-                    import inspect as _inspect
-
                     if handle is not None and hasattr(handle, "stop"):
-                        _b = getattr(handle, "stop")
-                        _stop.__signature__ = _inspect.signature(_b)
-                        # Propagate annotations where possible (excluding self)
-                        try:
-                            _ann = dict(getattr(_b, "__annotations__", {}))
-                            _ann.pop("self", None)
-                            _stop.__annotations__ = _ann
-                        except Exception:
-                            pass
+                        _adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
                 except Exception:
                     pass
 
@@ -2196,7 +2272,7 @@ async def _async_tool_use_loop_inner(
                 if info.get("is_interjectable"):
                     _interject_doc = (
                         f"Inject additional instructions for {_fn_name}({_arg_repr}). "
-                        "Takes a single argument `content` containing plain-English guidance."
+                        "Accepts any arguments supported by the underlying handle's `interject` method (e.g. `content`)."
                     )
 
                     if handle is not None:
@@ -2204,49 +2280,14 @@ async def _async_tool_use_loop_inner(
                         async def _interject(**_kw) -> Dict[str, str]:
                             # nested async-tool loop: delegate to its public API with full argspec
                             try:
-                                import inspect as _inspect
-
-                                _bound = getattr(handle, "interject")
-                                sig = _inspect.signature(_bound)
-                                params = sig.parameters
-                                has_varkw = any(
-                                    p.kind == _inspect.Parameter.VAR_KEYWORD
-                                    for p in params.values()
+                                await _forward_handle_call(
+                                    handle,
+                                    "interject",
+                                    _kw,
+                                    fallback_positional_keys=["content", "message"],
                                 )
-
-                                # Map common aliases when a single public parameter is present
-                                public_params = [n for n in params if n != "self"]
-                                if (
-                                    len(public_params) == 1
-                                    and public_params[0] not in _kw
-                                ):
-                                    for alias in (
-                                        "content",
-                                        "message",
-                                        "text",
-                                        "prompt",
-                                        "guidance",
-                                        "instruction",
-                                    ):
-                                        if alias in _kw:
-                                            _kw[public_params[0]] = _kw.pop(alias)
-                                            break
-
-                                # Filter unknown keys unless **kwargs is accepted
-                                if not has_varkw:
-                                    _kw = {k: v for k, v in _kw.items() if k in params}
-                                await _maybe_await(_bound(**_kw))
                             except Exception:
-                                # Best-effort normalisation – never fail the call because of sanitisation
-                                try:
-                                    await _maybe_await(
-                                        handle.interject(
-                                            _kw.get("content")
-                                            or _kw.get("message", ""),
-                                        ),
-                                    )
-                                except Exception:
-                                    pass
+                                pass
                             return {
                                 "status": "interjected",
                                 "call_id": _call_id,
@@ -2255,20 +2296,10 @@ async def _async_tool_use_loop_inner(
 
                         # Expose the downstream handle's signature to the LLM
                         try:
-                            import inspect as _inspect
-
-                            _interject.__signature__ = _inspect.signature(
+                            _adopt_signature_and_annotations(
                                 getattr(handle, "interject"),
+                                _interject,
                             )
-                            _ann = dict(
-                                getattr(
-                                    getattr(handle, "interject"),
-                                    "__annotations__",
-                                    {},
-                                ),
-                            )
-                            _ann.pop("self", None)
-                            _interject.__annotations__ = _ann
                         except Exception:
                             pass
 
@@ -2322,40 +2353,17 @@ async def _async_tool_use_loop_inner(
 
                         async def _pause(**_kw) -> Dict[str, str]:
                             try:
-                                import inspect as _inspect
-
-                                _bound = getattr(handle, "pause")
-                                sig = _inspect.signature(_bound)
-                                params = sig.parameters
-                                has_varkw = any(
-                                    p.kind == _inspect.Parameter.VAR_KEYWORD
-                                    for p in params.values()
-                                )
-                                # Filter unknown keys unless **kwargs is accepted
-                                if not has_varkw:
-                                    _kw = {k: v for k, v in _kw.items() if k in params}
-                                await _maybe_await(_bound(**_kw))
+                                await _forward_handle_call(handle, "pause", _kw)
                             except Exception:
-                                # Fallback to simple pause without extras
-                                await _maybe_await(handle.pause())
+                                pass
                             return {"status": "paused", "call_id": _call_id, **_kw}
 
                         # Reflect downstream signature/annotations
                         try:
-                            import inspect as _inspect
-
-                            _pause.__signature__ = _inspect.signature(
+                            _adopt_signature_and_annotations(
                                 getattr(handle, "pause"),
+                                _pause,
                             )
-                            _ann = dict(
-                                getattr(
-                                    getattr(handle, "pause"),
-                                    "__annotations__",
-                                    {},
-                                ),
-                            )
-                            _ann.pop("self", None)
-                            _pause.__annotations__ = _ann
                         except Exception:
                             pass
 
@@ -2385,37 +2393,16 @@ async def _async_tool_use_loop_inner(
 
                         async def _resume(**_kw) -> Dict[str, str]:
                             try:
-                                import inspect as _inspect
-
-                                _bound = getattr(handle, "resume")
-                                sig = _inspect.signature(_bound)
-                                params = sig.parameters
-                                has_varkw = any(
-                                    p.kind == _inspect.Parameter.VAR_KEYWORD
-                                    for p in params.values()
-                                )
-                                if not has_varkw:
-                                    _kw = {k: v for k, v in _kw.items() if k in params}
-                                await _maybe_await(_bound(**_kw))
+                                await _forward_handle_call(handle, "resume", _kw)
                             except Exception:
-                                await _maybe_await(handle.resume())
+                                pass
                             return {"status": "resumed", "call_id": _call_id, **_kw}
 
                         try:
-                            import inspect as _inspect
-
-                            _resume.__signature__ = _inspect.signature(
+                            _adopt_signature_and_annotations(
                                 getattr(handle, "resume"),
+                                _resume,
                             )
-                            _ann = dict(
-                                getattr(
-                                    getattr(handle, "resume"),
-                                    "__annotations__",
-                                    {},
-                                ),
-                            )
-                            _ann.pop("self", None)
-                            _resume.__annotations__ = _ann
                         except Exception:
                             pass
 
@@ -2894,17 +2881,12 @@ async def _async_tool_use_loop_inner(
                             nested_handle = task_info[task_to_cancel].get("handle")
                             if nested_handle is not None:
                                 # public API call – propagates cancellation downwards
-                                try:
-                                    # Prefer kwargs (including any extra ones)
-                                    await _maybe_await(
-                                        nested_handle.stop(**payload),
-                                    )  # type: ignore[misc]
-                                except TypeError:
-                                    # Fallbacks for legacy signatures
-                                    if "reason" in payload:
-                                        await _maybe_await(nested_handle.stop(payload.get("reason")))  # type: ignore[misc]
-                                    else:
-                                        await _maybe_await(nested_handle.stop())  # type: ignore[misc]
+                                await _forward_handle_call(
+                                    nested_handle,
+                                    "stop",
+                                    payload,
+                                    fallback_positional_keys=["reason"],
+                                )
 
                         # ── then cancel the waiter coroutine itself ───────────────────────────
                         if task_to_cancel and not task_to_cancel.done():
@@ -2956,10 +2938,7 @@ async def _async_tool_use_loop_inner(
                             h = task_info[tgt_task].get("handle")
                             ev = task_info[tgt_task].get("pause_event")
                             if h is not None and hasattr(h, "pause"):
-                                try:
-                                    await _maybe_await(h.pause(**payload))
-                                except TypeError:
-                                    await _maybe_await(h.pause())
+                                await _forward_handle_call(h, "pause", payload)
                             elif ev is not None:
                                 ev.clear()
 
@@ -3003,10 +2982,7 @@ async def _async_tool_use_loop_inner(
                             h = task_info[tgt_task].get("handle")
                             ev = task_info[tgt_task].get("pause_event")
                             if h is not None and hasattr(h, "resume"):
-                                try:
-                                    await _maybe_await(h.resume(**payload))
-                                except TypeError:
-                                    await _maybe_await(h.resume())
+                                await _forward_handle_call(h, "resume", payload)
                             elif ev is not None:
                                 ev.set()
 
@@ -3093,10 +3069,12 @@ async def _async_tool_use_loop_inner(
                             if iq is not None:
                                 await iq.put(new_text)
                             elif h is not None and hasattr(h, "interject"):
-                                try:
-                                    await _maybe_await(h.interject(**payload))
-                                except TypeError:
-                                    await _maybe_await(h.interject(new_text))
+                                await _forward_handle_call(
+                                    h,
+                                    "interject",
+                                    payload,
+                                    fallback_positional_keys=["content", "message"],
+                                )
 
                         # ― emit a tool message so the chat log stays tidy ---
                         tool_msg = {
