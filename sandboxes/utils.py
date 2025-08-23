@@ -1136,7 +1136,7 @@ async def _apply_steering_action(
     """Apply a routed steering action. Returns True if the caller should break (on stop)."""
     try:
         if action == "ask":
-            print(f"asking question: {text}")
+            print(f"❓ Asking question: {text}")
             nested = await handle.ask(text)
             ans = await nested.result()
             print(f"[ask] → {ans}")
@@ -1405,7 +1405,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             print("✅ Clarification sent.")
                             pending_clar_q = None
                             if enable_voice_steering:
-                                speak("Clarification sent")
+                                speak("Thanks for clarifying.")
                                 _wait_for_tts_end()
                                 print(
                                     steering_controls_hint(
@@ -1449,10 +1449,12 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         if not transcript or transcript.strip() == "":
                             print("⚠️  Empty transcript – ignoring")
                             continue
+                        # Echo the captured clarification transcript for visibility
+                        print(f"▶️  {transcript}")
                         await clarification_down_q.put(transcript)  # type: ignore[union-attr]
                         print("✅ Clarification sent.")
                         pending_clar_q = None
-                        speak("Clarification sent")
+                        speak("Thanks for clarifying.")
                         _wait_for_tts_end()
                         print(
                             steering_controls_hint(
@@ -1553,7 +1555,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         print("Usage: /ask <question>")
                     else:
                         try:
-                            print(f"asking question: {arg}")
+                            print(f"❓ Asking question: {arg}")
                             # Forward the question exactly as provided
                             nested = await handle.ask(arg)
                             ans = await nested.result()
@@ -1584,6 +1586,8 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         if not transcript or transcript.strip() == "":
                             print("⚠️  Empty transcript – ignoring")
                             continue
+                        # Echo the captured freeform transcript for visibility
+                        print(f"▶️  {transcript}")
                         should_break = await _route_freeform_and_apply(
                             handle,
                             transcript,
@@ -1676,7 +1680,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         print("✅ Clarification sent.")
                         pending_clar_q = None
                         if enable_voice_steering:
-                            speak("Clarification sent")
+                            speak("Thanks for clarifying.")
                             _wait_for_tts_end()
                             print(
                                 steering_controls_hint(
