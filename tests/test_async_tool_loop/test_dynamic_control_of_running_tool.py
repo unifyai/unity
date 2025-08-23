@@ -250,6 +250,8 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     t0 = time.perf_counter()
 
     await outer.interject("hold")
+    # Ensure the assistant has actually invoked the pause helper before timing the pause window
+    await _wait_for_assistant_call_prefix(client, "pause")
     await asyncio.sleep(2.0)  # loop is paused here
     await outer.interject("go")
 
