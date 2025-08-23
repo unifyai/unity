@@ -349,7 +349,7 @@ async def test_interject_nested_handle(monkeypatch):
         for call in interject_call_msg["tool_calls"]
         if call["function"]["name"].startswith("interject_outer_tool_call_")
     )
-    assert json.loads(interj_call["function"]["arguments"]) == {"content": "dogs"}
+    assert json.loads(interj_call["function"]["arguments"]) == {"message": "dogs"}
 
     # e) Find the tool response from the interject helper
     interject_response_msg = next(
