@@ -173,5 +173,5 @@ jobs:
           tests.log
           report.xml
           report.html
-          .cache_write.json
+          .cache_write.ndjson
         retention-days: 7
