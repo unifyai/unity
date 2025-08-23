@@ -43,7 +43,6 @@ def _ctx_name(fn: Callable, fn_name: str) -> str:
 def _handle_project(
     test_fn: Callable | None = None,
     *,
-    try_reuse_prev_ctx: bool = False,
     delete_ctx_on_exit: bool = False,
 ):
     if _get_unity_test_env_var("UNIFY_DELETE_CONTEXT_ON_EXIT"):
@@ -51,7 +50,6 @@ def _handle_project(
     if test_fn is None:  # called with parameters → return real decorator
         return lambda f: _handle_project(
             f,
-            try_reuse_prev_ctx=try_reuse_prev_ctx,
             delete_ctx_on_exit=delete_ctx_on_exit,
         )
 
@@ -76,14 +74,13 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
-            ctx_is_created = ctx in PRECREATED_CONTEXTS
-
-            if not ctx_is_created:
-                if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
-                    unify.delete_context(ctx)
 
             try:
-                unify.set_context(ctx, relative=False, skip_create=ctx_is_created)
+                unify.set_context(
+                    ctx,
+                    relative=False,
+                    skip_create=ctx in PRECREATED_CONTEXTS,
+                )
                 EVENT_BUS.reset(delete_contexts=False)
                 # Ensure EVENT_BUS has been initialised – in case the
                 # global pytest_sessionstart hook was bypassed (e.g. when
@@ -116,14 +113,13 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
-            ctx_is_created = ctx in PRECREATED_CONTEXTS
-
-            if not ctx_is_created:
-                if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
-                    unify.delete_context(ctx)
 
             try:
-                unify.set_context(ctx, relative=False, skip_create=ctx_is_created)
+                unify.set_context(
+                    ctx,
+                    relative=False,
+                    skip_create=ctx in PRECREATED_CONTEXTS,
+                )
                 EVENT_BUS.reset(delete_contexts=False)
                 # Ensure EVENT_BUS has been initialised – in case the
                 # global pytest_sessionstart hook was bypassed (e.g. when
