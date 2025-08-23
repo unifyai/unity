@@ -1446,6 +1446,11 @@ async def _async_tool_use_loop_inner(
                 if guidance
                 else "Interjection acknowledged and forwarded to the running tool."
             )
+        else:
+            # Default acknowledgement for custom write-only helpers
+            ack_content = (
+                f"Operation {name!r} acknowledged and forwarded to the running tool."
+            )
         return ack_content
 
     # Helper: insert a tool-acknowledgement message for helper tools
@@ -2436,6 +2441,21 @@ async def _async_tool_use_loop_inner(
                             if name in allowed
                         }
 
+                    # Identify write-only helpers declared by the handle
+                    write_only_set: set[str] = set()
+                    try:
+                        wo = getattr(handle, "write_only_methods", None)
+                        if wo is not None:
+                            write_only_set |= set(wo)
+                    except Exception:
+                        pass
+                    try:
+                        wo2 = getattr(handle, "write_only_tools", None)
+                        if wo2 is not None:
+                            write_only_set |= set(wo2)
+                    except Exception:
+                        pass
+
                     for meth_name, bound in public_methods.items():
                         # use the same name we're about to give fn.__name__
                         func_name = f"{meth_name}_{_fn_name}_{_call_id}"
@@ -2446,97 +2466,43 @@ async def _async_tool_use_loop_inner(
                         if helper_key in dynamic_tools:
                             continue
 
-                        async def _invoke_handle_method(
-                            _bound=bound,
-                            **_kw,
-                        ):  # default args → capture current bound method
-                            """
-                            Auto-generated wrapper that calls the corresponding
-                            method on the live handle and **waits** for the return
-                            value (sync or async).
-                            """
-                            # ── normalise/validate incoming arguments against the bound method ──
-                            try:
-                                import inspect as _inspect  # local to avoid polluting module ns
+                        # Write-only helpers: fire-and-forget operations
+                        if meth_name in write_only_set:
 
-                                sig = _inspect.signature(_bound)
-                                params = sig.parameters
-                                has_varkw = any(
-                                    p.kind == _inspect.Parameter.VAR_KEYWORD
-                                    for p in params.values()
+                            async def _invoke_handle_method(
+                                _method_name=meth_name,
+                                **_kw,
+                            ):
+                                # Robust forwarding incl. kwargs normalisation and fallbacks
+                                try:
+                                    await _forward_handle_call(
+                                        handle,
+                                        _method_name,
+                                        _kw,
+                                    )
+                                except Exception:
+                                    pass
+                                # Write-only: no result propagation
+                                return {"call_id": _call_id, "status": "ack"}
+
+                        else:
+
+                            async def _invoke_handle_method(
+                                _method_name=meth_name,
+                                **_kw,
+                            ):  # default args → capture current method name
+                                """
+                                Auto-generated wrapper that calls the corresponding
+                                method on the live handle and **waits** for the return
+                                value (sync or async).
+                                """
+                                # Use shared forwarding to support flexible args and fallbacks
+                                res = await _forward_handle_call(
+                                    handle,
+                                    _method_name,
+                                    _kw,
                                 )
-
-                                # 1) Expand nested {"kwargs": {...}} if present
-                                if "kwargs" in _kw and isinstance(_kw["kwargs"], dict):
-                                    nested_kw = _kw.pop("kwargs")
-                                    for k, v in nested_kw.items():
-                                        _kw.setdefault(k, v)
-
-                                # 2) Drop common placeholder noise keys when empty (e.g. "a", "kw")
-                                for _noise in ("a", "kw"):
-                                    if _noise in _kw and (
-                                        _kw[_noise] is None or _kw[_noise] == ""
-                                    ):
-                                        _kw.pop(_noise, None)
-
-                                # 3) Map positional array → named params if provided under "args"
-                                if "args" in _kw and isinstance(_kw["args"], list):
-                                    pos_params = [
-                                        name
-                                        for name, p in params.items()
-                                        if name != "self"
-                                        and p.kind
-                                        in (
-                                            _inspect.Parameter.POSITIONAL_ONLY,
-                                            _inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                                        )
-                                    ]
-                                    for idx, val in enumerate(_kw["args"]):
-                                        if (
-                                            idx < len(pos_params)
-                                            and pos_params[idx] not in _kw
-                                        ):
-                                            _kw[pos_params[idx]] = val
-                                    _kw.pop("args", None)
-
-                                # 4) If the method has exactly one public parameter, accept common aliases
-                                public_params = [
-                                    name
-                                    for name, p in params.items()
-                                    if name not in ("self",)
-                                ]
-                                # exclude underscored keyword-only helpers from public consideration
-                                public_params = [
-                                    n for n in public_params if not n.startswith("_")
-                                ]
-                                if (
-                                    len(public_params) == 1
-                                    and public_params[0] not in _kw
-                                ):
-                                    for alias in (
-                                        "question",
-                                        "query",
-                                        "text",
-                                        "message",
-                                        "prompt",
-                                        "content",
-                                    ):
-                                        if alias in _kw:
-                                            _kw[public_params[0]] = _kw.pop(alias)
-                                            break
-
-                                # 5) Always drop unknown keys to avoid leaking stray args
-                                #    (e.g. passing 'answer' to an 'ask' wrapper that forwards
-                                #    to a stricter inner method).  Wrapper methods may accept
-                                #    **kwargs, but dynamic helper tools are defined by the
-                                #    exposed signature; extra keys should be ignored.
-                                _kw = {k: v for k, v in _kw.items() if k in params}
-                            except Exception:
-                                # Best-effort normalisation – never fail the call because of sanitisation
-                                pass
-
-                            res = await _maybe_await(_bound(**_kw))
-                            return {"call_id": _call_id, "result": res}
+                                return {"call_id": _call_id, "result": res}
 
                         # override the wrapper's signature to match the real method
                         _invoke_handle_method.__signature__ = inspect.signature(bound)
@@ -2545,11 +2511,24 @@ async def _async_tool_use_loop_inner(
                             key=helper_key,
                             func_name=func_name,
                             doc=(
-                                f"Invoke `{meth_name}` on the running handle (id={_call_id}). "
-                                "Returns when that method finishes."
+                                (
+                                    f"Perform `{meth_name}` on the running handle (id={_call_id}). "
+                                    "Fire-and-forget write-only operation; returns immediately."
+                                )
+                                if meth_name in write_only_set
+                                else (
+                                    f"Invoke `{meth_name}` on the running handle (id={_call_id}). "
+                                    "Returns when that method finishes."
+                                )
                             ),
                             fn=_invoke_handle_method,
                         )
+                        # Mark write-only helpers so scheduling can acknowledge and avoid tracking
+                        if meth_name in write_only_set:
+                            try:
+                                dynamic_tools[helper_key].__write_only__ = True  # type: ignore[attr-defined]
+                            except Exception:
+                                pass
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
@@ -3158,6 +3137,28 @@ async def _async_tool_use_loop_inner(
                                 "arguments": call["function"]["arguments"],
                             },
                         }
+                        # If this dynamic helper is marked as write-only, acknowledge immediately
+                        # and run fire-and-forget without tracking in pending/task_info.
+                        if getattr(fn, "__write_only__", False):
+                            try:
+                                tool_msg = {
+                                    "role": "tool",
+                                    "tool_call_id": call["id"],
+                                    "name": name,
+                                    "content": _build_helper_ack_content(
+                                        name,
+                                        call["function"]["arguments"],
+                                    ),
+                                }
+                                await _insert_after_assistant(msg, tool_msg)
+                            except Exception:
+                                pass
+                            try:
+                                asyncio.create_task(coro, name=f"ToolCall_{name}")
+                            except Exception:
+                                pass
+                            continue
+
                         # Scheduling dynamic helper call
 
                         t = asyncio.create_task(coro, name=f"ToolCall_{name}")
