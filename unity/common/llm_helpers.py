@@ -2109,7 +2109,11 @@ async def _async_tool_use_loop_inner(
 
                 # concise, informative, single‑line docs  ----------------------
                 _continue_doc = f"Continue waiting for {_fn_name}({_arg_repr})."
-                _stop_doc = f"Stop pending call {_fn_name}({_arg_repr})."
+                _stop_doc = (
+                    f"Stop pending call {_fn_name}({_arg_repr}). "
+                    "Requires `cancel: boolean` to indicate whether to abandon the task (True) "
+                    "or defer/reinstate it (False). Optionally include `reason: string`."
+                )
 
                 # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
                 # Skip if the task is blocked waiting for clarification; there's
@@ -2127,14 +2131,22 @@ async def _async_tool_use_loop_inner(
                     )
 
                 # ––– 2. stop helper –––––––––––––––––––––––––––––––––––––
-                async def _stop() -> Dict[str, str]:
+                async def _stop(
+                    cancel: bool,
+                    reason: Optional[str] = None,
+                ) -> Dict[str, str]:
                     if handle is not None and hasattr(handle, "stop"):
-                        await _maybe_await(handle.stop())  # graceful nested shutdown
+                        # Forward explicit intent to the running handle
+                        try:
+                            await _maybe_await(handle.stop(cancel=cancel, reason=reason))  # type: ignore[call-arg]
+                        except TypeError:
+                            # Back-compat: some handles may not accept the new signature
+                            await _maybe_await(handle.stop(reason))  # type: ignore[misc]
                     if not _task.done():
                         _task.cancel()  # kill the waiter coroutine
                     pending.discard(_task)
                     task_info.pop(_task, None)
-                    return {"status": "stopped", "call_id": _call_id}
+                    return {"status": "stopped", "call_id": _call_id, "cancel": cancel}
 
                 _reg_tool(
                     key=f"stop_{_fn_name}_{_call_id}",
@@ -3414,7 +3426,12 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             + (f" – reason: {reason}" if reason else ""),
         )
         if self._delegate is not None:
-            self._delegate.stop(reason)
+            try:
+                # Conservative default: defer instead of abandon when not explicit
+                self._delegate.stop(cancel=False, reason=reason)  # type: ignore[misc]
+            except TypeError:
+                # Delegate may use legacy signature
+                self._delegate.stop(reason)  # type: ignore[misc]
             return
         # In persist-mode we perform a graceful stop (result resolves).
         # Otherwise preserve legacy behaviour: cancel so result() raises.
