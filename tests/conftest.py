@@ -1562,8 +1562,18 @@ def _close_httpx_clients_at_session_end():
     loop.close()
 
 
-def _compute_context_for_item(item):
-    """Compute the unify context path for a collected pytest item using the same logic as tests.helpers._ctx_name."""
+# --------------------------------------------------------------------------- #
+#  Pre-run context creation (to minimize API calls)
+# --------------------------------------------------------------------------- #
+
+
+def _get_context_name_for_item(item):
+    """
+    Return the unify context name for a collected pytest item.
+
+    This uses the same logic as tests.helpers._ctx_name to generate a unique context
+    path for the test, including any parametrization suffixes.
+    """
     original_name = item.originalname or item.name
 
     # Append normalized parametrization suffix if available
@@ -1577,31 +1587,31 @@ def _compute_context_for_item(item):
     return f"{path}/{func_name}"
 
 
-async def _pretest_context_create(ctx: str, remote_ctxs: list[str]):
+async def _pretest_context_create(ctx: str):
     try:
-        if ctx in remote_ctxs:
-            return
-
-        # Create main context + required sub-contexts for EventBus
+        # Hacky way to create main context + required sub-contexts for EventBus in a single API call
         await asyncio.to_thread(unify.create_context, f"{ctx}/Events/_callbacks")
-        PRECREATED_CONTEXTS.add(ctx)
+        return ctx
     except Exception:
         pass
 
 
 async def _pretest_ctx_handler(contexts: list[str]):
+    """
+    Create contexts prior to test execution. Minimizes the number of API calls to Unify.
+    """
     remote_ctxs = unify.get_contexts()
-    coros = [_pretest_context_create(ctx, remote_ctxs) for ctx in contexts]
-    await asyncio.gather(*coros)
+    coros = [_pretest_context_create(ctx) for ctx in contexts if ctx not in remote_ctxs]
+    created_contexts = await asyncio.gather(*coros)
+    PRECREATED_CONTEXTS.update(created_contexts)
 
 
 def pytest_collection_finish(session):
     # Compute all contexts and fire off background creation tasks
     contexts: set[str] = set()
     for item in session.items:
-        ctx = _compute_context_for_item(item)
+        ctx = _get_context_name_for_item(item)
         contexts.add(ctx)
 
     loop = asyncio.get_event_loop()
-
     loop.run_until_complete(_pretest_ctx_handler(list(contexts)))
