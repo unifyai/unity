@@ -1198,11 +1198,16 @@ async def _apply_steering_action(
         if action == "stop":
             print("stopping…")
             # Pass a reason when provided; otherwise call without argument
+            _used_reason: Optional[str] = None
             if isinstance(reason, str) and reason.strip():
-                handle.stop(reason)
+                _used_reason = reason.strip()
+                handle.stop(_used_reason)
             else:
                 handle.stop()
-            print("✅ Stop sent.")
+            if _used_reason:
+                print(f"✅ Stop sent, with reason: {_used_reason}")
+            else:
+                print("✅ Stop sent.")
             if enable_voice_steering:
                 speak("Stop sent")
                 _wait_for_tts_end()
@@ -1284,13 +1289,27 @@ async def _route_freeform_and_apply(
     intent = _SteeringIntent.model_validate_json(
         judge.set_system_message(_steering_router_sys()).generate(router_input),
     )
+
+    # Prefer passing the user's full utterance as the stop reason when a reason is detected.
+    # If the router did not detect a reason, omit it entirely (user likely said just "stop").
+    reason_override: Optional[str] = None
+    if intent.action == "stop":
+        try:
+            if (
+                isinstance(getattr(intent, "reason", None), str)
+                and intent.reason.strip()
+            ):
+                reason_override = text.strip()
+        except Exception:
+            reason_override = None
+
     return await _apply_steering_action(
         handle,
         intent.action,
         text,
         enable_voice_steering,
         HELP_TEXT,
-        reason=getattr(intent, "reason", None),
+        reason=reason_override if intent.action == "stop" else None,
     )
 
 
@@ -1384,11 +1403,17 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                 if cmd in {"stop", "cancel", "s"}:
                     print("stopping…")
                     # Allow an optional free-form reason after the command token
-                    if arg and arg.strip():
-                        handle.stop(arg)
+                    _reason_txt: Optional[str] = (
+                        arg.strip() if arg and arg.strip() else None
+                    )
+                    if _reason_txt:
+                        handle.stop(_reason_txt)
                     else:
                         handle.stop()
-                    print("✅ Stop sent.")
+                    if _reason_txt:
+                        print(f"✅ Stop sent, with reason: {_reason_txt}")
+                    else:
+                        print("✅ Stop sent.")
                     if enable_voice_steering:
                         speak("Stop sent")
                         _wait_for_tts_end()
