@@ -29,7 +29,11 @@ import random
 import string
 import unify
 
-from tests.helpers import _get_unity_test_env_var, TESTS_DEFAULT_ENV_VARS
+from tests.helpers import (
+    _get_unity_test_env_var,
+    TESTS_DEFAULT_ENV_VARS,
+    PRECREATED_CONTEXTS,
+)
 
 
 def pytest_report_header(config):
@@ -1556,3 +1560,61 @@ def _close_httpx_clients_at_session_end():
                 pass
     loop.run_until_complete(loop.shutdown_asyncgens())
     loop.close()
+
+
+# --------------------------------------------------------------------------- #
+#  Pre-run context creation (to minimize API calls)
+# --------------------------------------------------------------------------- #
+
+
+def _get_context_name_for_item(item):
+    """
+    Return the unify context name for a collected pytest item.
+
+    This uses the same logic as tests.helpers._ctx_name to generate a unique context
+    path for the test, including any parametrization suffixes.
+    """
+    original_name = item.originalname or item.name
+
+    # Append normalized parametrization suffix if available
+    normalized = _normalize_pytest_nodeid(item.nodeid)
+
+    func_name = original_name
+    if normalized is not None:
+        func_name = f"{original_name}/{normalized}"
+
+    path = item._nodeid.split(".py")[0]
+    return f"{path}/{func_name}"
+
+
+async def _pretest_context_create(ctx: str, remote_ctxs: list[str]):
+    for remote_ctx in remote_ctxs:
+        # TODO workaround, unify.get_contexts doesn't return implicit contexts created by later unify.create_context calls
+        if remote_ctx.startswith(ctx):
+            await asyncio.to_thread(unify.delete_context, ctx)
+    # Hacky way to create main context + required sub-contexts for EventBus in a single API call
+    if _get_unity_test_env_var("UNIFY_TRACED"):
+        await asyncio.to_thread(unify.create_context, f"{ctx}/Traces/")
+    await asyncio.to_thread(unify.create_context, f"{ctx}/Events/_callbacks/")
+    return ctx
+
+
+async def _pretest_ctx_handler(contexts: list[str]):
+    """
+    Create contexts prior to test execution. Minimizes the number of API calls to Unify.
+    """
+    remote_ctxs = unify.get_contexts()
+    coros = [_pretest_context_create(ctx, remote_ctxs) for ctx in contexts]
+    created_contexts = await asyncio.gather(*coros)
+    PRECREATED_CONTEXTS.update(created_contexts)
+
+
+def pytest_collection_finish(session):
+    # Compute all contexts and fire off background creation tasks
+    contexts: set[str] = set()
+    for item in session.items:
+        ctx = _get_context_name_for_item(item)
+        contexts.add(ctx)
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(_pretest_ctx_handler(list(contexts)))
