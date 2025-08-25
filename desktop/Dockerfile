@@ -26,8 +26,12 @@ RUN mkdir -p /opt/novnc && \
     rm -rf master.zip noVNC-master
 
 # Desktop script
-COPY desktop.sh /app/desktop.sh
+COPY desktop/desktop.sh /app/desktop.sh
 RUN chmod +x /app/desktop.sh
+
+# Device script
+COPY desktop/device.sh /app/device.sh
+RUN chmod -x /app/device.sh
 
 # Agent service install
 WORKDIR /app/agent-service
