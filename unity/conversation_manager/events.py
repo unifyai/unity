@@ -326,8 +326,8 @@ class ToolUseStartedEvent(Event):
         chat_history: list[dict[str, str]],
         query: str,
         handle_id: int,
-        call_mode: bool = False,
         *,
+        call_mode: bool = False,
         is_urgent: bool = True,
         role: str = "tool_use start",
         stage: str = "",
@@ -369,8 +369,8 @@ class ToolUseEndedEvent(Event):
         self,
         query: str,
         handle_id: int,
-        call_mode: bool = False,
         *,
+        call_mode: bool = False,
         is_urgent: bool = True,
         role: str = "tool_use end",
         stage: str = "",
@@ -409,8 +409,8 @@ class ToolUseHandleSuccessEvent(Event):
         self,
         query: str,
         handle_type: str,
-        call_mode: bool = False,
         *,
+        call_mode: bool = False,
         is_urgent: bool = True,
         **kwargs,
     ):
@@ -441,7 +441,14 @@ class ToolUseHandleSuccessEvent(Event):
 
 
 class ToolUseHandleFailedEvent(Event):
-    def __init__(self, query: str, handle_type: str, call_mode: bool = False, **kwargs):
+    def __init__(
+        self,
+        query: str,
+        handle_type: str,
+        *,
+        call_mode: bool = False,
+        **kwargs,
+    ):
         kwargs.pop("query", None)
         kwargs.pop("handle_type", None)
         kwargs.pop("call_mode", None)
