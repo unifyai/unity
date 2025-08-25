@@ -1,6 +1,5 @@
 import inspect
 import os
-import base64
 import subprocess
 import sys
 import time
@@ -243,8 +242,6 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 f"Magnitude BrowserAgent failed to become ready within 30 seconds on port {port}",
             )
 
-        # self._load_persistent_data()
-
     def _start_output_readers(self):
         """Start threads to read stdout/stderr to prevent buffer blocking."""
 
@@ -322,159 +319,6 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
                 raise
-
-    def _load_persistent_data(self):
-        """
-        Load all files and folders in the assistant's data directory from a remote endpoint.
-        """
-        # list all files in /home/install through the endpoint, then for each file, save in local /home/install
-        try:
-            orchestra_url = os.getenv("UNIFY_BASE_URL")
-            endpoint = f"{orchestra_url}/admin/file"
-
-            user_id = os.environ.get("USER_ID", "default")
-            assistant_name = os.environ.get("ASSISTANT_NAME", "assistant")
-            project = "Assistants"
-
-            headers = {
-                "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
-            }
-
-            # 1) Get all files from Orchestra (path -> content)
-            resp = requests.get(
-                endpoint,
-                params={
-                    "user_id": user_id,
-                    "project": project,
-                    "staging": "staging" in orchestra_url,
-                },
-                headers=headers,
-                timeout=60,
-            )
-            if resp.status_code >= 400:
-                print(
-                    f"Warning: Orchestra list failed: {resp.status_code} {resp.text[:200]}",
-                )
-                return
-            files_map = resp.json() or {}
-            print("files_map:", files_map)
-
-            install_root = "/home/install"
-            os.makedirs(install_root, exist_ok=True)
-
-            # 2) Write each file for this assistant under /home/install
-            for path_key, content in files_map.items():
-                try:
-                    if not isinstance(path_key, str) or not path_key.startswith(
-                        assistant_name,
-                    ):
-                        continue
-                    rel = path_key[len(assistant_name) :]
-                    data = content if isinstance(content, str) else str(content)
-                    with open(rel, "w") as f:
-                        f.write(data)
-                except Exception as e:
-                    print(f"Warning: Could not restore {path_key}: {e}")
-
-        except Exception as e:
-            print(f"Warning: Could not query remote files for persistence: {e}")
-
-        # Optionally install packages recorded in apt-manual.txt if present
-        try:
-            if os.path.exists("/home/install/apt-manual.txt"):
-                subprocess.run(
-                    [
-                        "xargs",
-                        "-a",
-                        "/home/install/apt-manual.txt",
-                        "apt-get",
-                        "install",
-                        "-y",
-                    ],
-                    check=True,
-                )
-        except Exception as e:
-            print(
-                f"Warning: Could not execute apt-get install from apt-manual.txt: {e}",
-            )
-
-    def _save_persistent_data(self):
-        """
-        Save all files and folders in the assistant's data directory by sending them
-        to a remote endpoint for persistence.
-        """
-        try:
-            subprocess.run(
-                ["apt-mark", "showmanual"],
-                check=True,
-                stdout=open("/home/install/apt-manual.txt", "w"),
-            )
-            # Now sort the file in place
-            with open("/home/install/apt-manual.txt", "r") as f:
-                lines = f.readlines()
-            lines.sort()
-            with open("/home/install/apt-manual.txt", "w") as f:
-                f.writelines(lines)
-        except Exception as e:
-            print(f"Warning: Could not save apt manual package list: {e}")
-
-        # save files in /home/install folder with the endpoint
-        try:
-            install_root = "/home/install"
-
-            # Build files mapping: relative_path -> base64 content
-            files_map: dict[str, str] = {}
-            for root, _, files in os.walk(install_root):
-                for fname in files:
-                    fpath = os.path.join(root, fname)
-                    rel_path = os.path.join(
-                        os.getenv("ASSISTANT_NAME", "assistant"),
-                        fpath.lstrip("/"),
-                    )
-                    try:
-                        with open(fpath, "rb") as fp:
-                            files_map[rel_path] = base64.b64encode(fp.read()).decode(
-                                "ascii",
-                            )
-                    except Exception as e:
-                        print(
-                            f"Warning: Could not read {rel_path} for persistence: {e}",
-                        )
-
-            print("files_map:", files_map)
-
-            if files_map:
-                orchestra_url = os.getenv("UNIFY_BASE_URL")
-                endpoint = f"{orchestra_url}/admin/file"
-
-                user_id = os.environ.get("USER_ID", "default")
-                project = f"Assistants"
-                headers = {
-                    "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
-                    "Content-Type": "application/json",
-                }
-                payload = {
-                    "user_id": user_id,
-                    "project": project,
-                    "files": files_map,
-                    "staging": "staging" in orchestra_url,
-                }
-
-                try:
-                    r = requests.post(
-                        endpoint,
-                        json=payload,
-                        headers=headers,
-                        timeout=120,
-                    )
-                    if r.status_code >= 400:
-                        print(
-                            f"Warning: Orchestra persist failed: {r.status_code} {r.text[:200]}",
-                        )
-                except Exception as e:
-                    print(f"Warning: Could not reach Orchestra to persist files: {e}")
-        except Exception as e:
-            print(f"Warning: Could not enumerate /home/install for persistence: {e}")
 
     async def act(self, instruction: str, expectation: str = "") -> str:
         """
@@ -614,8 +458,6 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 print(
                     f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
                 )
-
-                # self._save_persistent_data()
 
                 if sys.platform != "win32":
                     import signal
