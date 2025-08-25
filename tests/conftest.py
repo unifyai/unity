@@ -1611,10 +1611,11 @@ async def _pretest_ctx_handler(contexts: list[str]):
 
 def pytest_collection_finish(session):
     # Compute all contexts and fire off background creation tasks
-    contexts: set[str] = set()
-    for item in session.items:
-        ctx = _get_context_name_for_item(item)
-        contexts.add(ctx)
+    if _get_unity_test_env_var("UNIFY_PRETEST_CONTEXT_CREATE"):
+        contexts: set[str] = set()
+        for item in session.items:
+            ctx = _get_context_name_for_item(item)
+            contexts.add(ctx)
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(_pretest_ctx_handler(list(contexts)))
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(_pretest_ctx_handler(list(contexts)))

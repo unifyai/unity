@@ -153,6 +153,7 @@ jobs:
         UNIFY_DELETE_CONTEXT_ON_EXIT: false
         UNIFY_OVERWRITE_PROJECT: true
         UNIFY_CACHE_BENCHMARK: true
+        UNIFY_PRETEST_CONTEXT_CREATE: true
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         FIRST_NAME: Rick
         AGENT_FIRST: Rick
