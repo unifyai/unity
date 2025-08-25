@@ -25,6 +25,7 @@ from unity.conversation_manager.prompt_builders import (
     build_message_prompt,
 )
 from unity.conversation_manager.utils import (
+    create_connection,
     publish_event,
     find_assistant_whatsapp_number,
     assign_new_assistant_whatsapp_number,
@@ -46,13 +47,24 @@ from unity.common.llm_helpers import (
 
 load_dotenv()
 
+# Global connection variables for comms_actions
 headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
-
+reader = None
+writer = None
 
 # Local chat history builder
 # This is required as Call/Meet is a separate process and requires polling data
 redis_client = None
 local_chat_history = []
+
+
+async def _publish_event(ev: dict):
+    """Publish an event using the comms_actions connection"""
+    global reader, writer
+
+    if reader is None or writer is None:
+        reader, writer = await create_connection("comms")
+    return await publish_event(ev, writer=writer)
 
 
 def _init_redis_client():
@@ -242,17 +254,17 @@ async def _send_whatsapp_message_via_number(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            # await publish_event(
-            #     {
-            #         "topic": to_number,
-            #         "to": "past",
-            #         "event": WhatsappMessageSentEvent(
-            #             content=message,
-            #             role="Assistant",
-            #             timestamp=datetime.now().isoformat(),
-            #         ).to_dict(),
-            #     },
-            # )
+            await _publish_event(
+                {
+                    "topic": to_number,
+                    "to": "past",
+                    "event": WhatsappMessageSentEvent(
+                        content=message,
+                        role="Assistant",
+                        timestamp=datetime.now().isoformat(),
+                    ).to_dict(),
+                },
+            )
             return response_text
 
 
@@ -286,17 +298,17 @@ async def _send_sms_message_via_number(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            # await publish_event(
-            #     {
-            #         "topic": to_number,
-            #         "to": "past",
-            #         "event": SMSMessageSentEvent(
-            #             content=message,
-            #             role="Assistant",
-            #             timestamp=datetime.now().isoformat(),
-            #         ).to_dict(),
-            #     },
-            # )
+            await _publish_event(
+                {
+                    "topic": to_number,
+                    "to": "past",
+                    "event": SMSMessageSentEvent(
+                        content=message,
+                        role="Assistant",
+                        timestamp=datetime.now().isoformat(),
+                    ).to_dict(),
+                },
+            )
             return response_text
 
 
@@ -336,18 +348,18 @@ async def _send_email_via_address(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            # await publish_event(
-            #     {
-            #         "topic": to_email,
-            #         "to": "past",
-            #         "event": EmailSentEvent(
-            #             content=content,
-            #             role="Assistant",
-            #             timestamp=datetime.now().isoformat(),
-            #             message_id=message_id,
-            #         ).to_dict(),
-            #     },
-            # )
+            await _publish_event(
+                {
+                    "topic": to_email,
+                    "to": "past",
+                    "event": EmailSentEvent(
+                        content=content,
+                        role="Assistant",
+                        timestamp=datetime.now().isoformat(),
+                        message_id=message_id,
+                    ).to_dict(),
+                },
+            )
             return response_text
 
 
@@ -373,7 +385,7 @@ async def _start_call(
     if not from_number:
         from_number = os.getenv("ASSISTANT_NUMBER")
 
-    await publish_event(
+    await _publish_event(
         {
             "topic": to_number,
             "event": {
@@ -419,7 +431,7 @@ async def _join_meet_call(
     Returns:
         str: The response from the Google Meet API
     """
-    await publish_event(
+    await _publish_event(
         {
             "topic": os.getenv("USER_NUMBER"),
             "event": {
@@ -620,14 +632,14 @@ class Call(SteerableToolHandle):
 
     async def _ask_user_then_search(self, question):
         """Ask user the question, then search for their response in local chat history."""
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "past",
                 "event": InterruptEvent().to_dict(),
             },
         ),
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "pending",
@@ -700,7 +712,7 @@ class Call(SteerableToolHandle):
         await self.call_ask_status.wait()
         self.call_ask_status.clear()
 
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "past",
@@ -720,14 +732,14 @@ class Call(SteerableToolHandle):
         """
         await self.call_ready.wait()
         await self.call_ask_status.wait()
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "past",
                 "event": InterruptEvent().to_dict(),
             },
         ),
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "pending",
@@ -738,7 +750,7 @@ class Call(SteerableToolHandle):
             },
         )
         await asyncio.sleep(15)
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "past",
@@ -829,14 +841,14 @@ class GoogleMeet(SteerableToolHandle):
 
     async def _ask_user_then_search(self, question):
         """Ask user the question, then search for their response in local chat history."""
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "past",
                 "event": InterruptEvent().to_dict(),
             },
         ),
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "pending",
@@ -909,7 +921,7 @@ class GoogleMeet(SteerableToolHandle):
         await self.call_ask_status.wait()
         self.call_ask_status.clear()
 
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "past",
@@ -929,14 +941,14 @@ class GoogleMeet(SteerableToolHandle):
         """
         await self.call_ready.wait()
         await self.call_ask_status.wait()
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "past",
                 "event": InterruptEvent().to_dict(),
             },
         ),
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "pending",
@@ -947,7 +959,7 @@ class GoogleMeet(SteerableToolHandle):
             },
         )
         await asyncio.sleep(15)
-        await publish_event(
+        await _publish_event(
             {
                 "topic": self.phone_number,
                 "to": "past",
