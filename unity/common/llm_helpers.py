@@ -681,6 +681,191 @@ def _chat_context_repr(
     return combined
 
 
+# ASYNC TOOL USE INNER HELPERS ────────────────────────────────────────────────
+
+
+# ── small helper: publish to the EventBus (if configured) ──────────────
+async def _to_event_bus(
+    messages: Union[Dict, List[Dict]],
+    loop_id: str,
+    lineage: list[str],
+    log_label: str,
+) -> None:
+    """
+    Emit *messages* to the shared EventBus (if configured).
+
+    Every `ToolLoop` event now carries **both** the raw chat *message*
+    and the *public method* that spawned the loop so downstream
+    subscribers can easily group / filter events.
+    """
+    if not EVENT_BUS:
+        return
+    if isinstance(messages, dict):
+        messages = [messages]
+    for message in messages:
+        await EVENT_BUS.publish(
+            Event(
+                type="ToolLoop",
+                payload={
+                    "message": message,
+                    "method": loop_id,
+                    "hierarchy": list(lineage),
+                    "hierarchy_label": log_label,
+                },
+            ),
+        )
+
+
+# Helper: scan transcript for assistant messages that have tool_calls with
+# missing tool replies (before the next assistant message).
+def _find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
+    findings: list[dict] = []
+    try:
+        for i, m in enumerate(client.messages):
+            if m.get("role") != "assistant":
+                continue
+            tcs = m.get("tool_calls") or []
+            if not tcs:
+                continue
+            ids = [tc.get("id") for tc in tcs if isinstance(tc, dict)]
+            if not ids:
+                continue
+            responded: set[str] = set()
+            j = i + 1
+            while (
+                j < len(client.messages)
+                and client.messages[j].get("role") != "assistant"
+            ):
+                mm = client.messages[j]
+                if mm.get("role") == "tool":
+                    tcid = mm.get("tool_call_id")
+                    if tcid in ids:
+                        responded.add(tcid)
+                j += 1
+            missing = [c for c in ids if c not in responded]
+            if missing:
+                findings.append(
+                    {
+                        "assistant_index": i,
+                        "assistant_msg": m,
+                        "missing": missing,
+                    },
+                )
+    except Exception:
+        pass
+    return findings
+
+
+# Helper: call `client.generate` with optional preprocessing
+async def _generate_with_preprocess(
+    client: unify.AsyncUnify,
+    preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]],
+    **gen_kwargs,
+):
+    if preprocess_msgs is None:
+        return await _maybe_await(client.generate(**gen_kwargs))
+
+    import copy
+
+    original_msgs = client.messages  # reference to canonical log
+    msgs_copy = copy.deepcopy(original_msgs)
+
+    try:
+        patched = preprocess_msgs(msgs_copy) or msgs_copy
+    except Exception as exc:  # resilience – don't fail the loop
+        LOGGER.error(
+            f"preprocess_msgs raised {exc!r}; using original messages.",
+        )
+        patched = msgs_copy
+
+    start_len = len(patched)
+
+    # ------------------------------------------------------------------
+    # Some ``AsyncUnify`` implementations (the real one) keep their chat
+    # transcript in a **private** attribute ``_messages`` which is what
+    # ``.generate`` reads from, while lightweight test doubles (e.g.
+    # ``SpyAsyncUnify`` in the test-suite) expose only a public
+    # ``messages`` list.  To remain compatible with *both* variants we
+    # detect the attribute that is actually consumed by the downstream
+    # ``generate`` call and patch **that** for the duration of the call.
+    # ------------------------------------------------------------------
+    target_attr = "_messages" if hasattr(client, "_messages") else "messages"
+
+    original_container = getattr(client, target_attr)
+    setattr(client, target_attr, patched)
+    try:
+        result = await _maybe_await(client.generate(**gen_kwargs))
+
+        # Append any new messages the LLM produced back to canonical log
+        current_msgs = getattr(client, target_attr)
+        if len(current_msgs) > start_len:
+            original_msgs.extend(copy.deepcopy(current_msgs[start_len:]))
+
+        return result
+    finally:
+        # Always restore the canonical chat log so the outer loop remains
+        # consistent irrespective of whether we patched `_messages` or
+        # `messages`.
+        setattr(client, target_attr, original_container)
+
+
+# Helper: detect helper-tool names (continue_/stop_/pause_/resume_/clarify_/interject_)
+def _is_helper_tool(name: str) -> bool:
+    return (
+        name.startswith("continue_")
+        or name.startswith("stop_")
+        or name.startswith("pause_")
+        or name.startswith("resume_")
+        or name.startswith("clarify_")
+        or name.startswith("interject_")
+    )
+
+
+# Helper: build human-readable acknowledgement content for helper tools
+def _build_helper_ack_content(name: str, args_json: Any) -> str:
+    ack_content = "Acknowledged."
+    try:
+        payload = (
+            json.loads(args_json or "{}")
+            if isinstance(args_json, str)
+            else (args_json or {})
+        )
+    except Exception:
+        payload = {}
+
+    if name.startswith("continue_"):
+        ack_content = "Continue request acknowledged. Still waiting for the original tool call to finish."
+    elif name.startswith("stop_"):
+        ack_content = "Stop request acknowledged. If the underlying call is still running, it will be stopped."
+    elif name.startswith("pause_"):
+        ack_content = "Pause request acknowledged. If the underlying call is still running, it will be paused."
+    elif name.startswith("resume_"):
+        ack_content = "Resume request acknowledged. If the underlying call was paused, it will be resumed."
+    elif name.startswith("clarify_"):
+        ans = payload.get("answer")
+        ack_content = (
+            f"Clarification answer received: {ans!r}. Waiting for the original tool to proceed."
+            if ans is not None
+            else "Clarification helper acknowledged. Waiting for the original tool to proceed."
+        )
+    elif name.startswith("interject_"):
+        guidance = payload.get("content")
+        ack_content = (
+            f"Guidance forwarded to the running tool: {guidance!r}."
+            if guidance
+            else "Interjection acknowledged and forwarded to the running tool."
+        )
+    else:
+        # Default acknowledgement for custom write-only helpers
+        ack_content = (
+            f"Operation {name!r} acknowledged and forwarded to the running tool."
+        )
+    return ack_content
+
+
+# ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
+
+
 async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
     message: str,
@@ -867,7 +1052,7 @@ async def _async_tool_use_loop_inner(
 
     async def _append_msgs(msgs: list[dict]) -> None:
         client.append_messages(msgs)
-        await _to_event_bus(msgs)
+        await _to_event_bus(msgs, loop_id, _lineage, log_label)
         _reset_timeout_timer()
 
     if log_steps:
@@ -901,80 +1086,6 @@ async def _async_tool_use_loop_inner(
         insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
         client.messages.insert(insert_pos, client.messages.pop())
         meta["results_count"] += 1
-
-    # ── small helper: publish to the EventBus (if configured) ──────────────
-    async def _to_event_bus(messages: Union[Dict, List[Dict]]) -> None:
-        """
-        Emit *messages* to the shared EventBus (if configured).
-
-        Every `ToolLoop` event now carries **both** the raw chat *message*
-        and the *public method* that spawned the loop so downstream
-        subscribers can easily group / filter events.
-        """
-        if not EVENT_BUS:
-            return
-        if isinstance(messages, dict):
-            messages = [messages]
-        for message in messages:
-            await EVENT_BUS.publish(
-                Event(
-                    type="ToolLoop",
-                    payload={
-                        "message": message,
-                        "method": loop_id,
-                        "hierarchy": list(_lineage),
-                        "hierarchy_label": log_label,
-                    },
-                ),
-            )
-
-    # ── helper: call `client.generate` with optional preprocessing ──
-    async def _generate_with_preprocess(**gen_kwargs):
-        if preprocess_msgs is None:
-            return await _maybe_await(client.generate(**gen_kwargs))
-
-        import copy
-
-        original_msgs = client.messages  # reference to canonical log
-        msgs_copy = copy.deepcopy(original_msgs)
-
-        try:
-            patched = preprocess_msgs(msgs_copy) or msgs_copy
-        except Exception as exc:  # resilience – don't fail the loop
-            LOGGER.error(
-                f"preprocess_msgs raised {exc!r}; using original messages.",
-            )
-            patched = msgs_copy
-
-        start_len = len(patched)
-
-        # ------------------------------------------------------------------
-        # Some ``AsyncUnify`` implementations (the real one) keep their chat
-        # transcript in a **private** attribute ``_messages`` which is what
-        # ``.generate`` reads from, while lightweight test doubles (e.g.
-        # ``SpyAsyncUnify`` in the test-suite) expose only a public
-        # ``messages`` list.  To remain compatible with *both* variants we
-        # detect the attribute that is actually consumed by the downstream
-        # ``generate`` call and patch **that** for the duration of the call.
-        # ------------------------------------------------------------------
-        target_attr = "_messages" if hasattr(client, "_messages") else "messages"
-
-        original_container = getattr(client, target_attr)
-        setattr(client, target_attr, patched)
-        try:
-            result = await _maybe_await(client.generate(**gen_kwargs))
-
-            # Append any new messages the LLM produced back to canonical log
-            current_msgs = getattr(client, target_attr)
-            if len(current_msgs) > start_len:
-                original_msgs.extend(copy.deepcopy(current_msgs[start_len:]))
-
-            return result
-        finally:
-            # Always restore the canonical chat log so the outer loop remains
-            # consistent irrespective of whether we patched `_messages` or
-            # `messages`.
-            setattr(client, target_attr, original_container)
 
     # ── small helper: add completion tool message pair ──────────────
     async def _emit_completion_pair(result: str, call_id: str) -> dict:
@@ -1278,45 +1389,6 @@ async def _async_tool_use_loop_inner(
         lim = norm_tools[t_name].max_total_calls
         return lim is None or _quota_count(t_name) < lim
 
-    # Helper: scan transcript for assistant messages that have tool_calls with
-    # missing tool replies (before the next assistant message).
-    def _find_unreplied_assistant_entries() -> list[dict]:
-        findings: list[dict] = []
-        try:
-            for i, m in enumerate(client.messages):
-                if m.get("role") != "assistant":
-                    continue
-                tcs = m.get("tool_calls") or []
-                if not tcs:
-                    continue
-                ids = [tc.get("id") for tc in tcs if isinstance(tc, dict)]
-                if not ids:
-                    continue
-                responded: set[str] = set()
-                j = i + 1
-                while (
-                    j < len(client.messages)
-                    and client.messages[j].get("role") != "assistant"
-                ):
-                    mm = client.messages[j]
-                    if mm.get("role") == "tool":
-                        tcid = mm.get("tool_call_id")
-                        if tcid in ids:
-                            responded.add(tcid)
-                    j += 1
-                missing = [c for c in ids if c not in responded]
-                if missing:
-                    findings.append(
-                        {
-                            "assistant_index": i,
-                            "assistant_msg": m,
-                            "missing": missing,
-                        },
-                    )
-        except Exception:
-            pass
-        return findings
-
     # Ensure placeholder tool messages exist for pending tasks. If assistant_msg
     # is provided, only affects tasks spawned by that assistant turn; otherwise
     # applies to all pending tasks. Returns the list of call_ids for which a
@@ -1400,58 +1472,6 @@ async def _async_tool_use_loop_inner(
         except Exception:
             # Defensive: never let pruning break the loop
             pass
-
-    # Helper: detect helper-tool names (continue_/stop_/pause_/resume_/clarify_/interject_)
-    def _is_helper_tool(name: str) -> bool:
-        return (
-            name.startswith("continue_")
-            or name.startswith("stop_")
-            or name.startswith("pause_")
-            or name.startswith("resume_")
-            or name.startswith("clarify_")
-            or name.startswith("interject_")
-        )
-
-    # Helper: build human-readable acknowledgement content for helper tools
-    def _build_helper_ack_content(name: str, args_json: Any) -> str:
-        ack_content = "Acknowledged."
-        try:
-            payload = (
-                json.loads(args_json or "{}")
-                if isinstance(args_json, str)
-                else (args_json or {})
-            )
-        except Exception:
-            payload = {}
-
-        if name.startswith("continue_"):
-            ack_content = "Continue request acknowledged. Still waiting for the original tool call to finish."
-        elif name.startswith("stop_"):
-            ack_content = "Stop request acknowledged. If the underlying call is still running, it will be stopped."
-        elif name.startswith("pause_"):
-            ack_content = "Pause request acknowledged. If the underlying call is still running, it will be paused."
-        elif name.startswith("resume_"):
-            ack_content = "Resume request acknowledged. If the underlying call was paused, it will be resumed."
-        elif name.startswith("clarify_"):
-            ans = payload.get("answer")
-            ack_content = (
-                f"Clarification answer received: {ans!r}. Waiting for the original tool to proceed."
-                if ans is not None
-                else "Clarification helper acknowledged. Waiting for the original tool to proceed."
-            )
-        elif name.startswith("interject_"):
-            guidance = payload.get("content")
-            ack_content = (
-                f"Guidance forwarded to the running tool: {guidance!r}."
-                if guidance
-                else "Interjection acknowledged and forwarded to the running tool."
-            )
-        else:
-            # Default acknowledgement for custom write-only helpers
-            ack_content = (
-                f"Operation {name!r} acknowledged and forwarded to the running tool."
-            )
-        return ack_content
 
     # Helper: insert a tool-acknowledgement message for helper tools
     async def _acknowledge_helper_call(
@@ -1673,7 +1693,7 @@ async def _async_tool_use_loop_inner(
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     try:
-        unreplied = _find_unreplied_assistant_entries()
+        unreplied = _find_unreplied_assistant_entries(client)
         if unreplied:
             # backfill for all such assistant messages (oldest → newest)
             for entry in unreplied:
@@ -1838,7 +1858,7 @@ async def _async_tool_use_loop_inner(
             # 0-γ. Repair any outstanding assistant tool_calls missing replies
             #      before we allow new user interjections to be appended.
             try:
-                unreplied = _find_unreplied_assistant_entries()
+                unreplied = _find_unreplied_assistant_entries(client)
                 # Only consider the very latest assistant with missing replies first
                 if unreplied:
                     last_problem = unreplied[-1]
@@ -2565,7 +2585,7 @@ async def _async_tool_use_loop_inner(
                     _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
                 llm_task = asyncio.create_task(
-                    _generate_with_preprocess(**_gen_kwargs),
+                    _generate_with_preprocess(client, preprocess_msgs, **_gen_kwargs),
                     name="LLMGenerate",
                 )
                 interject_w = asyncio.create_task(
@@ -2649,14 +2669,18 @@ async def _async_tool_use_loop_inner(
                     if max_parallel_tool_calls is not None:
                         _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
-                    await _generate_with_preprocess(**_gen_kwargs)
+                    await _generate_with_preprocess(
+                        client,
+                        preprocess_msgs,
+                        **_gen_kwargs,
+                    )
                 except Exception:
                     raise Exception(
                         f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
                     )
 
             msg = client.messages[-1]
-            await _to_event_bus(msg)
+            await _to_event_bus(msg, loop_id, _lineage, log_label)
 
             if log_steps:
                 try:
