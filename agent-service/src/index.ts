@@ -9,6 +9,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // --- Helper to parse command-line arguments ---
 const args = process.argv.slice(2);
 const isHeadless = args.includes('--headless');
+const isDesktop = args.includes('--desktop');
 
 // --- JSON Schema to Zod Conversion Utility ---
 function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new Set<string>()): ZodTypeAny {
@@ -153,47 +154,60 @@ console.log(`Starting Magnitude BrowserAgent (Headless: ${isHeadless})...`);
 
 const browserOptions: BrowserOptions = {
     launchOptions: {
-        headless: isHeadless,
+        headless: isDesktop ? true : isHeadless,
         args: [
           "--disable-blink-features=AutomationControlled",
           "--disable-features=IsolateOrigins,site-per-process",
           // "--enable-features=WebRtcV4L2VideoCapture",
           "--auto-select-window-capture-source-by-title=Google",
         ],
-        downloadsPath: `/home/agent/Downloads`,
-        tracesDir: `/home/agent/traces`,
+        // downloadsPath: `/home/agent/Downloads`,
+        // tracesDir: `/home/agent/traces`,
     },
 };
 
 // Starts desktop agent
-startBrowserAgent({
-    url: "http://localhost:6080/vnc.html?resize=scale&autoconnect=1",
-    browser: browserOptions,
-    prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the terminal, apps and browser within the virtual desktop.",
-  }).then(agent => {
-// startBrowserAgent({ browser: browserOptions })
-//   .then(agent => {
-    browserAgent = agent;
-    console.log("✅ BrowserAgent started successfully.");
-    app.listen(port, () => {
-      console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
+if (isDesktop) {
+  startBrowserAgent({
+      url: "http://localhost:6080/vnc.html?resize=scale&autoconnect=1",
+      browser: browserOptions,
+      prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the terminal, apps and browser within the virtual desktop.",
+    }).then(agent => {
+      browserAgent = agent;
+      console.log("✅ BrowserAgent started successfully.");
+      app.listen(port, () => {
+        console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
+      });
+    })
+    .catch(err => {
+      console.error("❌ Failed to start BrowserAgent:", err);
+      process.exit(1);
     });
-  })
-  .catch(err => {
-    console.error("❌ Failed to start BrowserAgent:", err);
-    process.exit(1);
-  });
 
-// Browser to be controlled through desktop
-startBrowserAgent({
-  url: "https://www.duckduckgo.com/",
-  browser: {
-    launchOptions: {
-      headless: false,
-      downloadsPath: `/home/browser/Downloads`,
-      tracesDir: `/home/browser/traces`,
-    }
-  }})
+  // Browser to be controlled through desktop
+  startBrowserAgent({
+    url: "https://www.duckduckgo.com/",
+    browser: {
+      launchOptions: {
+        headless: false,
+        downloadsPath: `/home/browser/Downloads`,
+        tracesDir: `/home/browser/traces`,
+      }
+    }})
+} else {
+  startBrowserAgent({ browser: browserOptions })
+    .then(agent => {
+      browserAgent = agent;
+      console.log("✅ BrowserAgent started successfully.");
+      app.listen(port, () => {
+        console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
+      });
+    })
+    .catch(err => {
+      console.error("❌ Failed to start BrowserAgent:", err);
+      process.exit(1);
+    });
+}
 
 const isAgentReady = (req: Request, res: Response, next: Function) => {
   if (!browserAgent) {

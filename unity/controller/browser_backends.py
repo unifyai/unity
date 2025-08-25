@@ -578,12 +578,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """Navigates the browser using the dedicated /nav endpoint."""
         print(f"🐍 PYTHON: Navigating to URL: {url}")
 
-        # response = await self._request(
-        #     "POST",
-        #     "/act",
-        #     {"task": f"Go to the page: {url}"},
-        # )
-        # return response.get("status", "success")
+        if MagnitudeBrowserBackend._process is None:
+            # Controlling virtual desktop
+            response = await self._request(
+                "POST",
+                "/act",
+                {"task": f"Go to the page: {url}"},
+            )
+            return response.get("status", "success")
 
         max_retries = 3
         for attempt in range(max_retries):
