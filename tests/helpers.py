@@ -78,7 +78,7 @@ def _handle_project(
 
             ctx = _ctx_name(test_fn, test_fn_name)
             if ctx not in PRECREATED_CONTEXTS:
-                if not try_reuse_prev_ctx and ctx in unify.get_contexts():
+                if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
                     unify.delete_context(ctx)
 
             try:
@@ -120,7 +120,7 @@ def _handle_project(
 
             ctx = _ctx_name(test_fn, test_fn_name)
             if ctx not in PRECREATED_CONTEXTS:
-                if not try_reuse_prev_ctx and ctx in unify.get_contexts():
+                if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
                     unify.delete_context(ctx)
 
             try:
