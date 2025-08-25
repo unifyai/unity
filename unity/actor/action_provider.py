@@ -28,6 +28,7 @@ class ActionProvider:
         headless: bool = False,
         browser_mode: str = "legacy",
         controller_mode: str = "hybrid",
+        mode: str = "browser",
     ):
 
         browser_kwargs = {
@@ -38,6 +39,7 @@ class ActionProvider:
             },
             "magnitude": {
                 "headless": headless,
+                "start_service": mode == "browser",
             },
         }
 
