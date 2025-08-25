@@ -27,8 +27,7 @@ startup.sh records PIDs of desktop, device and agent processes and on SIGTERM/SI
 - Build: `docker build -t unity-desktop -f desktop/Dockerfile .`
 - Run: `docker run --rm -p 6080:6080 -p 5900:5900 -p 3000:3000 --env-file .env unity-desktop`
 - Open `http://localhost:6080/vnc.html?resize=scale&autoconnect=1` to view the desktop
+- Control: You can now run the Actor (e.g., `HierarchicalActor`) locally with `mode="desktop"`
 
 ### Troubleshooting
-- Sharp native module errors: `npm rebuild sharp --verbose`
-- TypeScript entry errors: ensure `ts-node`/`typescript` are installed via `npm ci`
-- PipeWire/WirePlumber availability: use Debian bookworm base (already set)
+- Make sure `ANTHROPIC_API_KEY` is in your `.env` file when starting the Docker container.
