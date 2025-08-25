@@ -971,6 +971,7 @@ class CommsAgent:
         self.tts_provider = payload["tts_provider"]
         self.voice_id = payload["voice_id"]
         os.environ["UNIFY_KEY"] = payload.pop("api_key")
+        os.environ["USER_ID"] = self.user_id
         os.environ["USER_NAME"] = self.user_name
         os.environ["USER_NUMBER"] = self.user_number
         os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number

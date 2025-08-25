@@ -164,9 +164,19 @@ class MagnitudeBrowserBackend(BrowserBackend):
         self,
         agent_server_url: str = "http://localhost:3000",
         headless: bool = False,
+        start_service: bool = True,
         **kwargs,
     ):
         with MagnitudeBrowserBackend._lock:
+            if not start_service:
+                # Do not spawn a new process; point to the provided URL
+                MagnitudeBrowserBackend._agent_base_url = agent_server_url
+                self.agent_base_url = agent_server_url
+                print(
+                    f"🔗 Using existing Magnitude service at {self.agent_base_url} (no local process started)",
+                )
+                return
+
             if MagnitudeBrowserBackend._process is None:
                 self.agent_base_url = agent_server_url
                 self._start_service(headless)
@@ -412,12 +422,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """Navigates the browser using the dedicated /nav endpoint."""
         print(f"🐍 PYTHON: Navigating to URL: {url}")
 
-        # response = await self._request(
-        #     "POST",
-        #     "/act",
-        #     {"task": f"Go to the page: {url}"},
-        # )
-        # return response.get("status", "success")
+        if MagnitudeBrowserBackend._process is None:
+            # Controlling virtual desktop
+            response = await self._request(
+                "POST",
+                "/act",
+                {"task": f"Go to the page: {url}"},
+            )
+            return response.get("status", "success")
 
         max_retries = 3
         for attempt in range(max_retries):
@@ -446,6 +458,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 print(
                     f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
                 )
+
                 if sys.platform != "win32":
                     import signal
 
