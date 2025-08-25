@@ -111,9 +111,6 @@ WORKDIR /app/agent-service
 RUN npm ci
 WORKDIR /app
 
-# # Install helper tools
-# RUN install -m 0755 scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
-
 
 # Set environment variables
 ENV PYTHONPATH=/app
