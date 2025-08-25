@@ -1,5 +1,6 @@
 import inspect
 import os
+import base64
 import subprocess
 import sys
 import time
@@ -164,9 +165,19 @@ class MagnitudeBrowserBackend(BrowserBackend):
         self,
         agent_server_url: str = "http://localhost:3000",
         headless: bool = False,
+        start_service: bool = True,
         **kwargs,
     ):
         with MagnitudeBrowserBackend._lock:
+            if not start_service:
+                # Do not spawn a new process; point to the provided URL
+                MagnitudeBrowserBackend._agent_base_url = agent_server_url
+                self.agent_base_url = agent_server_url
+                print(
+                    f"🔗 Using existing Magnitude service at {self.agent_base_url} (no local process started)",
+                )
+                return
+
             if MagnitudeBrowserBackend._process is None:
                 self.agent_base_url = agent_server_url
                 self._start_service(headless)
@@ -232,7 +243,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 f"Magnitude BrowserAgent failed to become ready within 30 seconds on port {port}",
             )
 
-        self._load_persistent_data()
+        # self._load_persistent_data()
 
     def _start_output_readers(self):
         """Start threads to read stdout/stderr to prevent buffer blocking."""
@@ -421,8 +432,10 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         fpath.lstrip("/"),
                     )
                     try:
-                        with open(fpath, "r") as fp:
-                            files_map[rel_path] = fp.read()
+                        with open(fpath, "rb") as fp:
+                            files_map[rel_path] = base64.b64encode(fp.read()).decode(
+                                "ascii",
+                            )
                     except Exception as e:
                         print(
                             f"Warning: Could not read {rel_path} for persistence: {e}",
@@ -600,7 +613,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
                 )
 
-                self._save_persistent_data()
+                # self._save_persistent_data()
 
                 if sys.platform != "win32":
                     import signal
