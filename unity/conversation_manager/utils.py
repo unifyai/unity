@@ -1,6 +1,6 @@
 import asyncio
+from asyncio import StreamReader, StreamWriter
 import json
-import time
 import os
 import aiohttp
 import requests
@@ -11,43 +11,13 @@ EVENT_SERVER_PORT = 8090
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0  # seconds
 
-# Global variables to hold the connection
-reader: asyncio.StreamReader | None = None
-writer: asyncio.StreamWriter | None = None
-_connection_established = False
-_last_connection_attempt = 0.0
+# Admin headers and URLs
 admin_headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 unity_comms_url = os.getenv("UNITY_COMMS_URL")
 
 
-async def _ensure_connection():
-    """Ensure we have a connection to the event server with retry logic"""
-    global reader, writer, _connection_established, _last_connection_attempt
-
-    if _connection_established and writer is not None:
-        # Check if connection is still alive
-        try:
-            # Try to write a ping (empty line) to test connection
-            writer.write(
-                (
-                    json.dumps({"topic": "ping", "to": "past", "event": {}}) + "\n"
-                ).encode(),
-            )
-            await writer.drain()
-            return
-        except Exception:
-            # Connection is dead, reset and reconnect
-            _connection_established = False
-            reader = None
-            writer = None
-
-    # Rate limiting for connection attempts
-    current_time = time.time()
-    if current_time - _last_connection_attempt < RETRY_DELAY:
-        await asyncio.sleep(RETRY_DELAY - (current_time - _last_connection_attempt))
-
-    _last_connection_attempt = current_time
-
+async def create_connection(connection_type: str = "general"):
+    """Create a new connection to the event server with type identification"""
     # Try to establish connection with retries
     for attempt in range(MAX_RETRIES):
         try:
@@ -55,31 +25,33 @@ async def _ensure_connection():
                 EVENT_SERVER_HOST,
                 EVENT_SERVER_PORT,
             )
-            _connection_established = True
-            print(
-                f"Connected to event server at {EVENT_SERVER_HOST}:{EVENT_SERVER_PORT}",
+
+            # Send connection type identification
+            connection_msg = (
+                json.dumps({"topic": "init", "type": connection_type}) + "\n"
             )
-            return
+            writer.write(connection_msg.encode())
+            await writer.drain()
+
+            print(
+                f"Connected to event server as {connection_type} at "
+                f"{EVENT_SERVER_HOST}:{EVENT_SERVER_PORT}",
+            )
+            return reader, writer
         except Exception as e:
             print(f"Connection attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(RETRY_DELAY * (attempt + 1))  # Exponential backoff
             else:
                 print(
-                    f"Failed to connect to event server at {EVENT_SERVER_HOST}:{EVENT_SERVER_PORT} after {MAX_RETRIES} attempts",
+                    f"Failed to connect to event server at {EVENT_SERVER_HOST}:"
+                    f"{EVENT_SERVER_PORT} after {MAX_RETRIES} attempts",
                 )
                 raise
 
 
-async def publish_event(ev: dict):
+async def publish_event(ev: dict, writer: StreamWriter = None):
     """Publish an event to the event server"""
-    global writer
-
-    await _ensure_connection()
-
-    if writer is None:
-        raise RuntimeError("No connection to event server")
-
     try:
         ev_str = json.dumps(ev) + "\n"
         writer.write(ev_str.encode())
@@ -87,58 +59,14 @@ async def publish_event(ev: dict):
     except Exception as e:
         # Connection might be broken, reset and retry once
         print(f"Failed to publish event, connection may be broken: {e}")
-        writer = None
-
-        # Try one more time
-        await _ensure_connection()
-        if writer is None:
-            raise RuntimeError("Failed to reconnect to event server")
-
-        ev_str = json.dumps(ev) + "\n"
-        writer.write(ev_str.encode())
-        await writer.drain()
 
 
-async def close_connection():
+async def close_connection(writer: StreamWriter = None):
     """Close the connection to the event server"""
-    global reader, writer, _connection_established
-
     if writer is not None:
         writer.close()
         await writer.wait_closed()
-        reader = None
-        writer = None
-        _connection_established = False
         print("Disconnected from event server")
-
-
-async def get_reader():
-    """Get the current reader for event collection"""
-    global reader
-    await _ensure_connection()
-    return reader
-
-
-def get_server_info():
-    """Get the current server configuration"""
-    return {
-        "host": EVENT_SERVER_HOST,
-        "port": EVENT_SERVER_PORT,
-        "connected": _connection_established,
-        "max_retries": MAX_RETRIES,
-        "retry_delay": RETRY_DELAY,
-    }
-
-
-async def test_connection():
-    """Test the connection to the event server"""
-    try:
-        await _ensure_connection()
-        print("Connection test successful")
-        return True
-    except Exception as e:
-        print(f"Connection test failed: {e}")
-        return False
 
 
 # comms related utils

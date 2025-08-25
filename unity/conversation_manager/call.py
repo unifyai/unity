@@ -37,12 +37,14 @@ from unity.conversation_manager.utils import (
     dispatch_agent,
     publish_event,
     close_connection,
-    get_reader,
+    create_connection,
 )
 
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
+reader = None
+writer = None
 
 
 async def audio_from_meet_mic():
@@ -120,6 +122,7 @@ class Assistant(Agent):
                     content=new_message.text_content,
                 ).to_dict(),
             },
+            writer=writer,
         )
         raise llm.StopResponse()
 
@@ -232,6 +235,8 @@ class Assistant(Agent):
 
 
 async def entrypoint(ctx: agents.JobContext):
+    global reader, writer
+
     await ctx.connect()
 
     # Get phone numbers from environment variables
@@ -275,6 +280,7 @@ async def entrypoint(ctx: agents.JobContext):
                 "to": "past",
                 "event": PhoneCallEndedEvent().to_dict(),
             },
+            writer=writer,
         )
         print("End call event sent")
 
@@ -301,7 +307,7 @@ async def entrypoint(ctx: agents.JobContext):
 
         # Close the connection gracefully
         try:
-            await close_connection()
+            await close_connection(writer=writer)
             print("Connection closed gracefully")
         except Exception as e:
             print(f"Error during connection cleanup: {e}")
@@ -366,13 +372,14 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     # Initialize connection using utility function
-    reader = await get_reader()
+    reader, writer = await create_connection("call")
     await publish_event(
         {
             "topic": from_number,
             "to": "pending",
             "event": PhoneCallStartedEvent().to_dict(),
         },
+        writer=writer,
     )
 
     async def response_task():
@@ -404,6 +411,7 @@ async def entrypoint(ctx: agents.JobContext):
                                     content=phone_utterance,
                                 ).to_dict(),
                             },
+                            writer=writer,
                         ),
                     )
                     # Update activity time on assistant response
@@ -421,13 +429,14 @@ async def entrypoint(ctx: agents.JobContext):
                                     "topic": from_number,
                                     "event": InterruptEvent().to_dict(),
                                 },
+                                writer=writer,
                             ),
                         )
         except asyncio.CancelledError:
             pass
 
     async def collect_events():
-        nonlocal last_activity_time, reader
+        nonlocal last_activity_time
         global chunk_queue
 
         while True:

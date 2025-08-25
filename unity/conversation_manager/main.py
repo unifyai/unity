@@ -38,9 +38,7 @@ class EventManager:
 
     async def serve(self):
         self.servers["call"] = await asyncio.start_server(
-            self.handle_call_client,
-            "127.0.0.1",
-            8090,
+            self.handle_client, "127.0.0.1", 8090
         )
 
         self.event_aggregator_task = asyncio.create_task(self.collect_events())
@@ -110,15 +108,32 @@ class EventManager:
                 traceback.print_exc()
                 print(str(e))
 
-    async def handle_call_client(
+    async def handle_client(
         self,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ):
-        self.readers["call"] = reader
-        self.writers["call"] = writer
+        """Generic client connection handler that identifies connection type"""
+        # Wait for connection type identification
+        raw = await reader.readline()
+        if not raw:
+            return
 
-        print("Call connected")
+        # Set read and write streams for the connection type
+        init_msg = json.loads(raw.decode())
+        print(f"Received connection init message: {init_msg}")
+        if not init_msg.get("topic") == "init":
+            print("Unknown connection type, closing connection")
+            writer.close()
+            await writer.wait_closed()
+            return
+
+        # Set read and write streams for the connection type
+        connection_type = init_msg.get("type", "unknown")
+        self.readers[connection_type] = reader
+        self.writers[connection_type] = writer
+
+        print(f"{connection_type} connected")
         while True:
             if self.is_shutting_down:
                 break
@@ -128,13 +143,13 @@ class EventManager:
                 if not raw:
                     break
                 msg = json.loads(raw.decode())
-                # Update activity time on any message from call client
+                # Update activity time on any message from client
                 self.last_activity_time = asyncio.get_event_loop().time()
                 self.events_queue.put_nowait(msg)
             except Exception as e:
                 traceback.print_exc()
                 print(str(e))
-                print("CALL CLOSED")
+                print(f"{connection_type.upper()} CLOSED")
                 writer.close()
                 await writer.wait_closed()
                 break
@@ -175,13 +190,13 @@ class EventManager:
                 print(f"Error during user agent cleanup: {e}")
 
         # Close all connections
-        for writer in self.writers.values():
+        for connection_type, writer in self.writers.items():
             if writer and not writer.is_closing():
                 try:
                     writer.close()
                     await writer.wait_closed()
                 except Exception as e:
-                    print(f"Error closing writer: {e}")
+                    print(f"Error closing {connection_type} writer: {e}")
 
         # Close servers
         for server in self.servers.values():
