@@ -77,17 +77,17 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
-            should_create_ctx = ctx not in PRECREATED_CONTEXTS
+            skip_ctx_create = ctx in PRECREATED_CONTEXTS
             if ctx not in PRECREATED_CONTEXTS:
                 if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
                     unify.delete_context(ctx)
-                    should_create_ctx = True
+                    skip_ctx_create = False
 
             try:
                 unify.set_context(
                     ctx,
                     relative=False,
-                    skip_create=should_create_ctx,
+                    skip_create=skip_ctx_create,
                 )
                 EVENT_BUS.reset(delete_contexts=False)
                 # Ensure EVENT_BUS has been initialised – in case the
@@ -121,17 +121,17 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
-            should_create_ctx = ctx not in PRECREATED_CONTEXTS
+            skip_ctx_create = ctx in PRECREATED_CONTEXTS
             if ctx not in PRECREATED_CONTEXTS:
                 if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
                     unify.delete_context(ctx)
-                    should_create_ctx = True
+                    skip_ctx_create = False
 
             try:
                 unify.set_context(
                     ctx,
                     relative=False,
-                    skip_create=should_create_ctx,
+                    skip_create=skip_ctx_create,
                 )
                 EVENT_BUS.reset(delete_contexts=False)
                 # Ensure EVENT_BUS has been initialised – in case the
