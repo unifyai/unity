@@ -77,8 +77,10 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
-            skip_ctx_create = ctx in PRECREATED_CONTEXTS
-            if ctx not in PRECREATED_CONTEXTS:
+            skip_ctx_create = False
+            if _get_unity_test_env_var("UNIFY_PRETEST_CONTEXT_CREATE"):
+                skip_ctx_create = ctx in PRECREATED_CONTEXTS
+            else:
                 if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
                     unify.delete_context(ctx)
                     skip_ctx_create = False
@@ -121,8 +123,10 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
-            skip_ctx_create = ctx in PRECREATED_CONTEXTS
-            if ctx not in PRECREATED_CONTEXTS:
+            skip_ctx_create = False
+            if _get_unity_test_env_var("UNIFY_PRETEST_CONTEXT_CREATE"):
+                skip_ctx_create = ctx in PRECREATED_CONTEXTS
+            else:
                 if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
                     unify.delete_context(ctx)
                     skip_ctx_create = False

@@ -1587,28 +1587,6 @@ def _get_context_name_for_item(item):
     return f"{path}/{func_name}"
 
 
-async def _pretest_context_create(ctx: str, remote_ctxs: list[str]):
-    for remote_ctx in remote_ctxs:
-        # TODO workaround, unify.get_contexts doesn't return implicit contexts created by later unify.create_context calls
-        if remote_ctx.startswith(ctx):
-            await asyncio.to_thread(unify.delete_context, ctx)
-    # Hacky way to create main context + required sub-contexts for EventBus in a single API call
-    if _get_unity_test_env_var("UNIFY_TRACED"):
-        await asyncio.to_thread(unify.create_context, f"{ctx}/Traces/")
-    await asyncio.to_thread(unify.create_context, f"{ctx}/Events/_callbacks/")
-    return ctx
-
-
-async def _pretest_ctx_handler(contexts: list[str]):
-    """
-    Create contexts prior to test execution. Minimizes the number of API calls to Unify.
-    """
-    remote_ctxs = unify.get_contexts()
-    coros = [_pretest_context_create(ctx, remote_ctxs) for ctx in contexts]
-    created_contexts = await asyncio.gather(*coros)
-    PRECREATED_CONTEXTS.update(created_contexts)
-
-
 def pytest_collection_finish(session):
     # Compute all contexts and fire off background creation tasks
     if _get_unity_test_env_var("UNIFY_PRETEST_CONTEXT_CREATE"):
@@ -1616,6 +1594,9 @@ def pytest_collection_finish(session):
         for item in session.items:
             ctx = _get_context_name_for_item(item)
             contexts.add(ctx)
+            contexts.add(f"{ctx}/Events/_callbacks/")
+            if _get_unity_test_env_var("UNIFY_TRACED"):
+                contexts.add(f"{ctx}/Traces/")
 
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(_pretest_ctx_handler(list(contexts)))
+        unify.create_contexts(list(contexts))
+        PRECREATED_CONTEXTS.update(contexts)
