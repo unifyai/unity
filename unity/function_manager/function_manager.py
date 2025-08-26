@@ -4,6 +4,7 @@ import threading
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column, list_private_fields
+from ..common.sandbox_utils import create_sandbox_globals
 from .types.function import Function
 from ..common.model_to_fields import model_to_fields
 
@@ -261,7 +262,7 @@ class FunctionManager(threading.Thread):
         results: Dict[str, str] = {}
 
         for name, _, node, source in parsed:
-            namespace: Dict[str, object] = {}
+            namespace = create_sandbox_globals()
             exec(source, namespace)
             fn_obj = namespace[name]
 

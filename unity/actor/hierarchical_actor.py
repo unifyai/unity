@@ -2129,90 +2129,9 @@ class HierarchicalActor(BaseActor):
         Returns:
             A dictionary of globals allowed within the execution environment.
         """
-        safe_builtins = {
-            k: __builtins__.get(k)
-            for k in [
-                "print",
-                "len",
-                "str",
-                "int",
-                "float",
-                "bool",
-                "list",
-                "dict",
-                "set",
-                "tuple",
-                "range",
-                "type",
-                "object",
-                "bytes",
-                "frozenset",
-                "isinstance",
-                "hasattr",
-                "getattr",
-                "setattr",
-                "callable",
-                "dir",
-                "vars",
-                "iter",
-                "next",
-                "filter",
-                "map",
-                "reversed",
-                "enumerate",
-                "zip",
-                "any",
-                "all",
-                "sum",
-                "min",
-                "max",
-                "abs",
-                "round",
-                "pow",
-                "divmod",
-                "sorted",
-                "format",
-                "chr",
-                "ord",
-                "Exception",
-                "NotImplementedError",
-                "ValueError",
-                "TypeError",
-                "KeyError",
-                "IndexError",
-                "AttributeError",
-                "RuntimeError",
-                "StopIteration",
-                "AssertionError",
-                "super",
-                "property",
-                "classmethod",
-                "staticmethod",
-                "__build_class__",
-                "__name__",
-                "__import__",
-            ]
-            if __builtins__.get(k) is not None
-        }
-        return {
-            "__builtins__": safe_builtins,
-            "asyncio": asyncio,
-            "re": re,
-            "json": json,
-            "datetime": datetime,
-            "collections": collections,
-            "pydantic": pydantic,
-            "BaseModel": BaseModel,
-            "Field": Field,
-            "typing": typing,
-            "Any": Any,
-            "Callable": Callable,
-            "Dict": Dict,
-            "List": List,
-            "Optional": Optional,
-            "Tuple": Tuple,
-            "Set": Set,
-        }
+        from ..common.sandbox_utils import create_sandbox_globals
+
+        return create_sandbox_globals()
 
     async def _prepare_execution_environment(self, plan: HierarchicalPlan):
         """
