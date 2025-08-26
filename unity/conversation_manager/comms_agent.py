@@ -520,7 +520,7 @@ class CommsAgent:
                     chat_history,
                     action.query,
                     handle_id,
-                    call_mode,
+                    call_mode=call_mode,
                 ).to_dict(),
             },
         )
@@ -540,7 +540,9 @@ class CommsAgent:
         self.publish(
             {
                 "topic": "tool_use",
-                "event": ToolUseEndedEvent(answer, handle_id, call_mode).to_dict(),
+                "event": ToolUseEndedEvent(
+                    answer, handle_id, call_mode=call_mode
+                ).to_dict(),
             },
         )
 
@@ -560,7 +562,7 @@ class CommsAgent:
                     f"tool_use is not running currently, "
                     "please create a new action instead",
                     action.type,
-                    call_mode,
+                    call_mode=call_mode,
                 ).to_dict(),
             }
         else:
@@ -587,7 +589,7 @@ class CommsAgent:
                 "event": ToolUseHandleSuccessEvent(
                     action.query,
                     action.type,
-                    call_mode,
+                    call_mode=call_mode,
                 ).to_dict(),
                 "to": "past",
             }
