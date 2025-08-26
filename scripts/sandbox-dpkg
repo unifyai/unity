@@ -1,0 +1,30 @@
+#!/bin/bash
+
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+  echo "Usage: sandbox-dpkg <path-to-deb>" >&2
+  exit 1
+fi
+
+SRC=$1
+if [ ! -f "$SRC" ]; then
+  echo "Error: file not found: $SRC" >&2
+  exit 2
+fi
+
+DEST_DIR=/home/deb
+mkdir -p "$DEST_DIR"
+
+BASENAME=$(basename "$SRC")
+DEST="$DEST_DIR/$BASENAME"
+cp -f "$SRC" "$DEST"
+echo "Copied to $DEST"
+
+echo "Installing with dpkg -i ..."
+dpkg -i "$DEST" || {
+  echo "dpkg reported missing dependencies, attempting fix..." >&2
+  apt-get update && apt -f install -y
+}
+
+echo "Done."

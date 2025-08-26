@@ -322,11 +322,32 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     continue
                 raise
 
+    def _get_files_map(self, install_root: str) -> dict[str, str]:
+        files_map: dict[str, str] = {}
+        for root, _, files in os.walk(install_root):
+            for fname in files:
+                fpath = os.path.join(root, fname)
+                rel_path = os.path.join(
+                    os.getenv("ASSISTANT_NAME", "assistant"),
+                    fpath.lstrip("/"),
+                )
+                try:
+                    with open(fpath, "rb") as fp:
+                        files_map[rel_path] = base64.b64encode(fp.read()).decode(
+                            "ascii",
+                        )
+                except Exception as e:
+                    print(
+                        f"Warning: Could not read {rel_path} for persistence: {e}",
+                    )
+        return files_map
+
     def _load_persistent_data(self):
         """
         Load all files and folders in the assistant's data directory from a remote endpoint.
         """
         # list all files in /home/install through the endpoint, then for each file, save in local /home/install
+        print("🐍 PYTHON: Loading persistent installs...")
         try:
             orchestra_url = os.getenv("UNIFY_BASE_URL")
             endpoint = f"{orchestra_url}/admin/file"
@@ -356,10 +377,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 )
                 return
             files_map = resp.json() or {}
-            print("files_map:", files_map)
 
-            install_root = "/home/install"
-            os.makedirs(install_root, exist_ok=True)
+            os.makedirs("/home/install", exist_ok=True)
+            os.makedirs("/home/deb", exist_ok=True)
 
             # 2) Write each file for this assistant under /home/install
             for path_key, content in files_map.items():
@@ -378,30 +398,42 @@ class MagnitudeBrowserBackend(BrowserBackend):
         except Exception as e:
             print(f"Warning: Could not query remote files for persistence: {e}")
 
+        # Install downloaded/custom deb files
+        if os.path.exists("/home/deb"):
+            for deb_file in os.listdir("/home/deb"):
+                try:
+                    subprocess.run(
+                        ["sandbox-dpkg", os.path.join("/home/deb", deb_file)],
+                        check=True,
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not install {deb_file}: {e}")
+
         # Optionally install packages recorded in apt-manual.txt if present
-        # try:
-        #     if os.path.exists("/home/install/apt-manual.txt"):
-        #         subprocess.run(
-        #             [
-        #                 "xargs",
-        #                 "-a",
-        #                 "/home/install/apt-manual.txt",
-        #                 "apt-get",
-        #                 "install",
-        #                 "-y",
-        #             ],
-        #             check=True,
-        #         )
-        # except Exception as e:
-        #     print(
-        #         f"Warning: Could not execute apt-get install from apt-manual.txt: {e}",
-        #     )
+        try:
+            if os.path.exists("/home/install/apt-manual.txt"):
+                subprocess.run(
+                    [
+                        "xargs",
+                        "-a",
+                        "/home/install/apt-manual.txt",
+                        "apt-get",
+                        "install",
+                        "-y",
+                    ],
+                    check=True,
+                )
+        except Exception as e:
+            print(
+                f"Warning: Could not execute apt-get install from apt-manual.txt: {e}",
+            )
 
     def _save_persistent_data(self):
         """
         Save all files and folders in the assistant's data directory by sending them
         to a remote endpoint for persistence.
         """
+        print("🐍 PYTHON: Saving persistent installs...")
         try:
             subprocess.run(
                 ["apt-mark", "showmanual"],
@@ -419,28 +451,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         # save files in /home/install folder with the endpoint
         try:
-            install_root = "/home/install"
-
-            # Build files mapping: relative_path -> base64 content
-            files_map: dict[str, str] = {}
-            for root, _, files in os.walk(install_root):
-                for fname in files:
-                    fpath = os.path.join(root, fname)
-                    rel_path = os.path.join(
-                        os.getenv("ASSISTANT_NAME", "assistant"),
-                        fpath.lstrip("/"),
-                    )
-                    try:
-                        with open(fpath, "rb") as fp:
-                            files_map[rel_path] = base64.b64encode(fp.read()).decode(
-                                "ascii",
-                            )
-                    except Exception as e:
-                        print(
-                            f"Warning: Could not read {rel_path} for persistence: {e}",
-                        )
-
-            print("files_map:", files_map)
+            files_map = self._get_files_map("/home/install")
+            files_map.update(self._get_files_map("/home/deb"))
 
             if files_map:
                 orchestra_url = os.getenv("UNIFY_BASE_URL")
