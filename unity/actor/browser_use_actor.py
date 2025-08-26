@@ -11,6 +11,7 @@ import uuid
 from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
+    _strip_image_keys,
 )
 from ..task_scheduler.base import BaseActiveTask
 from .base import BaseActor
@@ -414,63 +415,65 @@ class BrowserUsePlan(BaseActiveTask):
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
     @functools.wraps(BaseActiveTask.ask, updated=())
-    async def ask(self, question: str) -> str:
-        try:
-            if not self._is_valid_method("ask"):
-                raise RuntimeError(
-                    f"Cannot ask question for plan {self._task_id} in state {self._state.name}.",
-                )
+    async def ask(self, question: str) -> SteerableToolHandle:
+        """
+        Asks a question about the current state of the plan by creating a new,
+        isolated tool loop that returns a handle to its result.
+        """
+        if not self._is_valid_method("ask"):
+            raise RuntimeError(
+                f"Cannot ask question for plan {self._task_id} in state {self._state.name}.",
+            )
 
-            logger.info(
-                f"BrowserUsePlan {self._task_id}: Answering query: '{question}'",
-            )
-            current_context_to_share = []
-            if (
-                self._state == _BrowserActorState.RUNNING
-                and self._plan_client
-                and self._plan_client.messages
-            ):
-                current_context_to_share = copy.deepcopy(self._plan_client.messages)
-            elif (
-                self._state == _BrowserActorState.PAUSED
-                and self._parent_chat_context_on_pause
-            ):
-                current_context_to_share = copy.deepcopy(
-                    self._parent_chat_context_on_pause,
-                )
+        logger.info(
+            f"BrowserUsePlan {self._task_id}: Answering query: '{question}'",
+        )
 
-            if not current_context_to_share:
-                return "No context available to answer the question."
+        current_context_to_share = []
+        if (
+            self._state == _BrowserActorState.RUNNING
+            and self._plan_client
+            and self._plan_client.messages
+        ):
+            current_context_to_share = _strip_image_keys(
+                copy.deepcopy(self._plan_client.messages),
+            )
+        elif (
+            self._state == _BrowserActorState.PAUSED
+            and self._parent_chat_context_on_pause
+        ):
+            current_context_to_share = copy.deepcopy(
+                self._parent_chat_context_on_pause,
+            )
+        self._ask_client.reset_messages()
+        self._ask_client.reset_system_message()
+        system_message = f"""
+        You are an AI assistant in the middle of performing a task. The user has just asked a question.
+        Based on the provided context (the task history and a screenshot of your browser), give a brief, natural, first-person response.
+        Speak as if you are the one doing the work (e.g., "I'm currently looking for...").
+        **Task History:**
+        The task's history up to this point has been shared with you.
+        **User Question:** "{question}"
+        **Answer:**
+        """
 
-            self._ask_client.reset_messages()
-            self._ask_client.set_system_message(
-                "You are answering questions about an ongoing automated web Browse task. "
-                "The main task's chat history will be provided. Answer concisely based on this history.",
-            )
-            self._ask_client.append_messages(
-                [
-                    {
-                        "role": "system",
-                        "content": f"Current task ({self._task_id}) chat history:\n{json.dumps(current_context_to_share, indent=2)}",
-                    },
-                    {"role": "user", "content": question},
-                ],
-            )
-            try:
-                response = await self._ask_client.generate()
-                return response.strip() if isinstance(response, str) else str(response)
-            except Exception as e:
-                logger.error(
-                    f"BrowserUsePlan {self._task_id}: Error during ask: {e}",
-                    exc_info=True,
-                )
-                return f"Error answering question: {e}"
-        except Exception as e:
-            logger.error(
-                f"BrowserUsePlan {self._task_id}: Error during ask: {e}",
-                exc_info=True,
-            )
-            return f"Error answering question due to LLM failure: {e}"
+        messages_to_send = [
+            {
+                "role": "system",
+                "content": f"--- Main Task History ---\n{json.dumps(current_context_to_share, indent=2)}",
+            },
+            {"role": "user", "content": question},
+        ]
+        self._ask_client.set_system_message(system_message)
+        self._ask_client.append_messages(messages_to_send)
+        return start_async_tool_use_loop(
+            client=self._ask_client,
+            message=question,
+            tools={},
+            loop_id=f"Question({self._task_id})",
+            max_consecutive_failures=1,
+            timeout=60,
+        )
 
     @property
     @functools.wraps(BaseActiveTask.valid_tools, updated=())
