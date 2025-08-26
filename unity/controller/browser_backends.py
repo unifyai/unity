@@ -350,7 +350,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         print("🐍 PYTHON: Loading persistent installs...")
         try:
             orchestra_url = os.getenv("UNIFY_BASE_URL")
-            endpoint = f"{orchestra_url}/admin/file"
+            dl_endpoint = f"{orchestra_url}/file/download_url"
 
             user_id = os.environ.get("USER_ID", "default")
             assistant_name = os.environ.get("ASSISTANT_NAME", "assistant")
@@ -360,73 +360,98 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
             }
 
-            # 1) Get all files from Orchestra (path -> content)
-            resp = requests.get(
-                endpoint,
-                params={
-                    "user_id": user_id,
-                    "project": project,
-                    "staging": "staging" in orchestra_url,
-                },
-                headers=headers,
-                timeout=60,
-            )
-            if resp.status_code >= 400:
-                print(
-                    f"Warning: Orchestra list failed: {resp.status_code} {resp.text[:200]}",
-                )
-                return
-            files_map = resp.json() or {}
-
             os.makedirs("/home/install", exist_ok=True)
             os.makedirs("/home/deb", exist_ok=True)
 
-            # 2) Write each file for this assistant under /home/install
-            for path_key, content in files_map.items():
+            # Download folders via prefix (assistant-scoped)
+            for prefix_folder in ["home/install", "home/deb"]:
                 try:
-                    if not isinstance(path_key, str) or not path_key.startswith(
-                        assistant_name,
-                    ):
+                    # Request signed URLs for all files under the prefix
+                    dl_resp = requests.get(
+                        dl_endpoint,
+                        params={
+                            "user_id": user_id,
+                            "project": project,
+                            "path": f"{assistant_name}/{prefix_folder}",
+                            "staging": "staging" in orchestra_url,
+                            "as_prefix": True,
+                        },
+                        headers=headers,
+                        timeout=60,
+                    )
+                    if dl_resp.status_code >= 400:
+                        print(
+                            f"Warning: download_url (prefix) failed for {prefix_folder}: {dl_resp.status_code} {dl_resp.text[:200]}",
+                        )
                         continue
-                    rel = path_key[len(assistant_name) :]
-                    data_bytes = base64.b64decode(content)
-                    with open(rel, "wb") as f:
-                        f.write(data_bytes)
+                    payload = dl_resp.json() or {}
+                    items = payload.get("items", [])
+                    for it in items:
+                        try:
+                            full_path = it.get(
+                                "path",
+                                "",
+                            )  # e.g., user/project/assistant/home/install/file
+                            url = it.get("download_url")
+                            if not full_path or not url:
+                                continue
+                            # Derive local absolute path by stripping up to '/<assistant_name>/'
+                            marker = f"/{assistant_name}/"
+                            idx = full_path.find(marker)
+                            if idx == -1:
+                                continue
+                            rel_from_assistant = full_path[idx + len(marker) :]
+                            local_path = (
+                                "/" + rel_from_assistant
+                            )  # starts with home/install or home/deb
+                            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                            bin_resp = requests.get(url, timeout=300)
+                            if bin_resp.status_code >= 400:
+                                print(
+                                    f"Warning: download content failed for {full_path}: {bin_resp.status_code}",
+                                )
+                                continue
+                            with open(local_path, "wb") as f:
+                                f.write(bin_resp.content)
+                        except Exception as e:
+                            print(
+                                f"Warning: Could not restore item under {prefix_folder}: {e}",
+                            )
                 except Exception as e:
-                    print(f"Warning: Could not restore {path_key}: {e}")
+                    print(f"Warning: Could not list prefix {prefix_folder}: {e}")
 
         except Exception as e:
             print(f"Warning: Could not query remote files for persistence: {e}")
 
         # Install downloaded/custom deb files
-        if os.path.exists("/home/deb"):
-            for deb_file in os.listdir("/home/deb"):
-                try:
-                    subprocess.run(
-                        ["sandbox-dpkg", os.path.join("/home/deb", deb_file)],
-                        check=True,
-                    )
-                except Exception as e:
-                    print(f"Warning: Could not install {deb_file}: {e}")
+        # if os.path.exists("/home/deb"):
+        #     for deb_file in os.listdir("/home/deb"):
+        #         try:
+        #             subprocess.run(
+        #                 ["sandbox-dpkg", os.path.join("/home/deb", deb_file)],
+        #                 check=True,
+        #             )
+        #         except Exception as e:
+        #             print(f"Warning: Could not install {deb_file}: {e}")
 
-        # Optionally install packages recorded in apt-manual.txt if present
-        try:
-            if os.path.exists("/home/install/apt-manual.txt"):
-                subprocess.run(
-                    [
-                        "xargs",
-                        "-a",
-                        "/home/install/apt-manual.txt",
-                        "apt-get",
-                        "install",
-                        "-y",
-                    ],
-                    check=True,
-                )
-        except Exception as e:
-            print(
-                f"Warning: Could not execute apt-get install from apt-manual.txt: {e}",
-            )
+        # # Optionally install packages recorded in apt-manual.txt if present
+        # try:
+        #     if os.path.exists("/home/install/apt-manual.txt"):
+        #         subprocess.run(
+        #             [
+        #                 "xargs",
+        #                 "-a",
+        #                 "/home/install/apt-manual.txt",
+        #                 "apt-get",
+        #                 "install",
+        #                 "-y",
+        #             ],
+        #             check=True,
+        #         )
+        # except Exception as e:
+        #     print(
+        #         f"Warning: Could not execute apt-get install from apt-manual.txt: {e}",
+        #     )
 
     def _save_persistent_data(self):
         """
@@ -451,39 +476,74 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         # save files in /home/install folder with the endpoint
         try:
-            files_map = self._get_files_map("/home/install")
-            files_map.update(self._get_files_map("/home/deb"))
+            # Iterate local files and upload each via signed upload URL
+            orchestra_url = os.getenv("UNIFY_BASE_URL")
+            up_endpoint = f"{orchestra_url}/file/upload_url"
+            user_id = os.environ.get("USER_ID", "default")
+            project = f"Assistants"
+            headers = {
+                "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
+                "Content-Type": "application/json",
+            }
 
-            if files_map:
-                orchestra_url = os.getenv("UNIFY_BASE_URL")
-                endpoint = f"{orchestra_url}/admin/file"
+            def _iter_local_files(root_dir: str):
+                assistant_name = os.getenv("ASSISTANT_NAME", "assistant")
+                for r, _, files in os.walk(root_dir):
+                    for fn in files:
+                        ap = os.path.join(r, fn)
+                        rel = os.path.relpath(ap, root_dir)
+                        base = root_dir.lstrip("/")  # e.g., home/install or home/deb
+                        key = os.path.join(assistant_name, base, rel)
+                        yield key, ap
 
-                user_id = os.environ.get("USER_ID", "default")
-                project = f"Assistants"
-                headers = {
-                    "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
-                    "Content-Type": "application/json",
-                }
-                payload = {
-                    "user_id": user_id,
-                    "project": project,
-                    "files": files_map,
-                    "staging": "staging" in orchestra_url,
-                }
-
-                try:
-                    r = requests.post(
-                        endpoint,
-                        json=payload,
-                        headers=headers,
-                        timeout=120,
-                    )
-                    if r.status_code >= 400:
-                        print(
-                            f"Warning: Orchestra persist failed: {r.status_code} {r.text[:200]}",
+            for base_dir in ["/home/install", "/home/deb"]:
+                if not os.path.exists(base_dir):
+                    continue
+                for key, abs_path in _iter_local_files(base_dir):
+                    try:
+                        # 1) Request upload URL for this file
+                        req = {
+                            "user_id": user_id,
+                            "project": project,
+                            "path": key,
+                            "staging": "staging" in orchestra_url,
+                            "content_type": "application/octet-stream",
+                        }
+                        up_resp = requests.post(
+                            up_endpoint,
+                            json=req,
+                            headers=headers,
+                            timeout=60,
                         )
-                except Exception as e:
-                    print(f"Warning: Could not reach Orchestra to persist files: {e}")
+                        if up_resp.status_code >= 400:
+                            print(
+                                f"Warning: upload_url failed for {key}: {up_resp.status_code} {up_resp.text[:200]}",
+                            )
+                            continue
+                        upload_url = up_resp.json().get("upload_url")
+                        if not upload_url:
+                            continue
+                        # 2) Upload bytes to signed URL (single-shot resumable PUT)
+                        with open(abs_path, "rb") as fp:
+                            data = fp.read()
+                        total = len(data)
+                        put_headers = {
+                            "Content-Type": "application/octet-stream",
+                            "Content-Length": str(total),
+                            "Content-Range": f"bytes 0-{total-1}/{total}",
+                        }
+                        put_resp = requests.put(
+                            upload_url,
+                            data=data,
+                            headers=put_headers,
+                            timeout=600,
+                        )
+                        if put_resp.status_code not in (200, 201, 204):
+                            print(
+                                f"Warning: upload failed for {key}: {put_resp.status_code} {put_resp.text[:200]}",
+                            )
+                    except Exception as e:
+                        print(f"Warning: Could not upload {key}: {e}")
         except Exception as e:
             print(f"Warning: Could not enumerate /home/install for persistence: {e}")
 
