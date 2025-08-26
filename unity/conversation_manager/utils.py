@@ -1,5 +1,5 @@
 import asyncio
-from asyncio import StreamReader, StreamWriter
+from asyncio import StreamWriter
 import json
 import os
 import aiohttp

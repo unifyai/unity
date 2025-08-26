@@ -259,15 +259,6 @@ class CodeActActor(BaseActor):
             "wait for the user to provide instructions via interjection."
         )
 
-        def dynamic_tool_policy(step_index: int, tools: Dict[str, Callable]):
-            """
-            Allows a text response on the first turn of an interactive session,
-            but requires tool use for all subsequent turns.
-            """
-            if is_interactive_session:
-                return ("auto", tools)
-            return ("required", tools)
-
         plan = ToolLoopPlan(
             task_description=description or initial_prompt,
             tools=self._tools,
@@ -278,7 +269,8 @@ class CodeActActor(BaseActor):
             timeout=self._timeout,
             persist=is_interactive_session,
             custom_system_prompt=self.system_prompt,
-            tool_policy=dynamic_tool_policy,
+            tool_policy=None,
+            action_provider=self._action_provider,
         )
         return plan
 

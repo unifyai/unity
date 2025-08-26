@@ -38,7 +38,9 @@ class EventManager:
 
     async def serve(self):
         self.servers["call"] = await asyncio.start_server(
-            self.handle_client, "127.0.0.1", 8090
+            self.handle_client,
+            "127.0.0.1",
+            8090,
         )
 
         self.event_aggregator_task = asyncio.create_task(self.collect_events())
