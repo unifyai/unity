@@ -302,6 +302,7 @@ class FunctionManager(threading.Thread):
 
         Each value contains:
 
+        * **function_id** – unique identifier for the function
         * **argspec** – full signature, e.g. ``(x: int, y: int) -> int``
         * **docstring** – cleaned docstring or empty string
         * **implementation** – full source code (only when
@@ -313,6 +314,7 @@ class FunctionManager(threading.Thread):
             exclude_fields=list_private_fields(self._ctx),
         ):
             data = {
+                "function_id": log.entries["function_id"],
                 "argspec": log.entries["argspec"],
                 "docstring": log.entries["docstring"],
             }
