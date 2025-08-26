@@ -62,7 +62,30 @@ def _collect_images(obj, acc: list[str]) -> None:
 # Deep-copy *obj* **without** any "image" keys so we can still present the
 # textual part of a tool result next to the promoted image blocks.
 def _strip_image_keys(obj):
+    """
+    Recursively deep-copies an object, removing any base64 image data.
+    This handles images in `{"image": "b64..."}` format and also the
+    more complex `[{"type": "image_url", ...}]` format in tool content.
+    """
     if isinstance(obj, dict):
+        # Special handling for tool messages with list content
+        if obj.get("role") == "tool" and isinstance(obj.get("content"), list):
+            new_content = [
+                item
+                for item in obj["content"]
+                if not (isinstance(item, dict) and item.get("type") == "image_url")
+            ]
+            # If only text remains, flatten content to a simple string for clarity
+            if len(new_content) == 1 and new_content[0].get("type") == "text":
+                obj_copy = {k: v for k, v in obj.items() if k != "content"}
+                obj_copy["content"] = new_content[0].get("text", "")
+                return obj_copy
+            else:  # Return a new dict with the filtered content
+                obj_copy = {k: v for k, v in obj.items() if k != "content"}
+                obj_copy["content"] = new_content
+                return obj_copy
+
+        # Standard recursive dictionary copy
         return {k: _strip_image_keys(v) for k, v in obj.items() if k != "image"}
     elif isinstance(obj, list):
         return [_strip_image_keys(v) for v in obj]
