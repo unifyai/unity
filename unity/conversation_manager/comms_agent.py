@@ -806,7 +806,7 @@ class CommsAgent:
             purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
             task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
         """
-        await Call.create(
+        return await Call.create(
             self.current_user["user_number"],
             purpose,
             task_context,
@@ -821,7 +821,7 @@ class CommsAgent:
         Args:
             message (str): The message to send.
         """
-        await _send_sms_message_via_number(self.current_user["user_number"], message)
+        return await _send_sms_message_via_number(self.current_user["user_number"], message)
 
     async def _send_email(self, subject: str, message: str, message_id: str = None):
         """
@@ -842,7 +842,7 @@ class CommsAgent:
         # You should ask the transcript manager based on the contents of the original
         # mail, and get the message_id from the "_metadata" field of that transcript and
         # pass that as the message_id to this tool.
-        await _send_email_via_address(
+        return await _send_email_via_address(
             self.current_user["user_email"],
             subject,
             message,
@@ -858,7 +858,7 @@ class CommsAgent:
             message (str): The message to send.
             reply_to_user (bool): `True` if replying to user's message. `False` if starting a new conversation.
         """
-        await _send_whatsapp_message_via_number(
+        return await _send_whatsapp_message_via_number(
             self.current_user["user_number"],
             message,
             reply_to_user,
@@ -880,7 +880,7 @@ class CommsAgent:
             purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
             task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
         """
-        await Call.create(
+        return await Call.create(
             to_number,
             purpose,
             task_context,
@@ -900,7 +900,7 @@ class CommsAgent:
             description (str): The description of the contact and content of the SMS message.
             parent_chat_context (list[dict]): The parent chat context.
         """
-        await send_sms_message(description, parent_chat_context)
+        return await send_sms_message(description, parent_chat_context)
 
     async def _send_email_to_third_party(
         self,
@@ -916,7 +916,7 @@ class CommsAgent:
             description (str): The description of the contact and content of the email.
             parent_chat_context (list[dict]): The parent chat context.
         """
-        await send_email(description, parent_chat_context)
+        return await send_email(description, parent_chat_context)
 
     async def _send_whatsapp_to_third_party(
         self,
@@ -932,7 +932,7 @@ class CommsAgent:
             description (str): The description of the WhatsApp message.
             parent_chat_context (list[dict]): The parent chat context.
         """
-        await send_whatsapp_message(description, parent_chat_context)
+        return await send_whatsapp_message(description, parent_chat_context)
 
     async def wait_for_seconds_or_next_event(self, time: int): ...
 
