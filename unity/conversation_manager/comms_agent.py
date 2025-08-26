@@ -806,6 +806,10 @@ class CommsAgent:
             purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
             task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
         """
+        from unity.contact_manager.contact_manager import ContactManager
+
+        if self.contact_manager is None:
+            self.contact_manager = ContactManager()
         return await Call.create(
             self.current_user["user_number"],
             purpose,
@@ -880,6 +884,10 @@ class CommsAgent:
             purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
             task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
         """
+        from unity.contact_manager.contact_manager import ContactManager
+
+        if self.contact_manager is None:
+            self.contact_manager = ContactManager()
         return await Call.create(
             to_number,
             purpose,
@@ -1111,7 +1119,6 @@ class CommsAgent:
                 return
 
             if self.transcript_manager is None:
-                self.contact_manager = ContactManager()
                 self.transcript_manager = TranscriptManager()
                 self.transcript_manager._get_logger().session.headers[
                     "Authorization"
