@@ -1188,6 +1188,7 @@ class CommsAgent:
                 self.broader_context = await asyncio.to_thread(get_broader_context)
             except Exception as e:
                 print(f"Error fetching bus events: {e}")
+                traceback.print_exc()
             await asyncio.sleep(2)
 
     def handle_event(self, event: dict):
