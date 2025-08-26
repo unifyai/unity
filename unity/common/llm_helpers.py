@@ -2232,6 +2232,8 @@ async def _async_tool_use_loop_inner(
                     info["clar_down_q"] = h_dn_q
 
                 _call_id: str = info["call_id"]
+                # Create a sanitized version of the call_id for use in function names.
+                _safe_call_id: str = _call_id.replace("-", "_").split("_")[-1]
                 _fn_name: str = info["name"]
                 _arg_json: str = info["call_dict"]["function"]["arguments"]
                 try:
@@ -2256,8 +2258,8 @@ async def _async_tool_use_loop_inner(
                         return {"status": "continue", "call_id": _call_id}
 
                     _reg_tool(
-                        key=f"continue_{_fn_name}_{_call_id}",
-                        func_name=f"continue_{_fn_name}_{_call_id}",
+                        key=f"continue_{_fn_name}_{_safe_call_id}",
+                        func_name=f"continue_{_fn_name}_{_safe_call_id}",
                         doc=_continue_doc,
                         fn=_continue,
                     )
@@ -2281,8 +2283,8 @@ async def _async_tool_use_loop_inner(
                     return {"status": "stopped", "call_id": _call_id, **_kw}
 
                 _reg_tool(
-                    key=f"stop_{_fn_name}_{_call_id}",
-                    func_name=f"stop_{_fn_name}_{_call_id}",
+                    key=f"stop_{_fn_name}_{_safe_call_id}",
+                    func_name=f"stop_{_fn_name}_{_safe_call_id}",
                     doc=_stop_doc,
                     fn=_stop,
                 )
@@ -2340,8 +2342,8 @@ async def _async_tool_use_loop_inner(
                             }
 
                     _reg_tool(
-                        key=f"interject_{_fn_name}_{_call_id}",
-                        func_name=f"interject_{_fn_name}_{_call_id}",
+                        key=f"interject_{_fn_name}_{_safe_call_id}",
+                        func_name=f"interject_{_fn_name}_{_safe_call_id}",
                         doc=_interject_doc,
                         fn=_interject,
                     )
@@ -2361,8 +2363,8 @@ async def _async_tool_use_loop_inner(
                         }
 
                     _reg_tool(
-                        key=f"clarify_{_fn_name}_{_call_id}",
-                        func_name=f"clarify_{_fn_name}_{_call_id}",
+                        key=f"clarify_{_fn_name}_{_safe_call_id}",
+                        func_name=f"clarify_{_fn_name}_{_safe_call_id}",
                         doc=_clarify_doc,
                         fn=_clarify,
                     )
@@ -2402,8 +2404,8 @@ async def _async_tool_use_loop_inner(
                             return {"status": "paused", "call_id": _call_id}
 
                     _reg_tool(
-                        key=f"pause_{_fn_name}_{_call_id}",
-                        func_name=f"pause_{_fn_name}_{_call_id}",
+                        key=f"pause_{_fn_name}_{_safe_call_id}",
+                        func_name=f"pause_{_fn_name}_{_safe_call_id}",
                         doc=_pause_doc,
                         fn=_pause,
                     )
@@ -2441,8 +2443,8 @@ async def _async_tool_use_loop_inner(
                             return {"status": "resumed", "call_id": _call_id}
 
                     _reg_tool(
-                        key=f"resume_{_fn_name}_{_call_id}",
-                        func_name=f"resume_{_fn_name}_{_call_id}",
+                        key=f"resume_{_fn_name}_{_safe_call_id}",
+                        func_name=f"resume_{_fn_name}_{_safe_call_id}",
                         doc=_resume_doc,
                         fn=_resume,
                     )
@@ -2478,7 +2480,7 @@ async def _async_tool_use_loop_inner(
 
                     for meth_name, bound in public_methods.items():
                         # use the same name we're about to give fn.__name__
-                        func_name = f"{meth_name}_{_fn_name}_{_call_id}"
+                        func_name = f"{meth_name}_{_fn_name}_{_safe_call_id}"
                         helper_key = func_name
 
                         # Skip if we already generated one this turn (possible when
