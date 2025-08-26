@@ -9,10 +9,12 @@ import json
 import copy
 import uuid
 import inspect
+import base64
 
 from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
+    _strip_image_keys,
 )
 from ..task_scheduler.base import BaseActiveTask
 from .base import BaseActor
@@ -195,6 +197,7 @@ class ToolLoopPlan(BaseActiveTask):
         persist: bool = False,
         custom_system_prompt: str | None = None,
         tool_policy: Optional[Callable] = None,
+        action_provider: Optional["ActionProvider"] = None,  # type: ignore
     ):
         self._initial_task_description = task_description
         self._tools = tools
@@ -222,6 +225,7 @@ class ToolLoopPlan(BaseActiveTask):
         self._timeout = timeout
         self._persist = persist
         self._tool_policy = tool_policy
+        self._action_provider = action_provider
 
         self._plan_client = AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
@@ -573,51 +577,76 @@ class ToolLoopPlan(BaseActiveTask):
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
     @functools.wraps(BaseActiveTask.ask, updated=())
-    async def ask(self, question: str) -> str:
+    async def ask(self, question: str) -> SteerableToolHandle:
+        """
+        Asks a question about the current state of the plan by creating a new,
+        isolated tool loop that returns a handle to its result.
+        """
         if not self._is_valid_method("ask"):
             raise RuntimeError(
                 f"Cannot ask question for plan {self._task_id} in state {self._state.name}.",
             )
 
         logger.info(f"ToolLoopPlan {self._task_id}: Answering query: '{question}'")
-        current_context_to_share = []
-        if (
-            self._state == _PlanState.RUNNING
-            and self._plan_client
-            and self._plan_client.messages
-        ):
-            current_context_to_share = copy.deepcopy(self._plan_client.messages)
-        elif self._state == _PlanState.PAUSED and self._parent_chat_context_on_pause:
-            current_context_to_share = copy.deepcopy(self._parent_chat_context_on_pause)
-
-        if not current_context_to_share:
-            return "No context available to answer the question for the current plan state."
-
+        current_context_to_share = _strip_image_keys(copy.deepcopy(self.chat_history))
         self._ask_client.reset_messages()
         self._ask_client.reset_system_message()
-        self._ask_client.set_system_message(
-            "You are answering questions about an ongoing automated task. "
-            "The main task's chat history will be provided. Answer concisely based on this history.",
-        )
-        self._ask_client.append_messages(
-            [
-                {
-                    "role": "system",
-                    "content": f"Current task ({self._task_id}, state: {self._state.name}) chat history:\n{json.dumps(current_context_to_share, indent=2)}",
-                },
-                {"role": "user", "content": question},
-            ],
-        )
 
-        try:
-            response = await self._ask_client.generate()
-            return response.strip() if isinstance(response, str) else str(response)
-        except Exception as e:
-            logger.error(
-                f"ToolLoopPlan {self._task_id}: Error during LLM call for ask: {e}",
-                exc_info=True,
-            )
-            return f"Error answering question due to LLM failure: {e}"
+        system_message = f"""
+        You are an AI assistant in the middle of performing a task. The user has just asked a question.
+        Based on the provided context (the task history and a screenshot of your browser), give a brief, natural, first-person response.
+        Speak as if you are the one doing the work (e.g., "I'm currently looking for...").
+        **Task History:**
+        The task's history up to this point has been shared with you.
+        **User Question:** "{question}"
+        **Answer:**
+        """
+
+        messages_to_send = [
+            {
+                "role": "system",
+                "content": f"--- Main Task History ---\n{json.dumps(current_context_to_share, indent=2)}",
+            },
+        ]
+        if self._action_provider and self._action_provider.browser:
+            try:
+                screenshot = await self._action_provider.browser.get_screenshot()
+                if isinstance(screenshot, str):
+                    screenshot_b64 = screenshot
+                else:
+                    screenshot_b64 = base64.b64encode(screenshot).decode("utf-8")
+
+                system_message += (
+                    "\n**Current Browser View (Screenshot):**\n"
+                    "An image of the current browser page has also been provided."
+                )
+                messages_to_send.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{screenshot_b64}",
+                                },
+                            },
+                        ],
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"Could not get screenshot for ask(): {e}")
+
+        self._ask_client.set_system_message(system_message)
+        self._ask_client.append_messages(messages_to_send)
+
+        return start_async_tool_use_loop(
+            client=self._ask_client,
+            message=question,
+            tools={},
+            loop_id=f"Question({self._task_id})",
+            max_consecutive_failures=1,
+            timeout=60,
+        )
 
     @property
     @functools.wraps(BaseActiveTask.valid_tools, updated=())
