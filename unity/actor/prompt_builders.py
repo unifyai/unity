@@ -1960,7 +1960,7 @@ def build_ask_prompt(
         You are an AI assistant in the middle of performing a task. The user has just asked a question.
         Based on the provided context, give a brief, natural, first-person response.
         Speak as if you are the one doing the work (e.g., "I'm currently looking for...").
-        
+
         **Goal:** {goal}
         **State:** {state}
         **Call Stack:** {call_stack}
