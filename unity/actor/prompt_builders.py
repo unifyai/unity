@@ -1796,7 +1796,6 @@ def build_dynamic_implement_prompt(
     function_sig: inspect.Signature,
     function_docstring: str,
     parent_code: str,
-    browser_state: str | None,
     clarification_question: str | None,
     clarification_answer: str | None,
     has_browser_screenshot: bool,
@@ -1884,12 +1883,8 @@ def build_dynamic_implement_prompt(
         )
 
     browser_context_section = ""
-    if browser_state:
-        browser_context_section = f"""**Current Browser State:**
-        {browser_state}
-        """
     if has_browser_screenshot:
-        browser_context_section += """
+        browser_context_section = """
         **Current Browser View (Screenshot):**
         An image of the current browser page has been provided. Analyze it carefully to inform your new implementation.
         """
@@ -1940,8 +1935,7 @@ def build_dynamic_implement_prompt(
         ### Situation Analysis
         **Function to Address:** `async def {function_name}{function_sig}`
         **Purpose of this Function:** "{function_docstring}"
-        **Current Browser State:**
-        {browser_state or "No browser state available."}
+        {browser_context_section or "No browser state available."}
         A screenshot of the current browser page has been provided. **Use it as the primary source of truth.**
 
         {rules_and_examples}
@@ -2081,7 +2075,6 @@ def build_ask_prompt(
     goal: str,
     state: str,
     call_stack: str,
-    browser_context: str,
     context_log: str,
     question: str,
 ) -> str:
@@ -2092,7 +2085,6 @@ def build_ask_prompt(
         goal: The overall goal of the plan.
         state: The current lifecycle state of the plan.
         call_stack: The current function call stack.
-        browser_context: A summary of the current browser state.
         context_log: A log of recent actions.
         question: The user's question.
 
@@ -2106,7 +2098,8 @@ def build_ask_prompt(
         **Goal:** {goal}
         **State:** {state}
         **Call Stack:** {call_stack}
-        **Browser State:** {browser_context}
+        **Current Browser View (Screenshot):**
+        An image of the current browser page has been provided.
         **Recent Log:**
         {context_log}
 
@@ -2318,11 +2311,7 @@ def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
 def build_course_correction_prompt(
     last_verified_function_name: str,
     last_verified_url: str,
-    last_verified_page_analysis,
-    has_last_verified_screenshot: bool,
     current_url: str,
-    current_page_analysis,
-    has_current_screenshot: bool,
     failed_function_name: str,
     failed_function_docstring: str,
     *,
@@ -2331,9 +2320,6 @@ def build_course_correction_prompt(
     """
     Builds the prompt for the course correction LLM.
     """
-    last_page_analysis_str = last_verified_page_analysis.model_dump_json(indent=2)
-    current_page_analysis_str = current_page_analysis.model_dump_json(indent=2)
-
     scripting_rules = _build_simple_script_rules(tools)
 
     return textwrap.dedent(
@@ -2348,20 +2334,12 @@ def build_course_correction_prompt(
         **1. The "Last Known Good" State (BEFORE the failure):**
         This is the state after the function `{last_verified_function_name}` completed successfully.
         - **URL:** `{last_verified_url}`
-        - **Page Analysis:**
-          ```json
-          {last_page_analysis_str}
-          ```
-        - **Screenshot:** A screenshot of this state is provided.
+        - **Screenshot:** A screenshot of this state is provided. (1st image)
 
         **2. The "Current / Corrupted" State (AFTER the failure):**
         This is the state where the function `{failed_function_name}` (Purpose: "{failed_function_docstring}") failed.
         - **URL:** `{current_url}`
-        - **Page Analysis:**
-          ```json
-          {current_page_analysis_str}
-          ```
-        - **Screenshot:** A screenshot of this current state is also provided.
+        - **Screenshot:** A screenshot of this current state is also provided. (2nd image)
 
         ---
         ### Your Task
@@ -2531,13 +2509,11 @@ def build_precondition_prompt(
 
 def build_state_verification_prompt(
     precondition: Dict[str, Any],
-    page_analysis: Any,
 ) -> str:
     """
     Builds the prompt for an LLM to verify if the current browser state meets a required precondition.
     """
     precondition_str = json.dumps(precondition, indent=2)
-    page_analysis_str = page_analysis.model_dump_json(indent=2)
     return textwrap.dedent(
         f"""
         You are a meticulous state verifier for an autonomous web agent. Your task is to determine if the current state of the web browser satisfies a function's required precondition.
@@ -2549,12 +2525,7 @@ def build_state_verification_prompt(
             ```json
             {precondition_str}
             ```
-
-        2.  **Current Browser State (What you see now):**
-            ```json
-            {page_analysis_str}
-            ```
-        3.  **Visual Evidence:** A screenshot of the current browser page is provided. This is your primary source of truth.
+        2.  **Visual Evidence:** A screenshot of the current browser page is provided. This is your primary source of truth.
 
         **Your Decision:**
         Compare the **Required Precondition** against the **Current Browser State**.
@@ -2570,7 +2541,6 @@ def build_state_verification_prompt(
 def build_proactive_correction_prompt(
     precondition: Dict[str, Any],
     current_url: str,
-    current_page_analysis: Any,
     *,
     tools: Dict[str, Any],
 ) -> str:
@@ -2578,7 +2548,6 @@ def build_proactive_correction_prompt(
     Builds the prompt for the LLM to generate a script to get from the current state to a target precondition state.
     """
     target_state_str = json.dumps(precondition, indent=2)
-    current_page_analysis_str = current_page_analysis.model_dump_json(indent=2)
     scripting_rules = _build_simple_script_rules(tools)
 
     return textwrap.dedent(
@@ -2592,10 +2561,6 @@ def build_proactive_correction_prompt(
 
         **1. The "Current" State (Where you are now):**
         - **URL:** `{current_url}`
-        - **Page Analysis:**
-          ```json
-          {current_page_analysis_str}
-          ```
         - **Screenshot:** A screenshot of this current state is provided.
 
         **2. The "Target" Precondition (Where you need to be):**

@@ -3,9 +3,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import base64
-import collections
 import datetime
-import re
 import enum
 import functools
 import inspect
@@ -14,11 +12,10 @@ import logging
 import sys
 import textwrap
 import traceback
-from typing import Any, Callable, Dict, List, Optional, Tuple, Set
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import typing
 import types
 import weakref
-import pydantic
 import unify
 from pydantic import BaseModel, Field
 import importlib.util
@@ -194,20 +191,6 @@ class CourseCorrectionDecision(BaseModel):
     correction_code: Optional[str] = Field(
         None,
         description="A short, self-contained Python script using the 'action_provider' to restore the browser state. This should only be provided if correction_needed is True. The script must be a single code block and contain no functions, only a sequence of `await action_provider...` calls.",
-    )
-
-
-class PageAnalysis(BaseModel):
-    page_title: str = Field(description="The title of the current page.")
-    url: str = Field(description="The current URL.")
-    visible_headings: List[str] = Field(
-        description="A list of all visible headings on the page.",
-    )
-    visible_links: List[str] = Field(
-        description="A list of all visible links and their text.",
-    )
-    interactive_elements: List[str] = Field(
-        description="A list of all buttons, input fields, and other interactive elements.",
     )
 
 
@@ -1021,7 +1004,6 @@ class HierarchicalPlan(BaseActiveTask):
         self.last_verified_function_name: Optional[str] = None
         self.last_verified_url: Optional[str] = None
         self.last_verified_screenshot: Optional[str | bytes] = None
-        self.last_verified_page_analysis: Optional[PageAnalysis] = None
         self.function_source_map: Dict[str, str] = {}
         self.clean_function_source_map: Dict[str, str] = {}
         self.interaction_stack: List[List[Tuple[str, str, Optional[str]]]] = []
@@ -2354,15 +2336,10 @@ class HierarchicalActor(BaseActor):
 
         if description_precondition := precondition.get("description"):
             try:
-                page_analysis = await self.action_provider.browser.observe(
-                    "Analyze current page for state verification.",
-                    response_format=PageAnalysis,
-                )
                 screenshot = await self.action_provider.browser.get_screenshot()
 
                 verification_prompt = prompt_builders.build_state_verification_prompt(
                     precondition=precondition,
-                    page_analysis=page_analysis,
                 )
                 plan.verification_client.set_response_format(
                     StateVerificationDecision,
@@ -2391,9 +2368,6 @@ class HierarchicalActor(BaseActor):
 
                 correction_prompt = prompt_builders.build_proactive_correction_prompt(
                     precondition=precondition,
-                    current_url=page_analysis.url,
-                    current_page_analysis=page_analysis,
-                    has_current_screenshot=screenshot is not None,
                     tools=self.tools,
                 )
                 plan.course_correction_client.set_response_format(
@@ -2705,15 +2679,6 @@ class HierarchicalActor(BaseActor):
                         )
                         plan.last_verified_function_name = fn_name
                         plan.last_verified_url = current_url
-                        try:
-                            plan.last_verified_page_analysis = await self.action_provider.browser.observe(
-                                "Summarize current visible structure: headings, links, interactive elements.",
-                                response_format=PageAnalysis,
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                f"Could not capture page analysis after '{fn_name}': {e}",
-                            )
                         logger.info(
                             f"STATE CAPTURE: Stored successful state after '{fn_name}' at URL {current_url}.",
                         )
@@ -2822,20 +2787,10 @@ class HierarchicalActor(BaseActor):
 
                 try:
                     current_url = await self.action_provider.browser.get_current_url()
-                    current_page_analysis = await self.action_provider.browser.observe(
-                        "Analyze the current page state for deviation assessment.",
-                        response_format=PageAnalysis,
-                    )
-
                     correction_prompt = prompt_builders.build_course_correction_prompt(
                         last_verified_function_name=plan.last_verified_function_name,
                         last_verified_url=plan.last_verified_url,
-                        last_verified_page_analysis=plan.last_verified_page_analysis,
-                        has_last_verified_screenshot=plan.last_verified_screenshot
-                        is not None,
                         current_url=current_url,
-                        current_page_analysis=current_page_analysis,
-                        has_current_screenshot=final_screenshot is not None,
                         failed_function_name=fn.__name__,
                         failed_function_docstring=fn.__doc__,
                         tools=self.tools,
@@ -3060,23 +3015,8 @@ class HierarchicalActor(BaseActor):
                     f"SyntaxError. You MUST fix this error. Details:\n{last_syntax_error}"
                 )
 
-            browser_state = None
             browser_screenshot = None
             if is_browser_task:
-                try:
-                    browser_state = await self.action_provider.browser.observe(
-                        "Analyze the current page and provide a structured summary of its content.",
-                        response_format=PageAnalysis,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Could not get browser state: {e}. No browser state will be available during reimplementation of {function_name}",
-                    )
-                    browser_state = None
-
-                plan.action_log.append(
-                    f"Browser State during dynamic implementation: {browser_state}",
-                )
                 browser_screenshot = await self.action_provider.browser.get_screenshot()
 
             docstring = (
@@ -3114,7 +3054,6 @@ class HierarchicalActor(BaseActor):
                 function_sig=func_sig,
                 function_docstring=docstring,
                 parent_code=parent_code,
-                browser_state=browser_state,
                 has_browser_screenshot=browser_screenshot is not None,
                 replan_context=replan_reason,
                 tools=self.tools,
