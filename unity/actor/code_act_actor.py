@@ -36,24 +36,13 @@ def build_code_act_system_prompt(
 You are an expert agent that solves tasks by writing and executing Python code. Your primary tool is a stateful code execution sandbox where you can control browsers, send communications, and perform complex automation tasks.
 
 ### Primary Execution Tool
-You MUST use this tool for ALL code execution tasks such as
-- Browser automation (navigate, act, observe)
-- Data extraction and processing
-- Sending communications (SMS, email, WhatsApp)
-- Complex calculations
-- Multi-step workflows
-
-
 ```json
 {execute_tool_reference}
 ```
 
 {rules_and_examples}
 
-### CRITICAL REMINDER
-Every response MUST be a tool call to `execute_python_code` **UNLESS** you are providing the final answer to the user. Use the code execution sandbox for everything until you are ready to conclude the task.
-
-Begin your response now. You must use the `execute_python_code` tool.
+Begin your response now.
 """
 
 
