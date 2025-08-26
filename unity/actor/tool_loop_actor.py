@@ -224,13 +224,13 @@ class ToolLoopPlan(BaseActiveTask):
         self._tool_policy = tool_policy
 
         self._plan_client = AsyncUnify(
-            "o4-mini@openai",
+            "gemini-2.5-pro@vertex-ai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
 
         self._ask_client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gemini-2.5-pro@vertex-ai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
@@ -266,7 +266,10 @@ class ToolLoopPlan(BaseActiveTask):
     def _get_internal_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         current_tools = self._tools.copy()
 
-        async def request_clarification_tool_for_llm(question: str) -> str:
+        async def request_clarification(question: str) -> str:
+            """
+            This tool is used to request clarification from the caller.
+            """
             logger.info(
                 f"ToolLoopPlan {self._task_id}: LLM (internal loop) requesting clarification: '{question}'",
             )
@@ -277,15 +280,9 @@ class ToolLoopPlan(BaseActiveTask):
             )
             return answer
 
-        request_clarification_tool_for_llm.__name__ = (
-            "request_clarification_from_plan_caller"
-        )
-        request_clarification_tool_for_llm.__qualname__ = (
-            "request_clarification_from_plan_caller"
-        )
-        current_tools["request_clarification_from_plan_caller"] = (
-            request_clarification_tool_for_llm
-        )
+        request_clarification.__name__ = "request_clarification"
+        request_clarification.__qualname__ = "request_clarification"
+        current_tools["request_clarification"] = request_clarification
         return current_tools
 
     async def _manage_plan_execution(self):
