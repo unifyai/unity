@@ -29,7 +29,11 @@ import random
 import string
 import unify
 
-from tests.helpers import _get_unity_test_env_var, TESTS_DEFAULT_ENV_VARS
+from tests.helpers import (
+    _get_unity_test_env_var,
+    TESTS_DEFAULT_ENV_VARS,
+    PRECREATED_CONTEXTS,
+)
 
 
 def pytest_report_header(config):
@@ -1556,3 +1560,46 @@ def _close_httpx_clients_at_session_end():
                 pass
     loop.run_until_complete(loop.shutdown_asyncgens())
     loop.close()
+
+
+# --------------------------------------------------------------------------- #
+#  Pre-run context creation (to minimize API calls)
+# --------------------------------------------------------------------------- #
+
+
+def _get_context_name_for_item(item):
+    """
+    Return the unify context name for a collected pytest item.
+
+    This uses the same logic as tests.helpers._ctx_name to generate a unique context
+    path for the test, including any parametrization suffixes.
+    """
+    original_name = item.originalname or item.name
+
+    # Append normalized parametrization suffix if available
+    normalized = _normalize_pytest_nodeid(item.nodeid)
+
+    func_name = original_name
+    if normalized is not None:
+        func_name = f"{original_name}/{normalized}"
+
+    path = item._nodeid.split(".py")[0]
+    return f"{path}/{func_name}"
+
+
+def pytest_collection_finish(session):
+    # Compute all contexts and fire off background creation tasks
+    if _get_unity_test_env_var("UNIFY_PRETEST_CONTEXT_CREATE"):
+        contexts: set[str] = set()
+        for item in session.items:
+            ctx = _get_context_name_for_item(item)
+            contexts.add(ctx)
+            contexts.add(f"{ctx}/Events/_callbacks/")
+            if _get_unity_test_env_var("UNIFY_TRACED"):
+                contexts.add(f"{ctx}/Traces/")
+
+        # TODO: Should delete contexts before creating them
+        # But this is mostly fine now for CI purpose, as we create
+        # a fresh project anyway
+        unify.create_contexts(list(contexts))
+        PRECREATED_CONTEXTS.update(contexts)
