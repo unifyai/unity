@@ -350,7 +350,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         print("🐍 PYTHON: Loading persistent installs...")
         try:
             orchestra_url = os.getenv("UNIFY_BASE_URL")
-            dl_endpoint = f"{orchestra_url}/file/download_url"
+            dl_endpoint = f"{orchestra_url}/admin/file/download_url"
 
             user_id = os.environ.get("USER_ID", "default")
             assistant_name = os.environ.get("ASSISTANT_NAME", "assistant")
@@ -478,7 +478,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         try:
             # Iterate local files and upload each via signed upload URL
             orchestra_url = os.getenv("UNIFY_BASE_URL")
-            up_endpoint = f"{orchestra_url}/file/upload_url"
+            up_endpoint = f"{orchestra_url}/admin/file/upload_url"
             user_id = os.environ.get("USER_ID", "default")
             project = f"Assistants"
             headers = {
