@@ -183,7 +183,6 @@ def create_global_configmap(api_client, namespace="default"):
                 "labels": {"app": "unity"},
             },
             "data": {
-                "UNIFY_BASE_URL": "https://api.unify.ai/v0",
                 "PROJECT_ID": "responsive-city-458413-a2",
             },
         }
@@ -224,7 +223,6 @@ def create_global_secrets(api_client, namespace="default"):
 
         secrets_data = {}
         required_secrets = [
-            "UNITY_COMMS_URL",
             "LIVEKIT_SIP_URI",
             "LIVEKIT_URL",
             "LIVEKIT_API_KEY",
