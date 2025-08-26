@@ -1598,5 +1598,8 @@ def pytest_collection_finish(session):
             if _get_unity_test_env_var("UNIFY_TRACED"):
                 contexts.add(f"{ctx}/Traces/")
 
+        # TODO: Should delete contexts before creating them
+        # But this is mostly fine now for CI purpose, as we create
+        # a fresh project anyway
         unify.create_contexts(list(contexts))
         PRECREATED_CONTEXTS.update(contexts)
