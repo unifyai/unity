@@ -163,7 +163,11 @@ class ActiveTask(BaseActiveTask):
         task is deferred and we attempt to reinstate it to its previous queue/schedule
         position using the stored reintegration plan (when available).
         """
-        ret = self._actor_handle.stop(reason)  # type: ignore[call-arg]
+        # Be tolerant if the underlying actor has already finished; treat stop as a no-op.
+        try:
+            ret = self._actor_handle.stop(reason)  # type: ignore[call-arg]
+        except Exception:
+            ret = "Stopped."
         self._was_stopped = True
 
         # Cancel → mark cancelled; Defer → try reinstatement
