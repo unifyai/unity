@@ -9,6 +9,10 @@ from unity.common.llm_helpers import (
     AsyncToolUseLoopHandle,
 )
 from tests.helpers import _get_unity_test_env_var
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_tool_request,
+    _wait_for_tool_result,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -943,3 +947,87 @@ async def test_dynamic_handle_public_method():
         m.get("role") == "tool" and "ask_" in (m.get("name") or "")
         for m in client.messages
     ), "No tool-message from the `ask_…` helper found"
+
+
+@pytest.mark.asyncio
+async def test_outer_handle_stop_propagates_to_inner_loop_stop():
+    """
+    Stopping the OUTER handle should propagate a stop down to any nested
+    async tool loop handles that were returned by tools and are still running.
+    """
+
+    # Holder for the inner handle so we can instrument its stop()
+    holder: dict[str, AsyncToolUseLoopHandle | None] = {"handle": None}
+    stop_calls = {"count": 0}
+
+    async def inner_long_job() -> str:
+        # Sleep long enough that the outer stop can arrive while it's running
+        await asyncio.sleep(10)
+        return "inner-finished"
+
+    inner_long_job.__name__ = "inner_long_job"
+    inner_long_job.__qualname__ = "inner_long_job"
+
+    async def outer_tool() -> AsyncToolUseLoopHandle:
+        inner_client = unify.AsyncUnify(
+            "gpt-4o@openai",
+            cache=_get_unity_test_env_var("UNIFY_CACHE"),
+            traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        )
+        inner_client.set_system_message(
+            "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
+        )
+        h = start_async_tool_use_loop(
+            client=inner_client,
+            message="start",
+            tools={"inner_long_job": inner_long_job},
+            max_steps=20,
+            timeout=240,
+        )
+
+        # Wrap stop on the inner handle to count calls and allow graceful finish
+        orig_stop = h.stop
+
+        def _wrapped_stop(reason: str | None = None):  # type: ignore[no-redef]
+            stop_calls["count"] += 1
+            return orig_stop(reason)
+
+        setattr(h, "stop", _wrapped_stop)
+        holder["handle"] = h
+        return h
+
+    outer_tool.__name__ = "outer_tool"
+    outer_tool.__qualname__ = "outer_tool"
+
+    client = unify.AsyncUnify(
+        "gpt-4o@openai",
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+    )
+    client.set_system_message(
+        "Call `outer_tool` with no arguments, then wait until it completes.",
+    )
+
+    outer = start_async_tool_use_loop(
+        client=client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        max_steps=20,
+        timeout=240,
+    )
+
+    # Wait deterministically until the assistant has requested the outer tool
+    await _wait_for_tool_request(client, "outer_tool")
+    # Also wait until the tool placeholder for outer_tool has been inserted,
+    # which happens when the inner handle has been created and adopted.
+    await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
+
+    # Now stop the OUTER loop directly – should propagate to inner
+    outer.stop("test-stop")
+
+    # The outer handle result should raise (non-persist cancel mode)
+    with pytest.raises(asyncio.CancelledError):
+        await outer.result()
+
+    # Assert that the inner handle's stop() was invoked exactly once
+    assert stop_calls["count"] == 1, "inner handle stop() was not propagated"
