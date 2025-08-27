@@ -2877,13 +2877,14 @@ async def _async_tool_use_loop_inner(
                     # • continue_* → acknowledge, no scheduling
                     # • cancel_*   → cancel underlying task & purge metadata
                     if _is_helper_tool("continue_") and name.startswith("continue_"):
-                        call_id = "_".join(name.split("_")[-2:])
+                        # Helper names are of the form: continue_{toolName}_{safeId}
+                        call_id_suffix = name.split("_")[-1]
 
                         tgt_task = next(
                             (
                                 t
                                 for t, inf in task_info.items()
-                                if call_id in inf["call_id"]
+                                if str(inf.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
                         )
@@ -2915,10 +2916,19 @@ async def _async_tool_use_loop_inner(
                             await _insert_after_assistant(msg, tool_reply_msg)
                             info["continue_msg"] = tool_reply_msg
                         else:  # the original tool already finished
+                            # Lookup finished result by matching call-id suffix
+                            _full_id = next(
+                                (
+                                    k
+                                    for k in completed_results.keys()
+                                    if k.endswith(call_id_suffix)
+                                ),
+                                None,
+                            )
                             finished = completed_results.get(
-                                call_id,
+                                _full_id,
                                 _dumps(
-                                    {"status": "not-found", "call_id": call_id},
+                                    {"status": "not-found", "call_id": call_id_suffix},
                                     indent=4,
                                 ),
                             )
@@ -2937,14 +2947,15 @@ async def _async_tool_use_loop_inner(
                     if name.startswith("stop_") and not name.startswith(
                         "_stop_tasks",
                     ):
-                        call_id = "_".join(name.split("_")[-2:])
+                        # Helper names are of the form: stop_{toolName}_{safeId}
+                        call_id_suffix = name.split("_")[-1]
 
                         # ── locate & cancel the underlying coroutine ──────
                         task_to_cancel = next(
                             (
                                 t
                                 for t, info in task_info.items()
-                                if info["call_id"] == call_id
+                                if str(info.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
                         )
@@ -2993,7 +3004,7 @@ async def _async_tool_use_loop_inner(
                             "tool_call_id": call["id"],
                             "name": pretty_name,
                             "content": (
-                                f"The tool call [{call_id}] has been stopped successfully."
+                                f"The tool call [{call_id_suffix}] has been stopped successfully."
                             ),
                         }
                         await _insert_after_assistant(msg, tool_msg)
@@ -3089,7 +3100,8 @@ async def _async_tool_use_loop_inner(
                         continue  # helper handled
 
                     if name.startswith("clarify_"):
-                        call_id = "_".join(name.split("_")[-2:])
+                        # Helper names are of the form: clarify_{toolName}_{safeId}
+                        call_id_suffix = name.split("_")[-1]
                         ans = args["answer"]
 
                         # ── find the underlying pending task (if still alive) ───────────────
@@ -3097,18 +3109,29 @@ async def _async_tool_use_loop_inner(
                             (
                                 t
                                 for t, inf in task_info.items()
-                                if call_id in inf["call_id"]
+                                if str(inf.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
                         )
 
-                        if call_id in clarification_channels:
-                            await clarification_channels[call_id][1].put(
+                        # Find clarification channel by matching call-id suffix
+                        _clar_key = next(
+                            (
+                                k
+                                for k in clarification_channels.keys()
+                                if k.endswith(call_id_suffix)
+                            ),
+                            None,
+                        )
+                        if _clar_key is not None:
+                            await clarification_channels[_clar_key][1].put(
                                 ans,
                             )  # down-queue
                             # ✔️ the tool is un-blocked – start watching it again
                             for _t, _inf in task_info.items():
-                                if call_id in _inf["call_id"]:
+                                if str(_inf.get("call_id", "")).endswith(
+                                    call_id_suffix,
+                                ):
                                     _inf["waiting_for_clarification"] = False
                                     break
                         tool_reply_msg = {
@@ -3136,14 +3159,15 @@ async def _async_tool_use_loop_inner(
                             payload = {}
                             new_text = "<unparsable>"
 
-                        call_id = "_".join(name.split("_")[-2:])
+                        # Helper names are of the form: interject_{toolName}_{safeId}
+                        call_id_suffix = name.split("_")[-1]
 
                         # locate the underlying long-running task
                         tgt_task = next(
                             (
                                 t
                                 for t, inf in task_info.items()
-                                if call_id in inf["call_id"]
+                                if str(inf.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
                         )
