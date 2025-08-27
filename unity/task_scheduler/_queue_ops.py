@@ -142,17 +142,18 @@ def detach_from_queue_for_activation(
         assert len(logs) == 1, "Task IDs should be unique"
         return logs[0]  # type: ignore[return-value]
 
-    # Record reintegration plan only for isolate scope
-    if execution_scope == "isolate":
-        scheduler._reintegration_plan = ReintegrationPlan(
-            task_id=task_id,
-            instance_id=task_row.get("instance_id"),
-            prev_task=prev_tid,
-            next_task=next_tid,
-            start_at=start_at,
-            was_head=prev_tid is None,
-            original_status=task_row.get("status"),
-        )
+    # Always record a reintegration plan for precise restore on defer stop,
+    # regardless of execution scope. This enables chain execution with later
+    # reinstatement to the original position when requested.
+    scheduler._reintegration_plan = ReintegrationPlan(
+        task_id=task_id,
+        instance_id=task_row.get("instance_id"),
+        prev_task=prev_tid,
+        next_task=next_tid,
+        start_at=start_at,
+        was_head=prev_tid is None,
+        original_status=task_row.get("status"),
+    )
 
     # Disconnect previous neighbour's next pointer
     if prev_tid is not None:
