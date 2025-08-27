@@ -131,6 +131,23 @@ def detach_from_queue_for_activation(
     next_tid = _q_next(sched)
     start_at = sched.get("start_at") if isinstance(sched, dict) else None
 
+    # Derive the current head's start_at so downstream tasks can be reinstated as
+    # head-scheduled later if their original predecessor becomes terminal.
+    def _get_row(tid: int) -> Optional[dict]:
+        rows = scheduler._filter_tasks(filter=f"task_id == {tid}", limit=1)
+        return rows[0] if rows else None
+
+    head_start_at: Optional[str] = None
+    if prev_tid is not None:
+        # Walk up to the head for the current chain
+        cur = _get_row(task_id)
+        while cur is not None and _q_prev(cur.get("schedule")) is not None:
+            cur = _get_row(_q_prev(cur.get("schedule")))
+        if cur is not None:
+            _sched = cur.get("schedule") or {}
+            if isinstance(_sched, dict):
+                head_start_at = _sched.get("start_at")
+
     def _get_log_obj(tid: int) -> Optional[unify.Log]:
         try:
             logs = scheduler._get_logs_by_task_ids(
@@ -153,6 +170,7 @@ def detach_from_queue_for_activation(
         start_at=start_at,
         was_head=prev_tid is None,
         original_status=task_row.get("status"),
+        head_start_at=head_start_at,
     )
 
     # Disconnect previous neighbour's next pointer
