@@ -1714,6 +1714,46 @@ async def _async_tool_use_loop_inner(
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
 
+    # Expose live task_info mapping on the current Task so outer handles/tests
+    # can introspect currently running nested handles (used by ask/stop helpers).
+    try:
+        _self_task = asyncio.current_task()
+        if _self_task is not None:
+            setattr(_self_task, "task_info", task_info)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    # Helper: propagate a stop request to any nested SteerableToolHandle returned
+    # by base tools. This ensures outer stop/cancel signals reach inner loops.
+    async def _propagate_stop_to_nested_handles(reason: Optional[str] = None) -> None:
+        try:
+            for _t, _inf in list(task_info.items()):
+                h = _inf.get("handle")
+                if h is not None and hasattr(h, "stop"):
+                    try:
+                        await _forward_handle_call(
+                            h,
+                            "stop",
+                            {"reason": reason} if reason is not None else {},
+                            fallback_positional_keys=["reason"],
+                        )
+                    except Exception:
+                        # Best effort – never let propagation failure crash the loop
+                        pass
+        except Exception:
+            pass
+
+    # Ensure we forward stop to nested handles at most once, even if multiple
+    # branches detect cancellation/stop around the same time.
+    _stop_forwarded_once: bool = False
+
+    async def _propagate_stop_once(reason: Optional[str]) -> None:
+        nonlocal _stop_forwarded_once
+        if _stop_forwarded_once:
+            return
+        await _propagate_stop_to_nested_handles(reason)
+        _stop_forwarded_once = True
+
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     try:
         unreplied = _find_unreplied_assistant_entries(client)
@@ -1819,8 +1859,17 @@ async def _async_tool_use_loop_inner(
                     for t in done & pending:
                         await _process_completed_task(t)
                     if cancel_event.is_set():
+                        # Forward stop to any nested handles before aborting
+                        try:
+                            await _propagate_stop_once("outer-loop cancelled")
+                        except Exception:
+                            pass
                         raise asyncio.CancelledError
                     if stop_event.is_set() and persist:
+                        try:
+                            await _propagate_stop_once("outer-loop stopped")
+                        except Exception:
+                            pass
                         # Graceful stop requested during pause
                         return last_final_answer or ""
                     continue  # remain paused: do not allow the LLM to speak while paused
@@ -1850,8 +1899,16 @@ async def _async_tool_use_loop_inner(
 
                     # cancelled?
                     if cancel_event.is_set():
+                        try:
+                            await _propagate_stop_once("outer-loop cancelled")
+                        except Exception:
+                            pass
                         raise asyncio.CancelledError
                     if stop_event.is_set() and persist:
+                        try:
+                            await _propagate_stop_once("outer-loop stopped")
+                        except Exception:
+                            pass
                         return last_final_answer or ""
                         continue  # top-of-loop, still paused
 
@@ -2052,8 +2109,16 @@ async def _async_tool_use_loop_inner(
                     continue  # → loop, will be processed in 0.
 
                 if cancel_waiter in done:
+                    try:
+                        await _propagate_stop_once("outer-loop cancelled")
+                    except Exception:
+                        pass
                     raise asyncio.CancelledError  # cancellation wins
                 if graceful_stop_waiter in done and persist:
+                    try:
+                        await _propagate_stop_once("outer-loop stopped")
+                    except Exception:
+                        pass
                     return last_final_answer or ""
 
                 # ── clarification request bubbled up from a child tool ──────────────
@@ -3363,6 +3428,10 @@ async def _async_tool_use_loop_inner(
         # resources cleanly.  Only after every task has finished/aborted do
         # we re-raise the same `CancelledError`, preserving expected asyncio
         # semantics for upstream callers.
+        try:
+            await _propagate_stop_once("outer-loop cancelled")
+        except Exception:
+            pass
         for t in pending:
             t.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
