@@ -36,11 +36,11 @@ eval "$(dbus-launch)"
 export DBUS_SESSION_BUS_ADDRESS
 
 # Launch virtual desktop
-bash /app/desktop.sh &
+bash /app/desktop/desktop.sh &
 DESKTOP_PID=$!
 
 # Start virtual device
-bash /app/device.sh &
+bash /app/desktop/device.sh &
 DEVICE_PID=$!
 
 # Start agent-service (ts-node)

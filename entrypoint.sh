@@ -58,35 +58,9 @@ echo "Redis started with PID: $REDIS_PID"
 
 
 # Virtual desktop and devices
-# Set up for virtual audio
-export XDG_RUNTIME_DIR=/tmp/runtime-root
-mkdir -p $XDG_RUNTIME_DIR
-chmod 700 $XDG_RUNTIME_DIR
-
-mkdir -p /run/dbus
-dbus-daemon --system --fork
-eval "$(dbus-launch)"
-export DBUS_SESSION_BUS_ADDRESS
-
-bash desktop.sh &
+echo "Starting virtual desktop and Magnitude server..."
+bash /app/desktop/startup.sh &
 DESKTOP_PID=$!
-
-# Create the virtual sink/mic
-pipewire &
-pipewire-pulse &
-wireplumber &
-sleep 2
-
-# 1. For capturing Meet participant audio
-pactl load-module module-null-sink sink_name=meet_sink
-pactl load-module module-remap-source master=meet_sink.monitor source_name=meet_mic
-
-# 2. For agent TTS (only goes to Meet, not to agent itself)
-pactl load-module module-null-sink sink_name=agent_sink
-pactl load-module module-remap-source master=agent_sink.monitor source_name=agent_mic
-
-pactl set-default-source meet_mic
-pactl set-default-sink agent_sink
 
 
 # Start the main application in parallel

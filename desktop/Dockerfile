@@ -27,10 +27,10 @@ RUN mkdir -p /opt/novnc && \
     rm -rf master.zip noVNC-master
 
 # Desktop script
-COPY desktop/ /app
-RUN chmod +x /app/desktop.sh
-RUN chmod -x /app/device.sh
-RUN chmod -x /app/startup.sh
+COPY desktop/ /app/desktop/
+RUN chmod +x /app/desktop/desktop.sh
+RUN chmod -x /app/desktop/device.sh
+RUN chmod -x /app/desktop/startup.sh
 
 # Agent service install
 WORKDIR /app/agent-service
@@ -48,4 +48,4 @@ RUN install -m 0755 sandbox-dpkg /usr/local/bin/sandbox-dpkg
 
 # Startup script to run desktop and agent-service
 EXPOSE 3000 6080 5900
-CMD ["/bin/bash", "/app/startup.sh"]
+CMD ["/bin/bash", "/app/desktop/startup.sh"]
