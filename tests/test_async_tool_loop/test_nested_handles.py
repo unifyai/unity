@@ -1031,3 +1031,169 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
 
     # Assert that the inner handle's stop() was invoked exactly once
     assert stop_calls["count"] == 1, "inner handle stop() was not propagated"
+
+
+@pytest.mark.asyncio
+async def test_outer_handle_pause_propagates_to_inner_loop_pause():
+    """
+    Pausing the OUTER handle should propagate a pause down to any nested
+    async tool loop handles that were returned by tools and are still running.
+    """
+
+    pause_calls = {"count": 0}
+
+    async def inner_long_job() -> str:
+        await asyncio.sleep(6)
+        return "inner-finished"
+
+    inner_long_job.__name__ = "inner_long_job"
+    inner_long_job.__qualname__ = "inner_long_job"
+
+    async def outer_tool() -> AsyncToolUseLoopHandle:
+        inner_client = unify.AsyncUnify(
+            "gpt-4o@openai",
+            cache=_get_unity_test_env_var("UNIFY_CACHE"),
+            traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        )
+        inner_client.set_system_message(
+            "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
+        )
+        h = start_async_tool_use_loop(
+            client=inner_client,
+            message="start",
+            tools={"inner_long_job": inner_long_job},
+            max_steps=20,
+            timeout=240,
+        )
+
+        # Wrap pause on the inner handle to count calls while preserving behaviour
+        orig_pause = h.pause
+
+        def _wrapped_pause():  # type: ignore[no-redef]
+            pause_calls["count"] += 1
+            return orig_pause()
+
+        setattr(h, "pause", _wrapped_pause)
+        return h
+
+    outer_tool.__name__ = "outer_tool"
+    outer_tool.__qualname__ = "outer_tool"
+
+    client = unify.AsyncUnify(
+        "gpt-4o@openai",
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+    )
+    client.set_system_message(
+        "Call `outer_tool` with no arguments, then wait until it completes.",
+    )
+
+    outer = start_async_tool_use_loop(
+        client=client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        max_steps=20,
+        timeout=240,
+    )
+
+    await _wait_for_tool_request(client, "outer_tool")
+    await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
+    # Give the outer loop a brief moment to adopt the nested handle
+    await asyncio.sleep(0.5)
+
+    # Pause outer; should propagate to inner handle if available
+    outer.pause()
+    await asyncio.sleep(0.1)
+    outer.resume()  # unfreeze outer so the test completes
+
+    await outer.result()
+
+    assert pause_calls["count"] == 1, "inner handle pause() was not propagated"
+
+
+@pytest.mark.asyncio
+async def test_outer_handle_resume_propagates_to_inner_loop_resume():
+    """
+    Resuming the OUTER handle should propagate a resume down to any nested
+    async tool loop handles that were returned by tools and are still running.
+    """
+
+    counts = {"pause": 0, "resume": 0}
+
+    async def inner_long_job() -> str:
+        # Long enough to pause then resume while running
+        await asyncio.sleep(6)
+        return "inner-finished"
+
+    inner_long_job.__name__ = "inner_long_job"
+    inner_long_job.__qualname__ = "inner_long_job"
+
+    async def outer_tool() -> AsyncToolUseLoopHandle:
+        inner_client = unify.AsyncUnify(
+            "gpt-4o@openai",
+            cache=_get_unity_test_env_var("UNIFY_CACHE"),
+            traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        )
+        inner_client.set_system_message(
+            "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
+        )
+        h = start_async_tool_use_loop(
+            client=inner_client,
+            message="start",
+            tools={"inner_long_job": inner_long_job},
+            max_steps=20,
+            timeout=240,
+        )
+
+        # Count pause/resume on the inner handle while preserving behaviour
+        orig_pause = h.pause
+        orig_resume = h.resume
+
+        def _wrapped_pause():  # type: ignore[no-redef]
+            counts["pause"] += 1
+            return orig_pause()
+
+        def _wrapped_resume():  # type: ignore[no-redef]
+            counts["resume"] += 1
+            return orig_resume()
+
+        setattr(h, "pause", _wrapped_pause)
+        setattr(h, "resume", _wrapped_resume)
+        return h
+
+    outer_tool.__name__ = "outer_tool"
+    outer_tool.__qualname__ = "outer_tool"
+
+    client = unify.AsyncUnify(
+        "gpt-4o@openai",
+        cache=_get_unity_test_env_var("UNIFY_CACHE"),
+        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+    )
+    client.set_system_message(
+        "Call `outer_tool` with no arguments, then wait until it completes.",
+    )
+
+    outer = start_async_tool_use_loop(
+        client=client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        max_steps=20,
+        timeout=240,
+    )
+
+    await _wait_for_tool_request(client, "outer_tool")
+    await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
+    # Give the outer loop a brief moment to adopt the nested handle
+    await asyncio.sleep(0.5)
+
+    # Pause then resume outer; both should propagate
+    outer.pause()
+    await asyncio.sleep(0.1)
+    outer.resume()
+
+    await outer.result()
+
+    assert counts == {
+        "pause": 1,
+        "resume": 1,
+    }, "pause/resume should each be propagated once"
