@@ -3,7 +3,6 @@ import os
 import subprocess
 import sys
 import time
-import base64
 import atexit
 import threading
 from abc import ABC, abstractmethod
@@ -321,26 +320,6 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
                 raise
-
-    def _get_files_map(self, install_root: str) -> dict[str, str]:
-        files_map: dict[str, str] = {}
-        for root, _, files in os.walk(install_root):
-            for fname in files:
-                fpath = os.path.join(root, fname)
-                rel_path = os.path.join(
-                    os.getenv("ASSISTANT_NAME", "assistant"),
-                    fpath.lstrip("/"),
-                )
-                try:
-                    with open(fpath, "rb") as fp:
-                        files_map[rel_path] = base64.b64encode(fp.read()).decode(
-                            "ascii",
-                        )
-                except Exception as e:
-                    print(
-                        f"Warning: Could not read {rel_path} for persistence: {e}",
-                    )
-        return files_map
 
     def _load_persistent_data(self):
         """
