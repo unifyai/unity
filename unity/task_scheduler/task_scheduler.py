@@ -270,22 +270,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
-        # Stores a minimal corrective plan that allows us to restore the
-        # previously queued/scheduled position of the most recently activated
-        # task (when it was started in "isolate" mode).  This enables a
-        # surgical reintegration after a user cancels the task and asks to
-        # "do it as originally scheduled" without reverting unrelated changes.
-        #
-        # Shape:
-        # @dataclass ReintegrationPlan
-        #   task_id: int
-        #   instance_id: int | None
-        #   prev_task: int | None
-        #   next_task: int | None
-        #   start_at: str | None
-        #   was_head: bool
-        #   original_status: str | None
-        self._reintegration_plan: Optional["ReintegrationPlan"] = None
+        # Registry of corrective plans per active task so we can restore their
+        # original position on defer stop. Map: task_id -> ReintegrationPlan
+        self._reintegration_plans: dict[int, "ReintegrationPlan"] = {}
 
     # Public #
     # -------#
@@ -757,13 +744,14 @@ class TaskScheduler(BaseTaskScheduler):
         # Intentionally keep the plan on 'cancelled' so callers can reinstate
         # a cancelled isolated activation back to its prior queue position.
         try:
+            plan = self._reintegration_plans.get(task_id)
             if (
-                self._reintegration_plan is not None
-                and self._reintegration_plan.task_id == task_id
-                and self._reintegration_plan.instance_id == instance_id
+                plan is not None
+                and plan.task_id == task_id
+                and plan.instance_id == instance_id
                 and new_status_enum in {Status.completed, Status.failed}
             ):
-                self._reintegration_plan = None
+                self._reintegration_plans.pop(task_id, None)
         except Exception:
             pass
 
@@ -2174,7 +2162,7 @@ class TaskScheduler(BaseTaskScheduler):
             If no reintegration plan is available or the provided task_id
             does not match the stored plan.
         """
-        plan = getattr(self, "_reintegration_plan", None)
+        plan = self._reintegration_plans.get(task_id) if task_id is not None else None
         if not plan:
             raise ValueError("No reintegration plan available.")
         if task_id is not None and plan.task_id != task_id:
@@ -2216,7 +2204,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Idempotence: if there is already a schedule present, treat as a no-op
         if cur_row.get("schedule") is not None:
-            self._reintegration_plan = None
+            self._reintegration_plans.pop(tid, None)
             return {
                 "outcome": "no-op: task already has a schedule",
                 "details": {"task_id": tid},
@@ -2283,8 +2271,15 @@ class TaskScheduler(BaseTaskScheduler):
             "prev_task": final_prev,
             "next_task": final_next,
         }
-        if was_head and original_start_at is not None:
-            cur_sched["start_at"] = original_start_at
+        # Set start_at when reinstating as head. Prefer the original head_start_at
+        # captured at activation; fall back to the task's own start_at if present.
+        plan_head_start = getattr(plan, "head_start_at", None)
+        if final_prev is None:
+            _head_ts = (
+                plan_head_start if plan_head_start is not None else original_start_at
+            )
+            if _head_ts is not None:
+                cur_sched["start_at"] = _head_ts
 
         # Decide restored status (respect primed invariants)
         desired_status = (
@@ -2299,6 +2294,10 @@ class TaskScheduler(BaseTaskScheduler):
         ):
             # Another primed exists – do not violate single-primed invariant
             desired_status = Status.queued
+
+        # If reinstating as head with an explicit start_at, invariants require 'scheduled'
+        if final_prev is None and cur_sched.get("start_at") is not None:
+            desired_status = Status.scheduled
 
         # Invariant check for schedule/state combo before writing
         self._validate_scheduled_invariants(
@@ -2383,7 +2382,7 @@ class TaskScheduler(BaseTaskScheduler):
         Only acts when a reintegration plan exists (i.e., the task was started in
         "isolate" scope). Silently no-ops on any validation error.
         """
-        plan = getattr(self, "_reintegration_plan", None)
+        plan = self._reintegration_plans.get(task_id) if task_id is not None else None
         if plan is None or plan.task_id != task_id:
             return  # nothing to do
 
