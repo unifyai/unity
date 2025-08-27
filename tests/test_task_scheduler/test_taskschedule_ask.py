@@ -249,7 +249,7 @@ async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
 
         # Give the LLM a moment to start processing, then stop it
         await asyncio.sleep(0.05)
-        handle.stop()
+        handle.stop(cancel=True)
 
         with pytest.raises(asyncio.CancelledError):
             await handle.result()

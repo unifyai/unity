@@ -53,7 +53,10 @@ async def test_starting_head_promotes_next_to_scheduled_with_start_at():
 
     # Stop the active task with guidance to resume as originally scheduled
     handle.stop(
-        "Actually this is taking longer than I expected, let's complete this task as per our original schedule instead",
+        cancel=False,
+        reason=(
+            "Actually this is taking longer than I expected, let's complete this task as per our original schedule instead"
+        ),
     )
     await handle.result()
 
@@ -126,7 +129,10 @@ async def test_starting_middle_detaches_and_links_neighbors():
 
     # Stop the active task with guidance to resume as originally scheduled
     handle.stop(
-        "Actually this is taking longer than I expected, let's complete this task as per our original schedule instead",
+        cancel=False,
+        reason=(
+            "Actually this is taking longer than I expected, let's complete this task as per our original schedule instead"
+        ),
     )
     await handle.result()
 
@@ -163,7 +169,7 @@ async def test_reinstate_head_restores_head_and_start_at():
 
     # Activate head in isolate (default) and then cancel
     handle = await ts.execute_task(text=str(head_id))
-    handle.stop()
+    handle.stop(cancel=True)
     await handle.result()
 
     # Reinstate the task back to its original head position
@@ -191,7 +197,7 @@ async def test_reinstate_middle_restores_links():
 
     # Activate middle task (B) in isolate and cancel it
     handle = await ts.execute_task(text=str(b))
-    handle.stop()
+    handle.stop(cancel=True)
     await handle.result()
 
     # Reinstate B → expect A→B→C restored
@@ -218,7 +224,7 @@ async def test_reinstate_with_deleted_next_fallback():
 
     # Activate head and cancel
     handle = await ts.execute_task(text=str(head_id))
-    handle.stop()
+    handle.stop(cancel=True)
     await handle.result()
 
     # Delete original next before reinstatement (drift)
