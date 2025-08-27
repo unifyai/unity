@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
@@ -42,8 +42,9 @@ RUN npx playwright@1.52.0 install --with-deps chromium
 
 WORKDIR /app
 
-# # Install helper tools
-# RUN install -m 0755 scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
+# Install helper tools
+COPY scripts/sandbox-dpkg .
+RUN install -m 0755 sandbox-dpkg /usr/local/bin/sandbox-dpkg
 
 # Startup script to run desktop and agent-service
 EXPOSE 3000 6080 5900
