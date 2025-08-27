@@ -193,6 +193,10 @@ class TaskScheduler(BaseTaskScheduler):
                 self._update_task_trigger,
                 include_class_name=False,  # redundant, all same class (this one)
             ),
+            **methods_to_tool_dict(
+                self._contact_manager.ask,
+                include_class_name=True,  # Retain originating class so name is ContactManager.ask
+            ),
         }
 
         # active task
