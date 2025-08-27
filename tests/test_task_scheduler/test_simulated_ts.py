@@ -150,7 +150,7 @@ async def test_stop_simulated_ts():
     ts = SimulatedTaskScheduler()
     handle = await ts.ask("Produce a very long report about my tasks.")
     await asyncio.sleep(0.05)
-    handle.stop()
+    handle.stop(cancel=True)
 
     with pytest.raises(asyncio.CancelledError):
         await handle.result()

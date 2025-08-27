@@ -124,7 +124,7 @@ async def test_execute_task_interject(monkeypatch):
     # Give the background thread one beat to process the step counter.
     await asyncio.sleep(0.2)
     # Gracefully stop to avoid leaking the background thread.
-    task.stop()
+    task.stop(cancel=False)
     await task.result()
 
     assert calls["interject"] == 1, "interject must be called exactly once"
@@ -168,7 +168,7 @@ async def test_execute_task_pause_resume(monkeypatch):
     await asyncio.sleep(0.1)
     task.resume()
     # Stop the task to finish quickly and collect counts.
-    task.stop()
+    task.stop(cancel=False)
     await task.result()
 
     assert counts == {"pause": 1, "resume": 1}, "pause/resume each called once"
@@ -200,7 +200,7 @@ async def test_execute_task_stop(monkeypatch):
         steps=5,
     )
 
-    task.stop()
+    task.stop(cancel=False)
     result = await task.result()
 
     assert called["stop"] == 1, "stop must be invoked exactly once"
