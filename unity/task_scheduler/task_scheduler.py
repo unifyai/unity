@@ -2622,3 +2622,93 @@ class TaskScheduler(BaseTaskScheduler):
             return "isolate"
         except Exception:
             return "isolate"
+
+    # ------------------------------------------------------------------ #
+    #  Steering intent classification (0-shot + heuristics)               #
+    # ------------------------------------------------------------------ #
+
+    async def _classify_steering_intent(
+        self,
+        message: str,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+    ) -> tuple[str, str]:
+        """
+        Classify a steering message into one of:
+          cancel | defer | pause | resume | continue | none
+        Returns (intent, reason_summary). On failure, falls back to heuristics.
+        """
+        text = (message or "").strip().lower()
+
+        def _heur() -> Optional[str]:
+            if any(
+                k in text
+                for k in (
+                    "cancel",
+                    "abandon",
+                    "drop it",
+                    "not needed",
+                    "forget it",
+                    "never mind",
+                )
+            ):
+                return "cancel"
+            if any(
+                k in text
+                for k in (
+                    "do it later",
+                    "later",
+                    "postpone",
+                    "defer",
+                    "as per our original schedule",
+                    "back into the queue",
+                    "reinsert",
+                    "re-insert",
+                    "return to schedule",
+                    "continue as scheduled",
+                    "put back",
+                )
+            ):
+                return "defer"
+            if "pause" in text:
+                return "pause"
+            if "resume" in text:
+                return "resume"
+            if any(
+                k in text for k in ("keep going", "continue", "carry on", "proceed")
+            ):
+                return "continue"
+            return None
+
+        guess = _heur()
+        if guess is not None:
+            return guess, message
+
+        try:
+            client = self._new_llm_client("gpt-5->o4-mini@openai")
+            client.set_system_message(
+                "Classify the user's steering message for a running task. "
+                "Respond with exactly one of these intents (lowercase): "
+                "cancel | defer | pause | resume | continue | none. "
+                "Definitions: "
+                "cancel = abandon/do not reinsert; "
+                "defer = stop now and do it later, reinsert into prior queue/schedule; "
+                "pause = temporarily halt; resume = unpause; continue = keep going; none = not a steering action.",
+            )
+            parts: List[str] = [f"Message: {message}"]
+            if parent_chat_context:
+                try:
+                    ctx_preview = json.dumps(
+                        parent_chat_context[-6:],
+                        ensure_ascii=False,
+                    )
+                    parts.append(f"Context (preview): {ctx_preview}")
+                except Exception:
+                    pass
+            raw = await client.generate("\n\n".join(parts))
+            ans = (raw or "").strip().lower()
+            for label in ("cancel", "defer", "pause", "resume", "continue", "none"):
+                if ans == label or label in ans:
+                    return label, message
+            return "none", message
+        except Exception:
+            return "none", message

@@ -31,6 +31,8 @@ class ActiveTask(BaseActiveTask):
         self._task_id: Optional[int] = task_id
         self._instance_id: Optional[int] = instance_id
         self._was_stopped: bool = False
+        self._last_intent: Optional[str] = None
+        self._last_intent_reason: Optional[str] = None
 
     @classmethod
     async def create(
@@ -101,6 +103,56 @@ class ActiveTask(BaseActiveTask):
 
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> None:
+        # Classify steering intent and enforce lifecycle synchronization for stop/defer/cancel.
+        intent: Optional[str] = None
+        reason: Optional[str] = None
+
+        try:
+            if self._scheduler is not None:
+                intent, reason = await self._scheduler._classify_steering_intent(  # type: ignore[attr-defined]
+                    message,
+                    parent_chat_context=None,
+                )
+        except Exception:
+            intent, reason = None, None
+
+        self._last_intent = intent
+        self._last_intent_reason = reason or message
+
+        # If the interjection semantically requests stopping, enforce correct lifecycle handling.
+        if intent in ("cancel", "defer"):
+            try:
+                if hasattr(self._actor_handle, "stop"):
+                    self._actor_handle.stop(reason)  # type: ignore[call-arg]
+            except Exception:
+                pass
+
+            self._was_stopped = True  # prevents result() from marking 'completed'
+
+            try:
+                if self._scheduler and self._task_id is not None:
+                    if intent == "cancel":
+                        # Explicit cancellation: mark cancelled.
+                        self._mirror_status("cancelled")
+                    else:
+                        # Defer: restore prior queue/schedule position.
+                        try:
+                            self._scheduler._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
+                                task_id=self._task_id,
+                            )
+                        except Exception:
+                            # Best-effort heuristic fallback when no plan exists.
+                            self._scheduler._maybe_reinstate_after_stop(  # type: ignore[attr-defined]
+                                task_id=self._task_id,
+                                reason=reason,
+                            )
+            except Exception:
+                pass
+
+            self._clear_active_pointer()
+            return
+
+        # No stop/defer/cancel intent ⇒ forward interjection to the actor.
         await self._actor_handle.interject(message)
 
     @functools.wraps(BaseActiveTask.stop, updated=())
