@@ -74,13 +74,6 @@ RUN mkdir -p /opt/novnc && \
 #     gir1.2-gstreamer-1.0 \
 #     && rm -rf /var/lib/apt/lists/*
 
-# Download noVNC
-RUN mkdir -p /opt/novnc && \
-    wget https://github.com/novnc/noVNC/archive/refs/heads/master.zip && \
-    unzip master.zip && \
-    mv noVNC-master/* /opt/novnc && \
-    rm -rf master.zip noVNC-master
-
 # Install Node.js & npm for agent-service
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
