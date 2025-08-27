@@ -168,7 +168,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         start_service: bool = True,
         **kwargs,
     ):
-        self._load_persistent_data()
+        # self._load_persistent_data()
         with MagnitudeBrowserBackend._lock:
             if not start_service:
                 # Do not spawn a new process; point to the provided URL
@@ -424,34 +424,34 @@ class MagnitudeBrowserBackend(BrowserBackend):
             print(f"Warning: Could not query remote files for persistence: {e}")
 
         # Install downloaded/custom deb files
-        # if os.path.exists("/home/deb"):
-        #     for deb_file in os.listdir("/home/deb"):
-        #         try:
-        #             subprocess.run(
-        #                 ["sandbox-dpkg", os.path.join("/home/deb", deb_file)],
-        #                 check=True,
-        #             )
-        #         except Exception as e:
-        #             print(f"Warning: Could not install {deb_file}: {e}")
+        if os.path.exists("/home/deb"):
+            for deb_file in os.listdir("/home/deb"):
+                try:
+                    subprocess.run(
+                        ["dpkg", "-i", os.path.join("/home/deb", deb_file)],
+                        check=True,
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not install {deb_file}: {e}")
 
-        # # Optionally install packages recorded in apt-manual.txt if present
-        # try:
-        #     if os.path.exists("/home/install/apt-manual.txt"):
-        #         subprocess.run(
-        #             [
-        #                 "xargs",
-        #                 "-a",
-        #                 "/home/install/apt-manual.txt",
-        #                 "apt-get",
-        #                 "install",
-        #                 "-y",
-        #             ],
-        #             check=True,
-        #         )
-        # except Exception as e:
-        #     print(
-        #         f"Warning: Could not execute apt-get install from apt-manual.txt: {e}",
-        #     )
+        # Optionally install packages recorded in apt-manual.txt if present
+        try:
+            if os.path.exists("/home/install/apt-manual.txt"):
+                subprocess.run(
+                    [
+                        "xargs",
+                        "-a",
+                        "/home/install/apt-manual.txt",
+                        "apt-get",
+                        "install",
+                        "-y",
+                    ],
+                    check=True,
+                )
+        except Exception as e:
+            print(
+                f"Warning: Could not execute apt-get install from apt-manual.txt: {e}",
+            )
 
     def _save_persistent_data(self):
         """
@@ -674,7 +674,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
     def stop(self):
         """Stops the Node.js service subprocess."""
-        self._save_persistent_data()
+        # self._save_persistent_data()
 
         with MagnitudeBrowserBackend._lock:
             if (
