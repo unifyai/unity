@@ -3004,12 +3004,12 @@ async def _async_tool_use_loop_inner(
                     if name.startswith("pause_") and not name.startswith(
                         "_pause_tasks",
                     ):
-                        call_id = "_".join(name.split("_")[-2:])
+                        call_id_suffix = name.split("_")[-1]
                         tgt_task = next(
                             (
                                 t
                                 for t, info in task_info.items()
-                                if info["call_id"] == call_id
+                                if call_id_suffix in info["call_id"]
                             ),
                             None,
                         )
@@ -3039,7 +3039,7 @@ async def _async_tool_use_loop_inner(
                             "role": "tool",
                             "tool_call_id": call["id"],
                             "name": pretty_name,
-                            "content": f"The tool call [{call_id}] has been paused successfully.",
+                            "content": f"The tool call [{call_id_suffix}] has been paused successfully.",
                         }
                         await _insert_after_assistant(msg, tool_msg)
                         continue  # helper handled, move on
@@ -3048,12 +3048,12 @@ async def _async_tool_use_loop_inner(
                     if name.startswith("resume_") and not name.startswith(
                         "_resume_tasks",
                     ):
-                        call_id = "_".join(name.split("_")[-2:])
+                        call_id_suffix = name.split("_")[-1]
                         tgt_task = next(
                             (
                                 t
                                 for t, info in task_info.items()
-                                if info["call_id"] == call_id
+                                if call_id_suffix in info["call_id"]
                             ),
                             None,
                         )
@@ -3083,7 +3083,7 @@ async def _async_tool_use_loop_inner(
                             "role": "tool",
                             "tool_call_id": call["id"],
                             "name": pretty_name,
-                            "content": f"The tool call [{call_id}] has been resumed successfully.",
+                            "content": f"The tool call [{call_id_suffix}] has been resumed successfully.",
                         }
                         await _insert_after_assistant(msg, tool_msg)
                         continue  # helper handled
@@ -3766,6 +3766,29 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             self._delegate.pause()
             return
         self._pause_event.clear()
+        # Propagate pause to any nested steerable handles that expose `.pause`
+        try:
+            task_info = getattr(self._task, "task_info", {})
+        except Exception:
+            task_info = {}
+        try:
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                try:
+                    h = _inf.get("handle")
+                except Exception:
+                    h = None
+                if h is not None and hasattr(h, "pause"):
+                    try:
+                        maybe = h.pause()  # may be sync or async
+                        if asyncio.iscoroutine(maybe):
+                            asyncio.create_task(maybe)
+                    except Exception:
+                        # Best-effort propagation – never break outer pause
+                        pass
+        except Exception:
+            # Defensive: do not let propagation errors bubble up
+            pass
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
     def resume(self) -> None:
@@ -3774,6 +3797,29 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             self._delegate.resume()
             return
         self._pause_event.set()
+        # Propagate resume to any nested steerable handles that expose `.resume`
+        try:
+            task_info = getattr(self._task, "task_info", {})
+        except Exception:
+            task_info = {}
+        try:
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                try:
+                    h = _inf.get("handle")
+                except Exception:
+                    h = None
+                if h is not None and hasattr(h, "resume"):
+                    try:
+                        maybe = h.resume()  # may be sync or async
+                        if asyncio.iscoroutine(maybe):
+                            asyncio.create_task(maybe)
+                    except Exception:
+                        # Best-effort propagation – never break outer resume
+                        pass
+        except Exception:
+            # Defensive: do not let propagation errors bubble up
+            pass
 
     @functools.wraps(SteerableToolHandle.done, updated=())
     def done(self) -> bool:
