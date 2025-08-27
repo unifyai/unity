@@ -270,9 +270,10 @@ def tm_scenario(request: pytest.FixtureRequest):
     """
     os.environ["TQDM_DISABLE"] = "1"
 
-    unify.set_context("test_transcript_manager")
+    ctx = "tests/test_transcript_manager/Scenario"
+    unify.set_context(ctx, relative=False)
     sb = ScenarioBuilder()
-    existing_contexts = unify.get_contexts(prefix="test_transcript_manager")
+    existing_contexts = unify.get_contexts(prefix=ctx)
     existing_context_names = list(existing_contexts.keys())
     no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
 
@@ -325,7 +326,7 @@ def tm_scenario(request: pytest.FixtureRequest):
             SCENARIO_COMMIT_HASHES[ctx] = commit_info["commit_hash"]
 
         # After seeding, re-fetch contexts created under the test prefix
-        created_contexts = unify.get_contexts(prefix="test_transcript_manager")
+        created_contexts = unify.get_contexts(prefix=ctx)
         created_context_names = list(created_contexts.keys())
 
         if created_context_names:
@@ -337,12 +338,12 @@ def tm_scenario(request: pytest.FixtureRequest):
         else:
             # Fallback: try committing known child contexts if present
             all_ctxs = unify.get_contexts()
-            for ctx in [
-                "test_transcript_manager/Contacts",
-                "test_transcript_manager/Transcripts",
+            for _ctx in [
+                f"{ctx}/Contacts",
+                f"{ctx}/Transcripts",
             ]:
-                if ctx in all_ctxs:
-                    commit_context_and_store(ctx)
+                if _ctx in all_ctxs:
+                    commit_context_and_store(_ctx)
 
     unify.unset_context()
     yield sb.tm, _ID_BY_NAME
