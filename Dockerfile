@@ -26,28 +26,29 @@ RUN apt-get update && apt-get install -y \
 
 
 # Virtual devices and remote browser setup
-# Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
 
-# Install system dependencies
+# System dependencies for virtual desktop/devices, browser runtime, and native modules
 RUN apt-get update && apt-get install -y \
-    curl wget unzip gnupg2 \
-    xvfb x11vnc fluxbox xdotool wmctrl imagemagick tesseract-ocr \
+    curl wget unzip git gnupg2 \
+    xvfb x11vnc fluxbox xdotool wmctrl xterm dbus dbus-x11 websockify \
+    xdg-desktop-portal xdg-desktop-portal-gtk \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
     libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
-    ffmpeg ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-
-# Dependencies for virtual audio
-RUN apt update && apt install -y \
-    pipewire pipewire-audio pipewire-bin pipewire-pulse wireplumber \
-    libpipewire-0.3-modules libportaudio2 \
-    pulseaudio-utils alsa-utils alsa-tools \
-    xterm dbus dbus-x11 \
-    xdg-desktop-portal xdg-desktop-portal-gtk \
+    ffmpeg ca-certificates \
+    pipewire pipewire-pulse wireplumber pulseaudio-utils alsa-utils \
+    fuse3 libfuse2 squashfs-tools \
+    build-essential python3 pkg-config libvips \
     && rm -rf /var/lib/apt/lists/*
+
+# noVNC static files
+RUN mkdir -p /opt/novnc && \
+    wget https://github.com/novnc/noVNC/archive/refs/heads/master.zip && \
+    unzip master.zip && \
+    mv noVNC-master/* /opt/novnc && \
+    rm -rf master.zip noVNC-master
 
 # Dependencies for virtual camera
 # RUN apt-get update && apt-get install -y \
@@ -115,6 +116,7 @@ WORKDIR /app
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV UNIFY_KEY=${UNIFY_KEY}
+RUN install -m 0755 /app/scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 
 # Download the turn detector model files
 # Set memory-efficient environment variables for model loading
