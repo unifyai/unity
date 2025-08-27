@@ -353,6 +353,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                             "project": project,
                             "path": f"{assistant_name}/{prefix_folder}",
                             "staging": "staging" in orchestra_url,
+                            "expires_in": 5 * 60,
                             "as_prefix": True,
                         },
                         headers=headers,
