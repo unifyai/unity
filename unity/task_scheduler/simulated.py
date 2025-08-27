@@ -111,8 +111,13 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         self._interjections.append(message)
         return "Noted."
 
-    def stop(self, reason: Optional[str] = None) -> str:
-        """Cancel further processing so `.result()` raises."""
+    def stop(self, *, cancel: bool, reason: Optional[str] = None) -> str:
+        """Cancel further processing so `.result()` raises.
+
+        The signature mirrors the real ActiveTask handle: a keyword-only
+        `cancel` flag is required. In this simulated handle the flag does
+        not change behaviour – the interaction is always cancelled.
+        """
         self._cancelled = True
         self._done_event.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
