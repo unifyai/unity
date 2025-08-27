@@ -337,7 +337,7 @@ async def test_interject_nested_handle(monkeypatch):
             for m in msgs
             if m.get("tool_calls")
             and any(
-                call["function"]["name"].startswith("interject_outer_tool_call_")
+                call["function"]["name"].startswith("interject_outer_tool_")
                 for call in m["tool_calls"]
             )
         ),
@@ -351,7 +351,7 @@ async def test_interject_nested_handle(monkeypatch):
     interj_call = next(
         call
         for call in interject_call_msg["tool_calls"]
-        if call["function"]["name"].startswith("interject_outer_tool_call_")
+        if call["function"]["name"].startswith("interject_outer_tool_")
     )
     assert json.loads(interj_call["function"]["arguments"]) == {"message": "dogs"}
 
