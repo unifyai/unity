@@ -113,8 +113,9 @@ def task_scenario(request: pytest.FixtureRequest):
     same seeded data. Build scenario once and reuse across tests.
     """
     os.environ["TQDM_DISABLE"] = "1"
-    unify.set_context("test_task_scheduler")
-    existing_contexts = unify.get_contexts(prefix="test_task_scheduler")
+    ctx = "tests/test_task_scheduler/Scenario"
+    unify.set_context(ctx, relative=False)
+    existing_contexts = unify.get_contexts(prefix=ctx)
     no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
 
     # If --no-reuse-scenario is explicitly set, override reuse_scenario
@@ -173,7 +174,7 @@ def task_scenario(request: pytest.FixtureRequest):
             SCENARIO_COMMIT_HASHES[ctx] = commit_info["commit_hash"]
 
         # Refresh contexts after seeding so we commit the ones just created
-        existing_contexts = unify.get_contexts(prefix="test_task_scheduler")
+        existing_contexts = unify.get_contexts(prefix=ctx)
         _targets = list(existing_contexts.keys())
         if _targets:
             unify.map(
