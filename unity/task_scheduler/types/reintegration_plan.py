@@ -19,6 +19,6 @@ class ReintegrationPlan:
     prev_task: Optional[int]
     next_task: Optional[int]
     start_at: Optional[str]
-    head_start_at: Optional[str] = None
     was_head: bool
     original_status: Optional[str]
+    head_start_at: Optional[str] = None
