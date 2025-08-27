@@ -200,3 +200,61 @@ async def test_active_task_result_and_done():
 
     assert "completed" in result.lower()
     assert task.done(), "`done()` must return True after natural completion"
+
+
+# --------------------------------------------------------------------------- #
+#  5. Interject implying stop/defer should not mark as completed            //
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_task_interject_implies_defer_and_reinstate(monkeypatch):
+    """
+    An interjection like "let's stop this and do it later" should trigger a
+    graceful stop and reintegration, resulting in a "stopped" outcome rather
+    than "completed". Pre-patch, this would incorrectly complete.
+    """
+
+    class _FakeScheduler:
+        def __init__(self):
+            self.reinstate_called = False
+            self.fallback_called = False
+
+        async def _classify_steering_intent(
+            self,
+            message: str,
+            parent_chat_context=None,
+        ):
+            # Classify this interjection as a defer request
+            return ("defer", message)
+
+        def _reinstate_task_to_previous_queue(self, *, task_id: int):  # type: ignore[no-redef]
+            self.reinstate_called = True
+            return {"outcome": "ok", "details": {"task_id": task_id}}
+
+        def _maybe_reinstate_after_stop(self, *, task_id: int, reason: str | None):
+            self.fallback_called = True
+
+    actor = SimulatedActor(steps=5)
+    fake_sched = _FakeScheduler()
+
+    task = await ActiveTask.create(
+        actor,
+        task_description="Draft release notes",
+        scheduler=fake_sched,  # type: ignore[arg-type]
+        task_id=101,
+        instance_id=1,
+    )
+
+    # Interjection that implies stop & do later (defer)
+    await task.interject("Let's stop this task and do it later.")
+    result = await task.result()
+
+    # Should not be marked as completed; should read as stopped
+    assert "stopped" in result.lower()
+    assert "completed" not in result.lower()
+
+    # Reintegration should run via the primary path (not fallback)
+    assert fake_sched.reinstate_called is True
+    assert fake_sched.fallback_called is False
