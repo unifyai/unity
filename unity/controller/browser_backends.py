@@ -1,14 +1,9 @@
 import inspect
 import os
 import subprocess
-import sys
 import time
-import atexit
-import threading
 from abc import ABC, abstractmethod
 from typing import Any
-import socket
-import contextlib
 
 import aiohttp
 import requests
@@ -149,83 +144,30 @@ class LegacyBrowserBackend(BrowserBackend):
 
 
 class MagnitudeBrowserBackend(BrowserBackend):
-    _process = None
     _agent_base_url = "http://localhost:3000"
-    _lock = threading.Lock()
-
-    @staticmethod
-    def _find_free_port() -> int:
-        """Find and return a free port on the system."""
-        with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-            s.bind(("", 0))
-            return s.getsockname()[1]
 
     def __init__(
         self,
         agent_server_url: str = "http://localhost:3000",
         headless: bool = False,
         start_service: bool = True,
+        mode: str = "browser",
         **kwargs,
     ):
-        # self._load_persistent_data()
-        with MagnitudeBrowserBackend._lock:
-            if not start_service:
-                # Do not spawn a new process; point to the provided URL
-                MagnitudeBrowserBackend._agent_base_url = agent_server_url
-                self.agent_base_url = agent_server_url
-                print(
-                    f"🔗 Using existing Magnitude service at {self.agent_base_url} (no local process started)",
-                )
-                return
-
-            if MagnitudeBrowserBackend._process is None:
-                self.agent_base_url = agent_server_url
-                self._start_service(headless)
-            else:
-                print(
-                    "✅ Magnitude service already running. Attaching to existing process.",
-                )
-                self.agent_base_url = MagnitudeBrowserBackend._agent_base_url
-
-    def _start_service(self, headless: bool):
-        port = self._find_free_port()
-        MagnitudeBrowserBackend._agent_base_url = f"http://localhost:{port}"
-
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        service_path = os.path.abspath(
-            os.path.join(current_dir, "..", "..", "agent-service"),
-        )
-        script_path = os.path.join(service_path, "src", "index.ts")
-
-        if not os.path.exists(script_path):
-            raise FileNotFoundError(
-                f"Could not find agent service script at expected path: {script_path}",
-            )
-
-        command = ["npx", "ts-node", script_path]
-        if headless:
-            command.append("--headless")
-
-        env = os.environ.copy()
-        env["PORT"] = str(port)
-
-        MagnitudeBrowserBackend._process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=service_path,
-            env=env,
-            preexec_fn=os.setsid if sys.platform != "win32" else None,
-        )
-
+        self.mode = mode
+        MagnitudeBrowserBackend._agent_base_url = agent_server_url
+        self.agent_base_url = agent_server_url
         print(
-            f"🚀 Starting Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid}) on port {port}...",
+            f"🔗 Using existing Magnitude service at {self.agent_base_url} ",
         )
+        self._check_service_ready()
 
-        self._start_output_readers()
-        atexit.register(self.stop)
+        if "localhost:3000" in self.agent_base_url:
+            self._load_persistent_data()
 
+        self._request("POST", "/start", {"headless": headless, "mode": mode})
+
+    def _check_service_ready(self):
         deadline = time.time() + 30
         url = f"{MagnitudeBrowserBackend._agent_base_url}/screenshot"
 
@@ -233,48 +175,15 @@ class MagnitudeBrowserBackend(BrowserBackend):
             try:
                 r = requests.get(url, timeout=1)
                 if r.status_code < 500:
-                    print(f"✅ Magnitude service is ready on port {port}")
+                    print(f"✅ Magnitude service is ready on {self.agent_base_url}")
                     break
             except Exception:
                 time.sleep(0.5)
         else:
             self.stop()
             raise RuntimeError(
-                f"Magnitude BrowserAgent failed to become ready within 30 seconds on port {port}",
+                f"Magnitude BrowserAgent failed to become ready within 30 seconds on {self.agent_base_url}",
             )
-
-    def _start_output_readers(self):
-        """Start threads to read stdout/stderr to prevent buffer blocking."""
-
-        def read_output(pipe, prefix):
-            for line in iter(pipe.readline, ""):
-                if line:
-                    print(f"[{prefix}] {line.strip()}")
-                    if "listening on http://localhost:" in line:
-                        import re
-
-                        match = re.search(r"http://localhost:(\d+)", line)
-                        if match:
-                            MagnitudeBrowserBackend._agent_base_url = (
-                                f"http://localhost:{match.group(1)}"
-                            )
-                            print(
-                                f"✨ Detected service running on {MagnitudeBrowserBackend._agent_base_url}",
-                            )
-            pipe.close()
-
-        stdout_thread = threading.Thread(
-            target=read_output,
-            args=(MagnitudeBrowserBackend._process.stdout, "Magnitude"),
-            daemon=True,
-        )
-        stderr_thread = threading.Thread(
-            target=read_output,
-            args=(MagnitudeBrowserBackend._process.stderr, "Magnitude-ERR"),
-            daemon=True,
-        )
-        stdout_thread.start()
-        stderr_thread.start()
 
     async def _request(
         self,
@@ -629,7 +538,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """Navigates the browser using the dedicated /nav endpoint."""
         print(f"🐍 PYTHON: Navigating to URL: {url}")
 
-        if MagnitudeBrowserBackend._process is None:
+        if self.mode == "desktop":
             # Controlling virtual desktop
             response = await self._request(
                 "POST",
@@ -654,35 +563,6 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
     def stop(self):
         """Stops the Node.js service subprocess."""
-        # self._save_persistent_data()
-
-        with MagnitudeBrowserBackend._lock:
-            if (
-                MagnitudeBrowserBackend._process
-                and MagnitudeBrowserBackend._process.poll() is None
-            ):
-                print(
-                    f"🐍 PYTHON: Explicitly calling stop() on MagnitudeBrowserBackend. PID: {MagnitudeBrowserBackend._process.pid}",
-                )
-                print(
-                    f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
-                )
-
-                if sys.platform != "win32":
-                    import signal
-
-                    try:
-                        os.killpg(
-                            os.getpgid(MagnitudeBrowserBackend._process.pid),
-                            signal.SIGTERM,
-                        )
-                    except ProcessLookupError:
-                        pass
-                else:
-                    MagnitudeBrowserBackend._process.terminate()
-
-                try:
-                    MagnitudeBrowserBackend._process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    MagnitudeBrowserBackend._process.kill()
-                MagnitudeBrowserBackend._process = None
+        if "localhost:3000" in self.agent_base_url:
+            self._save_persistent_data()
+        self._request("POST", "/stop")

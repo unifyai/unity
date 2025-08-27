@@ -5,10 +5,6 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-// --- Helper to parse command-line arguments ---
-const args = process.argv.slice(2);
-const isHeadless = args.includes('--headless');
-const isDesktop = args.includes('--desktop');
 
 // --- JSON Schema to Zod Conversion Utility ---
 function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new Set<string>()): ZodTypeAny {
@@ -144,68 +140,13 @@ function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new S
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
+let agentMode: string | null = null;
 let browserAgent: BrowserAgent | null = null;
+let desktopBrowserAgent: BrowserAgent | null = null;
 const port = process.env.PORT || 3000;
 
 // --- Agent Initialization ---
-console.log(`Starting Magnitude BrowserAgent (Headless: ${isHeadless})...`);
-
-const browserOptions: BrowserOptions = {
-    launchOptions: {
-        headless: isDesktop ? true : isHeadless,
-        args: [
-          "--disable-blink-features=AutomationControlled",
-          "--disable-features=IsolateOrigins,site-per-process",
-          // "--enable-features=WebRtcV4L2VideoCapture",
-          "--auto-select-window-capture-source-by-title=Google",
-        ],
-        // downloadsPath: `/home/agent/Downloads`,
-        // tracesDir: `/home/agent/traces`,
-    },
-};
-
-// Starts desktop agent
-if (isDesktop) {
-  startBrowserAgent({
-      url: "http://localhost:6080/vnc.html?resize=scale&autoconnect=1",
-      browser: browserOptions,
-      prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the terminal, apps and browser within the virtual desktop.",
-    }).then(agent => {
-      browserAgent = agent;
-      console.log("✅ BrowserAgent started successfully.");
-      app.listen(port, () => {
-        console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
-      });
-    })
-    .catch(err => {
-      console.error("❌ Failed to start BrowserAgent:", err);
-      process.exit(1);
-    });
-
-  // Browser to be controlled through desktop
-  startBrowserAgent({
-    url: "https://www.duckduckgo.com/",
-    browser: {
-      launchOptions: {
-        headless: false,
-        downloadsPath: `/home/browser/Downloads`,
-        tracesDir: `/home/browser/traces`,
-      }
-    }})
-} else {
-  startBrowserAgent({ browser: browserOptions })
-    .then(agent => {
-      browserAgent = agent;
-      console.log("✅ BrowserAgent started successfully.");
-      app.listen(port, () => {
-        console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
-      });
-    })
-    .catch(err => {
-      console.error("❌ Failed to start BrowserAgent:", err);
-      process.exit(1);
-    });
-}
+console.log(`Starting Magnitude BrowserAgent...`);
 
 const isAgentReady = (req: Request, res: Response, next: Function) => {
   if (!browserAgent) {
@@ -214,7 +155,75 @@ const isAgentReady = (req: Request, res: Response, next: Function) => {
   next();
 };
 
+const getLaunchOptions = (headless: boolean, downloadsPath: string | null = null, tracesDir: string | null = null) => {
+  return { launchOptions: {
+    headless: headless,
+    args: [
+      "--disable-blink-features=AutomationControlled",
+      "--disable-features=IsolateOrigins,site-per-process",
+      // "--enable-features=WebRtcV4L2VideoCapture",
+      "--auto-select-window-capture-source-by-title=Google",
+    ],
+    downloadsPath: downloadsPath || undefined,
+    tracesDir: tracesDir || undefined,
+  }}
+};
+
+const startDesktop = () => {
+  startBrowserAgent({
+    url: "http://localhost:6080/vnc.html?resize=scale&autoconnect=1",
+    browser: getLaunchOptions(true),
+    prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the terminal, apps and browser within the virtual desktop.",
+  }).then(agent => {
+    browserAgent = agent;
+    console.log("✅ BrowserAgent started successfully.");
+  }).catch(err => {
+    console.error("❌ Failed to start BrowserAgent:", err);
+    process.exit(1);
+  });
+
+  startBrowserAgent({
+    url: "https://www.duckduckgo.com/",
+    browser: getLaunchOptions(false, "/home/browser/Downloads", "/home/browser/traces"),
+  }).then(agent => {
+    desktopBrowserAgent = agent;
+    console.log("✅ Desktop BrowserAgent started successfully.");
+  }).catch(err => {
+    console.error("❌ Failed to start Desktop BrowserAgent:", err);
+    process.exit(1);
+  });
+}
+
+const startBrowser = (headless: boolean) => {
+  startBrowserAgent({
+    url: "https://www.duckduckgo.com/",
+    browser: getLaunchOptions(headless, "/home/browser/Downloads", "/home/browser/traces"),
+  }).then(agent => {
+    browserAgent = agent;
+    console.log("✅ BrowserAgent started successfully.");
+  }).catch(err => {
+    console.error("❌ Failed to start BrowserAgent:", err);
+    process.exit(1);
+  });
+}
+
 // --- API Endpoints ---
+app.post('/start', async (req: Request, res: Response) => {
+  const { headless, mode } = req.body;
+  if (!mode || (mode !== "desktop" && mode !== "browser")) return res.status(400).json({ error: 'bad_request', message: 'Mode is required and must be either "desktop" or "browser".' });
+  agentMode = mode;
+  try {
+    if (agentMode === "desktop") {
+      startDesktop();
+    } else {
+      startBrowser(headless);
+    }
+    res.json({ status: 'started' });
+  } catch (err) {
+    handleAgentError(err, res);
+  }
+});
+
 app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'bad_request', message: 'URL is required.' });
@@ -293,8 +302,14 @@ app.get('/state', isAgentReady, async (_req: Request, res: Response) => {
 
 app.post('/stop', isAgentReady, async (_req: Request, res: Response) => {
   try {
+    if (agentMode === "desktop") {
+      await desktopBrowserAgent!.stop();
+      desktopBrowserAgent = null;
+      console.log("Desktop BrowserAgent stopped.");
+    }
     await browserAgent!.stop();
     browserAgent = null;
+    agentMode = null;
     res.json({ status: 'stopped' });
     console.log("BrowserAgent stopped. Server will now exit.");
     setTimeout(() => process.exit(0), 100);
