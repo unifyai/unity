@@ -177,6 +177,9 @@ const startDesktop = () => {
   }).then(agent => {
     browserAgent = agent;
     console.log("✅ BrowserAgent started successfully.");
+    app.listen(port, () => {
+      console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
+    });
   }).catch(err => {
     console.error("❌ Failed to start BrowserAgent:", err);
     process.exit(1);
@@ -201,6 +204,9 @@ const startBrowser = (headless: boolean) => {
   }).then(agent => {
     browserAgent = agent;
     console.log("✅ BrowserAgent started successfully.");
+    app.listen(port, () => {
+      console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
+    });
   }).catch(err => {
     console.error("❌ Failed to start BrowserAgent:", err);
     process.exit(1);
