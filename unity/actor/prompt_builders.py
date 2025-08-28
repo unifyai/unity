@@ -220,6 +220,7 @@ def _build_initial_plan_rules_and_examples(
         7.  **Default Search Engine:** Prefer DuckDuckGo (https://duckduckgo.com) for searches unless the user specifies otherwise.
         8.  **Prefer .deb for Linux App Installations**: When installing apps, prefer .deb packages over other formats. `.deb` files are the most common and trusted format for Linux app installations. Then, use `dpkg` to install the app with full permissions.
         9.  **Browser Downloads**: The browser downloads directory is `/home/browser/Downloads`.
+        10.  **Desktop Mode**: You have control over a virtual desktop through the browser tools, and have access to apps like terminal, shell, browser, etc. You are also able to search for apps to be used in the desktop. Use screenshot to observe the desktop.
         ---
         """,
     )
