@@ -6,7 +6,7 @@ import unify
 
 from unity.common.llm_helpers import start_async_tool_use_loop, AsyncToolUseLoopHandle
 from unity.events.event_bus import EVENT_BUS
-from tests.helpers import _get_unity_test_env_var
+from tests.helpers import SETTINGS
 
 
 @pytest.mark.asyncio
@@ -30,8 +30,8 @@ async def test_nested_logging_hierarchy_labels():
     async def outer_tool() -> AsyncToolUseLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
-            cache=_get_unity_test_env_var("UNIFY_CACHE"),
-            traced=_get_unity_test_env_var("UNIFY_TRACED"),
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
         )
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
@@ -56,8 +56,8 @@ async def test_nested_logging_hierarchy_labels():
     # ── top-level loop: uses the outer tool ────────────────────────────────
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
@@ -122,8 +122,8 @@ async def test_single_loop_logging_hierarchy_label():
 
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "1️⃣  Call `noop_tool`. 2️⃣ Then reply exactly 'done'.",

@@ -19,7 +19,7 @@ from typing import Any, List
 import pytest
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
-from tests.helpers import _handle_project, _get_unity_test_env_var
+from tests.helpers import _handle_project, SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
@@ -64,8 +64,8 @@ def new_client() -> unify.AsyncUnify:
     """
     return unify.AsyncUnify(
         MODEL_NAME,
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
 
 

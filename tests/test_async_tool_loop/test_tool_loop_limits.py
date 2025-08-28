@@ -6,7 +6,7 @@ from typing import Dict, Callable
 
 from unity.common.llm_helpers import start_async_tool_use_loop
 from unity.common.llm_helpers import ToolSpec
-from tests.helpers import _get_unity_test_env_var
+from tests.helpers import SETTINGS
 
 
 class DummyAsyncUnify:
@@ -317,8 +317,8 @@ def new_client() -> unify.AsyncUnify:
     """
     return unify.AsyncUnify(
         MODEL_NAME,
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
 
 
