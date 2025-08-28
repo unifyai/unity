@@ -59,7 +59,7 @@ echo "Redis started with PID: $REDIS_PID"
 
 # Virtual desktop and devices
 echo "Starting virtual desktop and Magnitude server..."
-bash /app/desktop/startup.sh &
+bash desktop/startup.sh &
 DESKTOP_PID=$!
 
 

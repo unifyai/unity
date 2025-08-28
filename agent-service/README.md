@@ -17,17 +17,11 @@ This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, a
 
 ## Running the Service
 
-You can run the service in two modes:
+You can run the service by:
 
--   **Development Mode (Visible Browser)**:
-    ```bash
-    npx ts-node src/index.ts
-    ```
-
--   **Headless Mode (No Visible Browser)**:
-    ```bash
-    npx ts-node src/index.ts --headless
-    ```
+```bash
+npx ts-node src/index.ts
+```
 
 The service will start and listen on `http://localhost:3000`.
 

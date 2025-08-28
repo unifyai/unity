@@ -147,6 +147,9 @@ const port = process.env.PORT || 3000;
 
 // --- Agent Initialization ---
 console.log(`Starting Magnitude BrowserAgent...`);
+app.listen(port, () => {
+  console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
+});
 
 const isAgentReady = (req: Request, res: Response, next: Function) => {
   if (!browserAgent) {
@@ -177,9 +180,6 @@ const startDesktop = () => {
   }).then(agent => {
     browserAgent = agent;
     console.log("✅ BrowserAgent started successfully.");
-    app.listen(port, () => {
-      console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
-    });
   }).catch(err => {
     console.error("❌ Failed to start BrowserAgent:", err);
     process.exit(1);
@@ -204,9 +204,6 @@ const startBrowser = (headless: boolean) => {
   }).then(agent => {
     browserAgent = agent;
     console.log("✅ BrowserAgent started successfully.");
-    app.listen(port, () => {
-      console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
-    });
   }).catch(err => {
     console.error("❌ Failed to start BrowserAgent:", err);
     process.exit(1);
