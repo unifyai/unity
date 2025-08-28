@@ -150,18 +150,21 @@ class MagnitudeBrowserBackend(BrowserBackend):
         self,
         agent_server_url: str = "http://localhost:3000",
         headless: bool = False,
-        start_service: bool = True,
-        mode: str = "browser",
+        agent_mode: str = "browser",
         **kwargs,
     ):
-        self.mode = mode
+        self.agent_mode = agent_mode
         MagnitudeBrowserBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
         print(
             f"🔗 Using existing Magnitude service at {self.agent_base_url} ",
         )
 
-        self._sync_request("POST", "/start", {"headless": headless, "mode": mode})
+        self._sync_request(
+            "POST",
+            "/start",
+            {"headless": headless, "mode": self.agent_mode},
+        )
         self._check_service_ready()
         if "localhost:3000" in self.agent_base_url:
             self._load_persistent_data()
@@ -552,7 +555,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """Navigates the browser using the dedicated /nav endpoint."""
         print(f"🐍 PYTHON: Navigating to URL: {url}")
 
-        if self.mode == "desktop":
+        if self.agent_mode == "desktop":
             # Controlling virtual desktop
             response = await self._request(
                 "POST",

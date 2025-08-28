@@ -1906,7 +1906,7 @@ class HierarchicalActor(BaseActor):
         max_local_retries: Optional[int] = None,
         timeout: Optional[int] = 300,
         browser_mode: str = "magnitude",
-        mode: str = "browser",
+        agent_mode: str = "browser",
     ):
         """
         Initializes the HierarchicalActor.
@@ -1920,14 +1920,14 @@ class HierarchicalActor(BaseActor):
             max_local_retries: Default max number of tactical retries for plans.
             timeout: Default timeout for plan execution.
             browser_mode: The browser mode to use. Can be "legacy" or "magnitude".
-            mode: The mode to use. Can be "browser" or "desktop".
+            agent_mode: The agent mode to use. Can be "browser" or "desktop".
         """
         self.function_manager = function_manager or FunctionManager()
         self.action_provider = ActionProvider(
             session_connect_url=session_connect_url,
             headless=headless,
             browser_mode=browser_mode,
-            mode=mode,
+            agent_mode=agent_mode,
         )
         self.tools = {}
         for name in dir(self.action_provider):
