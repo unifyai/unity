@@ -393,3 +393,59 @@ async def test_reintegration_plan_clears_on_completion():
     # Attempting reinstatement should now fail because the plan was cleared
     with pytest.raises(ValueError):
         ts._reinstate_task_to_previous_queue(task_id=head_id)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
+    from datetime import datetime, timezone, timedelta
+
+    ts = TaskScheduler()
+
+    # Force "chain" execution for this test
+    monkeypatch.setenv("UNITY_TS_EXEC_CHAIN", "true")
+
+    # Create a chain of three tasks scheduled for next week
+    future = datetime.now(timezone.utc) + timedelta(days=7)
+    head_id = ts._create_task(
+        name="ChainHead",
+        description="ch head",
+        schedule=Schedule(start_at=future),
+    )["details"]["task_id"]
+    mid_id = ts._create_task(
+        name="ChainMid",
+        description="ch mid",
+        schedule=Schedule(prev_task=head_id),
+    )["details"]["task_id"]
+    tail_id = ts._create_task(
+        name="ChainTail",
+        description="ch tail",
+        schedule=Schedule(prev_task=mid_id),
+    )["details"]["task_id"]
+
+    # Capture the original head's start_at to compare later
+    row_h = ts._filter_tasks(filter=f"task_id == {head_id}")[0]
+    original_start = (row_h.get("schedule") or {}).get("start_at")
+    assert original_start
+
+    # Start the head in chain mode and let it complete
+    handle_head = await ts.execute_task(text=str(head_id))
+    await handle_head.result()
+
+    # Start the second task (mid) and then request deferral "as originally scheduled"
+    handle_mid = await ts.execute_task(text=str(mid_id))
+    handle_mid.stop(cancel=False, reason="as per our original schedule")
+    await handle_mid.result()
+
+    # The middle task should now be reinstated as the head with the original start_at and scheduled status
+    row_mid = ts._filter_tasks(filter=f"task_id == {mid_id}")[0]
+    sched_mid = row_mid.get("schedule") or {}
+    assert sched_mid.get("prev_task") is None
+    assert sched_mid.get("start_at") == original_start
+    assert row_mid["status"] == "scheduled"
+
+    # The tail should be queued behind the reinstated head without a start_at
+    row_tail = ts._filter_tasks(filter=f"task_id == {tail_id}")[0]
+    sched_tail = row_tail.get("schedule") or {}
+    assert sched_tail.get("prev_task") == mid_id
+    assert "start_at" not in sched_tail or not sched_tail.get("start_at")
