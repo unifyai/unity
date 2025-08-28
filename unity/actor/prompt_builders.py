@@ -173,9 +173,245 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
             }
            ],
            "messages": []
+        }
         """,
     )
-    examples = ""  # TODO: Add examples
+    examples = textwrap.dedent(
+        """
+        ### 💡 Strategy & Examples
+
+        Your primary workflow is an iterative loop: **Think → Code → Observe → Repeat**. You write a block of Python code, execute it, observe the output (including stdout, errors, and browser state), and then decide on the next block of code.
+
+        ---
+
+        **Example 1: Web Navigation and Structured Data Extraction**
+
+        *User Request*: "What is the main heading and the text of the first paragraph on playwright.dev?"
+
+        *Turn 1: Navigate to the website*
+        * **Tool Call**:
+            ```json
+            {
+              "tool_calls": [{
+                "name": "execute_python_code",
+                "arguments": {
+                  "thought": "The first step is to navigate to the website specified in the user's request, which is playwright.dev.",
+                  "code": "await action_provider.browser_navigate('https://playwright.dev/')"
+                }
+              }]
+            }
+            ```
+        * **Observation**:
+            ```text
+            --- BROWSER STATE ---
+            URL: https://playwright.dev/
+            [A screenshot of the Playwright homepage is available to you.]
+            ```
+
+        *Turn 2: Observe the content using a Pydantic model*
+        * **Tool Call**:
+            ```json
+            {
+              "tool_calls": [{
+                "name": "execute_python_code",
+                "arguments": {
+                  "thought": "Great, I'm on the page. Now I'll extract the heading and paragraph text into a structured object for clarity. I'll define a Pydantic model right here in the sandbox.",
+                  "code": "from pydantic import BaseModel, Field\n\nclass PageContent(BaseModel):\n    heading: str = Field(description=\"The main H1 heading of the page\")\n    first_paragraph: str = Field(description=\"The text of the first paragraph under the heading\")\n\nPageContent.model_rebuild()\n\npage_info = await action_provider.browser_observe(\n    \"Extract the main heading and the first paragraph.\",\n    response_format=PageContent\n)\n\nprint(page_info.model_dump_json(indent=2))"
+                }
+              }]
+            }
+            ```
+        * **Observation**:
+            ```text
+            --- STDOUT ---
+            {
+              "heading": "Playwright enables reliable end-to-end testing for modern web apps.",
+              "first_paragraph": "Playwright is an open-source framework for web testing and automation. It allows testing Chromium, Firefox and WebKit with a single API."
+            }
+            --- BROWSER STATE ---
+            URL: https://playwright.dev/
+            [A screenshot of the Playwright homepage is available to you.]
+            ```
+
+        *Turn 3: Provide the final answer*
+        * **Thought**: I have successfully extracted the information. I will now provide the final answer to the user without using any tools.
+        * **Final Answer (tool-less response)**:
+            The main heading on playwright.dev is 'Playwright enables reliable end-to-end testing for modern web apps.', and the first paragraph is 'Playwright is an open-source framework for web testing and automation. It allows testing Chromium, Firefox and WebKit with a single API.'
+
+        ---
+        **Example 2: Error Handling and Correction**
+
+        *User Request*: "Get the title from example.com."
+
+        *Turn 1: Navigate*
+        * **Tool Call**:
+            ```json
+            {
+              "tool_calls": [{
+                "name": "execute_python_code",
+                "arguments": {
+                  "thought": "I need to navigate to example.com to get the title.",
+                  "code": "await action_provider.browser_navigate('https://example.com/')"
+                }
+              }]
+            }
+            ```
+        * **Observation**: Success, browser is on example.com.
+
+        *Turn 2: Attempt to extract data with a mistake*
+        * **Tool Call**:
+            ```json
+            {
+              "tool_calls": [{
+                "name": "execute_python_code",
+                "arguments": {
+                  "thought": "I need to get the title. I will use Pydantic, but I'll deliberately forget to call `model_rebuild()` to demonstrate error handling.",
+                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# MISTAKE: I forgot to call PageTitle.model_rebuild()\n\ntitle_info = await action_provider.browser_observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info)"
+                }
+              }]
+            }
+            ```
+        * **Observation**:
+            ```text
+            --- ERROR ---
+            Traceback (most recent call last):
+              ...
+            ValidationError: The response from the model did not conform to the expected Pydantic schema. [Reason: Could not find a registered Pydantic model named 'PageTitle'. Did you forget to call `PageTitle.model_rebuild()`?]
+            ```
+
+        *Turn 3: Correct the code based on the error*
+        * **Tool Call**:
+            ```json
+            {
+              "tool_calls": [{
+                "name": "execute_python_code",
+                "arguments": {
+                  "thought": "The error message is very clear. I forgot to call `model_rebuild()` on my Pydantic class. I will add that line and retry.",
+                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# CORRECTED: I've added the required model_rebuild() call.\nPageTitle.model_rebuild()\n\ntitle_info = await action_provider.browser_observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info.title)"
+                }
+              }]
+            }
+            ```
+        * **Observation**:
+            ```text
+            --- STDOUT ---
+            Example Domain
+            ```
+        * **Final Answer (tool-less)**: The title of the page is "Example Domain".
+
+        ---
+
+        **Example 3: Stateful Computation and Helper Functions**
+
+        *User Request*: "On `fakestore.example.com`, find the average price of all products that cost less than $100."
+
+        *Turn 1: Define a helper function and extract all product data*
+        * **Tool Call**:
+            ```json
+            {
+              "tool_calls": [{
+                "name": "execute_python_code",
+                "arguments": {
+                  "thought": "This is a multi-step task. First, I'll extract all products. I know I'll need to parse prices that might be strings (e.g., '$25.99'), so I'll define a helper function to clean them. This function will persist in the sandbox for later.",
+                  "code": "import re\nfrom pydantic import BaseModel, Field\nfrom typing import List\n\ndef parse_price(price_str: str) -> float:\n    nums = re.findall(r'[\\d.]+', price_str)\n    return float(nums[0]) if nums else 0.0\n\nclass Product(BaseModel):\n    name: str\n    price_text: str = Field(alias=\"price\")\n\nclass ProductList(BaseModel):\n    products: List[Product]\n\nProductList.model_rebuild()\n\nglobal all_products_data\nall_products_data = await action_provider.browser_observe(\n    \"Extract all products with their name and price text\",\n    response_format=ProductList\n)\nprint(f\"Extracted {len(all_products_data.products)} products.\")"
+                }
+              }]
+            }
+            ```
+        * **Observation**:
+            ```text
+            --- STDOUT ---
+            Extracted 20 products.
+            ```
+
+        *Turn 2: Use the helper function and the stored variable to compute the average*
+        * **Tool Call**:
+            ```json
+            {
+              "tool_calls": [{
+                "name": "execute_python_code",
+                "arguments": {
+                  "thought": "I have the product data in the `all_products_data` variable and my `parse_price` function is defined. Now I can perform the calculation in pure Python.",
+                  "code": "prices_under_100 = []\nfor product in all_products_data.products:\n    price = parse_price(product.price_text)\n    if price < 100.0:\n        prices_under_100.append(price)\n\nif prices_under_100:\n    average = sum(prices_under_100) / len(prices_under_100)\n    result_text = f\"The average price of products under $100 is ${average:.2f}.\"\nelse:\n    result_text = \"No products found under $100.\"\n\nprint(result_text)"
+                }
+              }]
+            }
+            ```
+        * **Observation**:
+            ```text
+            --- STDOUT ---
+            The average price of products under $100 is $42.75.
+            ```
+        * **Final Answer (tool-less)**: The average price of products under $100 on the site is $42.75.
+
+        ---
+
+        **Example 4: Interactive Communication Workflow**
+
+        *User Request*: "Text Jane Doe to confirm her appointment for tomorrow at 3 PM. Then, call her to ask if she has any dietary restrictions for the pre-appointment lunch."
+
+        *Turn 1: Send the confirmation SMS*
+        * **Tool Call**:
+            ```json
+            {
+              "tool_calls": [{
+                "name": "execute_python_code",
+                "arguments": {
+                  "thought": "I'll start by sending the SMS. The `send_sms_message` tool returns a handle, which I'll await to ensure the message is sent and get a result.",
+                  "code": "sms_handle = await action_provider.send_sms_message(\n    description=\"Text Jane Doe to confirm her appointment for tomorrow at 3 PM.\"\n)\n\nsms_result = await sms_handle.result()\nprint(sms_result)"
+                }
+              }]
+            }
+            ```
+        * **Observation**:
+            ```text
+            --- STDOUT ---
+            Message successfully sent to Jane Doe (+1-555-123-4567): 'Hi Jane, this is a confirmation for your appointment tomorrow at 3 PM. Please reply to confirm.'
+            ```
+
+        *Turn 2: Initiate the interactive phone call*
+        * **Tool Call**:
+            ```json
+            {
+              "tool_calls": [{
+                "name": "execute_python_code",
+                "arguments": {
+                  "thought": "The SMS is sent. Now I need to make the phone call. The `start_call` tool also returns a handle. I will store this handle in a global variable so I can interact with it in the next turn.",
+                  "code": "global active_call_handle\nactive_call_handle = action_provider.start_call(\n    phone_number=\"Jane Doe\",\n    purpose=\"Ask about dietary restrictions for a lunch meeting.\"\n)\nprint(f\"Initiated call to Jane Doe. Handle ID: {active_call_handle._loop_id}\")"
+                }
+              }]
+            }
+            ```
+        * **Observation**:
+            ```text
+            --- STDOUT ---
+            Initiated call to Jane Doe. Handle ID: a4b1
+            --- RESULT ---
+            <AsyncToolUseLoopHandle object ...>
+            ```
+
+        *Turn 3: Interact with the live call using the handle*
+        * **Tool Call**:
+            ```json
+            {
+              "tool_calls": [{
+                "name": "execute_python_code",
+                "arguments": {
+                  "thought": "The call is now active and the handle is stored in `active_call_handle`. I will use the handle's `.ask()` method to pose the question and get the answer.",
+                  "code": "ask_handle = await active_call_handle.ask(\"Do you have any dietary restrictions for the lunch tomorrow?\")\n\ndietary_info = await ask_handle.result()\nprint(f\"Received dietary info: {dietary_info}\")\n\nawait active_call_handle.stop()\nprint(\"Call ended.\")"
+                }
+              }]
+            }
+            ```
+        * **Observation**:
+            ```text
+            --- STDOUT ---
+            Received dietary info: "Thanks for asking! I'm vegetarian."
+            Call ended.
+            ```
+        * **Final Answer (tool-less)**: I've confirmed Jane Doe's appointment via SMS. I also called her and she mentioned her dietary restriction is vegetarian.
+        """,
+    )
     return f"""
 {instructions_and_rules}
 
