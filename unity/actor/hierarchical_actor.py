@@ -1962,27 +1962,54 @@ class HierarchicalPlan(BaseActiveTask):
         Asks a question about the current state of the plan by creating a new,
         isolated tool loop that returns a handle to its result.
         """
-        context_log = "\n".join(f"- {log}" for log in self.action_log[-10:])
+        screenshot = None
+        try:
+            screenshot = await self.actor.action_provider.browser.get_screenshot()
+        except Exception as e:
+            logger.warning(f"Could not capture screenshot for /ask: {e}")
+
+        full_context_log = "\n".join(f"- {log}" for log in self.action_log)
+
         prompt = prompt_builders.build_ask_prompt(
             goal=self.goal,
             state=self._state.name,
             call_stack=" -> ".join(self.call_stack) or "None",
-            context_log=context_log,
+            context_log=full_context_log,
             question=question,
         )
 
         self.ask_client.reset_messages()
         self.ask_client.reset_system_message()
-        self.ask_client.set_system_message(prompt)
 
-        return start_async_tool_use_loop(
-            client=self.ask_client,
-            message=question,
-            tools={},
-            loop_id=f"Question({self._module_name})",
-            max_consecutive_failures=1,
-            timeout=60,
-        )
+        answer = await llm_call(self.ask_client, prompt, screenshot=screenshot)
+
+        class SimpleHandle(SteerableToolHandle):
+            def __init__(self, answer_text: str):
+                self._answer = answer_text
+                self._done = True
+
+            async def ask(self, question: str) -> "SteerableToolHandle":
+                return self
+
+            async def interject(self, message: str):
+                pass
+
+            def stop(self, reason: Optional[str] = None):
+                pass
+
+            def pause(self):
+                pass
+
+            def resume(self):
+                pass
+
+            def done(self) -> bool:
+                return self._done
+
+            async def result(self) -> str:
+                return self._answer
+
+        return SimpleHandle(answer)
 
     def _is_valid_method(self, name: str) -> bool:
         """
@@ -2154,6 +2181,7 @@ class HierarchicalActor(BaseActor):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        **kwargs,
     ) -> HierarchicalPlan:
         """
         Creates and starts a new HierarchicalPlan active task.
