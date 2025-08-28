@@ -160,6 +160,25 @@ def attach_with_links(
 
     # Build current task schedule and write via validated funnel
     cur_sched: Dict[str, Any] = {"prev_task": prev_task, "next_task": next_task}
+    # Carry through queue_id onto the head when known (non-breaking additive field)
+    try:
+        from .types.reintegration_plan import ReintegrationPlan as _RP  # local import
+
+        # We cannot access the exact plan here reliably; rely on `head_start_at` signal.
+        # If reinstating at head with a known queue id on neighbour, propagate it.
+        if prev_task is None and head_start_at is not None:
+            # Probe next_task for queue_id if present
+            if next_task is not None:
+                nxt_rows = scheduler._filter_tasks(
+                    filter=f"task_id == {next_task}",
+                    limit=1,
+                )
+                if nxt_rows:
+                    qid = (nxt_rows[0].get("schedule") or {}).get("queue_id")
+                    if qid is not None:
+                        cur_sched["queue_id"] = qid
+    except Exception:
+        pass
     if prev_task is None and head_start_at is not None:
         cur_sched["start_at"] = head_start_at
     scheduler._validated_write(

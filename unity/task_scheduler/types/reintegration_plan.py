@@ -22,3 +22,4 @@ class ReintegrationPlan:
     was_head: bool
     original_status: Optional[str]
     head_start_at: Optional[str] = None
+    queue_id: Optional[int] = None

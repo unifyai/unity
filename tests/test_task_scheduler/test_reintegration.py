@@ -10,6 +10,52 @@ from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.trigger import Trigger, Medium
 
 
+# Speed up only this module's SimulatedActor by monkeypatching the class symbols
+# used by TaskScheduler to a shorter-duration variant. This does not affect
+# other test modules.
+import pytest
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _short_simulated_actor():
+    from pytest import MonkeyPatch
+
+    mp = MonkeyPatch()
+    from unity.actor.simulated import SimulatedActor as _BaseSA
+
+    class _ShortSimActor(_BaseSA):  # type: ignore[misc]
+        def __init__(
+            self,
+            *,
+            steps: int | None = None,
+            duration: float | None = None,
+            _requests_clarification: bool = False,
+            log_mode: "str | None" = "log",
+            simulation_guidance: "str | None" = None,
+        ) -> None:  # noqa: E501
+            # Force a very short duration for tests in this module only
+            super().__init__(
+                steps=steps,
+                duration=0.1 if duration is None or duration > 0.1 else duration,
+                _requests_clarification=_requests_clarification,
+                log_mode=log_mode,
+                simulation_guidance=simulation_guidance,
+            )
+
+    # Replace both the canonical class and the symbol imported inside TaskScheduler
+    mp.setattr("unity.actor.simulated.SimulatedActor", _ShortSimActor, raising=True)
+    mp.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _ShortSimActor,
+        raising=True,
+    )
+
+    try:
+        yield
+    finally:
+        mp.undo()
+
+
 async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
     """Create tasks and order them head→tail, returning their ids.
 

@@ -138,6 +138,7 @@ def detach_from_queue_for_activation(
         return rows[0] if rows else None
 
     head_start_at: Optional[str] = None
+    queue_id: Optional[int] = None
     if prev_tid is not None:
         # Walk up to the head for the current chain
         cur = _get_row(task_id)
@@ -147,6 +148,9 @@ def detach_from_queue_for_activation(
             _sched = cur.get("schedule") or {}
             if isinstance(_sched, dict):
                 head_start_at = _sched.get("start_at")
+                queue_id = (
+                    _sched.get("queue_id") if isinstance(_sched, dict) else None
+                ) or None
 
     def _get_log_obj(tid: int) -> Optional[unify.Log]:
         try:
@@ -162,9 +166,10 @@ def detach_from_queue_for_activation(
     # Always record a reintegration plan for precise restore on defer stop,
     # regardless of execution scope. This enables chain execution with later
     # reinstatement to the original position when requested.
-    scheduler._reintegration_plan = ReintegrationPlan(
+    plan = ReintegrationPlan(
         task_id=task_id,
         instance_id=task_row.get("instance_id"),
+        queue_id=queue_id,
         prev_task=prev_tid,
         next_task=next_tid,
         start_at=start_at,
@@ -172,9 +177,27 @@ def detach_from_queue_for_activation(
         original_status=task_row.get("status"),
         head_start_at=head_start_at,
     )
+    # Prefer per-task registry; keep legacy attribute as best-effort fallback
+    try:
+        key = (
+            task_id,
+            (
+                task_row.get("instance_id")
+                if task_row.get("instance_id") is not None
+                else -1
+            ),
+        )
+        scheduler._reintegration_plans[key] = plan  # type: ignore[attr-defined]
+    except Exception:
+        try:
+            scheduler._reintegration_plan = plan  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
-    # Disconnect previous neighbour's next pointer
-    if prev_tid is not None:
+    # Disconnect previous neighbour's next pointer only for CHAIN execution.
+    # For ISOLATE, preserve prev.next so CAS-protected rewiring below can atomically
+    # switch prev.next from `task_id` → `next_tid`.
+    if prev_tid is not None and execution_scope == "chain":
         prev_log = _get_log_obj(prev_tid)
         if prev_log is not None:
             prev_sched = {
@@ -203,50 +226,59 @@ def detach_from_queue_for_activation(
                         ),
                     }
                     if prev_tid is None:
-                        next_sched["prev_task"] = None
-                        if start_at is not None:
-                            next_sched["start_at"] = start_at
-                        # New head with an explicit start_at must become 'scheduled'
-                        unify.update_logs(
-                            logs=next_log.id if hasattr(next_log, "id") else next_log,
-                            context=scheduler._ctx,
-                            entries={
-                                "schedule": next_sched,
-                                "status": Status.scheduled,
-                            },
-                            overwrite=True,
-                        )
+                        # CAS-like guard: only clear prev when it currently points to our task
+                        if next_sched.get("prev_task") == task_id:
+                            next_sched["prev_task"] = None
+                            if start_at is not None:
+                                next_sched["start_at"] = start_at
+                            # New head with an explicit start_at must become 'scheduled'
+                            unify.update_logs(
+                                logs=(
+                                    next_log.id if hasattr(next_log, "id") else next_log
+                                ),
+                                context=scheduler._ctx,
+                                entries={
+                                    "schedule": next_sched,
+                                    "status": Status.scheduled,
+                                },
+                                overwrite=True,
+                            )
                         # Also keep primed cache in sync if we just changed the head
                         try:
                             scheduler._refresh_primed_cache(next_tid)
                         except Exception:
                             pass
                     else:
-                        next_sched["prev_task"] = prev_tid
-                        next_sched.pop("start_at", None)
-                        # also set prev.next_task → next
-                        if prev_tid is not None:
-                            prev_log2 = _get_log_obj(prev_tid)
-                            if prev_log2 is not None:
-                                prev_sched2 = {
-                                    **(
-                                        (getattr(prev_log2, "entries", {}) or {}).get(
-                                            "schedule",
+                        # CAS-like guard: only re-point when next.prev still points at our task
+                        if next_sched.get("prev_task") == task_id:
+                            next_sched["prev_task"] = prev_tid
+                            next_sched.pop("start_at", None)
+                            # also set prev.next_task → next when prev still points at our task
+                            if prev_tid is not None:
+                                prev_log2 = _get_log_obj(prev_tid)
+                                if prev_log2 is not None:
+                                    prev_sched2 = {
+                                        **(
+                                            (
+                                                getattr(prev_log2, "entries", {}) or {}
+                                            ).get(
+                                                "schedule",
+                                            )
+                                            or {}
+                                        ),
+                                    }
+                                    if prev_sched2.get("next_task") == task_id:
+                                        prev_sched2["next_task"] = next_tid
+                                        unify.update_logs(
+                                            logs=(
+                                                prev_log2.id
+                                                if hasattr(prev_log2, "id")
+                                                else prev_log2
+                                            ),
+                                            context=scheduler._ctx,
+                                            entries={"schedule": prev_sched2},
+                                            overwrite=True,
                                         )
-                                        or {}
-                                    ),
-                                }
-                                prev_sched2["next_task"] = next_tid
-                                unify.update_logs(
-                                    logs=(
-                                        prev_log2.id
-                                        if hasattr(prev_log2, "id")
-                                        else prev_log2
-                                    ),
-                                    context=scheduler._ctx,
-                                    entries={"schedule": prev_sched2},
-                                    overwrite=True,
-                                )
                     if prev_tid is not None:
                         unify.update_logs(
                             logs=next_log.id if hasattr(next_log, "id") else next_log,
@@ -286,14 +318,15 @@ def detach_from_queue_for_activation(
                             or {}
                         ),
                     }
-                    next_sched["prev_task"] = task_id
-                    next_sched.pop("start_at", None)
-                    unify.update_logs(
-                        logs=next_log.id if hasattr(next_log, "id") else next_log,
-                        context=scheduler._ctx,
-                        entries={"schedule": next_sched},
-                        overwrite=True,
-                    )
+                    # CAS-like guard: only set when still pointing to our task
+                    if next_sched.get("prev_task") == task_id:
+                        next_sched.pop("start_at", None)
+                        unify.update_logs(
+                            logs=next_log.id if hasattr(next_log, "id") else next_log,
+                            context=scheduler._ctx,
+                            entries={"schedule": next_sched},
+                            overwrite=True,
+                        )
 
 
 def attach_with_links(

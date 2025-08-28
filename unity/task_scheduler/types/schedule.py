@@ -4,6 +4,10 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class Schedule(BaseModel):
+    queue_id: Optional[int] = Field(
+        default=None,
+        description="Identifier of the logical queue/chain this task belongs to",
+    )
     next_task: Optional[int] = Field(
         default=None,
         description="ID of the next task in the sequence, used for task dependencies and ordering",

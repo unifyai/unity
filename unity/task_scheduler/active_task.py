@@ -139,6 +139,7 @@ class ActiveTask(BaseActiveTask):
                         try:
                             self._scheduler._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
                                 task_id=self._task_id,
+                                _allow_active=True,
                             )
                         except Exception:
                             # Best-effort heuristic fallback when no plan exists.
@@ -180,6 +181,7 @@ class ActiveTask(BaseActiveTask):
                     try:
                         self._scheduler._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
                             task_id=self._task_id,
+                            _allow_active=True,
                         )
                     except Exception:
                         # If no plan exists, fall back to heuristic best-effort reinsertion.
