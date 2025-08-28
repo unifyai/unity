@@ -49,6 +49,7 @@ from ..actor.base import BaseActor
 from ..actor.simulated import SimulatedActor
 from .active_task import ActiveTask
 import json
+from dataclasses import dataclass
 
 from ..events.manager_event_logging import (
     new_call_id,
@@ -66,15 +67,22 @@ from ._queue_ops import (
     detach_from_queue_for_activation as _ops_detach_for_activation,
     attach_with_links as _ops_attach_with_links,
 )
+from .reintegration import ReintegrationManager
 
 
 # ------------------------------------------------------------------ #
 #  Typed reintegration plan                                          #
 # ------------------------------------------------------------------ #
 from .types.reintegration_plan import ReintegrationPlan
+from .storage import TasksStore
 
 
 class TaskScheduler(BaseTaskScheduler):
+    @dataclass
+    class ActivePointer:
+        task_id: int
+        instance_id: int
+        handle: "ActiveTask"
 
     _HEAD_FILTER = (
         "schedule is not None and "
@@ -231,44 +239,25 @@ class TaskScheduler(BaseTaskScheduler):
         ), "read and write contexts must be the same when instantiating a TaskScheduler."
         self._ctx = f"{read_ctx}/Tasks" if read_ctx else "Tasks"
 
-        if self._ctx not in unify.get_contexts():
-            unify.create_context(
-                self._ctx,
-                unique_keys={"task_id": "int", "instance_id": "int"},
-                auto_counting={"task_id": None, "instance_id": "task_id"},
-                description=(
-                    "List of all tasks with their name, description, status, "
-                    "schedule, deadline, repeat pattern, priority **and** "
-                    "`instance_id` which tracks multiple executions of the "
-                    "same logical task."
-                ),
-            )
-            fields = model_to_fields(Task)
-            unify.create_fields(
-                fields,
-                context=self._ctx,
-            )
-        else:
-            # Ensure any new fields added to the Task model are present in the context
-            try:
-                existing_fields = unify.get_fields(context=self._ctx) or {}
-            except Exception:
-                existing_fields = {}
-            model_fields = model_to_fields(Task)
-            missing = {
-                k: v for k, v in model_fields.items() if k not in existing_fields
-            }
-            if missing:
-                unify.create_fields(
-                    missing,
-                    context=self._ctx,
-                )
+        # Install storage adapter and ensure context/fields exist
+        self._store = TasksStore(self._ctx)
+        self._store.ensure_context(
+            unique_keys={"task_id": "int", "instance_id": "int"},
+            auto_counting={"task_id": None, "instance_id": "task_id"},
+            description=(
+                "List of all tasks with their name, description, status, "
+                "schedule, deadline, repeat pattern, priority **and** "
+                "`instance_id` which tracks multiple executions of the "
+                "same logical task."
+            ),
+            fields=model_to_fields(Task),
+        )
 
         # ID of the *single* task that is allowed to be in the **active**
         # state at any moment.  This will be maintained by a forthcoming
         # tool; until then it may legitimately stay as ``None``.
-        # {'task_id': int, 'instance_id': int, 'handle': ActiveTask}
-        self._active_task: Optional[Dict[str, Any]] = None
+        # Pointer to the currently active task (if any)
+        self._active_task: Optional[TaskScheduler.ActivePointer] = None
         primed_tasks = self._filter_tasks(filter="status == 'primed'")
         if primed_tasks:
             assert (
@@ -283,6 +272,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Registry of corrective plans per active task so we can restore their
         # original position on defer stop. Map: task_id -> ReintegrationPlan
         self._reintegration_plans: dict[int, "ReintegrationPlan"] = {}
+        self._reintegration_manager = ReintegrationManager(self)
 
     # Public #
     # -------#
@@ -445,6 +435,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        execution_scope: Optional[Literal["isolate", "chain"]] = None,
     ) -> SteerableToolHandle:
         freeform_text: str = text
 
@@ -459,9 +450,13 @@ class TaskScheduler(BaseTaskScheduler):
         if stripped.isdigit():
             try:
                 # Decide execution scope (allows tests to monkeypatch)
-                scope = await self._decide_execution_scope(
-                    request_text=freeform_text,
-                    parent_chat_context=parent_chat_context,
+                scope = (
+                    execution_scope
+                    if execution_scope is not None
+                    else await self._decide_execution_scope(
+                        request_text=freeform_text,
+                        parent_chat_context=parent_chat_context,
+                    )
                 )
                 direct_handle = await self._execute_task_internal(
                     task_id=int(stripped),
@@ -485,6 +480,7 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
+            execution_scope=execution_scope,
         )
 
     # ------------------------------------------------------------------ #
@@ -572,11 +568,11 @@ class TaskScheduler(BaseTaskScheduler):
             scheduler=self,
         )
 
-        self._active_task = {
-            "task_id": task_id,
-            "instance_id": task_row["instance_id"],
-            "handle": handle,
-        }
+        self._active_task = TaskScheduler.ActivePointer(
+            task_id=task_id,
+            instance_id=task_row["instance_id"],
+            handle=handle,
+        )
 
         # Clone if this is a triggerable or recurring task
         if self._to_status(task_row["status"]) == Status.triggerable or task_row.get(
@@ -624,6 +620,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        execution_scope: Optional[Literal["isolate", "chain"]] = None,
     ) -> SteerableToolHandle:
         """Compose tools and prompt, then start the execute_task reasoning loop."""
         client = self._new_llm_client("gpt-5@openai")
@@ -633,9 +630,13 @@ class TaskScheduler(BaseTaskScheduler):
             """Start the task with *task_id* and bubble up its handle (passthrough)."""
 
             # Decide execution scope using the same helper as the fast-path
-            scope = await self._decide_execution_scope(
-                request_text=freeform_text,
-                parent_chat_context=parent_chat_context,
+            scope = (
+                execution_scope
+                if execution_scope is not None
+                else await self._decide_execution_scope(
+                    request_text=freeform_text,
+                    parent_chat_context=parent_chat_context,
+                )
             )
             handle = await self._execute_task_internal(
                 task_id=task_id,
@@ -758,8 +759,7 @@ class TaskScheduler(BaseTaskScheduler):
         AssertionError
             If more than one row matches the composite key.
         """
-        log_objs = unify.get_logs(
-            context=self._ctx,
+        log_objs = self._store.get_rows(
             filter=f"task_id == {task_id} and instance_id == {instance_id}",
             return_ids_only=False,
         )
@@ -776,9 +776,8 @@ class TaskScheduler(BaseTaskScheduler):
             # Set only at the moment of activation; never overwrite later
             entries["activated_by"] = str(activated_by)
 
-        result = unify.update_logs(
+        result = self._write_log_entries(
             logs=log_objs[0].id if hasattr(log_objs[0], "id") else log_objs[0],
-            context=self._ctx,
             entries=entries,
             overwrite=True,
         )
@@ -818,11 +817,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Do not carry over activation metadata to a fresh instance
         clone_payload.pop("activated_by", None)
         # Drop any internal bookkeeping injected by Unify (_id, _log_id …)
-        unify.log(
-            context=self._ctx,
-            new=True,
-            **clone_payload,
-        )
+        self._store.log(entries=clone_payload, new=True)
 
     # Private Helpers #
     # ----------------#
@@ -924,7 +919,7 @@ class TaskScheduler(BaseTaskScheduler):
         else:
             ids = list(task_ids)
 
-        active_task_id = self._active_task["task_id"]
+        active_task_id = self._active_task.task_id
         if active_task_id in ids:
             raise RuntimeError(
                 f"Operation not permitted on the active task (task_id={active_task_id})",
@@ -951,25 +946,10 @@ class TaskScheduler(BaseTaskScheduler):
         list[int | unify.Log]
             The matching log identifiers or objects.
         """
-        singular = isinstance(task_ids, int)
-        original_id = task_ids if singular else None
-        if singular:
-            task_ids = [task_ids]
-        log_ids = unify.get_logs(
-            context=self._ctx,
-            filter=f"task_id in {task_ids}",
+        return self._store.get_logs_by_task_ids(
+            task_ids=task_ids,
             return_ids_only=return_ids_only,
         )
-        if singular:
-            if len(log_ids) == 0:
-                raise ValueError(
-                    f"Task with task_id == {original_id} does not exist in the task list.",
-                )
-            if len(log_ids) > 1:
-                raise AssertionError(
-                    f"Expected exactly 1 row for task_id {original_id}, but found {len(log_ids)}.",
-                )
-        return log_ids
 
     # Private Tools #
     # --------------#
@@ -1062,10 +1042,10 @@ class TaskScheduler(BaseTaskScheduler):
         # always generate a *valid* Python string literal regardless of the
         # characters contained in *value*.
         for key, value in {"name": name, "description": description}.items():
-            clashes = unify.get_logs(
-                context=self._ctx,
+            clashes = self._store.get_rows(
                 filter=f"{key} == {value!r}",
                 limit=1,
+                return_ids_only=False,
             )
             if clashes:
                 raise ValueError(f"A task with {key!r} = {value!r} already exists")
@@ -1176,11 +1156,7 @@ class TaskScheduler(BaseTaskScheduler):
         ).to_post_json()
 
         # ------------------  write log immediately  ------------------ #
-        log = unify.log(
-            context=self._ctx,
-            **task_details,
-            new=True,
-        )
+        log = self._store.log(entries=task_details, new=True)
         task_id = log.entries["task_id"]
         task_details["task_id"] = task_id
 
@@ -1242,10 +1218,7 @@ class TaskScheduler(BaseTaskScheduler):
         self._ensure_not_active_task(task_id)
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1awp] is done
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        unify.delete_logs(
-            context=self._ctx,
-            logs=log_id,
-        )
+        self._store.delete(logs=log_id)
         return {
             "outcome": "task deleted",
             "details": {"task_id": task_id},
@@ -1354,12 +1327,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        result = unify.update_logs(
-            logs=log_id,
-            context=self._ctx,
-            entries=entries,
-            overwrite=True,
-        )
+        result = self._write_log_entries(logs=log_id, entries=entries)
 
         # Ensure neighbour symmetry whenever schedule changed
         if "schedule" in entries:
@@ -1419,9 +1387,9 @@ class TaskScheduler(BaseTaskScheduler):
         Delegates to the internal `_reinstate_task_to_previous_queue` and maps
         the `allow_active` flag to the private `_allow_active` parameter.
         """
-        return self._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
+        return self._reintegration_manager.apply(
             task_id=task_id,
-            _allow_active=allow_active,
+            allow_active=allow_active,
         )
 
     def _refresh_primed_cache(self, task_id: Optional[int] = None) -> None:
@@ -1698,12 +1666,7 @@ class TaskScheduler(BaseTaskScheduler):
             assert len(logs) == 1, "Task IDs should be unique"
             log = logs[0]
             _task_id_to_task[tid] = log
-            unify.update_logs(
-                logs=log.id,
-                context=self._ctx,
-                entries=payload,
-                overwrite=True,
-            )
+            self._store.update(logs=log.id, entries=payload, overwrite=True)
         return {
             "outcome": "queue reordered",
             "details": {"new_order": new},
@@ -1766,12 +1729,7 @@ class TaskScheduler(BaseTaskScheduler):
             entries["status"] = Status.queued
 
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        unify.update_logs(
-            logs=log_id,
-            context=self._ctx,
-            entries=entries,
-            overwrite=True,
-        )
+        self._store.update(logs=log_id, entries=entries, overwrite=True)
 
         return {
             "outcome": "trigger updated",
@@ -1898,9 +1856,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
-        return unify.update_logs(
+        return self._store.update(
             logs=log_ids,
-            context=self._ctx,
             entries={"status": new_status_enum},
             overwrite=True,
         )
@@ -2128,12 +2085,41 @@ class TaskScheduler(BaseTaskScheduler):
         """
         self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        return unify.update_logs(
-            logs=log_id,
-            context=self._ctx,
-            entries=entries,
-            overwrite=True,
-        )
+        return self._write_log_entries(logs=log_id, entries=entries)
+
+    # ------------------------------------------------------------------ #
+    #  Small centralised write helper                                     #
+    # ------------------------------------------------------------------ #
+
+    def _write_log_entries(
+        self,
+        *,
+        logs: Union[int, "unify.Log", List[Union[int, "unify.Log"]]],
+        entries: Dict[str, Any],
+        overwrite: bool = True,
+    ) -> Dict[str, str]:
+        """
+        Centralised adapter for log writes. Keeps all mutation calls going
+        through one place in the scheduler.
+        """
+        return self._store.update(logs=logs, entries=entries, overwrite=overwrite)
+
+    # ------------------------------------------------------------------ #
+    #  Best-effort helper                                                 #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _best_effort(func: "Callable[[], Any]") -> None:
+        """
+        Execute func and intentionally swallow any exceptions.
+
+        Use only for non-critical maintenance paths (e.g., cache refresh,
+        neighbour status fix-ups) where failure must not affect correctness.
+        """
+        try:
+            func()
+        except Exception:
+            pass
 
     @staticmethod
     def _normalize_filter_expr(expr: Optional[str]) -> Optional[str]:
@@ -2264,235 +2250,11 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         _allow_active: bool = False,
     ) -> ToolOutcome:
-        """
-        Restore a previously isolated-and-activated task back to its prior
-        queue/schedule position according to the stored ``ReintegrationPlan``.
-
-        Behavioural contract (from tests):
-        - Refuse reinstatement when the task is currently active (unless
-          ``_allow_active`` is True) or when a trigger is present.
-        - Use the plan's ``prev_task``/``next_task`` and ``was_head`` to decide
-          the final neighbours. Apply graceful fallback when originals are no
-          longer viable: heads restore with ``prev=None`` and prefer the current
-          queue head as ``next`` when the original is missing; middle tasks
-          prefer their original ``prev`` else become head with ``next`` kept when
-          viable and non-identical to ``prev``.
-        - When reinstating to head, set ``start_at`` from the captured
-          ``head_start_at`` (preferred) or the task's own original ``start_at``.
-          Non-head tasks must not carry ``start_at``.
-        - Set status based on the original status, except:
-          * If reinstated as head with a ``start_at`` → ``scheduled``.
-          * If original was ``primed`` but another primed exists → downgrade to
-            ``queued``.
-        - After restoring the head, ensure the immediate successor (if any) does
-          not remain ``scheduled``/``primed`` without a ``start_at``; downgrade it
-          to ``queued``.
-
-        This method writes neighbour pointers symmetrically and clears the plan
-        upon success. It intentionally limits scope to the affected task and its
-        immediate neighbours.
-        """
-        # Plans are keyed by (task_id, instance_id). Prefer the plan for any
-        # non-terminal instance; if none are live, fall back to any stored plan
-        # for this task (e.g., when the instance was cancelled by design).
-        rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=10)
-        live = [
-            r
-            for r in rows
-            if self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
-        ]
-        instance_id = None
-        plan = None
-        if live:
-            instance_id = sorted(live, key=lambda r: r.get("instance_id", 0))[0].get(
-                "instance_id",
-            )
-            plan = self._reintegration_plans.get((task_id, instance_id))
-        else:
-            # No live instances – try any plan for this task id
-            for (tid, iid), p in getattr(self, "_reintegration_plans", {}).items():
-                if tid == task_id:
-                    plan = p
-                    instance_id = iid
-                    break
-        # No legacy fallback – per-instance plans are the only source of truth
-
-        if not plan:
-            raise ValueError("No reintegration plan available.")
-        if plan.task_id != task_id:
-            raise ValueError(
-                f"Reintegration plan exists for task_id={plan.task_id}, not {task_id}",
-            )
-
-        tid = plan.task_id
-        prev_tid = plan.prev_task
-        next_tid = plan.next_task
-        was_head = bool(plan.was_head)  # original position
-        original_start_at = plan.start_at
-        original_status = plan.original_status
-
-        # Fetch current affected logs (ids and entries)
-        def _get_log_obj(tid_int: int) -> Optional[unify.Log]:
-            rows = self._get_logs_by_task_ids(task_ids=tid_int, return_ids_only=False)
-            if not rows:
-                return None
-            assert len(rows) == 1, "Task IDs should be unique"
-            return rows[0]  # type: ignore[return-value]
-
-        cur_log = _get_log_obj(tid)
-        if cur_log is None:
-            raise ValueError(f"Task id {tid} no longer exists")
-        # Load current row dict for checks
-        cur_rows = self._filter_tasks(filter=f"task_id == {tid}", limit=1)
-        cur_row = cur_rows[0] if cur_rows else {}
-
-        # Guard: by default refuse when currently active, unless explicitly allowed
-        if (
-            self._to_status(cur_row.get("status")) == Status.active
-            and not _allow_active
-        ):
-            raise RuntimeError(
-                "Cannot reinstate while the task is active. Stop/defer first.",
-            )
-
-        # Guard: if a trigger exists now, schedule restoration would violate exclusivity
-        if cur_row.get("trigger") is not None:
-            raise ValueError(
-                "Task currently has a trigger; remove the trigger before restoring its schedule/queue position.",
-            )
-
-        # Note: do not early-return simply because a schedule exists. In chain
-        # mode a task may have a minimal schedule (e.g. promoted to head without
-        # a start_at). We still need to restore the original head-level
-        # start_at and correct linkage when requested.
-
-        # Determine viable neighbours (drift-aware)
-        def _is_viable(neighbour_tid: Optional[int]) -> bool:
-            if neighbour_tid is None:
-                return False
-            rows = self._filter_tasks(filter=f"task_id == {neighbour_tid}", limit=1)
-            if not rows:
-                return False
-            return self._to_status(rows[0].get("status")) not in self._TERMINAL_STATUSES
-
-        # Current queue view (head, tail) for fallbacks
-        queue_list = self._get_task_queue()
-        queue_ids = [t.task_id for t in queue_list]
-
-        # Compute final neighbours with graceful fallback via pure selector
-        final_prev, final_next = self._select_final_neighbours(
-            task_id=tid,
-            was_head=was_head,
-            original_prev=prev_tid,
-            original_next=next_tid,
-            queue_ids=queue_ids,
-            is_viable=_is_viable,
+        # Delegate to manager; keep signature for backwards-compat with existing callers/tests
+        return self._reintegration_manager.apply(
+            task_id=task_id,
+            allow_active=_allow_active,
         )
-
-        # Build payload for current task (no queue_id propagation)
-        cur_sched: Dict[str, Any] = {
-            "prev_task": final_prev,
-            "next_task": final_next,
-        }
-        # Intentionally skip any queue_id propagation; not required by tests
-        # Set start_at when reinstating as head. Prefer the original head_start_at
-        # captured at activation; fall back to the task's own start_at if present.
-        plan_head_start = getattr(plan, "head_start_at", None)
-        if final_prev is None:
-            _head_ts = (
-                plan_head_start if plan_head_start is not None else original_start_at
-            )
-            if _head_ts is not None:
-                cur_sched["start_at"] = _head_ts
-
-        # Decide restored status (respect primed invariants)
-        desired_status = (
-            self._to_status(str(original_status))
-            if original_status is not None
-            else Status.queued
-        )
-        if (
-            desired_status == Status.primed
-            and self._primed_task is not None
-            and self._primed_task.get("task_id") != tid
-        ):
-            # Another primed exists – do not violate single-primed invariant
-            desired_status = Status.queued
-
-        # If reinstating as head with an explicit start_at, invariants require 'scheduled'
-        if final_prev is None and cur_sched.get("start_at") is not None:
-            desired_status = Status.scheduled
-
-        # Invariant check for schedule/state combo before writing
-        self._validate_scheduled_invariants(
-            status=desired_status,
-            schedule=cur_sched,
-            err_prefix=f"While reinstating task {tid}:",
-        )
-
-        # Use centralised attach helper which performs symmetric neighbour updates
-        self._attach_with_links(
-            task_id=tid,
-            prev_task=final_prev,
-            next_task=final_next,
-            head_start_at=(cur_sched.get("start_at") if final_prev is None else None),
-            err_prefix=f"While reinstating task {tid}:",
-        )
-
-        # Restore the prior non-active status of the task instance
-        if desired_status != Status.active:
-            # Use per-instance update to avoid touching other instances
-            self._update_task_status_instance(
-                task_id=tid,
-                instance_id=plan.instance_id,
-                new_status=str(desired_status),
-            )
-
-        # If we reinstated the original head, ensure the next task (now non-head)
-        # does not erroneously remain 'scheduled' after we stripped its start_at.
-        # Downgrade it back to 'queued' to reflect normal queue semantics.
-        if was_head and final_next is not None:
-            try:
-                next_rows = self._filter_tasks(
-                    filter=f"task_id == {final_next}",
-                    limit=1,
-                )
-                if next_rows:
-                    next_row = next_rows[0]
-                    next_sched = next_row.get("schedule") or {}
-                    # If it is no longer head and has no start_at timestamp, it must not be scheduled
-                    if (
-                        self._sched_prev(next_sched) is not None
-                        and (next_sched.get("start_at") is None)
-                        and self._to_status(next_row.get("status"))
-                        in {Status.scheduled, Status.primed}
-                    ):
-                        self._update_task_status_instance(
-                            task_id=final_next,
-                            instance_id=next_row["instance_id"],
-                            new_status="queued",
-                        )
-            except Exception:
-                # Best-effort; do not fail reinstatement because of neighbour status fixups
-                pass
-
-        # Maintain primed cache if needed
-        if desired_status == Status.primed:
-            self._refresh_primed_cache(tid)
-
-        # Clear plan – it has been applied
-        try:
-            self._reintegration_plans.pop((tid, instance_id), None)
-        except Exception:
-            pass
-        # Legacy single-slot plan removed
-
-        # No-op: we do not need to reload rows here; writes above are authoritative
-
-        return {
-            "outcome": "task reinstated to previous queue position",
-            "details": {"task_id": tid},
-        }
 
     # (Removed) heuristic fallback reinstatement – rely on stored plan only
 
@@ -2567,16 +2329,12 @@ class TaskScheduler(BaseTaskScheduler):
             Entries for each matching task (raw JSON-serialisable dictionaries).
         """
         filter = self._normalize_filter_expr(filter)
-        return [
-            log.entries
-            for log in unify.get_logs(
-                context=self._ctx,
-                filter=filter,
-                offset=offset,
-                limit=limit,
-                exclude_fields=list_private_fields(self._ctx),
-            )
-        ]
+        return self._store.get_entries(
+            filter=filter,
+            offset=offset,
+            limit=limit,
+            exclude_fields=list_private_fields(self._ctx),
+        )
 
     # ────────────────────────────────────────────────────────────────────
     # Broader context helper
@@ -2616,14 +2374,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Return {column_name: column_type} for the tasks table.
         """
-        try:
-            fields = unify.get_fields(context=self._ctx) or {}
-            return {
-                k: (v.get("data_type") if isinstance(v, dict) else str(v))
-                for k, v in fields.items()
-            }
-        except Exception:
-            return {}
+        return self._store.get_fields()
 
     def _list_columns(
         self,
@@ -2638,14 +2389,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _num_tasks(self) -> int:
         """Return the total number of tasks in the Tasks context."""
-        ret = unify.get_logs_metric(
-            metric="count",
-            key="task_id",
-            context=self._ctx,
-        )
-        if ret is None:
-            return 0
-        return int(ret)
+        return self._store.get_metric_count(key="task_id")
 
     # (Removed) LLM-based scope classifier
 

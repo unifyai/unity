@@ -231,8 +231,8 @@ class ActiveTask(BaseActiveTask):
         if self._scheduler and getattr(self._scheduler, "_active_task", None):
             active = self._scheduler._active_task  # type: ignore[attr-defined]
             if (
-                active["task_id"] == self._task_id
-                and active["instance_id"] == self._instance_id
+                getattr(active, "task_id", None) == self._task_id
+                and getattr(active, "instance_id", None) == self._instance_id
             ):
                 self._scheduler._active_task = None  # type: ignore[attr-defined]
 
