@@ -175,7 +175,7 @@ class SimulatedConductor:
             tools["request_clarification"] = request_clarification
 
         client = unify.AsyncUnify(
-            "gpt-5->o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
             reasoning_effort="high",
@@ -267,7 +267,7 @@ class SimulatedConductor:
             tools["request_clarification"] = request_clarification
 
         client = unify.AsyncUnify(
-            "gpt-5->o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
             reasoning_effort="high",

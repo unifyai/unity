@@ -689,7 +689,7 @@ class ContactManager(BaseContactManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5->o4-mini@openai")
+        client = self._new_llm_client("gpt-5@openai")
 
         # Build a *live* tools-dict so the prompt never hard-codes
         # either the number of tools or their names/argspecs.
@@ -780,7 +780,7 @@ class ContactManager(BaseContactManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5->o4-mini@openai")
+        client = self._new_llm_client("gpt-5@openai")
 
         tools = dict(self._update_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
