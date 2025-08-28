@@ -157,7 +157,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         MagnitudeBrowserBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
         print(
-            f"🔗 Using existing Magnitude service at {self.agent_base_url} ",
+            f"🔗 Using existing Magnitude service at {self.agent_base_url} (Mode: {self.agent_mode})",
         )
 
         self._sync_request(
