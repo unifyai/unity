@@ -123,31 +123,13 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
            - A screenshot of the page
            - Any output from your code
 
-        7. **Communication Tools with Handles**: When using communication tools, they return handle objects for interaction:
-           ```python
-           # Send SMS and interact with handle
-           sms_handle = await action_provider.send_sms_message(
-               "Send John Doe a reminder about tomorrow's meeting"
-           )
-
-           # Check status
-           status = await sms_handle.status()
-           print(f"SMS Status: {status}")
-
-           # Modify if needed
-           await sms_handle.modify("Actually, make it for 3 PM instead")
-
-           # Confirm sending
-           await sms_handle.confirm()
-           ```
-
-        8. **Think → Code → Observe → Repeat**: Your workflow should be:
+        7. **exit**: Your workflow should be:
            - Think about what you need to do
            - Write code to execute the action
            - Observe the results (output, screenshots, errors)
            - Continue with the next step or correct errors
 
-        9. **Final Answer Rule**:
+        8. **Final Answer Rule**:
            - When the user's request has been fully addressed and you have the final answer, you **MUST** provide that answer directly as a tool-less assistant message.
            - Do not call a tool to print the final answer. Simply state the answer.
 
@@ -456,9 +438,17 @@ def _build_initial_plan_rules_and_examples(
         7.  **Default Search Engine:** Prefer DuckDuckGo (https://duckduckgo.com) for searches unless the user specifies otherwise.
         8.  **Prefer .deb for Linux App Installations**: When installing apps, prefer .deb packages over other formats. `.deb` files are the most common and trusted format for Linux app installations. Then, use `dpkg` to install the app with full permissions.
         9.  **Desktop Mode**: You have control over a virtual desktop through the browser tools, and have access to apps like terminal, shell, browser, etc. You are also able to search for apps to be used in the desktop. Use screenshot to observe the desktop.
+        10.  **Browser Downloads**: The browser downloads directory is `/home/browser/Downloads`.
+        11. **Write General, Parameterized Functions**: Your functions should be reusable tools, not single-use scripts. Pass specific values (like search terms, filenames, or counts) as parameters.
+        12. **Name for the Action, Not the Data**: Function names must describe the *process*, not the specific values being processed. Avoid hardcoding data like numbers or names into function names. This makes your plan robust and easy to modify later.
+
+        | ❌ Bad (Too Specific & Brittle)        | ✅ Good (Generic & Reusable)                    |
+        | ------------------------------------ | --------------------------------------------- |
+        | `async def process_user_smith()`       | `async def process_user(username: str)`       |
+        | `async def get_report_for_q3()`        | `async def get_report(quarter: str)`          |
+        | `async def extract_ten_items()`        | `async def extract_items(item_count: int)`    |
         ---
         """,
-        # 10. **Browser Downloads**: The browser downloads directory is `/home/browser/Downloads`.
     )
 
     instructions_and_rules = textwrap.dedent(
