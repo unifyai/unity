@@ -187,7 +187,7 @@ const startDesktop = () => {
 
   startBrowserAgent({
     url: "https://www.duckduckgo.com/",
-    browser: getLaunchOptions(false, "/home/browser/Downloads", "/home/browser/traces"),
+    browser: getLaunchOptions(false),
   }).then(agent => {
     desktopBrowserAgent = agent;
     console.log("✅ Desktop BrowserAgent started successfully.");
@@ -200,7 +200,7 @@ const startDesktop = () => {
 const startBrowser = (headless: boolean) => {
   startBrowserAgent({
     url: "https://www.duckduckgo.com/",
-    browser: getLaunchOptions(headless, "/home/browser/Downloads", "/home/browser/traces"),
+    browser: getLaunchOptions(headless),
   }).then(agent => {
     browserAgent = agent;
     console.log("✅ BrowserAgent started successfully.");
