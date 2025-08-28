@@ -1626,6 +1626,13 @@ class HierarchicalPlan(BaseActiveTask):
             else:
                 reason = f"User interjected with a new instruction: '{decision.modification_request}'"
 
+            if self.goal and decision.modification_request:
+                new_goal = f"{self.goal}\n\nIMPORTANT UPDATE: The user has provided a new instruction to modify the plan: '{decision.modification_request}'"
+                self.action_log.append(
+                    f"Updating plan goal to reflect interjection. New goal: '{new_goal}'",
+                )
+                self.goal = new_goal
+
             await self._handle_dynamic_implementation(
                 target_function,
                 replan_reason=reason,
@@ -2218,11 +2225,14 @@ class HierarchicalActor(BaseActor):
             plan._temp_file_path = plans_dir / f"{plan._module_name}.py"
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        goal_lines = plan.goal.split("\n") if plan.goal else ["No goal specified"]
+        formatted_goal = "\n        # ".join(goal_lines)
+
         header = textwrap.dedent(
             f"""
         # Hierarchical Plan Script
         # Plan ID: {plan._module_name}
-        # Goal: {plan.goal}
+        # Goal: {formatted_goal}
         # Last Updated: {timestamp}
         #
         # This script is auto-generated and executed by the HierarchicalActor.
