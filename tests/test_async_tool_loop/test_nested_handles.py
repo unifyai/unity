@@ -8,7 +8,7 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     AsyncToolUseLoopHandle,
 )
-from tests.helpers import _get_unity_test_env_var
+from tests.helpers import SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
@@ -37,8 +37,8 @@ async def outer_tool() -> AsyncToolUseLoopHandle:
     # brand‑new LLM client dedicated to the nested conversation
     inner_client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     inner_client.set_system_message(
         "You are running inside an automated test. "
@@ -73,8 +73,8 @@ async def test_nested_async_tool_loop():
     # Outer client that drives the *first* loop
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
@@ -169,8 +169,8 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
     # 2.  Fire up the *outer* conversational loop
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "You are running inside an automated test.\n"
@@ -259,8 +259,8 @@ async def test_interject_nested_handle(monkeypatch):
     async def outer_tool() -> AsyncToolUseLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
-            cache=_get_unity_test_env_var("UNIFY_CACHE"),
-            traced=_get_unity_test_env_var("UNIFY_TRACED"),
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
         )
         inner_client.set_system_message(
             "1️⃣  Call `slow_topic`.\n"
@@ -279,8 +279,8 @@ async def test_interject_nested_handle(monkeypatch):
     # 4.  Top-level loop – assistant must use `_interject_…`
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "1️⃣  Call `outer_tool`.\n"
@@ -448,8 +448,8 @@ async def test_clarification_nested_handle():
         up_q, down_q = asyncio.Queue(), asyncio.Queue()
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
-            cache=_get_unity_test_env_var("UNIFY_CACHE"),
-            traced=_get_unity_test_env_var("UNIFY_TRACED"),
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
         )
         inner_client.set_system_message(
             "1️⃣  Call `ask_colour`.\n"
@@ -487,8 +487,8 @@ async def test_clarification_nested_handle():
     # ── top-level loop – the assistant must answer the clar request ——––
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "Call `outer_tool`.  When the tool asks a question, answer **only** with 'blue' via the provided helper.\n"
@@ -553,8 +553,8 @@ async def test_handle_interject_method_appears_late():
     # outer conversation ----------------------------------------------
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "You are running inside an automated test.\n"
@@ -621,8 +621,8 @@ async def test_pause_nested_loop_calls_pause():
     # outer conversation --------------------------------------------------
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "1️⃣  Call `dummy_long_job`.\n"
@@ -702,8 +702,8 @@ async def test_resume_nested_loop_calls_resume():
 
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "1️⃣  Call `dummy_job`.\n"
@@ -779,8 +779,8 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     # ── 3.  Kick off outer loop ───────────────────────────────────────────
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "1️⃣ Call `long_tool`.\n"
@@ -836,8 +836,8 @@ async def test_handle_result_blocks_until_resume():
 
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "Call `noop_tool` then answer **only** with 'done'. Do not answer while the loop is paused or while tools are running; only answer after completion.",
@@ -912,8 +912,8 @@ async def test_dynamic_handle_public_method():
     # ── outer conversation that uses `long_compute` ────────────────────
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "1️⃣  Call `long_compute`.\n"
@@ -971,8 +971,8 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     async def outer_tool() -> AsyncToolUseLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
-            cache=_get_unity_test_env_var("UNIFY_CACHE"),
-            traced=_get_unity_test_env_var("UNIFY_TRACED"),
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
         )
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
@@ -1001,8 +1001,8 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
 
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
@@ -1052,8 +1052,8 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     async def outer_tool() -> AsyncToolUseLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
-            cache=_get_unity_test_env_var("UNIFY_CACHE"),
-            traced=_get_unity_test_env_var("UNIFY_TRACED"),
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
         )
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
@@ -1081,8 +1081,8 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
 
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
@@ -1131,8 +1131,8 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     async def outer_tool() -> AsyncToolUseLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
-            cache=_get_unity_test_env_var("UNIFY_CACHE"),
-            traced=_get_unity_test_env_var("UNIFY_TRACED"),
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
         )
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
@@ -1166,8 +1166,8 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
 
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",

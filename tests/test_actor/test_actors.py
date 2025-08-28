@@ -10,15 +10,15 @@ from unity.actor.base import BaseActor
 from unity.task_scheduler.base import BaseActiveTask
 from unity.actor.browser_use_actor import BrowserUseActor, BrowserUsePlan
 from unity.actor.tool_loop_actor import ToolLoopActor, ToolLoopPlan
-from tests.helpers import _handle_project, _get_unity_test_env_var
+from tests.helpers import _handle_project, SETTINGS
 
 
 # Fixtures to create a real LLM client for each test
 def make_client(system_message: str):
     client = unify.AsyncUnify(
         os.environ.get("UNIFY_MODEL", "gpt-4o@openai"),
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(system_message)
     return client

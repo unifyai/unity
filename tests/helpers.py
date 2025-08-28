@@ -1,5 +1,3 @@
-import os
-import json
 import unify
 import functools
 import inspect
@@ -8,30 +6,29 @@ import traceback
 from os import sep
 from typing import Any, Callable
 from unity.events.event_bus import EVENT_BUS
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Contexts that were pre-created during collection;
 PRECREATED_CONTEXTS: set[str] = set()
 
-TESTS_DEFAULT_ENV_VARS = {
-    "UNIFY_TRACED": "true",
-    "UNIFY_CACHE": "true",
-    "UNIFY_DELETE_CONTEXT_ON_EXIT": "false",
-    "UNIFY_OVERWRITE_PROJECT": "false",
-    "UNIFY_REGISTER_SUMMARY_CALLBACKS": "false",
-    "UNIFY_REGISTER_UPDATE_CALLBACKS": "false",
-    "UNIFY_TESTS_RAND_PROJ": "false",
-    "UNIFY_TESTS_DELETE_PROJ_ON_EXIT": "false",
-    "UNIFY_CACHE_BENCHMARK": "false",
-    "UNIFY_PRETEST_CONTEXT_CREATE": "false",
-}
+
+# Settings for the testing environment
+class TestingSettings(BaseSettings):
+    UNIFY_TRACED: bool = True
+    UNIFY_CACHE: bool = True
+    UNIFY_DELETE_CONTEXT_ON_EXIT: bool = False
+    UNIFY_OVERWRITE_PROJECT: bool = False
+    UNIFY_REGISTER_SUMMARY_CALLBACKS: bool = False
+    UNIFY_REGISTER_UPDATE_CALLBACKS: bool = False
+    UNIFY_TESTS_RAND_PROJ: bool = False
+    UNIFY_TESTS_DELETE_PROJ_ON_EXIT: bool = False
+    UNIFY_CACHE_BENCHMARK: bool = False
+    UNIFY_PRETEST_CONTEXT_CREATE: bool = False
+
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
 
-def _get_unity_test_env_var(name):
-    """
-    Get the value of an environment variable for tests. If requested variable is not set, return the default value.
-    If requested variable is not one of the test environment variables, return None.
-    """
-    return json.loads(os.environ.get(name, TESTS_DEFAULT_ENV_VARS.get(name, "false")))
+SETTINGS = TestingSettings()
 
 
 # ---------- helper -------------------------------------------------
@@ -47,7 +44,7 @@ def _handle_project(
     try_reuse_prev_ctx: bool = False,
     delete_ctx_on_exit: bool = False,
 ):
-    if _get_unity_test_env_var("UNIFY_DELETE_CONTEXT_ON_EXIT"):
+    if SETTINGS.UNIFY_DELETE_CONTEXT_ON_EXIT:
         delete_ctx_on_exit = True
     if test_fn is None:  # called with parameters → return real decorator
         return lambda f: _handle_project(
@@ -58,7 +55,7 @@ def _handle_project(
 
     async def _call(fn: Callable, *a: Any, **kw: Any):
         """Call *fn* and await it if it returns an awaitable."""
-        if _get_unity_test_env_var("UNIFY_TRACED"):
+        if SETTINGS.UNIFY_TRACED:
             result = unify.traced(fn)(*a, **kw)
         else:
             result = fn(*a, **kw)
@@ -78,7 +75,7 @@ def _handle_project(
 
             ctx = _ctx_name(test_fn, test_fn_name)
             skip_ctx_create = False
-            if _get_unity_test_env_var("UNIFY_PRETEST_CONTEXT_CREATE"):
+            if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
                 skip_ctx_create = ctx in PRECREATED_CONTEXTS
             else:
                 if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
@@ -100,7 +97,7 @@ def _handle_project(
 
                     _unity_mod.init("UnityTests")
                     EVENT_BUS.reset()
-                if _get_unity_test_env_var("UNIFY_TRACED"):
+                if SETTINGS.UNIFY_TRACED:
                     unify.set_trace_context("Traces")
                 await _call(test_fn, *args, **kwargs)
 
@@ -124,7 +121,7 @@ def _handle_project(
 
             ctx = _ctx_name(test_fn, test_fn_name)
             skip_ctx_create = False
-            if _get_unity_test_env_var("UNIFY_PRETEST_CONTEXT_CREATE"):
+            if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
                 skip_ctx_create = ctx in PRECREATED_CONTEXTS
             else:
                 if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
@@ -146,7 +143,7 @@ def _handle_project(
 
                     _unity_mod.init("UnityTests")
                     EVENT_BUS.reset()
-                if _get_unity_test_env_var("UNIFY_TRACED"):
+                if SETTINGS.UNIFY_TRACED:
                     unify.set_trace_context("Traces")
                     unify.traced(test_fn)(*args, **kwargs)
                 else:
