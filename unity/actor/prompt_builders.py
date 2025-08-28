@@ -2053,15 +2053,25 @@ def build_verification_prompt(
     Returns:
         The complete prompt string for the verification LLM call.
     """
+    formatted_interactions = []
+    for interaction in interactions:
+        kind, act, obs, *logs = interaction
+        logs = logs[0] if logs else []
+
+        log_entry = ""
+        if kind == "observe":
+            log_entry = f"- Action: `{act}`, Observation: `{obs or 'N/A'}`"
+        else:
+            log_entry = f"- Action: `{act}` with result `{obs}`"
+
+        if logs:
+            log_details = "\n".join([f"    {line}" for line in logs])
+            log_entry += f"\n  - Agent Logs:\n{log_details}"
+
+        formatted_interactions.append(log_entry)
+
     interactions_log = (
-        "\n".join(
-            (
-                f"- Action: `{act}`, Observation: `{obs or 'N/A'}`"
-                if kind == "observe"
-                else f"- Action: `{act}` with result `{obs}`"
-            )
-            for kind, act, obs in interactions
-        )
+        "\n".join(formatted_interactions)
         or "No browser actions were logged for this step."
     )
     screenshot_context_section = ""

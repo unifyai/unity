@@ -4,6 +4,13 @@ import subprocess
 import time
 from abc import ABC, abstractmethod
 from typing import Any
+import socket
+import contextlib
+import queue
+from typing import Optional
+import threading
+import sys
+import atexit
 
 import aiohttp
 import requests
@@ -141,29 +148,48 @@ class LegacyBrowserBackend(BrowserBackend):
 
 class MagnitudeBrowserBackend(BrowserBackend):
     _agent_base_url = "http://localhost:3000"
+    _lock = threading.Lock()
+    _process = None  # Add this for the subprocess management
+    
+    # Logging infrastructure
+    _thread_log_queue = queue.Queue()
+    _log_consumer_task = None
 
     def __init__(
         self,
         agent_server_url: str = "http://localhost:3000",
         headless: bool = False,
         agent_mode: str = "browser",
+        start_service: bool = False,  # Add this parameter for compatibility
         **kwargs,
     ):
         self.agent_mode = agent_mode
+        self._current_capture_queue: Optional[asyncio.Queue] = None
+        
+        # Keep the simpler initialization from HEAD but add logging support
         MagnitudeBrowserBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
+        
         print(
             f"🔗 Using existing Magnitude service at {self.agent_base_url} (Mode: {self.agent_mode})",
         )
-
+        
         self._sync_request(
             "POST",
             "/start",
             {"headless": headless, "mode": self.agent_mode},
         )
         self._check_service_ready()
-        # if "localhost:3000" in self.agent_base_url:
-        #     self._load_persistent_data()
+        
+        # Initialize the log consumer task if not already running
+        if MagnitudeBrowserBackend._log_consumer_task is None:
+            try:
+                MagnitudeBrowserBackend._log_consumer_task = asyncio.create_task(
+                    self._log_consumer(),
+                )
+            except RuntimeError:
+                # If we're not in an async context, skip the log consumer for now
+                pass
 
     def _check_service_ready(self):
         deadline = time.time() + 30
@@ -180,7 +206,61 @@ class MagnitudeBrowserBackend(BrowserBackend):
             raise RuntimeError(
                 f"Magnitude BrowserAgent failed to become ready within 30 seconds on {self.agent_base_url}",
             )
+    
+    def _start_output_readers(self):
+        """Start threads to read stdout/stderr and put lines into the central thread-safe queue."""
+        # Only start readers if we have a process
+        if MagnitudeBrowserBackend._process is None:
+            return
+            
+        def read_output(pipe, prefix):
+            for line in iter(pipe.readline, ""):
+                if line:
+                    log_line = f"[{prefix}] {line.strip()}"
+                    self._thread_log_queue.put(log_line)
+                    if "listening on http://localhost:" in line:
+                        import re
 
+                        match = re.search(r"http://localhost:(\d+)", line)
+                        if match:
+                            MagnitudeBrowserBackend._agent_base_url = (
+                                f"http://localhost:{match.group(1)}"
+                            )
+                            self._thread_log_queue.put(
+                                f"✨ Detected service running on {MagnitudeBrowserBackend._agent_base_url}",
+                            )
+            pipe.close()
+
+        stdout_thread = threading.Thread(
+            target=read_output,
+            args=(MagnitudeBrowserBackend._process.stdout, "Magnitude"),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=read_output,
+            args=(MagnitudeBrowserBackend._process.stderr, "Magnitude-ERR"),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+    async def _log_consumer(self):
+        """Consumes logs from the thread-safe queue and directs them appropriately."""
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                # Use a blocking get in an executor to bridge thread-to-async
+                log_line = await loop.run_in_executor(None, self._thread_log_queue.get)
+
+                # Check the shared instance attribute directly
+                if self._current_capture_queue is not None:
+                    self._current_capture_queue.put_nowait(log_line)
+                else:
+                    # Default behavior if not capturing
+                    print(log_line)
+            except Exception as e:
+                print(f"[MagnitudeLogConsumerError] {e}")
+    
     async def _request(
         self,
         method: str,
