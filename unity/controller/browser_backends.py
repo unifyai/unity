@@ -160,30 +160,17 @@ class MagnitudeBrowserBackend(BrowserBackend):
         print(
             f"🔗 Using existing Magnitude service at {self.agent_base_url} ",
         )
-        try:
-            r = requests.post(
-                f"{self.agent_base_url}/start",
-                json={"headless": headless, "mode": mode},
-                timeout=30,
-            )
-            if r.status_code >= 400:
-                raise RuntimeError(
-                    f"Failed to start agent-service: {r.status_code} {r.text[:200]}",
-                )
-        except Exception as e:
-            raise RuntimeError(f"Could not reach agent-service /start endpoint: {e}")
-        self._check_service_ready()
 
+        self._sync_request("POST", "/start", {"headless": headless, "mode": mode})
+        self._check_service_ready()
         if "localhost:3000" in self.agent_base_url:
             self._load_persistent_data()
 
     def _check_service_ready(self):
         deadline = time.time() + 30
-        url = f"{MagnitudeBrowserBackend._agent_base_url}/screenshot"
-
         while time.time() < deadline:
             try:
-                r = requests.get(url, timeout=1)
+                r = self._sync_request("GET", "/screenshot")
                 if r.status_code < 500:
                     print(f"✅ Magnitude service is ready on {self.agent_base_url}")
                     break
@@ -239,6 +226,23 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
                 raise
+
+    def _sync_request(
+        self,
+        method: str,
+        endpoint: str,
+        payload: dict | None = None,
+    ) -> Any:
+        try:
+            url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
+            result = requests.request(method, url, json=payload, timeout=300)
+            if result.status_code >= 400:
+                raise RuntimeError(
+                    f"Failed to reach agent-service {endpoint}: {result.status_code} {result.text[:200]}",
+                )
+            return result
+        except Exception as e:
+            raise RuntimeError(f"Could not reach agent-service {endpoint}: {e}")
 
     def _load_persistent_data(self):
         """
@@ -575,4 +579,4 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """Stops the Node.js service subprocess."""
         if "localhost:3000" in self.agent_base_url:
             self._save_persistent_data()
-        self._request("POST", "/stop")
+        self._sync_request("POST", "/stop")
