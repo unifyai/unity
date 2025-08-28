@@ -74,7 +74,7 @@ class ScenarioBuilder:
         *,
         description: str,
         tools: Dict[str, Callable],
-        endpoint: str = "gpt-5->o4-mini@openai",
+        endpoint: str = "gpt-5@openai",
         traced: bool = True,
         stateful: bool = True,
         enable_voice: bool = False,

@@ -241,7 +241,7 @@ class TranscriptManager(BaseTranscriptManager):
             )
 
         # ── 1.  Build LLM client & inject dynamic system-prompt ───────────
-        client = self._new_llm_client("gpt-5->o4-mini@openai")
+        client = self._new_llm_client("gpt-5@openai")
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
