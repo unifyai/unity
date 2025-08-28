@@ -25,7 +25,11 @@ class TestingSettings(BaseSettings):
     UNIFY_CACHE_BENCHMARK: bool = False
     UNIFY_PRETEST_CONTEXT_CREATE: bool = False
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
 
 SETTINGS = TestingSettings()
