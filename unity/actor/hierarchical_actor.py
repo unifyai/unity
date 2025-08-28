@@ -45,6 +45,8 @@ current_invocation_id_var = contextvars.ContextVar("hp_invocation_id", default="
 
 logger = logging.getLogger(__name__)
 
+DIAGNOSTIC_MODE = True
+
 
 class PlanRuntime:
     """A runtime object injected into the plan to manage execution state."""
@@ -826,7 +828,17 @@ class _ActionProviderProxy:
             interactions_log = current_interaction_sink_var.get()
             self._plan.runtime.action_counter += 1
             tool_name = f"action_provider.{name}"
+
+            if DIAGNOSTIC_MODE:
+                run_id = current_run_id_var.get()
+                invoc_id = current_invocation_id_var.get()
+                diag_prefix = f"[run_id={run_id} invoc={invoc_id}]"
+            else:
+                diag_prefix = ""
+
             call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs)})"
+            if diag_prefix:
+                logger.info(f"{diag_prefix} 🐍 PYTHON: Executing {call_repr}")
 
             cache_key = self._plan.actor._generate_cache_key(
                 self._plan,
@@ -849,9 +861,9 @@ class _ActionProviderProxy:
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
                 self._plan.action_log.append(
-                    f"CACHE HIT: Using cached result for {call_repr}",
+                    f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"CACHE HIT for key: {lookup_key}")
+                logger.debug(f"{diag_prefix} CACHE HIT for key: {lookup_key}")
                 interactions_log.append(cached_interaction)
 
                 if (
@@ -873,8 +885,10 @@ class _ActionProviderProxy:
                 return cached_result_id
 
             self._plan.runtime.cache_miss_counter += 1
-            self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
-            logger.debug(f"CACHE MISS for key: {cache_key}")
+            self._plan.action_log.append(
+                f"{diag_prefix} CACHE MISS: Executing {call_repr}",
+            )
+            logger.debug(f"{diag_prefix} CACHE MISS for key: {cache_key}")
 
             tool_output = await real_attr(*args, **kwargs)
 
@@ -906,10 +920,26 @@ class _ActionProviderProxy:
 
         def sync_wrapper(*args, **kwargs):
             """Synchronous wrapper for logging and calling sync tools."""
-            interactions_log = self._plan.interaction_stack[-1]
+            if current_run_id_var.get() != self._plan.run_id:
+                logger.warning(
+                    f"Blocked stale tool call to '{name}' from a previous run.",
+                )
+                raise asyncio.CancelledError("Stale tool call blocked by run_id gate.")
+
+            interactions_log = current_interaction_sink_var.get()
             self._plan.runtime.action_counter += 1
             tool_name = f"action_provider.{name}"
+
+            if DIAGNOSTIC_MODE:
+                run_id = current_run_id_var.get()
+                invoc_id = current_invocation_id_var.get()
+                diag_prefix = f"[run_id={run_id} invoc={invoc_id}]"
+            else:
+                diag_prefix = ""
+
             call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs)})"
+            if diag_prefix:
+                logger.info(f"{diag_prefix} 🐍 PYTHON: Executing {call_repr}")
 
             cache_key = self._plan.actor._generate_cache_key(
                 self._plan,
@@ -931,9 +961,9 @@ class _ActionProviderProxy:
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
                 self._plan.action_log.append(
-                    f"CACHE HIT: Using cached result for {call_repr}",
+                    f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"CACHE HIT for key: {lookup_key}")
+                logger.debug(f"{diag_prefix} CACHE HIT for key: {lookup_key}")
                 interactions_log.append(cached_interaction)
 
                 if (
@@ -955,8 +985,10 @@ class _ActionProviderProxy:
                 return cached_result_id
 
             self._plan.runtime.cache_miss_counter += 1
-            self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
-            logger.debug(f"CACHE MISS for key: {cache_key}")
+            self._plan.action_log.append(
+                f"{diag_prefix} CACHE MISS: Executing {call_repr}",
+            )
+            logger.debug(f"{diag_prefix} CACHE MISS for key: {cache_key}")
 
             result = real_attr(*args, **kwargs)
 
@@ -1478,7 +1510,10 @@ class HierarchicalPlan(BaseActiveTask):
         Processes a user interjection by using an LLM to decide on the best course of action.
         """
         logger.debug(
-            f"INTERJECT: Interjection received. Current state: {self._state.name}",
+            f"INTERJECT: Interjection received {message}. Current state: {self._state.name}",
+        )
+        self.action_log.append(
+            f"INTERJECT: Interjection received {message}. Current state: {self._state.name}",
         )
         if not self._is_valid_method("interject"):
             return "Cannot interject: plan not running."
@@ -1557,6 +1592,10 @@ class HierarchicalPlan(BaseActiveTask):
             )
 
             if self._execution_task and not self._execution_task.done():
+                self.action_log.append(
+                    f"Cancelling previous run task (ID: {self.run_id}).",
+                )
+                logger.debug(f"Cancelling previous run task (ID: {self.run_id}).")
                 self._execution_task.cancel()
                 try:
                     await self._execution_task
@@ -1629,8 +1668,6 @@ class HierarchicalPlan(BaseActiveTask):
             )
 
             self.action_log.append("Replacing old plan with newly refactored version.")
-            self.replay_keys = list(self.execution_key_log)
-            self.execution_key_log.clear()
 
             self.plan_source_code = self.actor._sanitize_code(
                 clean_refactored_script,
@@ -2416,11 +2453,20 @@ class HierarchicalActor(BaseActor):
                     plan.skipped_functions.remove(func_name)
                     return
 
+                plan.invocation_counter += 1
+                invocation_id = f"{func_name}_{plan.invocation_counter}"
+
+                diag_prefix = (
+                    f"[run_id={plan.run_id} invoc={invocation_id}]"
+                    if DIAGNOSTIC_MODE
+                    else ""
+                )
+
                 args_repr = [repr(a) for a in args]
                 kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
                 all_args = ", ".join(args_repr + kwargs_repr)
                 plan.action_log.append(
-                    f"-> Entering '{func_name}' with args: ({all_args})",
+                    f"{diag_prefix} -> Entering '{func_name}' with args: ({all_args})",
                 )
                 plan.call_stack.append(func_name)
 
@@ -2440,7 +2486,7 @@ class HierarchicalActor(BaseActor):
                         logger.warning(
                             f"Could not capture entry screenshot for '{func_name}': {e}",
                         )
-                logger.info(f"VERIFY: Entering '{func_name}'")
+                logger.info(f"{diag_prefix} VERIFY: Entering '{func_name}'")
                 parent_action_counter = plan.runtime.action_counter
                 plan.runtime.action_counter = 0
                 plan.runtime.cache_miss_counter = 0
@@ -2491,21 +2537,21 @@ class HierarchicalActor(BaseActor):
 
                         except _ControlledInterruptionException:
                             plan.action_log.append(
-                                f"Retrying '{func_name}' after user interjection.",
+                                f"{diag_prefix} Retrying '{func_name}' after user interjection.",
                             )
                             local_interactions.clear()
                             continue
 
                         except _ForcedRetryException:
                             plan.action_log.append(
-                                f"Retrying '{func_name}' after successful reimplementation.",
+                                f"{diag_prefix} Retrying '{func_name}' after successful reimplementation.",
                             )
                             local_interactions.clear()
                             continue
 
                         except NotImplementedError as e:
                             plan.action_log.append(
-                                f"'{func_name}' not implemented. Implementing JIT.",
+                                f"{diag_prefix} '{func_name}' not implemented. Implementing JIT.",
                             )
                             last_error_reason = str(e) or "Function is a stub."
                             await plan._handle_dynamic_implementation(
