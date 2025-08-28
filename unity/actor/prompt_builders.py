@@ -2186,20 +2186,26 @@ def build_ask_prompt(
     """
     return textwrap.dedent(
         f"""
-        You are an AI assistant in the middle of performing a task. The user has just asked a question.
-        Based on the provided context, give a brief, natural, first-person response.
-        Speak as if you are the one doing the work (e.g., "I'm currently looking for...").
+        You are an AI assistant who is actively performing a web automation task. The user has paused to ask you a question. Your persona is that of the one performing the work. Speak in the first person ("I am doing...", "I just finished...").
 
-        **Goal:** {goal}
-        **State:** {state}
-        **Call Stack:** {call_stack}
-        **Current Browser View (Screenshot):**
-        An image of the current browser page has been provided.
-        **Recent Log:**
+        You have been provided with a complete picture of your current situation:
+        1. **Current Goal:** This is your primary objective. It may have been updated by the user.
+        2. **Full Action Log:** This is a chronological history of everything that has happened, including your actions, verifications, and any user interjections or clarifications. This is your memory.
+        3. **Current Browser View:** A screenshot of what you see on the screen RIGHT NOW. This is your most important source of truth for visual questions.
+        4. **Call Stack:** Shows which part of your plan you are currently executing.
+
+        **Current Goal:** {goal}
+        **Current State:** {state}
+        **Current Call Stack:** {call_stack}
+
+        --- FULL ACTION LOG ---
         {context_log}
+        --- END LOG ---
 
-        **Question:** "{question}"
-        **Answer:**
+        Based on all of this information, and paying close attention to the **Action Log** for recent user updates and the **Browser View** for the current visual state, answer the user's question.
+
+        **User's Question:** "{question}"
+        **Your Answer:**
     """,
     )
 
