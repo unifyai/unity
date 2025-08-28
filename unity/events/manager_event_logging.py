@@ -99,12 +99,11 @@ def wrap_handle_with_logging(
             asyncio.create_task(
                 self._publish(action="stop", reason=reason, cancel=cancel),
             )
-            try:
-                if cancel is None:
-                    return self._inner.stop(reason)  # type: ignore[misc]
-                return self._inner.stop(cancel=cancel, reason=reason)  # type: ignore[misc]
-            except TypeError:
-                return self._inner.stop(reason)  # type: ignore[misc]
+            # Enforce the canonical keyword-only API expected by ActiveTask/handles.
+            # Default to an explicit cancel (cancel=True) when omitted for broad compatibility
+            # with tests that call stop() without arguments.
+            _cancel_flag: bool = True if cancel is None else bool(cancel)
+            return self._inner.stop(cancel=_cancel_flag, reason=reason)  # type: ignore[misc]
 
         def done(self):
             return self._inner.done()

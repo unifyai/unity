@@ -201,7 +201,13 @@ class TaskScheduler(BaseTaskScheduler):
 
         # active task
         if actor is None:
-            self._actor = SimulatedActor(duration=20)
+            # Allow tests to override default simulated duration via env var
+            try:
+                _dur_env = os.environ.get("UNITY_SIM_ACTOR_DURATION")
+                _duration = float(_dur_env) if _dur_env is not None else 20.0
+            except Exception:
+                _duration = 20.0
+            self._actor = SimulatedActor(duration=_duration)
         else:
             self._actor = actor
 
@@ -452,10 +458,11 @@ class TaskScheduler(BaseTaskScheduler):
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
-                # Decide execution scope (A: isolate | B: chain) for this explicit request
-                scope = await self._decide_execution_scope(
-                    request_text=freeform_text,
-                    parent_chat_context=parent_chat_context,
+                # Fast-path numeric id: default to isolate to avoid classifier latency
+                scope = (
+                    "chain"
+                    if (os.environ.get("UNITY_TS_EXEC_CHAIN", "").lower() == "true")
+                    else "isolate"
                 )
                 direct_handle = await self._execute_task_internal(
                     task_id=int(stripped),
@@ -626,10 +633,11 @@ class TaskScheduler(BaseTaskScheduler):
         async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
             """Start the task with *task_id* and bubble up its handle (passthrough)."""
 
-            # Decide execution scope (A: isolate | B: chain) for this explicit request
-            scope = await self._decide_execution_scope(
-                request_text=freeform_text,
-                parent_chat_context=parent_chat_context,
+            # Fast-path numeric/identified id inside outer loop: default to isolate
+            scope = (
+                "chain"
+                if (os.environ.get("UNITY_TS_EXEC_CHAIN", "").lower() == "true")
+                else "isolate"
             )
             handle = await self._execute_task_internal(
                 task_id=task_id,
@@ -748,14 +756,15 @@ class TaskScheduler(BaseTaskScheduler):
         # Intentionally keep the plan on 'cancelled' so callers can reinstate
         # a cancelled isolated activation back to its prior queue position.
         try:
-            plan = self._reintegration_plans.get(task_id)
+            key = (task_id, instance_id)
+            plan = self._reintegration_plans.get(key)
             if (
                 plan is not None
                 and plan.task_id == task_id
                 and plan.instance_id == instance_id
                 and new_status_enum in {Status.completed, Status.failed}
             ):
-                self._reintegration_plans.pop(task_id, None)
+                self._reintegration_plans.pop(key, None)
         except Exception:
             pass
 
@@ -1410,6 +1419,73 @@ class TaskScheduler(BaseTaskScheduler):
         Only rows actually traversed are loaded; the full table is not materialised.
         """
         return _ops_get_task_queue(self, task_id=task_id)
+
+    # ------------------------------------------------------------------ #
+    #  Pure neighbour selection helper                                    #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _select_final_neighbours(
+        *,
+        task_id: int,
+        was_head: bool,
+        original_prev: Optional[int],
+        original_next: Optional[int],
+        queue_ids: list[int],
+        is_viable: "Callable[[Optional[int]], bool]",
+    ) -> tuple[Optional[int], Optional[int]]:
+        """
+        Decide `(final_prev, final_next)` for reinstatement given original neighbours
+        and current drift, without performing any I/O.
+
+        Policy:
+        - If `was_head`: final_prev=None; prefer original_next if viable, else chain to
+          current head (first in queue_ids) if different from `task_id`.
+        - If middle: prefer original_prev if viable, else attach to tail (last in queue_ids)
+          if not self-referential; final_next=original_next if viable and distinct from final_prev.
+        - Avoid self-loops and identical prev/next; prefer keeping prev and dropping next.
+        """
+        current_head_id = queue_ids[0] if queue_ids else None
+        current_tail_id = queue_ids[-1] if queue_ids else None
+
+        def _clean(tid: Optional[int]) -> Optional[int]:
+            return None if tid == task_id else tid
+
+        if was_head:
+            final_prev = None
+            if is_viable(original_next):
+                final_next = original_next
+            else:
+                final_next = (
+                    current_head_id
+                    if (current_head_id is not None and current_head_id != task_id)
+                    else None
+                )
+        else:
+            final_prev = (
+                original_prev
+                if is_viable(original_prev)
+                else (
+                    current_tail_id
+                    if (current_tail_id is not None and current_tail_id != task_id)
+                    else None
+                )
+            )
+            if is_viable(original_next) and original_next != final_prev:
+                final_next = original_next
+            else:
+                final_next = None
+
+        final_prev = _clean(final_prev)
+        final_next = _clean(final_next)
+        if (
+            final_prev is not None
+            and final_next is not None
+            and final_prev == final_next
+        ):
+            final_next = None
+
+        return final_prev, final_next
 
     def _update_task_queue(
         self,
@@ -2139,7 +2215,8 @@ class TaskScheduler(BaseTaskScheduler):
     def _reinstate_task_to_previous_queue(
         self,
         *,
-        task_id: Optional[int] = None,
+        task_id: int,
+        _allow_active: bool = False,
     ) -> ToolOutcome:
         """
         Restore the most recently activated task (started in "isolate" scope)
@@ -2166,10 +2243,38 @@ class TaskScheduler(BaseTaskScheduler):
             If no reintegration plan is available or the provided task_id
             does not match the stored plan.
         """
-        plan = self._reintegration_plans.get(task_id) if task_id is not None else None
+        # Plans are keyed by (task_id, instance_id). Prefer the plan for any
+        # non-terminal instance; if none are live, fall back to any stored plan
+        # for this task (e.g., when the instance was cancelled by design).
+        rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=10)
+        live = [
+            r
+            for r in rows
+            if self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+        ]
+        instance_id = None
+        plan = None
+        if live:
+            instance_id = sorted(live, key=lambda r: r.get("instance_id", 0))[0].get(
+                "instance_id",
+            )
+            plan = self._reintegration_plans.get((task_id, instance_id))
+        else:
+            # No live instances – try any plan for this task id
+            for (tid, iid), p in getattr(self, "_reintegration_plans", {}).items():
+                if tid == task_id:
+                    plan = p
+                    instance_id = iid
+                    break
+        if plan is None:
+            # Legacy fallback (pre-dict storage) – only accept if it matches the explicit id
+            legacy = getattr(self, "_reintegration_plan", None)
+            if legacy is not None and legacy.task_id == task_id:
+                plan = legacy
+
         if not plan:
             raise ValueError("No reintegration plan available.")
-        if task_id is not None and plan.task_id != task_id:
+        if plan.task_id != task_id:
             raise ValueError(
                 f"Reintegration plan exists for task_id={plan.task_id}, not {task_id}",
             )
@@ -2196,9 +2301,14 @@ class TaskScheduler(BaseTaskScheduler):
         cur_rows = self._filter_tasks(filter=f"task_id == {tid}", limit=1)
         cur_row = cur_rows[0] if cur_rows else {}
 
-        # Guard: must not be active at this moment
-        if self._to_status(cur_row.get("status")) == Status.active:
-            raise RuntimeError("Cannot reinstate while the task is active.")
+        # Guard: by default refuse when currently active, unless explicitly allowed
+        if (
+            self._to_status(cur_row.get("status")) == Status.active
+            and not _allow_active
+        ):
+            raise RuntimeError(
+                "Cannot reinstate while the task is active. Stop/defer first.",
+            )
 
         # Guard: if a trigger exists now, schedule restoration would violate exclusivity
         if cur_row.get("trigger") is not None:
@@ -2208,7 +2318,10 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Idempotence: if there is already a schedule present, treat as a no-op
         if cur_row.get("schedule") is not None:
-            self._reintegration_plans.pop(tid, None)
+            try:
+                self._reintegration_plans.pop((tid, instance_id), None)
+            except Exception:
+                pass
             return {
                 "outcome": "no-op: task already has a schedule",
                 "details": {"task_id": tid},
@@ -2229,52 +2342,37 @@ class TaskScheduler(BaseTaskScheduler):
         current_head_id = queue_ids[0] if queue_ids else None
         current_tail_id = queue_ids[-1] if queue_ids else None
 
-        # Compute final neighbours with graceful fallback
-        final_prev: Optional[int]
-        final_next: Optional[int]
-        if was_head:
-            final_prev = None
-            if _is_viable(next_tid):
-                final_next = next_tid
-            else:
-                # Place as new head; chain to current head if present
-                final_next = (
-                    current_head_id
-                    if (current_head_id is not None and current_head_id != tid)
-                    else None
-                )
-        else:
-            final_prev = (
-                prev_tid
-                if _is_viable(prev_tid)
-                else (
-                    current_tail_id
-                    if (current_tail_id is not None and current_tail_id != tid)
-                    else None
-                )
-            )
-            if _is_viable(next_tid) and next_tid != final_prev:
-                final_next = next_tid
-            else:
-                final_next = None
+        # Compute final neighbours with graceful fallback via pure selector
+        final_prev, final_next = self._select_final_neighbours(
+            task_id=tid,
+            was_head=was_head,
+            original_prev=prev_tid,
+            original_next=next_tid,
+            queue_ids=queue_ids,
+            is_viable=_is_viable,
+        )
 
-        if final_prev == tid:
-            final_prev = None
-        if final_next == tid:
-            final_next = None
-        if (
-            final_prev is not None
-            and final_next is not None
-            and final_prev == final_next
-        ):
-            # Prefer keeping prev and dropping next to avoid self-loop via neighbour
-            final_next = None
-
-        # Build payload for current task
+        # Build payload for current task (queue_id preserved when available)
         cur_sched: Dict[str, Any] = {
             "prev_task": final_prev,
             "next_task": final_next,
         }
+        try:
+            if was_head:
+                # If original plan had a queue_id, preserve it on head write
+                if getattr(plan, "queue_id", None) is not None:
+                    cur_sched["queue_id"] = getattr(plan, "queue_id")
+            else:
+                # For middle reinstatement, inherit queue_id from viable prev/next when present
+                source = final_prev if final_prev is not None else final_next
+                if source is not None:
+                    srows = self._filter_tasks(filter=f"task_id == {source}", limit=1)
+                    if srows:
+                        qid = (srows[0].get("schedule") or {}).get("queue_id")
+                        if qid is not None:
+                            cur_sched["queue_id"] = qid
+        except Exception:
+            pass
         # Set start_at when reinstating as head. Prefer the original head_start_at
         # captured at activation; fall back to the task's own start_at if present.
         plan_head_start = getattr(plan, "head_start_at", None)
@@ -2311,13 +2409,18 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         # Use centralised attach helper which performs symmetric neighbour updates
-        self._attach_with_links(
-            task_id=tid,
-            prev_task=final_prev,
-            next_task=final_next,
-            head_start_at=(original_start_at if was_head else None),
-            err_prefix=f"While reinstating task {tid}:",
-        )
+        try:
+            self._attach_with_links(
+                task_id=tid,
+                prev_task=final_prev,
+                next_task=final_next,
+                head_start_at=(
+                    cur_sched.get("start_at") if final_prev is None else None
+                ),
+                err_prefix=f"While reinstating task {tid}:",
+            )
+        except Exception as e:
+            raise
 
         # Restore the prior non-active status of the task instance
         if desired_status != Status.active:
@@ -2361,7 +2464,25 @@ class TaskScheduler(BaseTaskScheduler):
             self._refresh_primed_cache(tid)
 
         # Clear plan – it has been applied
-        self._reintegration_plan = None
+        try:
+            self._reintegration_plans.pop((tid, instance_id), None)
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_reintegration_plan", None) is not None:
+                self._reintegration_plan = None  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        try:
+            row_after = self._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
+            if final_next is not None:
+                row_next = self._filter_tasks(
+                    filter=f"task_id == {final_next}",
+                    limit=1,
+                )[0]
+        except Exception:
+            pass
 
         return {
             "outcome": "task reinstated to previous queue position",
@@ -2386,7 +2507,17 @@ class TaskScheduler(BaseTaskScheduler):
         Only acts when a reintegration plan exists (i.e., the task was started in
         "isolate" scope). Silently no-ops on any validation error.
         """
-        plan = self._reintegration_plans.get(task_id) if task_id is not None else None
+        plan = None
+        try:
+            # Plans are keyed by (task_id, instance_id). Find any matching tuple for this task_id.
+            for (tid, iid), p in list(
+                getattr(self, "_reintegration_plans", {}).items(),
+            ):
+                if tid == task_id:
+                    plan = p
+                    break
+        except Exception:
+            plan = None
         if plan is None or plan.task_id != task_id:
             return  # nothing to do
 
