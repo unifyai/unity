@@ -33,20 +33,18 @@ LIVEKIT_API_SECRET={value}
 
 Check out various logs in the "Assistants" project in the [Unity Interface](https://console.unify.ai/interfaces?project=Unity).
 
-### Desktop Control
+### Controller Mode
 
-1. Build the image.
+**Browser Mode**
 
-`docker build --build-arg UNIFY_KEY=<your-key> -t unity_browser:latest -f Dockerfile .`
+1. Install the required dependencies through `node/npm`, then start the Magnitude server.
 
-2. Start the container.
+`npx ts-node agent-service/src/index.ts`
 
-`docker run -it -p 8080:8080 -p 6080:6080 --env-file .env -v $(pwd):/app --rm unity_browser:latest bash`
+2. Use the actor in browser mode, i.e., `mode="browser"`. This is the default mode.
 
-3. In the container, start the virtual desktop.
+**Desktop Mode**
 
-`bash desktop.sh`
+1. Follow the guide in `desktop/README.md` for starting the virtual desktop and Magnitude server through Docker.
 
-4. Access the virtual desktop through the address below. It can now be used with the actor and the Magnitude controller.
-
-`http://localhost:6080/vnc.html?resize=scale&autoconnect=1`
+2. 2. Use the actor in desktop mode, i.e., `mode="desktop"`.
