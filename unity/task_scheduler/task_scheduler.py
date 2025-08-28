@@ -458,11 +458,10 @@ class TaskScheduler(BaseTaskScheduler):
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
-                # Fast-path numeric id: default to isolate to avoid classifier latency
-                scope = (
-                    "chain"
-                    if (os.environ.get("UNITY_TS_EXEC_CHAIN", "").lower() == "true")
-                    else "isolate"
+                # Decide execution scope (allows tests to monkeypatch)
+                scope = await self._decide_execution_scope(
+                    request_text=freeform_text,
+                    parent_chat_context=parent_chat_context,
                 )
                 direct_handle = await self._execute_task_internal(
                     task_id=int(stripped),
@@ -633,11 +632,10 @@ class TaskScheduler(BaseTaskScheduler):
         async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
             """Start the task with *task_id* and bubble up its handle (passthrough)."""
 
-            # Fast-path numeric/identified id inside outer loop: default to isolate
-            scope = (
-                "chain"
-                if (os.environ.get("UNITY_TS_EXEC_CHAIN", "").lower() == "true")
-                else "isolate"
+            # Decide execution scope using the same helper as the fast-path
+            scope = await self._decide_execution_scope(
+                request_text=freeform_text,
+                parent_chat_context=parent_chat_context,
             )
             handle = await self._execute_task_internal(
                 task_id=task_id,
@@ -693,6 +691,38 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         return outer_handle
+
+    # ------------------------------------------------------------------ #
+    #  Scope classification helper                                        #
+    # ------------------------------------------------------------------ #
+    async def _decide_execution_scope(
+        self,
+        *,
+        request_text: str,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+    ) -> Literal["isolate", "chain"]:
+        """
+        Decide whether to execute a task in "isolate" or "chain" mode.
+
+        Default behaviour is environment-controlled for determinism in tests:
+        set UNITY_TS_EXEC_CHAIN=true to opt into "chain"; otherwise "isolate".
+        """
+        try:
+            env = os.environ.get("UNITY_TS_EXEC_CHAIN", "").lower()
+            if env == "true":
+                return "chain"
+        except Exception:
+            pass
+
+        # Lightweight heuristic: let explicit mentions opt into chaining.
+        try:
+            txt = (request_text or "").lower()
+            if any(k in txt for k in ("chain", "keep followers", "follow me")):
+                return "chain"
+        except Exception:
+            pass
+
+        return "isolate"
 
     #  Per-instance helpers
 
