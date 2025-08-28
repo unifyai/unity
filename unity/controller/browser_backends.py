@@ -166,8 +166,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
             {"headless": headless, "mode": self.agent_mode},
         )
         self._check_service_ready()
-        if "localhost:3000" in self.agent_base_url:
-            self._load_persistent_data()
+        # if "localhost:3000" in self.agent_base_url:
+        #     self._load_persistent_data()
 
     def _check_service_ready(self):
         deadline = time.time() + 30
@@ -580,6 +580,6 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
     def stop(self):
         """Stops the Node.js service subprocess."""
-        if "localhost:3000" in self.agent_base_url:
-            self._save_persistent_data()
+        # if "localhost:3000" in self.agent_base_url:
+        #     self._save_persistent_data()
         self._sync_request("POST", "/stop")

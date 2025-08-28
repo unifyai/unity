@@ -29,6 +29,7 @@ class ActionProvider:
         browser_mode: str = "legacy",
         controller_mode: str = "hybrid",
         agent_mode: str = "browser",
+        agent_server_url: str = "http://localhost:3000",
     ):
 
         browser_kwargs = {
@@ -40,6 +41,7 @@ class ActionProvider:
             "magnitude": {
                 "headless": headless,
                 "agent_mode": agent_mode,
+                "agent_server_url": agent_server_url,
             },
         }
 

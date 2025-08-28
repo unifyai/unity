@@ -157,6 +157,7 @@ class CodeActActor(BaseActor):
         browser_mode: str = "magnitude",
         timeout: float = 1000,
         agent_mode: str = "browser",
+        agent_server_url: str = "http://localhost:3000",
     ):
         """
         Initializes the CodeActActor.
@@ -166,6 +167,7 @@ class CodeActActor(BaseActor):
             headless=headless,
             browser_mode=browser_mode,
             agent_mode=agent_mode,
+            agent_server_url=agent_server_url,
         )
         self._sandbox = CodeExecutionSandbox(action_provider=self._action_provider)
         self._timeout = timeout
