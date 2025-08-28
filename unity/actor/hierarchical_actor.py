@@ -1847,8 +1847,7 @@ class HierarchicalPlan(BaseActiveTask):
                 self.action_log.append("SANDBOX: Returning to original tab")
                 try:
                     await self.actor.action_provider.browser_act(
-                        f"Switch to tab {original_tab_index} which was on the url {original_url}",
-                        expectation="Should be back on the original tab",
+                        f"Switch to tab {original_tab_index} which was on the url {original_url} to go back to the original tab",
                     )
                     self.action_log.append("SANDBOX: Returned to original tab")
 
@@ -3005,6 +3004,7 @@ class HierarchicalActor(BaseActor):
                 await plan._handle_dynamic_implementation(
                     fn.__name__,
                     replan_reason=assessment.reason,
+                    status=assessment.status,
                     failed_interactions=interactions,
                     existing_code_for_modification=existing_code,
                 )
