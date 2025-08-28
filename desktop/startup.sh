@@ -44,7 +44,7 @@ bash /app/desktop/device.sh &
 DEVICE_PID=$!
 
 # Start agent-service (ts-node)
-npx ts-node /app/agent-service/src/index.ts --headless --desktop &
+npx ts-node /app/agent-service/src/index.ts &
 AGENT_PID=$!
 
 # Wait for agent-service to exit, then cleanup
