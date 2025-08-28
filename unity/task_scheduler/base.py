@@ -237,3 +237,31 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         ValueError
             When no matching task could be identified.
         """
+
+    # ------------------------------------------------------------------ #
+    #  Public lifecycle helpers                                           #
+    # ------------------------------------------------------------------ #
+
+    def reinstate_to_previous_queue(
+        self,
+        *,
+        task_id: int,
+        allow_active: bool = False,
+    ) -> Dict[str, str]:
+        """
+        Restore a task to its previous queue/schedule position after a defer‑stop.
+
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the task to reinstate.
+        allow_active : bool, default ``False``
+            When ``True``, permit reinstatement while a task is currently active.
+
+        Notes
+        -----
+        This public method is the canonical entrypoint. Concrete schedulers may
+        delegate to an internal implementation. Backwards‑compatibility helpers
+        should accept additional kwargs and ignore unknown ones.
+        """
+        raise NotImplementedError

@@ -135,11 +135,8 @@ class ActiveTask(BaseActiveTask):
                         # Explicit cancellation: mark cancelled.
                         self._mirror_status("cancelled")
                     else:
-                        # Defer: restore prior queue/schedule position.
-                        self._scheduler._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
-                            task_id=self._task_id,
-                            _allow_active=True,
-                        )
+                        # Defer: restore prior queue/schedule position via public API when available.
+                        self._call_reinstate_public(task_id=self._task_id)
             except Exception:
                 # Best-effort: failure to reinstate must not break stop semantics
                 pass
@@ -172,10 +169,7 @@ class ActiveTask(BaseActiveTask):
             try:
                 if self._scheduler and self._task_id is not None:
                     # Prefer strict reinstatement using the stored plan when present.
-                    self._scheduler._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
-                        task_id=self._task_id,
-                        _allow_active=True,
-                    )
+                    self._call_reinstate_public(task_id=self._task_id)
             except Exception:
                 # Best-effort – failure to reinstate must not break stop semantics
                 pass
@@ -241,6 +235,30 @@ class ActiveTask(BaseActiveTask):
                 and active["instance_id"] == self._instance_id
             ):
                 self._scheduler._active_task = None  # type: ignore[attr-defined]
+
+    # Centralised reinstate caller to avoid duplication and tolerate older signatures
+    def _call_reinstate_public(self, *, task_id: int) -> None:
+        sched = self._scheduler
+        if sched is None:
+            return
+        try:
+            # Prefer public API when available
+            if hasattr(sched, "reinstate_to_previous_queue"):
+                try:
+                    # Try with allow_active=True
+                    sched.reinstate_to_previous_queue(task_id=task_id, allow_active=True)  # type: ignore[attr-defined]
+                except TypeError:
+                    # Fallback without allow_active (defensive)
+                    sched.reinstate_to_previous_queue(task_id=task_id)  # type: ignore[attr-defined]
+                return
+        except Exception:
+            pass
+
+        # Backwards compatibility: private method, with graceful arg fallback
+        try:
+            sched._reinstate_task_to_previous_queue(task_id=task_id, _allow_active=True)  # type: ignore[attr-defined]
+        except TypeError:
+            sched._reinstate_task_to_previous_queue(task_id=task_id)  # type: ignore[attr-defined]
 
     @property
     @functools.wraps(BaseActiveTask.valid_tools, updated=())

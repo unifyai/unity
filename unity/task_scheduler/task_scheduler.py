@@ -307,7 +307,7 @@ class TaskScheduler(BaseTaskScheduler):
             None,
         ] = "default",
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5->o4-mini@openai")
+        client = self._new_llm_client("gpt-5@openai")
 
         # Build a live tools dictionary so the prompt reflects reality
         tools = dict(self._ask_tools)
@@ -380,7 +380,7 @@ class TaskScheduler(BaseTaskScheduler):
             None,
         ] = "default",
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5->o4-mini@openai")
+        client = self._new_llm_client("gpt-5@openai")
 
         # Build a live tools dictionary first (prompt needs it)
         tools = dict(self._update_tools)
@@ -627,7 +627,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """Compose tools and prompt, then start the execute_task reasoning loop."""
-        client = self._new_llm_client("gpt-5->o4-mini@openai")
+        client = self._new_llm_client("gpt-5@openai")
 
         # ── tool definitions ────────────────────────────────────────────────
         async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
@@ -1372,6 +1372,27 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
     _TERMINAL_STATUSES = {Status.completed, Status.cancelled, Status.failed}
+
+    # ------------------------------------------------------------------ #
+    #  Public lifecycle helpers                                           #
+    # ------------------------------------------------------------------ #
+
+    def reinstate_to_previous_queue(
+        self,
+        *,
+        task_id: int,
+        allow_active: bool = False,
+    ) -> Dict[str, str]:
+        """
+        Public facade to restore a task to its prior queue/schedule position.
+
+        Delegates to the internal `_reinstate_task_to_previous_queue` and maps
+        the `allow_active` flag to the private `_allow_active` parameter.
+        """
+        return self._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
+            task_id=task_id,
+            _allow_active=allow_active,
+        )
 
     def _refresh_primed_cache(self, task_id: Optional[int] = None) -> None:
         """
