@@ -30,18 +30,17 @@ import string
 import unify
 
 from tests.helpers import (
-    _get_unity_test_env_var,
-    TESTS_DEFAULT_ENV_VARS,
+    SETTINGS,
     PRECREATED_CONTEXTS,
 )
 
 
 def pytest_report_header(config):
-    keys = TESTS_DEFAULT_ENV_VARS.keys()
+    settings_str = [f"{k}={v}" for k, v in SETTINGS.model_dump().items()]
     return [
         f"unify_base_url={os.environ.get('UNIFY_BASE_URL')}",
         f"unify_project={unify.active_project()}",
-    ] + [f"{key}={_get_unity_test_env_var(key)}" for key in keys]
+    ] + settings_str
 
 
 # --------------------------------------------------------------------------- #
@@ -278,9 +277,10 @@ def pytest_sessionstart(session):
     #  Activate the UnityTests project
     # ------------------------------------------------------------------
 
-    randomize_project_name = _get_unity_test_env_var("UNIFY_TESTS_RAND_PROJ")
     project_name = (
-        _generate_random_project_name() if randomize_project_name else "UnityTests"
+        _generate_random_project_name()
+        if SETTINGS.UNIFY_TESTS_RAND_PROJ
+        else "UnityTests"
     )
 
     if os.environ.get("CI"):
@@ -291,7 +291,7 @@ def pytest_sessionstart(session):
 
     unify.activate(
         project_name,
-        overwrite=_get_unity_test_env_var("UNIFY_OVERWRITE_PROJECT"),
+        overwrite=SETTINGS.UNIFY_OVERWRITE_PROJECT,
     )
     unify.set_user_logging(False)
 
@@ -309,12 +309,12 @@ def pytest_sessionstart(session):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    if _get_unity_test_env_var("UNIFY_TESTS_DELETE_PROJ_ON_EXIT"):
+    if SETTINGS.UNIFY_TESTS_DELETE_PROJ_ON_EXIT:
         unify.delete_project(unify.active_project())
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    if _get_unity_test_env_var("UNIFY_CACHE_BENCHMARK"):
+    if SETTINGS.UNIFY_CACHE_BENCHMARK:
         stats = unify.get_cache_stats()
         terminalreporter.section(
             f"Unify cache report | Hits ({stats.get_percentage_of_cache_hits():.2f}%): {stats.hits} | Misses ({stats.get_percentage_of_cache_misses():.2f}%): {stats.misses} | Reads: {stats.reads} | Writes: {stats.writes}",
@@ -1589,13 +1589,13 @@ def _get_context_name_for_item(item):
 
 def pytest_collection_finish(session):
     # Compute all contexts and fire off background creation tasks
-    if _get_unity_test_env_var("UNIFY_PRETEST_CONTEXT_CREATE"):
+    if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
         contexts: set[str] = set()
         for item in session.items:
             ctx = _get_context_name_for_item(item)
             contexts.add(ctx)
             contexts.add(f"{ctx}/Events/_callbacks/")
-            if _get_unity_test_env_var("UNIFY_TRACED"):
+            if SETTINGS.UNIFY_TRACED:
                 contexts.add(f"{ctx}/Traces/")
 
         # TODO: Should delete contexts before creating them

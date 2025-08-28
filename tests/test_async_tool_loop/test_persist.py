@@ -6,7 +6,7 @@ import pytest
 import unify
 
 from unity.common.llm_helpers import start_async_tool_use_loop
-from tests.helpers import _handle_project, _get_unity_test_env_var
+from tests.helpers import _handle_project, SETTINGS
 
 
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
@@ -16,8 +16,8 @@ def new_client() -> unify.AsyncUnify:
     """Utility to get a fresh client with env-controlled caching / tracing."""
     return unify.AsyncUnify(
         MODEL_NAME,
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
 
 
