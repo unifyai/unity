@@ -66,6 +66,68 @@ def wrap_handle_with_logging(
     time the user interacts with the handle (pause/resume/…/result).
     """
 
+    # --- normalize legacy handles that lack a 'cancel' kwarg on stop() -------
+    try:
+        import inspect as _inspect
+
+        _sig = _inspect.signature(getattr(inner, "stop"))
+        _has_cancel = any(
+            p.kind
+            in (
+                _inspect.Parameter.KEYWORD_ONLY,
+                _inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+            and p.name == "cancel"
+            for p in _sig.parameters.values()
+        )
+    except Exception:
+        _has_cancel = True  # be permissive when unsure
+
+    if not _has_cancel:
+
+        class _StopAdapter(SteerableToolHandle):  # type: ignore[misc]
+            __slots__ = ("_inner",)
+
+            def __init__(self, _h: SteerableToolHandle) -> None:
+                self._inner = _h
+
+            # delegate public API, but adapt stop signature
+            async def interject(self, message: str):
+                return await self._inner.interject(message)
+
+            def pause(self):
+                return self._inner.pause()
+
+            def resume(self):
+                return self._inner.resume()
+
+            def done(self):
+                return self._inner.done()
+
+            async def result(self):
+                return await self._inner.result()
+
+            async def ask(self, question: str, *a, **kw):
+                return await self._inner.ask(question, *a, **kw)
+
+            def stop(self, reason: str | None = None, *, cancel: bool | None = None):
+                # Default cancel when omitted
+                _cancel_flag: bool = True if cancel is None else bool(cancel)
+                try:
+                    return self._inner.stop(cancel=_cancel_flag, reason=reason)  # type: ignore[misc]
+                except TypeError:
+                    try:
+                        return self._inner.stop(reason=reason)  # type: ignore[misc]
+                    except TypeError:
+                        if reason is not None:
+                            return self._inner.stop(reason)  # type: ignore[misc]
+                        return self._inner.stop()  # type: ignore[misc]
+
+            def __getattr__(self, item):
+                return getattr(self._inner, item)
+
+        inner = _StopAdapter(inner)
+
     class _LoggedHandle(SteerableToolHandle):  # type: ignore[misc]
         __slots__ = ("_inner",)
 
@@ -99,11 +161,24 @@ def wrap_handle_with_logging(
             asyncio.create_task(
                 self._publish(action="stop", reason=reason, cancel=cancel),
             )
-            # Enforce the canonical keyword-only API expected by ActiveTask/handles.
-            # Default to an explicit cancel (cancel=True) when omitted for broad compatibility
-            # with tests that call stop() without arguments.
+            # Canonical semantics: cancel defaults to True when omitted.
             _cancel_flag: bool = True if cancel is None else bool(cancel)
-            return self._inner.stop(cancel=_cancel_flag, reason=reason)  # type: ignore[misc]
+            # Adapt to legacy implementations that may not accept the 'cancel' kwarg.
+            try:
+                return self._inner.stop(cancel=_cancel_flag, reason=reason)  # type: ignore[misc]
+            except TypeError:
+                try:
+                    # Older signature: stop(reason=...)
+                    return self._inner.stop(reason=reason)  # type: ignore[misc]
+                except TypeError:
+                    try:
+                        # Oldest signature: positional reason
+                        if reason is not None:
+                            return self._inner.stop(reason)  # type: ignore[misc]
+                        return self._inner.stop()  # type: ignore[misc]
+                    except Exception:
+                        # Last resort: call without args
+                        return self._inner.stop()  # type: ignore[misc]
 
         def done(self):
             return self._inner.done()

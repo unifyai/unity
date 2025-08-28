@@ -3498,8 +3498,18 @@ class SteerableToolHandle(ABC):
     def stop(
         self,
         reason: Optional[str] = None,
+        *,
+        cancel: Optional[bool] = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
-        """Politely ask the loop to shut down (gracefully). Optionally include a reason."""
+        """Politely request shutdown.
+
+        Semantics
+        ---------
+        - cancel=True  → hard cancel; pending work is aborted and result() raises.
+        - cancel=False → graceful stop; allow a final answer when supported.
+        - cancel=None  → default behaviour (treated as cancel=True unless the implementation
+          specifies otherwise).
+        """
 
     @abstractmethod
     def pause(self) -> Awaitable[Optional[str]] | Optional[str]:
@@ -3765,24 +3775,40 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         await self._queue.put(message)
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
-    def stop(self, reason: Optional[str] = None) -> None:
+    def stop(
+        self,
+        reason: Optional[str] = None,
+        *,
+        cancel: Optional[bool] = None,
+    ) -> None:
         LOGGER.info(
             f"🛑 [{self._loop_id}] Stop requested"
             + (f" – reason: {reason}" if reason else ""),
         )
+        # Normalise flag: default to explicit cancel unless caller asks for graceful stop
+        cancel_flag: bool = True if cancel is None else bool(cancel)
+
         if self._delegate is not None:
             try:
-                # Conservative default: defer instead of abandon when not explicit
-                self._delegate.stop(cancel=False, reason=reason)  # type: ignore[misc]
+                # Prefer delegate's modern signature if available
+                self._delegate.stop(cancel=cancel_flag, reason=reason)  # type: ignore[misc]
             except TypeError:
-                # Delegate may use legacy signature
+                # Delegate may use legacy signature; best-effort forwarding
                 self._delegate.stop(reason)  # type: ignore[misc]
             return
-        # In persist-mode we perform a graceful stop (result resolves).
-        # Otherwise preserve legacy behaviour: cancel so result() raises.
+
+        # Determine behaviour for this outer handle
+        # cancel=True  → hard cancel (result() raises CancelledError)
+        # cancel=False → graceful stop; in persist-mode return last answer, else cancel
+        if cancel_flag:
+            self._cancel_event.set()
+            return
+
+        # Graceful stop: honour persist-mode where the inner loop returns a final answer
         if self._persist:
             self._stop_event.set()
         else:
+            # Non-persist legacy mode has no graceful stop – fall back to cancel
             self._cancel_event.set()
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
