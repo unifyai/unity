@@ -26,7 +26,7 @@ class BrowserBackend(ABC):
     """
 
     @abstractmethod
-    async def act(self, instruction: str, expectation: str = "") -> str:
+    async def act(self, instruction: str) -> str:
         """Perform an action in the browser."""
 
     @abstractmethod
@@ -60,26 +60,22 @@ class LegacyBrowserBackend(BrowserBackend):
         if not self.controller.is_alive():
             self.controller.start()
 
-    async def act(self, instruction: str, expectation: str = "") -> str:
+    async def act(self, instruction: str) -> str:
         """
-        Performs a **single, high-level action** in the browser and verifies its outcome.
+        Performs a **single, high-level action** in the browser.
 
         This tool functions by looking at the screen; it **does not have access to the underlying HTML or DOM**. Therefore, instructions must describe elements based on their **visible text or position**, not by HTML attributes like `id`, `class`, or `aria-label`.
 
         Args:
             instruction (str): A single, natural-language command. Describe the element to interact with
                             based on its visible properties.
-            expectation (str): A clear, verifiable description of what the page should look like *after*
-                            the action is successfully completed.
 
         Examples:
             # ✅ Good Example (Using Visible Text)
             - instruction: "Click the 'Login' button"
-            expectation: "The page should now show a password field."
 
             # ✅ Good Example (Using Visible Text)
             - instruction: "Type 'hello world' into the search bar"
-            expectation: "The search bar should contain the text 'hello world'."
 
             # ❌ Bad Example (Using HTML Attributes)
             - instruction: "Click the button with id 'submit-btn'"
@@ -94,7 +90,7 @@ class LegacyBrowserBackend(BrowserBackend):
         """
         return await self.controller.act(
             instruction,
-            expectation=expectation,
+            expectation="",
             multi_step_mode=True,
         )
 
@@ -453,7 +449,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         except Exception as e:
             print(f"Warning: Could not enumerate /home/install for persistence: {e}")
 
-    async def act(self, instruction: str, expectation: str = "") -> str:
+    async def act(self, instruction: str) -> str:
         """
         Executes a high-level browser task using the Magnitude BrowserAgent.
 
@@ -461,7 +457,6 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         Args:
             instruction (str): A high-level, natural-language command describing the desired outcome.
-            expectation (str): (Optional) A description of the expected state after the action, which helps the agent confirm success.
 
         Examples:
             # ✅ Good Example (Multi-Step Task)
@@ -472,53 +467,78 @@ class MagnitudeBrowserBackend(BrowserBackend):
             - instruction: "Find the cheapest blue t-shirt on the page and add it to the cart."
             # The agent will visually scan, find the item, and click the corresponding 'Add to Cart' button.
 
-            # ✅ Good Example (Combining Action and Verification)
+            # ✅ Good Example (Clear Action)
             - instruction: "Click the 'Promotions' link in the navigation bar."
-            - expectation: "The page should show a heading titled 'Current Promotions'."
 
             # ❌ Bad Example (Too low-level)
             # Avoid breaking down simple actions. Let the agent handle it.
             - instruction: "Move the mouse to coordinate 250, 400, then click."
         """
-        task_desc = f"{instruction}. {expectation}".strip()
-        response = await self._request("POST", "/act", {"task": task_desc})
+        response = await self._request("POST", "/act", {"task": instruction})
         return response.get("status", "success")
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
         """
         Extracts structured information from the current page using the Magnitude BrowserAgent.
 
-        The agent uses a vision-language model to analyze the page content and screenshot, allowing it to understand context and structure. It can return complex, nested data if a Pydantic model is provided.
+        This is your primary tool for perception. The agent uses a vision-language model to
+        analyze the page, so its success depends entirely on the quality and clarity of your `query`.
 
-         **Key Principles for Effective Observation:**
+        **Key Principles for an Effective Query:**
 
-        1.  **Be Specific and Descriptive**: Don't just ask "what's on the page." Guide the agent. Instead of "get the product details," prefer "Extract the product name from the top, the price listed in bold, and the author's name below the title."
+        1.  **Be Specific and Descriptive**: Don't just ask "what's on the page." Guide the agent.
+            Instead of "get the product details," prefer "Extract the product name from the top, the price
+            listed in bold, and the author's name below the title."
 
-        2.  **Provide a Strategy for Non-Textual Elements**: For visual elements like star ratings, progress bars, or icons, you MUST provide a method for interpretation, as the model cannot infer it.
-            * **Good (Star Rating):** "For the 'star_rating', visually count the number of filled yellow stars and provide it as a number (e.g., 4.0). If you see a half-filled star, add 0.5. If you cannot determine the rating, approximate the value to the nearest half-star."
-            * **Good (Active Icon):** "Determine which navigation link is active by identifying the one that is underlined or has a different text color."
-            * **Bad:** "Get the star rating." (This will fail if the rating is not plain text).
+        2.  **Provide a Strategy for Non-Textual Elements**: For visual elements like star
+            ratings, progress bars, or icons, you MUST provide a method for interpretation.
+            - **Good (Star Rating):** "For the 'star_rating', visually count the number of filled yellow
+              stars and provide it as a number (e.g., 4.0). If you see a half-filled star, add 0.5."
+            - **Good (Active Icon):** "Determine which navigation link is active by identifying the one
+              that is underlined or has a different text color."
+            - **Bad:** "Get the star rating." (This will fail if the rating is not plain text).
 
-        3.  **Request Specific Data Types**: Guide the model to return the correct data type to ensure successful validation against your Pydantic schema.
-            * **Good:** "Extract the number of reviews as an integer."
-            * **Good:** "Get the price as a floating-point number, without the currency symbol."
+        3.  **Request Specific Data Types**: Guide the model to return the correct data type to
+            ensure successful validation against your Pydantic schema.
+            - **Good:** "Extract the number of reviews as an integer."
+            - **Good:** "Get the price as a floating-point number, without the currency symbol."
 
-        4.  **Leverage Pydantic for Structure**: For any non-trivial extraction (more than a single string), always use a Pydantic model. This forces the agent to return clean, structured, and validated data.
+        4.  **Leverage Pydantic for Structure**: For any non-trivial extraction (more than a single
+            string), always use a Pydantic model. This forces the agent to return clean,
+            structured, and validated data.
 
-        5.  **Embrace Optional Fields for Robustness**: Web pages are unpredictable; an element might be missing for one item but not another. Define fields that might not always be present as `Optional` in your Pydantic model (e.g., `rating: Optional[float]`). This prevents the entire extraction from failing if a single piece of data is missing.
+        5.  **Embrace Optional Fields for Robustness**: Web pages are unpredictable; an element
+            might be missing. Define fields that might not always be present as `Optional` in
+            your Pydantic model (e.g., `rating: Optional[float]`) to prevent failures.
 
-        **✅ Good Queries (Following the 5 Principles):**
-        - **(Principles 1, 4, 5):** "List all user comments. For each comment, extract the author's name and the comment text. Also, extract the date it was posted, but note that the date may be missing for some older comments."
-        - **(Principles 1, 2, 3, 4, 5):** "For every product card on the page, extract the product name, the price as a float, and the star rating. For the rating, visually count the number of filled stars and return it as a number (e.g., 4.0 or 4.5). If an exact value cannot be determined, approximate the value to the nearest half-star."
-        - **(Principles 1, 2, 4, 5):** "From the user data table, extract a list of users. For each user, get their full name and email. Also, check their 'Status' icon: a green checkmark means 'Active', and a red 'X' means 'Inactive'. Extract the status as the corresponding string. The email may be missing for some users."
+        6.  **Resolve Visual Ambiguity**: If the page presents conflicting information,
+            your query MUST instruct the model on how to resolve the conflict. Prioritize the
+            element that reflects the true state of the page.
+            - **Scenario:** A recipe page has a "2X" serving size button selected, but nearby static
+              text says "Original recipe (1X) yields 6 servings".
+            - **Bad Query:** "Get the number of servings." (The model may incorrectly read the static text).
+            - **Good Query:** "Determine the active serving size multiplier. CRITICAL: Identify which
+              multiplier button ('1/2X', '1X', '2X') is visually selected (e.g., has a checkmark or
+              filled background). IGNORE any nearby static text like 'Original recipe yields...'."
+
+        **✅ Good Queries (Following the Principles):**
+        - **(Principles 1, 4, 5):** "List all user comments. For each comment, extract the author's
+          name and the comment text. Also, extract the date it was posted, but note that the date
+          may be missing for some older comments."
+        - **(Principles 1, 2, 3, 4, 6):** "For every product on the page, extract the product name,
+          the price as a float, and the star rating. For the rating, visually count the filled stars
+          and return it as a number (e.g., 4.5). For the active sorting option, identify which one
+          is visually highlighted in blue."
 
         **❌ Bad Queries (HTML/DOM Specific):**
         - "Get the href attribute of the 'About Us' link."
-        # Instead, ask: "What is the destination URL of the 'About Us' link?" The agent can often infer this by navigating and checking the URL.
+        # Instead, ask: "What is the destination URL of the 'About Us' link?"
 
         Args:
-            query: The natural-language instruction for what to extract and, if necessary, a strategy for visual interpretation.
-            response_format: Optional. A Pydantic model to structure the output. **Highly recommended for reliable extraction.**
+            query: The natural-language instruction for what to extract and, if necessary, a
+                   strategy for visual interpretation.
+            response_format: Optional. A Pydantic model to structure the output.
+                             **Highly recommended for reliable extraction.**
         """
 
         def _safe_model_json_schema(model: type[BaseModel]):
