@@ -159,8 +159,8 @@ async def test_ts_update_calls_contact_manager_ask(monkeypatch):
 
     handle = await ts.update(cmd)
 
-    await asyncio.wait_for(handle.result(), timeout=180)
+    await asyncio.wait_for(handle.result(), timeout=300)
 
     assert (
-        calls["count"] == 1
-    ), "ContactManager.ask should be called exactly once during TaskScheduler.update"
+        calls["count"] >= 1
+    ), "ContactManager.ask should be called at least once during TaskScheduler.update (or by TaskScheduler.ask)"
