@@ -156,7 +156,7 @@ class CodeActActor(BaseActor):
         headless: bool = False,
         browser_mode: str = "magnitude",
         timeout: float = 1000,
-        mode: str = "browser",
+        agent_mode: str = "browser",
     ):
         """
         Initializes the CodeActActor.
@@ -165,7 +165,7 @@ class CodeActActor(BaseActor):
             session_connect_url=session_connect_url,
             headless=headless,
             browser_mode=browser_mode,
-            mode=mode,
+            agent_mode=agent_mode,
         )
         self._sandbox = CodeExecutionSandbox(action_provider=self._action_provider)
         self._timeout = timeout
