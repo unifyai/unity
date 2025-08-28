@@ -350,6 +350,7 @@ class PlanSanitizer(ast.NodeTransformer):
 
     def __init__(self):
         self._current_function_name = "global"
+        self._is_in_async_context = False
         self._defined_functions = set()
         self._loop_counter = 0
         self._if_counter = 0
@@ -402,9 +403,19 @@ class PlanSanitizer(ast.NodeTransformer):
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
         for sub_node in node.body:
-            if isinstance(sub_node, ast.AsyncFunctionDef):
+            if isinstance(sub_node, (ast.AsyncFunctionDef, ast.FunctionDef)):
                 self._defined_functions.add(sub_node.name)
         self.generic_visit(node)
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        """Handles regular (non-async) function definitions."""
+        parent_is_async = self._is_in_async_context
+        self._is_in_async_context = False
+
+        self.generic_visit(node)
+
+        self._is_in_async_context = parent_is_async
         return node
 
     def visit_AsyncFunctionDef(
@@ -448,10 +459,14 @@ class PlanSanitizer(ast.NodeTransformer):
         self._if_counter = 0
         self._try_counter = 0
 
+        parent_is_async = self._is_in_async_context
+        self._is_in_async_context = True
+
+        is_top_level_function = self._current_function_name == "global"
         parent = self._current_function_name
         self._current_function_name = node.name
 
-        if not any(
+        if is_top_level_function and not any(
             isinstance(d, ast.Name) and d.id == "verify" for d in node.decorator_list
         ):
             node.decorator_list.insert(0, ast.Name(id="verify", ctx=ast.Load()))
@@ -474,6 +489,7 @@ class PlanSanitizer(ast.NodeTransformer):
 
         self.generic_visit(node)
         self._current_function_name = parent
+        self._is_in_async_context = parent_is_async
         return node
 
     def _wrap_block_with_context(
@@ -522,13 +538,15 @@ class PlanSanitizer(ast.NodeTransformer):
         return node
 
     def _inject_loop_probes(self, node: typing.Union[ast.For, ast.While, ast.AsyncFor]):
-        probes = [
-            self._make_cp_node(
-                f"Enter {type(node).__name__} in {self._current_function_name}",
-            ),
-            self._make_int_node(self._current_function_name),
-        ]
-        node.body[0:0] = probes
+        if self._is_in_async_context:
+            probes = [
+                self._make_cp_node(
+                    f"Enter {type(node).__name__} in {self._current_function_name}",
+                ),
+                self._make_int_node(self._current_function_name),
+            ]
+            node.body[0:0] = probes
+
         self.generic_visit(node)
         return node
 
