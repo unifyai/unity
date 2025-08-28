@@ -160,12 +160,22 @@ class MagnitudeBrowserBackend(BrowserBackend):
         print(
             f"🔗 Using existing Magnitude service at {self.agent_base_url} ",
         )
+        try:
+            r = requests.post(
+                f"{self.agent_base_url}/start",
+                json={"headless": headless, "mode": mode},
+                timeout=30,
+            )
+            if r.status_code >= 400:
+                raise RuntimeError(
+                    f"Failed to start agent-service: {r.status_code} {r.text[:200]}",
+                )
+        except Exception as e:
+            raise RuntimeError(f"Could not reach agent-service /start endpoint: {e}")
         self._check_service_ready()
 
         if "localhost:3000" in self.agent_base_url:
             self._load_persistent_data()
-
-        self._request("POST", "/start", {"headless": headless, "mode": mode})
 
     def _check_service_ready(self):
         deadline = time.time() + 30
