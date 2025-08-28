@@ -867,6 +867,10 @@ class _ActionProviderProxy:
                 cached_data = self._plan.idempotency_cache[lookup_key]
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
+
+                if len(cached_interaction) < 4:
+                    cached_interaction = (*cached_interaction, [])
+
                 self._plan.action_log.append(
                     f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}",
                 )
@@ -897,7 +901,23 @@ class _ActionProviderProxy:
             )
             logger.debug(f"{diag_prefix} CACHE MISS for key: {cache_key}")
 
-            tool_output = await real_attr(*args, **kwargs)
+            backend = self._plan.actor.action_provider.browser.backend
+            is_magnitude = isinstance(backend, MagnitudeBrowserBackend)
+            magnitude_logs = []
+
+            if is_magnitude:
+                capture_q = asyncio.Queue()
+                backend._current_capture_queue = capture_q
+
+            try:
+                tool_output = await real_attr(*args, **kwargs)
+            finally:
+                if is_magnitude:
+                    await asyncio.sleep(0.25)
+
+                    backend._current_capture_queue = None
+                    while not capture_q.empty():
+                        magnitude_logs.append(capture_q.get_nowait())
 
             result_to_cache = tool_output
             return_value = tool_output
@@ -916,7 +936,12 @@ class _ActionProviderProxy:
                     handle_id,
                 )
 
-            interaction_to_cache = ("tool_call", call_repr, interaction_str)
+            interaction_to_cache = (
+                "tool_call",
+                call_repr,
+                interaction_str,
+                magnitude_logs,
+            )
             interactions_log.append(interaction_to_cache)
             self._plan.idempotency_cache[cache_key] = {
                 "result": result_to_cache,
@@ -2727,13 +2752,26 @@ class HierarchicalActor(BaseActor):
                 f"Awaiting it now to recover.",
             )
             result = await result
-        interactions_for_this_step = plan.interaction_stack[-1]
+
+        interactions_for_this_step = interactions
+        formatted_interactions = []
+        for interaction in interactions_for_this_step:
+            kind, act, obs, *logs = interaction
+            logs = logs[0] if logs else []
+
+            log_entry = f"- Action: `{act}` with result `{obs or 'N/A'}`"
+            if logs:
+                log_details = "\n".join([f"    {line}" for line in logs])
+                log_entry += f"\n  - Agent Logs:\n{log_details}"
+            formatted_interactions.append(log_entry)
+
+        interactions_str = "\n".join(formatted_interactions)
+
         logger.info(
             f"🕵️ VERIFICATION INPUT for '{fn.__name__}':\n"
             f"   - Purpose: {fn.__doc__ or 'N/A'}\n"
-            f"   - Interactions:\n{json.dumps(interactions_for_this_step, indent=4)}",
+            f"   - Interactions:\n{interactions_str}",
         )
-        interactions_str = json.dumps(interactions_for_this_step, indent=2)
         plan.action_log.append(
             f"VERIFICATION EVIDENCE for '{fn.__name__}':\n{interactions_str}",
         )

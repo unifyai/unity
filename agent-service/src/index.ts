@@ -201,6 +201,7 @@ const startBrowser = (headless: boolean) => {
   startBrowserAgent({
     url: "https://www.duckduckgo.com/",
     browser: getLaunchOptions(headless),
+    narrate: true,
   }).then(agent => {
     browserAgent = agent;
     console.log("✅ BrowserAgent started successfully.");
