@@ -4,6 +4,11 @@ import unify
 from .helpers import _handle_exceptions
 from typing import Optional
 
+
+# Set direct mode to True to avoid the overhead of the Unify API.
+unify.set_client_direct_mode(True)
+
+
 # ---------------------------------------------------------------------------
 # Lazy runtime initialisation
 # ---------------------------------------------------------------------------
