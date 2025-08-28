@@ -76,9 +76,8 @@ def sync_adjacent_links(
         except ValueError:
             # Neighbour was deleted after we fetched rows – skip
             continue
-        unify.update_logs(
+        scheduler._store.update(
             logs=log_id,
-            context=scheduler._ctx,
             entries={"schedule": n_sched},
             overwrite=True,
         )
@@ -134,9 +133,8 @@ def attach_with_links(
                 **((getattr(prev_log, "entries", {}) or {}).get("schedule") or {}),
             }
             prev_sched["next_task"] = task_id
-            unify.update_logs(
+            scheduler._store.update(
                 logs=prev_log.id if hasattr(prev_log, "id") else prev_log,
-                context=scheduler._ctx,
                 entries={"schedule": prev_sched},
                 overwrite=True,
             )
@@ -151,9 +149,8 @@ def attach_with_links(
             # If we are restoring head-level start_at back to current task, strip from next
             if head_start_at is not None:
                 next_sched.pop("start_at", None)
-            unify.update_logs(
+            scheduler._store.update(
                 logs=next_log.id if hasattr(next_log, "id") else next_log,
-                context=scheduler._ctx,
                 entries={"schedule": next_sched},
                 overwrite=True,
             )
