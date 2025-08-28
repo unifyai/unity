@@ -905,7 +905,7 @@ async def _async_tool_use_loop_inner(
     interrupt_llm_with_interjections: bool = True,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
-    log_steps: bool = True,
+    log_steps: Union[bool, str] = True,
     max_steps: Optional[int] = None,
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
@@ -1013,10 +1013,11 @@ async def _async_tool_use_loop_inner(
         :pyfunc:`_chat_context_repr` merges this with the current
         ``client.messages`` and forwards the result downward.
 
-    log_steps : ``bool``, default ``False``
-        When enabled, every significant action (LLM call, tool launch,
-        interjection, etc.) is logged to ``LOGGER`` for easier tracing and
-        debugging.
+    log_steps : ``bool | str``, default ``True``
+        Controls verbosity of step logging to ``LOGGER``:
+          • ``False`` – no logging
+          • ``True``  – log everything except system messages
+          • ``"full"`` – log everything including system messages
 
     Returns
     -------
@@ -1083,7 +1084,8 @@ async def _async_tool_use_loop_inner(
             LOGGER.info(
                 f"⬇️ [{log_label}] Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
             )
-        LOGGER.info(f"📋 [{log_label}] System Message: {client.system_message}\n")
+        if log_steps == "full":
+            LOGGER.info(f"📋 [{log_label}] System Message: {client.system_message}\n")
         LOGGER.info(f"🧑‍💻 [{log_label}] User Message: {message}\n")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
@@ -3937,7 +3939,7 @@ def start_async_tool_use_loop(
     interrupt_llm_with_interjections: bool = True,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
-    log_steps: bool = True,
+    log_steps: Union[bool, str] = True,
     max_steps: Optional[int] = 100,
     timeout: Optional[int] = 300,
     raise_on_limit: bool = False,
@@ -3953,6 +3955,14 @@ def start_async_tool_use_loop(
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
     a handle for live interaction.
+
+    Parameters
+    ----------
+    log_steps : bool | str, default True
+        Controls verbosity of step logging to `LOGGER`:
+          - False: no logging
+          - True: log everything except system messages
+          - "full": log everything including system messages
     """
     # Ensure a stable loop_id for consistent logging across handle and inner loop
     loop_id = loop_id if loop_id is not None else short_id()
