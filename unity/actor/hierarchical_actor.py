@@ -216,11 +216,14 @@ class StateVerificationDecision(BaseModel):
 class ImplementationDecision(BaseModel):
     """A structured decision for how to proceed with a function implementation."""
 
-    action: typing.Literal["implement_function", "replan_parent", "skip_function"] = (
-        Field(
-            ...,
-            description="The chosen action: 'implement_function' to provide new code, 'replan_parent' to escalate the failure, or 'skip_function' to bypass the current step.",
-        )
+    action: typing.Literal[
+        "implement_function",
+        "replan_parent",
+        "skip_function",
+        "request_clarification",
+    ] = Field(
+        ...,
+        description="The chosen action: 'implement_function' to provide new code, 'replan_parent' to escalate the failure, 'skip_function' to bypass the current step, or 'request_clarification' to ask the user for help.",
     )
     code: Optional[str] = Field(
         None,
@@ -229,6 +232,10 @@ class ImplementationDecision(BaseModel):
     reason: str = Field(
         ...,
         description="A concise justification for the chosen action. If replanning the parent, this reason will be passed up.",
+    )
+    clarification_question: Optional[str] = Field(
+        None,
+        description="A clear, specific question to ask the user. Required if action is 'request_clarification'.",
     )
 
 
@@ -1283,6 +1290,40 @@ class HierarchicalPlan(BaseActiveTask):
                 f"Decision: Skipping function '{function_name}'. Reason: {decision.reason}",
             )
             self.skipped_functions.add(function_name)
+
+        elif decision.action == "request_clarification":
+            self.action_log.append(
+                f"Decision: Requesting user clarification for '{function_name}'. Reason: {decision.reason}",
+            )
+
+            if not self.clarification_enabled:
+                self.action_log.append(
+                    "Clarification requested but no clarification channel available. Attempting to implement with best guess.",
+                )
+                existing_code = self.clean_function_source_map.get(function_name)
+                await self._handle_dynamic_implementation(
+                    function_name,
+                    replan_reason="Clarification channel not available. Please proceed with your best guess.",
+                    existing_code_for_modification=existing_code,
+                )
+            else:
+                question = (
+                    decision.clarification_question
+                    or "I need help understanding how to implement this function."
+                )
+                self.action_log.append(f"Asking user: {question}")
+
+                await self.clarification_up_q.put(question)
+                answer = await self.clarification_down_q.get()
+                self.action_log.append(f"User answered: {answer}")
+
+                existing_code = self.clean_function_source_map.get(function_name)
+                await self._handle_dynamic_implementation(
+                    function_name,
+                    clarification_question=question,
+                    clarification_answer=answer,
+                    existing_code_for_modification=existing_code,
+                )
 
         elif decision.action == "replan_parent":
             self.action_log.append(

@@ -1790,6 +1790,7 @@ def build_dynamic_implement_prompt(
         1.  **`implement_function`**: Write the Python code for `{function_name}`. Choose this if the function's goal is achievable from the current browser state. **Your code MUST be a single, self-contained `async def` function block. DO NOT include top-level imports or class definitions outside the function.** All necessary imports and helper classes MUST be defined *inside* the function.
         2.  **`skip_function`**: Bypass this function entirely. Choose this if you observe that the function's goal is **already completed** or is now **irrelevant**. For example, skip a "log in" function if you are already logged in.
         3.  **`replan_parent`**: Escalate the failure to the calling function. Choose this if the current function is **impossible to implement** because of a mistake made in a *previous* step. For example, if the goal is "apply filters" but the page has no filter controls, the error lies with the parent function that navigated to the wrong page or failed to get to the right state.
+        4.  **`request_clarification`**: Ask the user for help. Choose this if you cannot devise a reliable strategy to fix the function from the available information. For example, if required UI elements are missing or behaving unexpectedly, or if there are multiple possible approaches and you're unsure which the user prefers. **You must provide a clear, specific `clarification_question`.**
 
         {modification_instructions}
         {clarification_section}
