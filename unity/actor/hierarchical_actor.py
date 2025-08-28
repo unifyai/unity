@@ -22,7 +22,7 @@ import importlib.util
 import importlib.machinery
 import uuid
 from pathlib import Path
-
+import contextvars
 from unity.common.llm_helpers import (
     SteerableToolHandle,
 )
@@ -33,8 +33,15 @@ from unity.actor.base import (
 from unity.task_scheduler.base import BaseActiveTask
 from unity.actor.action_provider import ActionProvider
 import unity.actor.prompt_builders as prompt_builders
-from unity.common.llm_helpers import start_async_tool_use_loop
-from unity.controller.browser_backends import BrowserAgentError
+from unity.controller.browser_backends import BrowserAgentError, MagnitudeBrowserBackend
+
+
+current_run_id_var = contextvars.ContextVar("hp_run_id", default=0)
+current_interaction_sink_var = contextvars.ContextVar(
+    "hp_interaction_sink",
+    default=None,
+)
+current_invocation_id_var = contextvars.ContextVar("hp_invocation_id", default="none")
 
 logger = logging.getLogger(__name__)
 
@@ -792,7 +799,13 @@ class _ActionProviderProxy:
             return real_attr
 
         async def async_wrapper(*args, **kwargs):
-            interactions_log = self._plan.interaction_stack[-1]
+            if current_run_id_var.get() != self._plan.run_id:
+                logger.warning(
+                    f"Blocked stale tool call to '{name}' from a previous run.",
+                )
+                raise asyncio.CancelledError("Stale tool call blocked by run_id gate.")
+
+            interactions_log = current_interaction_sink_var.get()
             self._plan.runtime.action_counter += 1
             tool_name = f"action_provider.{name}"
             call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs)})"
@@ -1011,6 +1024,9 @@ class HierarchicalPlan(BaseActiveTask):
         self._is_complete = False
         self._execution_task: Optional[asyncio.Task] = None
         self._state = _HierarchicalPlanState.IDLE
+
+        self.run_id = 0
+        self.invocation_counter = 0
         self.interruption_request: Optional[Dict[str, str]] = None
         self._interject_lock = asyncio.Lock()
         self._completion_event = asyncio.Event()
@@ -1527,17 +1543,34 @@ class HierarchicalPlan(BaseActiveTask):
                 try:
                     await self._execution_task
                 except asyncio.CancelledError:
-                    pass
+                    self.action_log.append("Previous run task successfully cancelled.")
+                    logger.debug("Previous run task successfully cancelled.")
+                except Exception as e:
+                    self.action_log.append(f"Exception during task cancellation: {e}")
+                    logger.debug(f"Exception during task cancellation: {e}")
+
+            old_run_id = self.run_id
+            self.run_id += 1
+            self.action_log.append(
+                f"Interjection applied. Transitioning from run_id={old_run_id} to run_id={self.run_id}",
+            )
+            if DIAGNOSTIC_MODE:
+                logger.info(
+                    f"🔄 RUN TRANSITION: run_id={old_run_id} -> run_id={self.run_id} (modify_task interjection)",
+                )
 
             self.interaction_stack.clear()
-            self.interaction_stack.append([])
             self.call_stack.clear()
+
+            self.replay_keys = list(self.execution_key_log)
             self.execution_key_log.clear()
+
+            self.interaction_stack.append([])
 
             self._execution_task = asyncio.create_task(self._initialize_and_run())
             self.runtime.resume()
 
-            return f"Plan modification for '{target_function}' applied. Resuming execution."
+            return f"Plan modification for '{target_function}' applied. Resuming execution from a clean state."
 
         elif decision.action == "replace_task":
             if self._execution_task and not self._execution_task.done():
@@ -1588,11 +1621,35 @@ class HierarchicalPlan(BaseActiveTask):
             self.actor._load_plan_module(self)
 
             if self._execution_task and not self._execution_task.done():
+                self.action_log.append(
+                    f"Cancelling previous run task (ID: {self.run_id}) for refactor.",
+                )
                 self._execution_task.cancel()
                 try:
                     await self._execution_task
                 except asyncio.CancelledError:
-                    pass
+                    self.action_log.append("Previous run task successfully cancelled.")
+                    logger.debug("Previous run task successfully cancelled.")
+                except Exception as e:
+                    self.action_log.append(f"Exception during task cancellation: {e}")
+                    logger.debug(f"Exception during task cancellation: {e}")
+
+            old_run_id = self.run_id
+            self.run_id += 1
+            self.action_log.append(
+                f"Plan refactored. Transitioning from run_id={old_run_id} to run_id={self.run_id}",
+            )
+            if DIAGNOSTIC_MODE:
+                logger.info(
+                    f"🔄 RUN TRANSITION: run_id={old_run_id} -> run_id={self.run_id} (refactor_and_generalize interjection)",
+                )
+
+            self.interaction_stack.clear()
+            self.call_stack.clear()
+            self.replay_keys = list(self.execution_key_log)
+            self.execution_key_log.clear()
+            self.interaction_stack.append([])
+
             self._execution_task = asyncio.create_task(self._initialize_and_run())
             return "Plan successfully refactored. Resuming execution with the new modular plan."
 
@@ -1625,8 +1682,7 @@ class HierarchicalPlan(BaseActiveTask):
 
                 self.action_log.append("SANDBOX: Opening new tab for exploration")
                 await self.actor.action_provider.browser_act(
-                    f"Open a new tab navigating to the url {original_url}",
-                    expectation=f"A new tab should be open and active and the url should be {original_url}",
+                    f"Open a new tab navigating to the url {original_url} and ensure the new tab is active",
                 )
 
                 self.action_log.append(
@@ -2349,7 +2405,12 @@ class HierarchicalActor(BaseActor):
                     f"-> Entering '{func_name}' with args: ({all_args})",
                 )
                 plan.call_stack.append(func_name)
-                plan.interaction_stack.append([])
+
+                local_interactions = []
+
+                run_id_token = current_run_id_var.set(plan.run_id)
+                sink_token = current_interaction_sink_var.set(local_interactions)
+                invoc_token = current_invocation_id_var.set(invocation_id)
 
                 entry_screenshot = None
                 if "action_provider.browser" in plan.plan_source_code:
@@ -2372,6 +2433,8 @@ class HierarchicalActor(BaseActor):
                     last_error_reason = ""
                     for i in range(plan.MAX_LOCAL_RETRIES):
                         try:
+                            captured_run_id = current_run_id_var.get()
+
                             current_fn_for_execution = plan.execution_namespace[
                                 func_name
                             ]
@@ -2383,25 +2446,43 @@ class HierarchicalActor(BaseActor):
                                 func_source,
                                 args,
                                 kwargs,
-                                plan.interaction_stack[-1],
+                                local_interactions,
                                 entry_screenshot=entry_screenshot,
                             )
+
+                            if captured_run_id != plan.run_id:
+                                logger.warning(
+                                    f"Discarding stale verification for '{func_name}' from a previous run (ID: {captured_run_id}).",
+                                )
+                                plan.action_log.append(
+                                    f"Stale verification for '{func_name}' discarded.",
+                                )
+                                raise _ControlledInterruptionException(
+                                    "Stale verification.",
+                                )
+
+                            parent_sink = (
+                                plan.interaction_stack[-1]
+                                if plan.interaction_stack
+                                else None
+                            )
+                            if parent_sink is not None:
+                                parent_sink.extend(local_interactions)
+
                             return result
 
                         except _ControlledInterruptionException:
                             plan.action_log.append(
                                 f"Retrying '{func_name}' after user interjection.",
                             )
-                            if plan.interaction_stack:
-                                plan.interaction_stack[-1].clear()
+                            local_interactions.clear()
                             continue
 
                         except _ForcedRetryException:
                             plan.action_log.append(
                                 f"Retrying '{func_name}' after successful reimplementation.",
                             )
-                            if plan.interaction_stack:
-                                plan.interaction_stack[-1].clear()
+                            local_interactions.clear()
                             continue
 
                         except NotImplementedError as e:
@@ -2413,8 +2494,7 @@ class HierarchicalActor(BaseActor):
                                 func_name,
                                 replan_reason=f"Implement from stub: {last_error_reason}",
                             )
-                            if plan.interaction_stack:
-                                plan.interaction_stack[-1].clear()
+                            local_interactions.clear()
                             continue
 
                         except ReplanFromParentException as e:
@@ -2432,8 +2512,7 @@ class HierarchicalActor(BaseActor):
                                 failed_interactions=e.failed_interactions,
                                 existing_code_for_modification=existing_code,
                             )
-                            if plan.interaction_stack:
-                                plan.interaction_stack[-1].clear()
+                            local_interactions.clear()
                             continue
 
                         except FatalVerificationError:
@@ -2453,8 +2532,7 @@ class HierarchicalActor(BaseActor):
                                 replan_reason=f"Function crashed. Fix bug:\n{last_error_reason}",
                                 existing_code_for_modification=existing_code,
                             )
-                            if plan.interaction_stack:
-                                plan.interaction_stack[-1].clear()
+                            local_interactions.clear()
                             continue
 
                     raise ReplanFromParentException(
@@ -2463,17 +2541,14 @@ class HierarchicalActor(BaseActor):
                     )
 
                 finally:
+                    current_run_id_var.reset(run_id_token)
+                    current_interaction_sink_var.reset(sink_token)
+                    current_invocation_id_var.reset(invoc_token)
+
                     if plan.call_stack and plan.call_stack[-1] == func_name:
                         plan.call_stack.pop()
 
-                    if len(plan.interaction_stack) > 1:
-                        child_interactions = plan.interaction_stack.pop()
-                        parent_interactions = plan.interaction_stack[-1]
-                        parent_interactions.extend(child_interactions)
-                    elif plan.interaction_stack:
-                        plan.interaction_stack.pop()
-
-                    plan.action_log.append(f"<- Exiting '{func_name}'")
+                    plan.action_log.append(f"{diag_prefix} <- Exiting '{func_name}'")
                     plan.runtime.action_counter = parent_action_counter
 
             return wrapper
