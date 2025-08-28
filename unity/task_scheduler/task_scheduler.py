@@ -1462,15 +1462,17 @@ class TaskScheduler(BaseTaskScheduler):
                     else None
                 )
         else:
-            final_prev = (
-                original_prev
-                if is_viable(original_prev)
-                else (
-                    current_tail_id
-                    if (current_tail_id is not None and current_tail_id != task_id)
-                    else None
-                )
-            )
+            # Prefer restoring the original predecessor when still viable.
+            if is_viable(original_prev):
+                final_prev = original_prev
+            else:
+                # When the original predecessor is no longer viable (e.g. the
+                # previous head completed), reinstate this task as the new
+                # head.  The head-level start_at will be restored by the caller
+                # using the plan's captured head_start_at/original_start_at.
+                final_prev = None
+
+            # Preserve the original successor when possible and not creating a loop.
             if is_viable(original_next) and original_next != final_prev:
                 final_next = original_next
             else:
@@ -2316,16 +2318,10 @@ class TaskScheduler(BaseTaskScheduler):
                 "Task currently has a trigger; remove the trigger before restoring its schedule/queue position.",
             )
 
-        # Idempotence: if there is already a schedule present, treat as a no-op
-        if cur_row.get("schedule") is not None:
-            try:
-                self._reintegration_plans.pop((tid, instance_id), None)
-            except Exception:
-                pass
-            return {
-                "outcome": "no-op: task already has a schedule",
-                "details": {"task_id": tid},
-            }
+        # Note: do not early-return simply because a schedule exists. In chain
+        # mode a task may have a minimal schedule (e.g. promoted to head without
+        # a start_at). We still need to restore the original head-level
+        # start_at and correct linkage when requested.
 
         # Determine viable neighbours (drift-aware)
         def _is_viable(neighbour_tid: Optional[int]) -> bool:
