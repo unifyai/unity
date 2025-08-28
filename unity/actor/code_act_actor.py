@@ -21,7 +21,7 @@ def build_code_act_system_prompt(
 
     execute_tool = {
         "execute_python_code": {
-            "signature": "async def execute_python_code(code: str) -> Any",
+            "signature": "async def execute_python_code(thought: str, code: str) -> Any",
             "docstring": (
                 "Executes a block of Python code in a stateful sandbox and returns the result.\n"
                 "You have access to an `action_provider` object to control a web browser and send communications.\n"
@@ -41,8 +41,6 @@ You are an expert agent that solves tasks by writing and executing Python code. 
 ```
 
 {rules_and_examples}
-
-Begin your response now.
 """
 
 
@@ -173,7 +171,6 @@ class CodeActActor(BaseActor):
         self._timeout = timeout
         self._browser_tools = self._get_browser_tools()
         self._tools = self._build_tools()
-        self.system_prompt = build_code_act_system_prompt(self._action_provider)
 
         self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None
         try:
@@ -192,12 +189,17 @@ class CodeActActor(BaseActor):
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         """Builds the dictionary of tools available to the LLM."""
 
-        async def execute_python_code(code: str) -> Any:
+        async def execute_python_code(thought: str, code: Optional[str] = None) -> Any:
             """
-            Executes a block of Python code in a stateful sandbox and returns the result.
-            You have access to an `action_provider` object to control a web browser.
-            All variables are preserved between calls.
+            Executes a block of Python code in a stateful sandbox after reasoning about the step.
+
+            Args:
+                thought: A detailed, step-by-step reasoning of what you are about to do and why.
+                code: The Python code to execute. Can be None if only thinking is required.
             """
+            if code is None or code.strip() == "":
+                return "Acknowledged thought. No code to execute."
+
             execution_result = await self._sandbox.execute(code)
 
             output_parts = []
@@ -260,7 +262,9 @@ class CodeActActor(BaseActor):
             "This is an interactive session. Acknowledge that you are ready and "
             "wait for the user to provide instructions via interjection."
         )
-
+        system_prompt = build_code_act_system_prompt(
+            self._action_provider,
+        )
         plan = ToolLoopPlan(
             task_description=description or initial_prompt,
             tools=self._tools,
@@ -270,7 +274,7 @@ class CodeActActor(BaseActor):
             main_event_loop=self._main_event_loop,
             timeout=self._timeout,
             persist=is_interactive_session,
-            custom_system_prompt=self.system_prompt,
+            custom_system_prompt=system_prompt,
             tool_policy=None,
             action_provider=self._action_provider,
         )
