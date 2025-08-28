@@ -136,18 +136,12 @@ class ActiveTask(BaseActiveTask):
                         self._mirror_status("cancelled")
                     else:
                         # Defer: restore prior queue/schedule position.
-                        try:
-                            self._scheduler._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
-                                task_id=self._task_id,
-                                _allow_active=True,
-                            )
-                        except Exception:
-                            # Best-effort heuristic fallback when no plan exists.
-                            self._scheduler._maybe_reinstate_after_stop(  # type: ignore[attr-defined]
-                                task_id=self._task_id,
-                                reason=reason,
-                            )
+                        self._scheduler._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
+                            task_id=self._task_id,
+                            _allow_active=True,
+                        )
             except Exception:
+                # Best-effort: failure to reinstate must not break stop semantics
                 pass
 
             self._clear_active_pointer()
@@ -178,17 +172,10 @@ class ActiveTask(BaseActiveTask):
             try:
                 if self._scheduler and self._task_id is not None:
                     # Prefer strict reinstatement using the stored plan when present.
-                    try:
-                        self._scheduler._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
-                            task_id=self._task_id,
-                            _allow_active=True,
-                        )
-                    except Exception:
-                        # If no plan exists, fall back to heuristic best-effort reinsertion.
-                        self._scheduler._maybe_reinstate_after_stop(  # type: ignore[attr-defined]
-                            task_id=self._task_id,
-                            reason=reason,
-                        )
+                    self._scheduler._reinstate_task_to_previous_queue(  # type: ignore[attr-defined]
+                        task_id=self._task_id,
+                        _allow_active=True,
+                    )
             except Exception:
                 # Best-effort – failure to reinstate must not break stop semantics
                 pass

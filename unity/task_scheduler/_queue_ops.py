@@ -112,8 +112,27 @@ def detach_from_queue_for_activation(
 ) -> None:
     """Detach a task from the runnable queue ahead of activation.
 
-    This function contains the exact logic previously embedded in
-    TaskScheduler._detach_from_queue_for_activation.
+    Behavioural contract (from tests):
+    - General: Always record a ``ReintegrationPlan`` capturing ``prev_task``,
+      ``next_task``, whether the task was the head (``was_head``), the task's
+      original ``start_at`` (if any), the original status, and the queue head's
+      ``start_at`` at the time of detachment (``head_start_at``). This plan is
+      the only source used later by reinstatement.
+    - Isolated activation (default):
+      * If detaching the head: promote the next task to head, copy the head-level
+        ``start_at`` to it, and set its status to ``scheduled``. The detached task
+        loses its schedule.
+      * If detaching a middle task: unlink it from neighbours (``prev.next = next``
+        and ``next.prev = prev``) and ensure the successor does not carry a
+        ``start_at`` timestamp (only heads may carry it). The detached task loses
+        its schedule.
+    - Chained activation (opt-in via env in tests): keep the chain behind the
+      activated task attached to it. When promoting the activated task to head,
+      place any head-level ``start_at`` on it and remove ``start_at`` from the
+      immediate successor.
+
+    These semantics are intentionally minimal and exist solely to make
+    reinstatement deterministic and easy to reason about.
     """
 
     candidate_rows = scheduler._filter_tasks(
@@ -138,7 +157,6 @@ def detach_from_queue_for_activation(
         return rows[0] if rows else None
 
     head_start_at: Optional[str] = None
-    queue_id: Optional[int] = None
     if prev_tid is not None:
         # Walk up to the head for the current chain
         cur = _get_row(task_id)
@@ -148,9 +166,6 @@ def detach_from_queue_for_activation(
             _sched = cur.get("schedule") or {}
             if isinstance(_sched, dict):
                 head_start_at = _sched.get("start_at")
-                queue_id = (
-                    _sched.get("queue_id") if isinstance(_sched, dict) else None
-                ) or None
 
     def _get_log_obj(tid: int) -> Optional[unify.Log]:
         try:
@@ -169,7 +184,6 @@ def detach_from_queue_for_activation(
     plan = ReintegrationPlan(
         task_id=task_id,
         instance_id=task_row.get("instance_id"),
-        queue_id=queue_id,
         prev_task=prev_tid,
         next_task=next_tid,
         start_at=start_at,
@@ -177,22 +191,16 @@ def detach_from_queue_for_activation(
         original_status=task_row.get("status"),
         head_start_at=head_start_at,
     )
-    # Prefer per-task registry; keep legacy attribute as best-effort fallback
-    try:
-        key = (
-            task_id,
-            (
-                task_row.get("instance_id")
-                if task_row.get("instance_id") is not None
-                else -1
-            ),
-        )
-        scheduler._reintegration_plans[key] = plan  # type: ignore[attr-defined]
-    except Exception:
-        try:
-            scheduler._reintegration_plan = plan  # type: ignore[attr-defined]
-        except Exception:
-            pass
+    # Store per-instance plan (single source of truth)
+    key = (
+        task_id,
+        (
+            task_row.get("instance_id")
+            if task_row.get("instance_id") is not None
+            else -1
+        ),
+    )
+    scheduler._reintegration_plans[key] = plan  # type: ignore[attr-defined]
 
     # Disconnect previous neighbour's next pointer only for CHAIN execution.
     # For ISOLATE, preserve prev.next so CAS-protected rewiring below can atomically
