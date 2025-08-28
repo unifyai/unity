@@ -314,8 +314,7 @@ app.post('/stop', isAgentReady, async (_req: Request, res: Response) => {
     browserAgent = null;
     agentMode = null;
     res.json({ status: 'stopped' });
-    console.log("BrowserAgent stopped. Server will now exit.");
-    setTimeout(() => process.exit(0), 100);
+    console.log("BrowserAgent stopped.");
   } catch (err) {
     handleAgentError(err, res, 'stop_failed');
   }
