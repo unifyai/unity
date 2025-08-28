@@ -1080,11 +1080,11 @@ async def _async_tool_use_loop_inner(
         _reset_timeout_timer()
 
     if log_steps:
-        if parent_chat_context:
-            LOGGER.info(
-                f"⬇️ [{log_label}] Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
-            )
         if log_steps == "full":
+            if parent_chat_context:
+                LOGGER.info(
+                    f"⬇️ [{log_label}] Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
+                )
             LOGGER.info(f"📋 [{log_label}] System Message: {client.system_message}\n")
         LOGGER.info(f"🧑‍💻 [{log_label}] User Message: {message}\n")
 
