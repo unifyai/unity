@@ -13,23 +13,32 @@ apt-get install -y \
   gnupg
 
 mkdir -p /opt/novnc && \
-    wget https://github.com/novnc/noVNC/archive/refs/heads/master.zip && \
-    unzip master.zip && \
-    mv noVNC-master/* /opt/novnc && \
-    rm -rf master.zip noVNC-master
+  wget https://github.com/novnc/noVNC/archive/refs/heads/master.zip && \
+  unzip master.zip && \
+  mv noVNC-master/* /opt/novnc && \
+  rm -rf master.zip noVNC-master
 
 # Install Node.js 22.x (NodeSource) and project dependencies
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y nodejs
 
-# Install Node deps for agent-service
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-cd "$REPO_ROOT/agent-service"
+# Install global TypeScript runner and Node deps for agent-service
+cd agent-service
 
 # Prefer clean, lockfile-resolved install if lockfile exists
+npm install -g ts-node typescript
 if [ -f package-lock.json ]; then
   npm ci
 else
   npm install
 fi
+
+# Add cloudflare gpg key
+sudo mkdir -p --mode=0755 /usr/share/keyrings
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+
+# Add this repo to your apt repositories
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
+
+# install cloudflared
+sudo apt-get update && sudo apt-get install cloudflared

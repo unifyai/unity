@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Use the existing desktop display (default to :99 if not set)
-DISPLAY="${DISPLAY:-:99}"
+# Use the existing desktop display (default to :0 if not set)
+DISPLAY="${DISPLAY:-:0}"
 
 # Export UNIFY_KEY from first argument if provided, otherwise require env var
 if [[ ${1:-} != "" ]]; then
@@ -28,10 +28,37 @@ fi
 done
 fi
 
+# Start x11vnc (background)
 x11vnc -display "$DISPLAY" -nopw -forever -shared -bg -rfbport 5900 -passwd "$UNIFY_KEY" \
        -rfbportv6 0 -noxdamage -nowf -nocursorshape -cursor arrow -nodpms
+# Capture the newest x11vnc PID
+X11VNC_PID="$(pgrep -n x11vnc || true)"
 
 # Start the noVNC web proxy to expose VNC on http://localhost:6080/vnc.html
 websockify --web=/opt/novnc 6080 localhost:5900 &
+WEBSOCKIFY_PID=$!
 
-npx ts-node agent-service/src/index.ts
+# Graceful shutdown
+cleanup() {
+  echo "[remote] Shutting down..."
+  if [[ -n "${TS_PID:-}" ]]; then
+    kill -TERM "$TS_PID" 2>/dev/null || true
+    wait "$TS_PID" 2>/dev/null || true
+  fi
+  if [[ -n "${WEBSOCKIFY_PID:-}" ]]; then
+    kill -TERM "$WEBSOCKIFY_PID" 2>/dev/null || true
+    wait "$WEBSOCKIFY_PID" 2>/dev/null || true
+  fi
+  if [[ -n "${X11VNC_PID:-}" ]]; then
+    kill -TERM "$X11VNC_PID" 2>/dev/null || true
+    wait "$X11VNC_PID" 2>/dev/null || true
+  fi
+}
+
+trap cleanup SIGTERM SIGINT
+
+npx ts-node agent-service/src/index.ts &
+TS_PID=$!
+
+wait "$TS_PID"
+cleanup
