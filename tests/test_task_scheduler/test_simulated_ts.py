@@ -176,7 +176,7 @@ async def test_ts_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get())
+    question = await asyncio.wait_for(up_q.get(), timeout=300)
     assert "clarify" in question.lower()
 
     await down_q.put("Yes – prioritise according to deadlines.")
@@ -250,7 +250,7 @@ async def test_pause_and_resume_simulated_ts(monkeypatch):
     tools_running = handle.valid_tools
     assert "pause" in tools_running and "resume" not in tools_running
 
-    answer = await asyncio.wait_for(res_task)
+    answer = await asyncio.wait_for(res_task, timeout=300)
     assert isinstance(answer, str) and answer.strip()
 
     assert counts == {
