@@ -142,6 +142,8 @@ Anti‑patterns to avoid
 ---------------------
 • Avoid the default search behaviour of concatenating every column into one long string and comparing a single embedding of the whole question. Instead, pass multiple, focused reference texts keyed by their specific columns. The ranking minimizes the sum of cosine distances and is more accurate and robust.
 • Avoid filtering for text-heavy columns, sub-string matching is *very* brittle
+• Avoid making another search/filter call to reconfirm information that a previous step already established clearly (e.g., the same contact_id and fields); proceed with the established result unless new ambiguity arises.
+• Do not automatically chain a filter immediately after a successful semantic search unless you need an exact, structured constraint that the search result does not provide.
     """
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
@@ -153,6 +155,7 @@ Anti‑patterns to avoid
                 usage_examples,
                 "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
                 "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+                "• Avoid repeating `ask` within the same reasoning chain when earlier calls already surfaced the required contact(s) and no new ambiguity has been introduced.",
             ],
         )
 
