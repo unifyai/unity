@@ -245,6 +245,7 @@ const startDesktop = () => {
     url: `http://localhost:6080/vnc.html?resize=scale&autoreconnect=1&autoconnect=1&password=${process.env.UNIFY_KEY}`,
     browser: getLaunchOptions(true),
     prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the browser and apps within the virtual desktop. There may be a terminal (xterm) app launched in the desktop for use.",
+    narrate: true,
   }).then(agent => {
     browserAgent = agent;
     console.log("✅ BrowserAgent started successfully.");

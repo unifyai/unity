@@ -12,13 +12,13 @@
 
 3. Tunnel the service to HTTPS.
 
-1. For testing
+a. For testing
 
 - Start the tunnel. A URL for testing will be provided.
 
 `bash tunnel.sh`
 
-2. For production - WIP
+b. For production - WIP
 
 - Login to Cloudflare. This is a one time step.
 
