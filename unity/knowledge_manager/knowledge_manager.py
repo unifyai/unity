@@ -32,6 +32,7 @@ from ..common.semantic_search import (
     fetch_top_k_by_references,
     backfill_rows,
 )
+from ..common.context_store import TableStore
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -145,6 +146,18 @@ class KnowledgeManager(BaseKnowledgeManager):
             if include_contacts
             else None
         )
+
+        # Optional: idempotently ensure Contacts exists when linkage enabled
+        if self._contacts_ctx is not None:
+            try:
+                TableStore(
+                    self._contacts_ctx,
+                    unique_keys={"contact_id": "int"},
+                    auto_counting={"contact_id": None},
+                ).ensure_context()
+            except Exception:
+                # Best-effort; KnowledgeManager can still function without immediate Contacts access
+                pass
 
     # Helpers #
     # --------#

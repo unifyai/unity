@@ -30,6 +30,7 @@ from ..events.manager_event_logging import (
 from .prompt_builders import build_ask_prompt
 from .base import BaseTranscriptManager
 from ..helpers import _handle_exceptions
+from ..common.context_store import TableStore
 from ..common.semantic_search import (
     is_plain_identifier,
     ensure_vector_for_source,
@@ -117,19 +118,15 @@ class TranscriptManager(BaseTranscriptManager):
             self._transcripts_ctx = f"{read_ctx}/Transcripts"
         else:
             self._transcripts_ctx = "Transcripts"
-        ctxs = unify.get_contexts()
-        if self._transcripts_ctx not in ctxs:
-            unify.create_context(
-                self._transcripts_ctx,
-                unique_keys={"message_id": "int"},
-                auto_counting={"message_id": None, "exchange_id": None},
-                description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
-            )
-            fields = model_to_fields(Message)
-            unify.create_fields(
-                fields,
-                context=self._transcripts_ctx,
-            )
+        # Ensure transcripts context and fields deterministically
+        self._store = TableStore(
+            self._transcripts_ctx,
+            unique_keys={"message_id": "int"},
+            auto_counting={"message_id": None, "exchange_id": None},
+            description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
+            fields=model_to_fields(Message),
+        )
+        self._store.ensure_context()
 
         # Ensure a private `_metadata` column exists (dict, mutable) irrespective of context creation path
         try:
@@ -1206,13 +1203,7 @@ class TranscriptManager(BaseTranscriptManager):
         Dict[str, str]
             Dictionary mapping column names to their types.
         """
-        proj = unify.active_project()
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={self._transcripts_ctx}"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = requests.request("GET", url, headers=headers)
-        _handle_exceptions(response)
-        ret = response.json()
-        return {k: v["data_type"] for k, v in ret.items()}
+        return TableStore(self._transcripts_ctx).get_columns()
 
     def _list_columns(
         self,
