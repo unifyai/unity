@@ -140,6 +140,9 @@ def build_ask_prompt(
  • Avoid the default search behaviour of concatenating every column into one long string and comparing a single embedding of the whole question. Instead, pass multiple, focused reference texts keyed by their specific columns. The ranking minimises the sum of cosine distances and is more robust.
  • Avoid filtering for text‑heavy columns; substring matching is brittle. Prefer `{search_messages_fname}` for content‑based queries.
  • Do not attempt to reference contact fields (e.g., `bio`, `occupation`) inside `{filter_messages_fname}`; those fields live on the Contacts table. Use `{search_messages_fname}` to leverage sender contact fields.
+ • Avoid re‑querying the same tables or managers merely to reconfirm facts that a prior tool call has already established with clear, specific evidence; reuse earlier results and proceed.
+ • Do not automatically chain a `{filter_messages_fname}` call immediately after a successful `{search_messages_fname}` result unless you genuinely need an exact, structured constraint that the semantic search did not provide.
+ • If you call ContactManager tools during transcript analysis, avoid repeating those calls in the same reasoning chain when earlier results already identified the necessary contacts and no new ambiguity has arisen.
      """
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
