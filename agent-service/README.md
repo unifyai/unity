@@ -13,6 +13,8 @@ This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, a
     ```
     # agent-service/.env
     ANTHROPIC_API_KEY="sk-ant-..."
+    UNIFY_BASE_URL="..."
+    UNIFY_KEY="..."
     ```
 
 ## Running the Service
