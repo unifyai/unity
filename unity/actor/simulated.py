@@ -128,7 +128,7 @@ class SimulatedActorHandle:
             daemon=True,
         )
         self._action_thread.start()
-        # Start a periodic monitor that emits remaining duration every 5 seconds
+        # Start a periodic monitor that emits remaining duration every 20 seconds
         if self._duration is not None:
 
             def _monitor():
@@ -139,8 +139,8 @@ class SimulatedActorHandle:
                             self._emit_status(
                                 f"⏳ SimulatedActor Duration remaining: {max(0.0, rem):.1f}s",
                             )
-                        # Sleep in small chunks to be responsive to done-event
-                        for _ in range(50):
+                        # Sleep in small chunks to be responsive to done-event (~20s total)
+                        for _ in range(200):
                             if self._done_event.is_set():
                                 break
                             time.sleep(0.1)
