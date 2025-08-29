@@ -113,6 +113,9 @@ def build_ask_prompt(
             "---------------------",
             "• Avoid concatenating entire rows into one long string and embedding a single catch‑all reference.",
             f"• Avoid substring filtering for text‑heavy columns; prefer `{search_tasks_fname}` for meaning.",
+            "• Avoid re‑querying the same tables or managers just to reconfirm what a prior tool call has already established with clear, specific evidence; reuse the earlier result and proceed.",
+            "• Do not immediately chain a filter call after a successful semantic search unless you genuinely need an exact, structured constraint that the search did not capture.",
+            f"• Avoid calling `{contact_ask_fname}` repeatedly in the same reasoning chain when earlier calls have already identified the relevant contacts and no new ambiguity or information has been introduced.",
         ],
     )
 
@@ -282,11 +285,13 @@ def build_update_prompt(
             "Contact context",
             "---------------",
             "• When a trigger references people (by contact ids), call ContactManager.ask to resolve/confirm the ids and the intent before writing.",
+            "• Avoid repeated calls to ContactManager.ask in the same update session if a prior call already yielded the required ids and no new ambiguity was introduced.",
             "",
             "Anti‑patterns to avoid",
             "---------------------",
             '• Repeating the exact same update tool with identical arguments to "make sure" – instead, call ask to verify.',
             "• Using substring filters to locate tasks by description/name – prefer semantic ask/search first.",
+            "• Chaining a filter right after a conclusive semantic search when the filter does not add new, structured constraints.",
         ],
     )
 
