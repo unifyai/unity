@@ -99,7 +99,7 @@ _SIM_PARSER_SYS = (
 def _parse_simulation_config(text: str) -> _SimConfig:
     try:
         judge = unify.Unify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
             response_format=pydantic_response_format(_SimConfig),
         )
         parsed = _SimConfig.model_validate_json(
@@ -288,9 +288,9 @@ async def _dispatch_with_context(
     """
 
     # LLM-only routing
-    judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
+    judge = unify.Unify("gpt-5@openai", response_format=_Intent)
     judge = unify.Unify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         response_format=pydantic_response_format(_Intent),
     )
     intent = _Intent.model_validate_json(

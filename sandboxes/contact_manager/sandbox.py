@@ -144,7 +144,7 @@ async def _dispatch_with_context(
     methods.  This indirection keeps the diff minimal.
     """
 
-    judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
+    judge = unify.Unify("gpt-5@openai", response_format=_Intent)
     intent = _Intent.model_validate_json(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
