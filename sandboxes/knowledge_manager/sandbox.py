@@ -158,7 +158,7 @@ async def _dispatch_with_context(
         return "refactor", handle
 
     # ───── everything else – ask an LLM judge ────────────────────────
-    judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
+    judge = unify.Unify("gpt-5@openai", response_format=_Intent)
     intent = _Intent.model_validate_json(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )

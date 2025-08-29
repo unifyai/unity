@@ -1302,7 +1302,7 @@ async def _route_freeform_and_apply(
     import unify as _unify
 
     judge = _unify.Unify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         response_format=pydantic_response_format(_SteeringIntent),
     )
 
