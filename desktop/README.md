@@ -30,4 +30,5 @@ startup.sh records PIDs of desktop, device and agent processes and on SIGTERM/SI
 - Control: You can now run the Actor (e.g., `HierarchicalActor`) locally with `mode="desktop"`
 
 ### Troubleshooting
-- Make sure `ANTHROPIC_API_KEY` is in your `.env` file when starting the Docker container.
+- Make sure `ANTHROPIC_API_KEY`, `UNIFY_BASE_URL` and `UNIFY_KEY` are in your `.env` file when starting the Docker container.
+- When running with Actor, make sure `UNIFY_KEY` and at least `ASSISTANT_EMAIL=unity.agent@unity.ai` are present in your unity `.env` for the magnitude server auth to work.
