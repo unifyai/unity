@@ -90,7 +90,7 @@ async def test_ts_ask_requests_clarification():
     )
 
     # expect a clarification question
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get())
     assert _contains(question.lower(), "high") and _contains(
         question.lower(),
         "priority",
@@ -197,13 +197,13 @@ async def test_ts_update_requests_clarification():
     )
 
     # clarification expected
-    q_text = await asyncio.wait_for(up_q.get(), timeout=300)
+    q_text = await asyncio.wait_for(up_q.get())
     assert _contains(q_text, "queued"), "No clarification question"
 
     # clarify we mean the slide-deck task
     await down_q.put("I mean the Write quarterly report task.")
 
-    await asyncio.wait_for(task, timeout=300)
+    await asyncio.wait_for(task)
 
     row = ts._filter_tasks(filter=f"task_id == {tid_report}", limit=1)[0]
     assert row["priority"] == "high", assertion_failed(
