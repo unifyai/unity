@@ -41,10 +41,10 @@ Check out various logs in the "Assistants" project in the [Unity Interface](http
 
 `npx ts-node agent-service/src/index.ts`
 
-2. Use the actor in browser mode, i.e., `mode="browser"`. This is the default mode.
+2. Use the actor in browser mode, i.e., `agent_mode="browser"`. This is the default mode.
 
 **Desktop Mode**
 
 1. Follow the guide in `desktop/README.md` for starting the virtual desktop and Magnitude server through Docker.
 
-2. 2. Use the actor in desktop mode, i.e., `mode="desktop"`.
+2. Use the actor in desktop mode, i.e., `agent_mode="desktop"`.

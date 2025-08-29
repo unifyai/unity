@@ -5,11 +5,11 @@ set -euo pipefail
 if ! command -v cloudflared >/dev/null 2>&1; then
   echo "[tunnel] cloudflared not found. Installing..."
   # Add cloudflare GPG key and apt source
-  sudo mkdir -p --mode=0755 /usr/share/keyrings
-  curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-  echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
-  sudo apt-get update
-  sudo apt-get install -y cloudflared
+  mkdir -p --mode=0755 /usr/share/keyrings
+  curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+  echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
+  apt-get update
+  apt-get install -y cloudflared
   echo "[tunnel] cloudflared installed."
 else
   echo "[tunnel] cloudflared is already installed: $(cloudflared --version | head -n1)"
