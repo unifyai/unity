@@ -3649,8 +3649,10 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             "You are inspecting a running tool-use conversation. The entire "
             "transcript so far is attached below (read-only):\n"
             f"{json.dumps(parent_ctx, indent=2)}\n\n"
-            "Answer the user's follow-up question using ONLY this context. "
-            "Do not attempt to run new tools unless they are exposed to you.",
+            "Answer the user's follow-up question using ONLY this context.\n"
+            "Do not attempt to run new tools unless they are exposed to you.\n"
+            "Do not ask the user questions or request clarification. If information is missing,\n"
+            "state what is known and, if helpful, briefly note assumptions. Respond in a single, concise paragraph.",
         )
 
         # 3. Recursive visibility ––––––––––––––––––––––––––––––––––––––––
