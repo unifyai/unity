@@ -251,13 +251,16 @@ _INTENT_SYS_MSG = (
     "Rules:\n"
     "- Classify as 'start' when the user asks to begin doing the task now/immediately/ASAP, or uses imperative phrasing to carry out the task (e.g., 'start', 'begin', 'execute', 'work on', 'open a browser').\n"
     "- Classify as 'update' for creating/updating/deleting tasks, schedules, priorities, queues, ordering, or status (pause/resume/cancel).\n"
-    "- Classify as 'ask' for information-only queries about the current task list, schedules, priorities, or status.\n"
+    "- Classify as 'ask' for information-only queries such as progress/status checks ('how is it going', 'any update', 'have you scheduled X yet', 'is it done', 'ETA'), or questions about tasks, schedules, priorities, or status.\n"
+    "- Polite/indirect forms that request information only (e.g., 'could you let me know …?') are still 'ask'.\n"
+    "- If a message mixes a question with a requested action (e.g., 'have you done X? if not, please do it now'), choose 'update'.\n"
     "Examples:\n"
     "Input: 'Start task 12 right now' → {'action':'start'}\n"
     "Input: 'Could you research ACME ASAP and report back?' → {'action':'start'}\n"
     "Input: 'Move task 3 behind task 5' → {'action':'update'}\n"
     "Input: 'Pause the active task' → {'action':'update'}\n"
-    "Input: 'What is due this week?' → {'action':'ask'}"
+    "Input: 'What is due this week?' → {'action':'ask'}\n"
+    "Input: 'Could you let me know how that's coming along? Have you scheduled the tasks yet?' → {'action':'ask'}"
 )
 
 
