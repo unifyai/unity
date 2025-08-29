@@ -55,6 +55,46 @@ import argparse
 from unity.common.llm_helpers import SteerableToolHandle
 from pydantic import BaseModel, Field
 
+# ---------------------------------------------------------------------------
+# Pydantic → OpenAI response_format helper
+# ---------------------------------------------------------------------------
+
+
+def pydantic_response_format(model_cls: type[BaseModel]) -> dict:
+    """Return an OpenAI-compatible JSON schema response_format for *model_cls*.
+
+    This avoids passing a raw Pydantic class (which is not JSON-serialisable)
+    into client configs/logs while still enabling structured outputs.
+    """
+    try:
+        schema = model_cls.model_json_schema()
+    except Exception:
+        # Pydantic v1 fallback
+        try:  # type: ignore[attr-defined]
+            schema = model_cls.schema()  # type: ignore[attr-defined]
+        except Exception:
+            schema = {}
+
+    # Ensure OpenAI's stricter requirements on the root schema
+    try:
+        if not isinstance(schema, dict):
+            schema = {}
+        # The schema must be an object and disallow additional properties at the root
+        schema.setdefault("type", "object")
+        schema["additionalProperties"] = False
+    except Exception:
+        pass
+    name = getattr(model_cls, "__name__", "Response")
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": name,
+            "schema": schema,
+            "strict": True,
+        },
+    }
+
+
 # Added for direct logging of generated messages
 from unity.transcript_manager.transcript_manager import TranscriptManager
 
@@ -1252,7 +1292,10 @@ async def _route_freeform_and_apply(
 ) -> bool:
     import unify as _unify
 
-    judge = _unify.Unify("gpt-4o@openai", response_format=_SteeringIntent)
+    judge = _unify.Unify(
+        "gpt-4o@openai",
+        response_format=pydantic_response_format(_SteeringIntent),
+    )
 
     # Build a compact, recent-first transcript to provide conversation context
     def _format_ctx(ctx: list[dict], limit_chars: int = 2000) -> str:
