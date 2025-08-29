@@ -268,11 +268,11 @@ class MagnitudeBrowserBackend(BrowserBackend):
         retries = 3
         for attempt in range(retries):
             try:
-                # Build auth header: "authorization: Bearer <UNIFY_KEY> <ASSISTANT_NUMBER>"
+                # Build auth header: "authorization: Bearer <UNIFY_KEY> <ASSISTANT_EMAIL>"
                 auth_key = os.getenv("UNIFY_KEY", "")
-                assistant_phone = os.getenv("ASSISTANT_NUMBER", "")
+                assistant_email = os.getenv("ASSISTANT_EMAIL", "")
                 headers = {
-                    "authorization": f"Bearer {auth_key} {assistant_phone}".strip(),
+                    "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
                 }
                 async with aiohttp.ClientSession() as session:
                     async with session.request(
@@ -318,9 +318,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
         try:
             url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
             auth_key = os.getenv("UNIFY_KEY", "")
-            assistant_phone = os.getenv("ASSISTANT_NUMBER", "")
+            assistant_email = os.getenv("ASSISTANT_EMAIL", "")
             headers = {
-                "authorization": f"Bearer {auth_key} {assistant_phone}".strip(),
+                "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
             }
             result = requests.request(
                 method,
