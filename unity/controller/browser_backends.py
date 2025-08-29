@@ -4,13 +4,9 @@ import subprocess
 import time
 from abc import ABC, abstractmethod
 from typing import Any
-import socket
-import contextlib
 import queue
 from typing import Optional
 import threading
-import sys
-import atexit
 
 import aiohttp
 import requests
@@ -150,7 +146,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
     _agent_base_url = "http://localhost:3000"
     _lock = threading.Lock()
     _process = None  # Add this for the subprocess management
-    
+
     # Logging infrastructure
     _thread_log_queue = queue.Queue()
     _log_consumer_task = None
@@ -165,22 +161,22 @@ class MagnitudeBrowserBackend(BrowserBackend):
     ):
         self.agent_mode = agent_mode
         self._current_capture_queue: Optional[asyncio.Queue] = None
-        
+
         # Keep the simpler initialization from HEAD but add logging support
         MagnitudeBrowserBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
-        
+
         print(
             f"🔗 Using existing Magnitude service at {self.agent_base_url} (Mode: {self.agent_mode})",
         )
-        
+
         self._sync_request(
             "POST",
             "/start",
             {"headless": headless, "mode": self.agent_mode},
         )
         self._check_service_ready()
-        
+
         # Initialize the log consumer task if not already running
         if MagnitudeBrowserBackend._log_consumer_task is None:
             try:
@@ -206,13 +202,13 @@ class MagnitudeBrowserBackend(BrowserBackend):
             raise RuntimeError(
                 f"Magnitude BrowserAgent failed to become ready within 30 seconds on {self.agent_base_url}",
             )
-    
+
     def _start_output_readers(self):
         """Start threads to read stdout/stderr and put lines into the central thread-safe queue."""
         # Only start readers if we have a process
         if MagnitudeBrowserBackend._process is None:
             return
-            
+
         def read_output(pipe, prefix):
             for line in iter(pipe.readline, ""):
                 if line:
@@ -260,7 +256,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     print(log_line)
             except Exception as e:
                 print(f"[MagnitudeLogConsumerError] {e}")
-    
+
     async def _request(
         self,
         method: str,
@@ -272,11 +268,18 @@ class MagnitudeBrowserBackend(BrowserBackend):
         retries = 3
         for attempt in range(retries):
             try:
+                # Build auth header: "authorization: Bearer <UNIFY_KEY> <ASSISTANT_NUMBER>"
+                auth_key = os.getenv("UNIFY_KEY", "")
+                assistant_phone = os.getenv("ASSISTANT_NUMBER", "")
+                headers = {
+                    "authorization": f"Bearer {auth_key} {assistant_phone}".strip(),
+                }
                 async with aiohttp.ClientSession() as session:
                     async with session.request(
                         method,
                         url,
                         json=payload,
+                        headers=headers,
                         timeout=300,
                     ) as resp:
                         if resp.status >= 400:
@@ -314,7 +317,18 @@ class MagnitudeBrowserBackend(BrowserBackend):
     ) -> Any:
         try:
             url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
-            result = requests.request(method, url, json=payload, timeout=300)
+            auth_key = os.getenv("UNIFY_KEY", "")
+            assistant_phone = os.getenv("ASSISTANT_NUMBER", "")
+            headers = {
+                "authorization": f"Bearer {auth_key} {assistant_phone}".strip(),
+            }
+            result = requests.request(
+                method,
+                url,
+                json=payload,
+                headers=headers,
+                timeout=300,
+            )
             if result.status_code >= 400:
                 raise RuntimeError(
                     f"Failed to reach agent-service {endpoint}: {result.status_code} {result.text[:200]}",
