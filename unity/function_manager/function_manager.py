@@ -7,6 +7,7 @@ from ..common.embed_utils import EMBED_MODEL, ensure_vector_column, list_private
 from ..common.sandbox_utils import create_sandbox_globals
 from .types.function import Function
 from ..common.model_to_fields import model_to_fields
+from ..common.context_store import TableStore
 
 
 class FunctionManager(threading.Thread):
@@ -52,18 +53,15 @@ class FunctionManager(threading.Thread):
         ), "read and write contexts must be the same when instantiating a FunctionManager."
         self._ctx = f"{read_ctx}/Functions" if read_ctx else "Functions"
 
-        if self._ctx not in unify.get_contexts():
-            unify.create_context(
-                self._ctx,
-                unique_keys={"function_id": "int"},
-                auto_counting={"function_id": None},
-                description="List of functions, with all function details stored.",
-            )
-            fields = model_to_fields(Function)
-            unify.create_fields(
-                fields,
-                context=self._ctx,
-            )
+        # Ensure functions context and fields exist deterministically
+        self._store = TableStore(
+            self._ctx,
+            unique_keys={"function_id": "int"},
+            auto_counting={"function_id": None},
+            description="List of functions, with all function details stored.",
+            fields=model_to_fields(Function),
+        )
+        self._store.ensure_context()
         # Add tracing
         if traced:
             self = unify.traced(self)

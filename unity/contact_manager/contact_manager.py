@@ -10,6 +10,7 @@ from ..knowledge_manager.types import ColumnType
 from ..helpers import _handle_exceptions
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
+from ..common.context_store import TableStore
 
 import unify
 from .types.contact import Contact
@@ -77,18 +78,15 @@ class ContactManager(BaseContactManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
         self._ctx = f"{read_ctx}/Contacts"
-        if self._ctx not in unify.get_contexts():
-            unify.create_context(
-                self._ctx,
-                unique_keys={"contact_id": "int"},
-                auto_counting={"contact_id": None},
-                description="List of contacts, with all contact details stored.",
-            )
-            fields = model_to_fields(Contact)
-            unify.create_fields(
-                fields,
-                context=self._ctx,
-            )
+        # Ensure context/fields exist deterministically (idempotent)
+        self._store = TableStore(
+            self._ctx,
+            unique_keys={"contact_id": "int"},
+            auto_counting={"contact_id": None},
+            description="List of contacts, with all contact details stored.",
+            fields=model_to_fields(Contact),
+        )
+        self._store.ensure_context()
 
         # ── immutable built-in columns ───────────────────────────────────
         # Derive the required/built-in columns directly from the Contact model so
@@ -443,21 +441,8 @@ class ContactManager(BaseContactManager):
     # ──────────────────────────────────────────────────────────────────────
 
     def _get_columns(self) -> Dict[str, str]:
-        """
-        Return {column_name: column_type} for the contacts table.
-
-        Returns
-        -------
-        Dict[str, str]
-            Dictionary mapping column names to their types.
-        """
-        proj = unify.active_project()
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={self._ctx}"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = requests.request("GET", url, headers=headers)
-        _handle_exceptions(response)
-        ret = response.json()
-        return {k: v["data_type"] for k, v in ret.items()}
+        """Return {column_name: column_type} for the contacts table."""
+        return self._store.get_columns()
 
     def _list_columns(
         self,
