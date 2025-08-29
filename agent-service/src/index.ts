@@ -144,7 +144,7 @@ app.use(express.json({ limit: '10mb' }));
 // --- Authorization (Bearer) middleware ---
 function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const url = new URL(`${process.env.UNIFY_BASE_URL}/assistant?phone=${assistant_email}`);
+    const url = new URL(`${process.env.UNIFY_BASE_URL}/assistant?email=${assistant_email}`);
     const options: https.RequestOptions = {
       method: 'GET',
       hostname: url.hostname,
