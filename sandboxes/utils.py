@@ -82,6 +82,12 @@ def pydantic_response_format(model_cls: type[BaseModel]) -> dict:
         # The schema must be an object and disallow additional properties at the root
         schema.setdefault("type", "object")
         schema["additionalProperties"] = False
+        # Ensure properties exists and required lists all properties (OpenAI requirement)
+        props = schema.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            schema["properties"] = props
+        schema["required"] = list(props.keys())
     except Exception:
         pass
     name = getattr(model_cls, "__name__", "Response")
