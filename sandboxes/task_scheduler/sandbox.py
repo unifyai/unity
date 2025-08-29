@@ -50,6 +50,7 @@ from sandboxes.utils import (
     _wait_for_tts_end as _wait_tts_end,
     configure_sandbox_logging,
     call_manager_with_optional_clarifications,
+    pydantic_response_format,
 )
 
 LG = logging.getLogger("task_scheduler_sandbox")
@@ -97,7 +98,10 @@ _SIM_PARSER_SYS = (
 
 def _parse_simulation_config(text: str) -> _SimConfig:
     try:
-        judge = unify.Unify("gpt-4o@openai", response_format=_SimConfig)
+        judge = unify.Unify(
+            "gpt-4o@openai",
+            response_format=pydantic_response_format(_SimConfig),
+        )
         parsed = _SimConfig.model_validate_json(
             judge.set_system_message(_SIM_PARSER_SYS).generate(text),
         )
@@ -279,6 +283,10 @@ async def _dispatch_with_context(
 
     # LLM-only routing
     judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
+    judge = unify.Unify(
+        "gpt-4o@openai",
+        response_format=pydantic_response_format(_Intent),
+    )
     intent = _Intent.model_validate_json(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
