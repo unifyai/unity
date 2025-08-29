@@ -9,8 +9,8 @@ def test_create_table():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
     tables = knowledge_manager._tables_overview()
-    assert len(tables) == 1
-    assert "MyTable" in tables
+    assert len(tables) == 2
+    assert set(tables.keys()) == {"Contacts", "MyTable"}
 
 
 @pytest.mark.unit
@@ -22,8 +22,12 @@ def test_create_table_w_cols():
         columns={"ColA": "int", "ColB": "str"},
     )
     tables = knowledge_manager._tables_overview(include_column_info=True)
-    assert len(tables) == 1
+    assert len(tables) == 2
     assert tables == {
+        "Contacts": {
+            "description": tables["Contacts"]["description"],
+            "columns": tables["Contacts"]["columns"],
+        },
         "MyTable": {
             "description": None,
             "columns": {"row_id": "int", "ColA": "int", "ColB": "str"},
@@ -37,8 +41,9 @@ def test_create_table_w_desc():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable", description="For storing my data.")
     tables = knowledge_manager._tables_overview(include_column_info=False)
-    assert len(tables) == 1
+    assert len(tables) == 2
     assert tables == {
+        "Contacts": {"description": tables["Contacts"]["description"]},
         "MyTable": {"description": "For storing my data."},
     }
 
@@ -49,12 +54,13 @@ def test_list_tables():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyFirstTable")
     tables = knowledge_manager._tables_overview()
-    assert len(tables) == 1
+    assert len(tables) == 2
     assert "MyFirstTable" in tables
     knowledge_manager._create_table(name="MySecondTable")
     tables = knowledge_manager._tables_overview(include_column_info=False)
-    assert len(tables) == 2
+    assert len(tables) == 3
     assert tables == {
+        "Contacts": {"description": tables["Contacts"]["description"]},
         "MyFirstTable": {"description": None},
         "MySecondTable": {"description": None},
     }
@@ -68,13 +74,14 @@ def test_delete_tables():
     # create
     knowledge_manager._create_table(name="MyTable")
     tables = knowledge_manager._tables_overview()
-    assert len(tables) == 1
+    assert len(tables) == 2
     assert "MyTable" in tables
 
     # delete
     knowledge_manager._delete_tables(tables="MyTable")
     tables = knowledge_manager._tables_overview()
-    assert len(tables) == 0
+    assert len(tables) == 1
+    assert set(tables.keys()) == {"Contacts"}
 
 
 @pytest.mark.unit
@@ -87,7 +94,8 @@ def test_delete_multiple_tables():
     km._create_table(name="TableA")
     km._create_table(name="TableB")
     km._create_table(name="TableC")
-    assert set(km._tables_overview().keys()) == {"TableA", "TableB", "TableC"}
+    tabs = km._tables_overview()
+    assert set(tabs.keys()) == {"Contacts", "TableA", "TableB", "TableC"}
 
     # ── action ──────────────────────────────────────────────────────────
     res = km._delete_tables(tables=["TableA", "TableC"])
@@ -96,7 +104,8 @@ def test_delete_multiple_tables():
     # Two explicit deletions acknowledged …
     assert len(res) == 2
     # … and only the untouched table remains.
-    assert set(km._tables_overview().keys()) == {"TableB"}
+    tabs = km._tables_overview()
+    assert set(tabs.keys()) == {"Contacts", "TableB"}
 
 
 @pytest.mark.unit
@@ -109,14 +118,16 @@ def test_delete_tables_with_startswith():
     km._create_table(name="_Private1")
     km._create_table(name="_Private2")
     km._create_table(name="Public")
-    assert set(km._tables_overview().keys()) == {"_Private1", "_Private2", "Public"}
+    tabs = km._tables_overview()
+    assert set(tabs.keys()) == {"Contacts", "_Private1", "_Private2", "Public"}
 
     # ── action ──────────────────────────────────────────────────────────
     res = km._delete_tables(tables=[], startswith="_")  # delete all "_…" tables
 
     # ── assertions ──────────────────────────────────────────────────────
     assert len(res) == 2  # two prefixed tables deleted
-    assert set(km._tables_overview().keys()) == {"Public"}
+    tabs = km._tables_overview()
+    assert set(tabs.keys()) == {"Contacts", "Public"}
 
 
 @pytest.mark.unit
@@ -132,14 +143,16 @@ def test_delete_tables_mixed_explicit_and_startswith():
     km._create_table(name="_Tmp1")
     km._create_table(name="KeepMe")
     km._create_table(name="DeleteMe")
-    assert set(km._tables_overview().keys()) == {"_Tmp1", "KeepMe", "DeleteMe"}
+    tabs = km._tables_overview()
+    assert set(tabs.keys()) == {"Contacts", "_Tmp1", "KeepMe", "DeleteMe"}
 
     # ── action ──────────────────────────────────────────────────────────
     res = km._delete_tables(tables="DeleteMe", startswith="_")
 
     # ── assertions ──────────────────────────────────────────────────────
     assert len(res) == 2  # _Tmp1 and DeleteMe removed
-    assert set(km._tables_overview().keys()) == {"KeepMe"}
+    tabs = km._tables_overview()
+    assert set(tabs.keys()) == {"Contacts", "KeepMe"}
 
 
 @pytest.mark.unit
@@ -150,11 +163,11 @@ def test_rename_table():
     # create
     knowledge_manager._create_table(name="MyTable")
     tables = knowledge_manager._tables_overview()
-    assert len(tables) == 1
+    assert len(tables) == 2
     assert "MyTable" in tables
 
     # rename
     knowledge_manager._rename_table(old_name="MyTable", new_name="MyNewTable")
     tables = knowledge_manager._tables_overview()
-    assert len(tables) == 1
+    assert len(tables) == 2
     assert "MyNewTable" in tables

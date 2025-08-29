@@ -14,6 +14,7 @@ def test_filter_no_expr():
     )
     data = knowledge_manager._filter()
     assert data == {
+        "Contacts": [],
         "MyTable": [
             {"row_id": 1, "x": 2, "y": 3},
             {"row_id": 0, "x": 0, "y": 1},
@@ -32,6 +33,7 @@ def test_filter_basic_expr():
     )
     data = knowledge_manager._filter(filter="x > 0")
     assert data == {
+        "Contacts": [],
         "MyTable": [
             {"row_id": 1, "x": 2, "y": 3},
         ],
@@ -55,6 +57,7 @@ def test_filter_specific_tables():
     # default
     data = knowledge_manager._filter()
     assert data == {
+        "Contacts": [],
         "MyTable": [
             {"row_id": 1, "x": 2, "y": 3},
             {"row_id": 0, "x": 0, "y": 1},
@@ -84,6 +87,7 @@ def test_filter_multi_expr():
     )
     data = knowledge_manager._filter(filter="x > 1 and y < 4")
     assert data == {
+        "Contacts": [],
         "MyTable": [
             {"row_id": 2, "x": 2, "y": 3},
         ],
