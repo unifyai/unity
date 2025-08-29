@@ -22,7 +22,7 @@ from .types.status import Status
 from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.trigger import Trigger
-from .types.repetition import RepeatPattern
+from .types.repetition import RepeatPattern, Frequency, Weekday
 from .types.task import Task
 from .types.activated_by import ActivatedBy
 
@@ -2329,12 +2329,63 @@ class TaskScheduler(BaseTaskScheduler):
             Entries for each matching task (raw JSON-serialisable dictionaries).
         """
         filter = self._normalize_filter_expr(filter)
-        return self._store.get_entries(
+        rows = self._store.get_entries(
             filter=filter,
             offset=offset,
             limit=limit,
             exclude_fields=list_private_fields(self._ctx),
         )
+
+        # Rehydrate Enum values inside repetition patterns so callers see
+        # the same structure as produced by `RepeatPattern.model_dump()`.
+        # This preserves test expectations and keeps the Python-facing API
+        # consistent regardless of how values were serialised at rest.
+        def _rehydrate_repeat(item: dict) -> dict:
+            if not isinstance(item, dict):
+                return item
+            out = dict(item)
+            # frequency: accept values like "weekly" or names like "WEEKLY"
+            freq = out.get("frequency")
+            if isinstance(freq, str):
+                token = freq
+                if "." in token:
+                    # e.g. "Frequency.WEEKLY" → "WEEKLY"
+                    token = token.split(".")[-1]
+                try:
+                    out["frequency"] = Frequency[token]  # by name
+                except Exception:
+                    try:
+                        out["frequency"] = Frequency(token)  # by value
+                    except Exception:
+                        pass
+
+            # weekdays: list of strings like "MO" or "Weekday.MO"
+            wds = out.get("weekdays")
+            if isinstance(wds, list):
+                new_wds = []
+                for wd in wds:
+                    if isinstance(wd, str):
+                        tok = wd
+                        if "." in tok:
+                            tok = tok.split(".")[-1]
+                        try:
+                            new_wds.append(Weekday[tok])
+                        except Exception:
+                            try:
+                                new_wds.append(Weekday(tok))
+                            except Exception:
+                                new_wds.append(wd)
+                    else:
+                        new_wds.append(wd)
+                out["weekdays"] = new_wds
+            return out
+
+        for row in rows:
+            rep = row.get("repeat")
+            if isinstance(rep, list):
+                row["repeat"] = [_rehydrate_repeat(x) for x in rep]
+
+        return rows
 
     # ────────────────────────────────────────────────────────────────────
     # Broader context helper

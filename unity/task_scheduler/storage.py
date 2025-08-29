@@ -136,8 +136,18 @@ class TasksStore:
         overwrite: bool = True,
     ) -> Dict[str, str]:
         def _norm(v: Any) -> Any:
+            # Preserve semantic values for enums: for StrEnum keep the string value;
+            # for plain Enum store the underlying `.value` (e.g. 'weekly', 'MO').
             if isinstance(v, Enum):
-                return str(v)
+                try:
+                    from enum import StrEnum  # py311+
+
+                    if isinstance(v, StrEnum):  # type: ignore[arg-type]
+                        return str(v)
+                except Exception:
+                    # StrEnum may not be available in older runtimes; fall through
+                    pass
+                return v.value
             if isinstance(v, dict):
                 return {k: _norm(x) for k, x in v.items()}
             if isinstance(v, list):
@@ -154,8 +164,17 @@ class TasksStore:
 
     def log(self, *, entries: Dict[str, Any], new: bool = True) -> unify.Log:
         def _norm(v: Any) -> Any:
+            # Preserve semantic values for enums: for StrEnum keep the string value;
+            # for plain Enum store the underlying `.value`.
             if isinstance(v, Enum):
-                return str(v)
+                try:
+                    from enum import StrEnum  # py311+
+
+                    if isinstance(v, StrEnum):  # type: ignore[arg-type]
+                        return str(v)
+                except Exception:
+                    pass
+                return v.value
             if isinstance(v, dict):
                 return {k: _norm(x) for k, x in v.items()}
             if isinstance(v, list):
