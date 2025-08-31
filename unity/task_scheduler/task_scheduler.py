@@ -775,6 +775,9 @@ class TaskScheduler(BaseTaskScheduler):
         if new_status_enum == Status.active and activated_by is not None:
             # Set only at the moment of activation; never overwrite later
             entries["activated_by"] = str(activated_by)
+        else:
+            # Ensure non-active rows never carry activation metadata
+            entries["activated_by"] = None
 
         result = self._write_log_entries(
             logs=log_objs[0].id if hasattr(log_objs[0], "id") else log_objs[0],
@@ -1327,6 +1330,13 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
+        # Enforce activation metadata invariant at the funnel: only 'active' rows may carry it
+        try:
+            eff_status = self._to_status(prospective_status)  # type: ignore[arg-type]
+            if eff_status != Status.active:
+                entries = {**entries, "activated_by": None}
+        except Exception:
+            pass
         result = self._write_log_entries(logs=log_id, entries=entries)
 
         # Ensure neighbour symmetry whenever schedule changed
@@ -1625,6 +1635,9 @@ class TaskScheduler(BaseTaskScheduler):
             payload: Dict[str, Any] = {"schedule": sched_payload}
             if desired_status != existing_status:
                 payload["status"] = desired_status
+            # Ensure activation metadata is absent unless status becomes 'active' (it doesn't here)
+            if desired_status != Status.active:
+                payload["activated_by"] = None
 
             updates_per_log[tid] = payload
 
@@ -1727,6 +1740,10 @@ class TaskScheduler(BaseTaskScheduler):
             entries["status"] = Status.triggerable
         elif new_trigger is None and cur_status == Status.triggerable:
             entries["status"] = Status.queued
+
+        # Triggers imply non-active lifecycle. Ensure activation metadata is cleared on write.
+        if entries.get("status", cur_status) != Status.active:
+            entries["activated_by"] = None
 
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         self._store.update(logs=log_id, entries=entries, overwrite=True)
@@ -1856,11 +1873,11 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
-        return self._store.update(
-            logs=log_ids,
-            entries={"status": new_status_enum},
-            overwrite=True,
-        )
+        # Clear activation metadata whenever moving to a non-active state
+        entries: Dict[str, Any] = {"status": new_status_enum}
+        if new_status_enum != Status.active:
+            entries["activated_by"] = None
+        return self._store.update(logs=log_ids, entries=entries, overwrite=True)
 
     def _update_task_start_at(
         self,
@@ -2294,7 +2311,19 @@ class TaskScheduler(BaseTaskScheduler):
             k,
             unique_id_field="task_id",
         )
-        return [Task(**lg) for lg in filled]
+        # Defensive read: drop stale activation metadata on non-active rows to avoid
+        # Pydantic validation errors if any legacy writes left it behind.
+        sanitized: list[Task] = []
+        for lg in filled:
+            row = dict(lg)
+            try:
+                if self._to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
+                    row.pop("activated_by", None)
+            except Exception:
+                if str(row.get("status")) != str(Status.active):
+                    row.pop("activated_by", None)
+            sanitized.append(Task(**row))
+        return sanitized
 
     def _filter_tasks(
         self,
