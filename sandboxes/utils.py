@@ -1147,6 +1147,9 @@ class _SteeringIntent(BaseModel):
     action: str = Field(..., pattern="^(ask|interject|pause|resume|stop|status)$")
     # Optional free-form reason only used when action == "stop"
     reason: Optional[str] = None
+    # When action == "stop", router MUST set this boolean:
+    # True ⇒ cancel/abandon (terminal); False ⇒ defer/postpone (non-terminal)
+    cancel: Optional[bool] = None
 
 
 def _steering_router_sys() -> str:
@@ -1160,14 +1163,18 @@ def _steering_router_sys() -> str:
         "- 'interject': A directive that would change, add, remove, create, continue, or otherwise steer what the running task should do next. "
         "Polite or indirect phrasing ('could you', 'please', 'let's', 'why don't we') is 'interject' only when it instructs an action (do/make/change/create/update/etc.), not when merely asking for status or information. If a message mixes a question with a requested action, choose 'interject'.\n"
         "- 'pause'/'resume'/'stop'/'status': Direct control commands. Map common synonyms: 'continue' ⇒ 'resume'.\n"
+        "Stop semantics (required):\n"
+        "- When choosing 'stop', you MUST also include a boolean 'cancel':\n"
+        "  • cancel=true  ⇒ abandon/cancel/drop/scrap/kill the task (terminal).\n"
+        "  • cancel=false ⇒ defer/postpone/not now/do it later/next week/tomorrow/as originally planned (non-terminal; reinstate to prior queue).\n"
+        "- Include a concise 'reason' when present in the user's wording; otherwise set reason to null.\n"
         "Conversation-aware rules:\n"
-        "- If a task is RUNNING and the latest user message indicates reverting, postponing, deferring, or otherwise NOT doing the task now (e.g., 'let's do it next week', 'don't worry about it now', 'we'll do it later', 'scrap this for now'), choose 'stop'.\n"
-        "- If a task is RUNNING and the user explicitly asks to pause/hold/temporarily stop, choose 'pause'.\n"
-        "- If a task is PAUSED (you may infer from recent 'Paused' announcements) and the user asks to continue, choose 'resume'.\n"
-        "- If the request is to update/modify/steer the currently running task (without stopping/cancelling), then choose 'interject'.\n"
+        "- If a task is RUNNING and the user asks to postpone/not do it now but do it later, choose 'stop' with cancel=false.\n"
+        "- If a task is RUNNING and the user explicitly cancels/abandons/drops it, choose 'stop' with cancel=true.\n"
+        "- If a task is RUNNING and the user asks to pause/hold temporarily, choose 'pause'. If PAUSED and the user asks to continue, choose 'resume'.\n"
+        "- If the request is to update/modify/steer the currently running task (without stopping/cancelling), choose 'interject'.\n"
         "Stop reason extraction:\n"
-        "- When choosing 'stop', also include a concise 'reason' when present in the user's wording (e.g., postponements, scheduling, no longer needed, do it later/next week/tomorrow, change of plan).\n"
-        "- The reason should be a short phrase taken from the user's message, without paraphrasing when possible. If no reason is given, set reason to null.\n"
+        "- Provide a short 'reason' phrase taken from the user's message when present (no paraphrase). Otherwise reason=null.\n"
         "Disambiguation guidance:\n"
         "- Yes/no verification like 'have you X yet?', 'did you manage to …?', and meta-requests for an update are 'ask' if they do not instruct new work.\n"
         "- Requests that initiate or alter work now (e.g., 'schedule them now', 'go ahead and send the email', 'create two more tasks') are 'interject'.\n"
@@ -1175,8 +1182,9 @@ def _steering_router_sys() -> str:
         "Examples:\n"
         "- 'Could you let me know how that's coming along? Have you scheduled the tasks yet?' → action: ask\n"
         "- 'Could you schedule the tasks now?' → action: interject\n"
-        "- 'Have you sent the email yet? If not, please send it.' → action: interject\n"
-        "Return ONLY JSON matching the response schema with an 'action' field and optional 'reason' (string or null)."
+        "- 'Let's not do it now; start it tomorrow morning as planned.' → action: stop, cancel: false, reason: 'start it tomorrow morning as planned'\n"
+        "- 'Cancel this task – we don't need it anymore.' → action: stop, cancel: true, reason: 'we don't need it anymore'\n"
+        "Return ONLY JSON matching the response schema with fields: 'action', 'cancel' (required when action=='stop'), and optional 'reason' (string or null)."
     )
 
 
@@ -1188,6 +1196,7 @@ async def _apply_steering_action(
     HELP_TEXT: str,
     *,
     reason: Optional[str] = None,
+    cancel: Optional[bool] = None,
 ) -> bool:
     """Apply a routed steering action. Returns True if the caller should break (on stop)."""
     try:
@@ -1246,19 +1255,29 @@ async def _apply_steering_action(
             return False
         if action == "stop":
             print("stopping…")
-            # Pass a reason when provided; otherwise call without argument
+            # Require explicit cancel flag – no heuristics here
+            if not isinstance(cancel, bool):
+                print(
+                    "⚠️  Router did not provide required 'cancel' boolean for stop; ignoring",
+                )
+                return False
             _used_reason: Optional[str] = None
             if isinstance(reason, str) and reason.strip():
                 _used_reason = reason.strip()
-                handle.stop(_used_reason)
-            else:
-                handle.stop()
+            handle.stop(cancel=cancel, reason=_used_reason)
             if _used_reason:
-                print(f"✅ Stop sent, with reason: {_used_reason}")
+                print(
+                    (
+                        "✅ Cancel sent, with reason: "
+                        if cancel
+                        else "✅ Stop (defer) sent, with reason: "
+                    )
+                    + _used_reason,
+                )
             else:
-                print("✅ Stop sent.")
+                print("✅ Cancel sent." if cancel else "✅ Stop (defer) sent.")
             if enable_voice_steering:
-                speak("Stop sent")
+                speak("Cancel sent" if cancel else "Stop sent")
                 _wait_for_tts_end()
                 print(HELP_TEXT)
             else:
@@ -1362,6 +1381,7 @@ async def _route_freeform_and_apply(
         enable_voice_steering,
         HELP_TEXT,
         reason=reason_override if intent.action == "stop" else None,
+        cancel=(intent.cancel if intent.action == "stop" else None),
     )
 
 
@@ -1452,37 +1472,23 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     # Preserve the argument exactly as typed (post-separator substring)
                     arg = cmd_line[space_idx + 1 :]
 
-                if cmd in {"stop", "cancel", "s"}:
-                    print("stopping…")
-                    # Allow an optional free-form reason after the command token
-                    _reason_txt: Optional[str] = (
-                        arg.strip() if arg and arg.strip() else None
+                if cmd in {"stop", "s"}:
+                    # Route via LLM so it sets cancel explicitly (no heuristics)
+                    text_for_router = arg if arg.strip() else "stop"
+                    should_break = await _route_freeform_and_apply(
+                        handle,
+                        text_for_router,
+                        enable_voice_steering,
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                        chat_context=chat_context,
+                        is_task_running=not handle.done(),
                     )
-                    if _reason_txt:
-                        handle.stop(_reason_txt)
-                    else:
-                        handle.stop()
-                    if _reason_txt:
-                        print(f"✅ Stop sent, with reason: {_reason_txt}")
-                    else:
-                        print("✅ Stop sent.")
-                    if enable_voice_steering:
-                        speak("Stop sent")
-                        _wait_for_tts_end()
-                        print(
-                            steering_controls_hint(
-                                pending_clarification=(pending_clar_q is not None),
-                                voice_enabled=enable_voice_steering,
-                            ),
-                        )
-                    else:
-                        print(
-                            steering_controls_hint(
-                                pending_clarification=(pending_clar_q is not None),
-                                voice_enabled=enable_voice_steering,
-                            ),
-                        )
-                    break
+                    if should_break:
+                        break
+                    continue
                 # Clarification commands (handled irrespective of other state if channels exist)
                 if (
                     has_clar_channels
