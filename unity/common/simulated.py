@@ -293,7 +293,6 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
             # Attribute mutations
             TaskScheduler._update_task_name,
             TaskScheduler._update_task_description,
-            TaskScheduler._update_task_status,
             TaskScheduler._update_task_start_at,
             TaskScheduler._update_task_deadline,
             TaskScheduler._update_task_repetition,
