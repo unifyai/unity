@@ -83,7 +83,15 @@ def get_task_queue(
                 Status.cancelled,
                 Status.failed,
             }:
-                ordered.append(Task(**cur))
+                # Defensive read: drop stale activation metadata on non-active rows
+                _row = dict(cur)
+                try:
+                    if scheduler._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
+                        _row.pop("activated_by", None)
+                except Exception:
+                    if str(_row.get("status")) != str(Status.active):
+                        _row.pop("activated_by", None)
+                ordered.append(Task(**_row))
 
             nxt_id = _q_next(cur.get("schedule"))
             if nxt_id is None:
@@ -98,7 +106,14 @@ def get_task_queue(
         return []
 
     if start_row.get("schedule") is None:
-        return [Task(**start_row)]
+        _row = dict(start_row)
+        try:
+            if scheduler._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
+                _row.pop("activated_by", None)
+        except Exception:
+            if str(_row.get("status")) != str(Status.active):
+                _row.pop("activated_by", None)
+        return [Task(**_row)]
 
     head_row = _walk_to_head(start_row)
     return _walk_forward(head_row)
