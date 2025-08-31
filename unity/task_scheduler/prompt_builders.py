@@ -192,7 +192,6 @@ def build_update_prompt(
     update_task_queue_fname = _tool_name(tools, "update_task_queue")
     update_task_name_fname = _tool_name(tools, "update_task_name")
     update_task_description_fname = _tool_name(tools, "update_task_description")
-    update_task_status_fname = _tool_name(tools, "update_task_status")
     update_task_start_at_fname = _tool_name(tools, "update_task_start_at")
     update_task_deadline_fname = _tool_name(tools, "update_task_deadline")
     update_task_repetition_fname = _tool_name(tools, "update_task_repetition")
@@ -213,7 +212,6 @@ def build_update_prompt(
             "update_task_queue": update_task_queue_fname,
             "update_task_name": update_task_name_fname,
             "update_task_description": update_task_description_fname,
-            "update_task_status": update_task_status_fname,
             "update_task_start_at": update_task_start_at_fname,
             "update_task_deadline": update_task_deadline_fname,
             "update_task_repetition": update_task_repetition_fname,
@@ -245,7 +243,7 @@ def build_update_prompt(
         "",
         "Ask vs Clarification",
         "----------------------",
-        f"• `{ask_fname}` is ONLY for inspecting/locating tasks that ALREADY EXIST in the task list (e.g., to find task_id, status, queue position, deadlines, triggers).",
+        f"• `{ask_fname}` is ONLY for inspecting/locating tasks that ALREADY EXIST in the task list (e.g., to find task_id, queue position, deadlines, triggers).",
         f"• Do NOT use `{ask_fname}` to ask the human for details about NEW tasks being created/changed in this update request.",
         f"• For human clarifications about prospective/new tasks (e.g., start time, timezone, naming, scope), call `{request_clar_fname}` when available.",
         f"• Use `{update_task_queue_fname}` to reorder runnable tasks explicitly – do not try to emulate queue effects via timestamps.",
@@ -257,7 +255,7 @@ def build_update_prompt(
         "• Non-head tasks (prev_task is not None) must not define start_at; the timestamp belongs to the head only.",
         "• 'primed' must only be used for a head task (prev_task is None).",
         "• A 'scheduled' task must have either a prev_task or a start_at timestamp.",
-        "• When unsure, omit 'status' and let the tool infer the correct value from the schedule you provide.",
+        "• Status is updated implicitly based on operations (activation, scheduling, completion). Do not set status explicitly.",
         "",
         "Realistic find‑then‑update flows",
         "--------------------------------",

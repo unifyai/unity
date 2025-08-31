@@ -193,7 +193,6 @@ class TaskScheduler(BaseTaskScheduler):
                 # Attribute mutations
                 self._update_task_name,
                 self._update_task_description,
-                self._update_task_status,
                 self._update_task_start_at,
                 self._update_task_deadline,
                 self._update_task_repetition,
@@ -438,6 +437,10 @@ class TaskScheduler(BaseTaskScheduler):
         execution_scope: Optional[Literal["isolate", "chain"]] = None,
     ) -> SteerableToolHandle:
         freeform_text: str = text
+
+        # Refuse execution when a task is already active.
+        if self._active_task is not None:
+            raise RuntimeError("Another task is already running – stop it first.")
 
         # ── Fast-path: direct numeric task_id ───────────────────────────────
         # When the user input *is* a plain integer we can skip the full
@@ -1825,36 +1828,15 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Change the **lifecycle status** of one or many tasks.
 
-        Parameters
-        ----------
-        task_ids : int | list[int]
-            One or multiple task identifiers to update.
-        new_status : str
-            Target status value.  Must be a valid member of
-            :class:`~task_scheduler.types.status.Status`.
-        allow_active : bool, default ``False``
-            Guard-rail – when *False* the method refuses to set the status to
-            ``'active'`` or to touch the *currently* active task.  Internal
-            helpers (e.g. *execute_task*) pass *True* when they *really* need to.
-
-        Returns
-        -------
-        dict[str, str]
-            Confirmation object from :pyfunc:`unify.update_logs`.
-
-        Raises
-        ------
-        ValueError
-            If *new_status* is ``'active'`` while *allow_active* is ``False``.
-        RuntimeError
-            When trying to edit the live active task without permission.
+        Notes:
+        - Setting status to 'active' directly is forbidden. Activation is performed
+          exclusively by the execution path (execute_task / execute_task_by_id).
         """
         # Forbid making anything active (unless explicitly allowed)
         new_status_enum = self._to_status(new_status)
-        if new_status_enum == Status.active and not allow_active:
+        if new_status_enum == Status.active:
             raise ValueError(
-                "Direct status changes to 'active' are not allowed; "
-                "use the dedicated activation tool.",
+                "Direct status changes to 'active' are not allowed; use the dedicated activation method.",
             )
 
         # Forbid touching the existing active task
@@ -1875,8 +1857,7 @@ class TaskScheduler(BaseTaskScheduler):
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
         # Clear activation metadata whenever moving to a non-active state
         entries: Dict[str, Any] = {"status": new_status_enum}
-        if new_status_enum != Status.active:
-            entries["activated_by"] = None
+        entries["activated_by"] = None
         return self._store.update(logs=log_ids, entries=entries, overwrite=True)
 
     def _update_task_start_at(
