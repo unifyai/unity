@@ -1852,9 +1852,9 @@ class TaskScheduler(BaseTaskScheduler):
                 "Direct status changes to 'active' are not allowed; use the dedicated activation method.",
             )
 
-        # Forbid touching the existing active task
-        if not allow_active:
-            self._ensure_not_active_task(task_ids)
+        # Forbid touching the existing active task (always) – lifecycle changes
+        # to the active task must go through the live ActiveTask handle.
+        self._ensure_not_active_task(task_ids)
 
         # Invariant checks for queue/schedule-sensitive statuses
         if new_status_enum in {Status.scheduled, Status.queued}:
