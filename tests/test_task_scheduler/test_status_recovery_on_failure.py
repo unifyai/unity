@@ -76,3 +76,19 @@ async def test_disallow_internal_status_edits_on_active_task(monkeypatch):
     # Clean stop to avoid leaking background threads
     h.stop(cancel=False)
     await h.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_validated_write_rejects_active_status_direct_write(monkeypatch):
+    """Writing status='active' through the validated funnel should be rejected."""
+
+    ts = TaskScheduler()
+    tid = ts._create_task(name="C", description="C")["details"]["task_id"]
+
+    with pytest.raises(ValueError):
+        ts._validated_write(
+            task_id=tid,
+            entries={"status": "active"},
+            err_prefix="Test:",
+        )

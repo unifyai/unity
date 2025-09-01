@@ -1338,6 +1338,18 @@ class TaskScheduler(BaseTaskScheduler):
         prospective_status = entries.get("status", current.get("status"))
         prospective_trigger = entries.get("trigger", current.get("trigger"))
 
+        # Belt-and-braces: forbid setting status to 'active' via this funnel.
+        norm_status = None
+        if "status" in entries:
+            try:
+                norm_status = self._to_status(entries["status"])  # type: ignore[arg-type]
+            except Exception:
+                norm_status = None
+        if norm_status == Status.active:
+            raise ValueError(
+                f"{err_prefix} direct writes to 'active' are not allowed; use the execution method instead.",
+            )
+
         self._validate_scheduled_invariants(
             status=prospective_status,
             schedule=prospective_schedule,
