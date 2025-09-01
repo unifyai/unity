@@ -442,6 +442,19 @@ class TaskScheduler(BaseTaskScheduler):
         if self._active_task is not None:
             raise RuntimeError("Another task is already running – stop it first.")
 
+        # Also guard against orphan 'active' rows (e.g., after crash) even if pointer is None.
+        try:
+            any_active = any(
+                r.get("status") == str(Status.active)
+                for r in self._filter_tasks(filter="status == 'active'", limit=1)
+            )
+        except Exception:
+            any_active = False
+        if any_active:
+            raise RuntimeError(
+                "A task is marked as active, but no active handle is present – reconcile state before starting another task.",
+            )
+
         # ── Fast-path: direct numeric task_id ───────────────────────────────
         # When the user input *is* a plain integer we can skip the full
         # tool-resolution loop, execute the task immediately and hand back
