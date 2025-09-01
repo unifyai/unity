@@ -889,6 +889,27 @@ def _build_helper_ack_content(name: str, args_json: Any) -> str:
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
 
+class _AsyncToolLoopConfig:
+    def __init__(self, loop_id, lineage, parent_lineage):
+        self._loop_id = loop_id if loop_id is not None else short_id()
+        self._lineage = (
+            list(lineage) if lineage is not None else [*parent_lineage, loop_id]
+        )
+        self._log_label = "->".join(self._lineage) if self._lineage else (loop_id or "")
+
+    @property
+    def loop_id(self):
+        return self._loop_id
+
+    @property
+    def lineage(self):
+        return self._lineage
+
+    @property
+    def log_label(self):
+        return self._log_label
+
+
 async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
     message: str,
@@ -1026,11 +1047,9 @@ async def _async_tool_use_loop_inner(
         been fed back into the conversation.
     """
     # unique id / lineage
-    loop_id = loop_id if loop_id is not None else short_id()
     _parent_lineage = TOOL_LOOP_LINEAGE.get([])
-    _lineage = list(lineage) if lineage is not None else [*_parent_lineage, loop_id]
-    _token = TOOL_LOOP_LINEAGE.set(_lineage)
-    log_label = "->".join(_lineage) if _lineage else (loop_id or "")
+    cfg = _AsyncToolLoopConfig(loop_id, lineage, parent_lineage)
+    _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
@@ -1076,7 +1095,7 @@ async def _async_tool_use_loop_inner(
 
     async def _append_msgs(msgs: list[dict]) -> None:
         client.append_messages(msgs)
-        await _to_event_bus(msgs, loop_id, _lineage, log_label)
+        await _to_event_bus(msgs, cfg.loop_id, _lineage, log_label)
         _reset_timeout_timer()
 
     if log_steps:
@@ -1361,7 +1380,9 @@ async def _async_tool_use_loop_inner(
                     for item in tool_msg_for_logging["content"]
                     if item.get("type") != "image_url"
                 ]
-            LOGGER.info(f"🛠️ [{loop_id}] {json.dumps(tool_msg_for_logging, indent=4)}\n")
+            LOGGER.info(
+                f"🛠️ [{cfg.loop_id}] {json.dumps(tool_msg_for_logging, indent=4)}\n",
+            )
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures >= max_consecutive_failures:
@@ -2772,7 +2793,7 @@ async def _async_tool_use_loop_inner(
                     )
 
             msg = client.messages[-1]
-            await _to_event_bus(msg, loop_id, _lineage, log_label)
+            await _to_event_bus(msg, cfg.loop_id, _lineage, log_label)
 
             if log_steps:
                 try:
