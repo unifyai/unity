@@ -907,7 +907,7 @@ class _AsyncToolLoopConfig:
 
 class _AsyncToolLoopLogger:
     def __init__(self, cfg: _AsyncToolLoopConfig) -> None:
-        self._label = "->".join(cfg.lineage) if cfg.lineage else (self.loop_id or "")
+        self._label = "->".join(cfg.lineage) if cfg.lineage else (cfg.loop_id or "")
 
     @property
     def log_label(self):
@@ -1154,7 +1154,7 @@ async def _async_tool_use_loop_inner(
 
     async def _append_msgs(msgs: list[dict]) -> None:
         client.append_messages(msgs)
-        await _to_event_bus(msgs, cfg.loop_id, _lineage, log_label)
+        await _to_event_bus(msgs, cfg.loop_id, cfg.lineage, logger.log_label)
         timer.reset()
 
     if log_steps:
@@ -2836,7 +2836,7 @@ async def _async_tool_use_loop_inner(
                     )
 
             msg = client.messages[-1]
-            await _to_event_bus(msg, cfg.loop_id, _lineage, log_label)
+            await _to_event_bus(msg, cfg.loop_id, cfg.lineage, log_label)
 
             if log_steps:
                 try:
