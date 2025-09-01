@@ -341,6 +341,10 @@ async def _dispatch_with_context(
         )
         eff_guidance = parsed.simulation_guidance
 
+        # Default to a 20s duration when no explicit steps or timeout were provided
+        if eff_steps is None and eff_timeout is None:
+            eff_timeout = 20.0
+
         stripped_id = core_text.strip()
         if stripped_id.isdigit():
             try:
