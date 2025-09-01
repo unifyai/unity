@@ -123,7 +123,10 @@ jobs:
         # 5) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 6) cleanup
+        # 6) Install docling package
+        uv pip install "docling>=2.49.0"
+
+        # 7) cleanup
         rm temp_requirements.txt
 
     - name: Restore .cache.ndjson
