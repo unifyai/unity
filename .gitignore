@@ -18,3 +18,4 @@ dump.rdb
 .async_trace.html
 .unity_plans
 *.txt
+parsed_results_output/
