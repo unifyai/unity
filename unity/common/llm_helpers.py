@@ -922,6 +922,57 @@ class _AsyncToolLoopLogger:
         LOGGER.error(txt)
 
 
+class _TimeoutTimer:
+    def __init__(self, timeout: int, max_steps: int, raise_on_limit: bool, client):
+        self._timeout = timeout
+        self._client = client
+        self._max_steps = max_steps
+        self._raise_on_limit = raise_on_limit
+        self.reset()
+
+    def remaining_time(self) -> Optional[float]:
+        if self._timeout is None:
+            return None
+
+        return self._timeout - (time.perf_counter() - self._last_activity_ts)
+
+    def reset(self):
+        """Refresh the rolling timeout."""
+        self.last_activity_ts = time.perf_counter()
+        self.last_msg_count = (
+            0 if not self._client.messages else len(self._client.messages)
+        )
+
+    def has_exceeded_time(self) -> bool:
+        """
+        Return whether we exceeded the timeout threshold, raises Exception if raise_on_limit is set
+        """
+        if self._timeout is None:
+            return False
+
+        ret = time.perf_counter() - self.last_activity_ts > self._timeout
+        if self._raise_on_limit and ret:
+            raise asyncio.TimeoutError(
+                f"Loop exceeded {self._timeout}s wall-clock limit",
+            )
+        return True
+
+    def has_exceeded_msgs(self) -> bool:
+        """
+        Return whether we exceeded the messages threshold, raises Exception if raise_on_limit is set
+        """
+        if self._max_steps is None:
+            return False
+
+        ret = len(self._client.messages) >= self._max_steps
+        if self._raise_on_limit and ret:
+            raise RuntimeError(
+                f"Conversation exceeded max_steps={self._max_steps} "
+                f"(len(client.messages)={len(self._client.messages)})",
+            )
+        return True
+
+
 async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
     message: str,
@@ -1059,8 +1110,7 @@ async def _async_tool_use_loop_inner(
         been fed back into the conversation.
     """
     # unique id / lineage
-    _parent_lineage = TOOL_LOOP_LINEAGE.get([])
-    cfg = _AsyncToolLoopConfig(loop_id, lineage, parent_lineage)
+    cfg = _AsyncToolLoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
     logger = _AsyncToolLoopLogger(cfg)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
@@ -1095,21 +1145,17 @@ async def _async_tool_use_loop_inner(
 
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
-    last_activity_ts: float = time.perf_counter()  # reset every time
-    last_msg_count: int = (
-        0 if not client.messages else len(client.messages)
-    )  # we add a message
-
-    def _reset_timeout_timer() -> None:
-        """Refresh the rolling timeout."""
-        nonlocal last_activity_ts, last_msg_count
-        last_activity_ts = time.perf_counter()
-        last_msg_count = 0 if not client.messages else len(client.messages)
+    timer: _TimeoutTimer = _TimeoutTimer(
+        timeout=timeout,
+        max_steps=max_steps,
+        raise_on_limit=raise_on_limit,
+        client=client,
+    )
 
     async def _append_msgs(msgs: list[dict]) -> None:
         client.append_messages(msgs)
         await _to_event_bus(msgs, cfg.loop_id, _lineage, log_label)
-        _reset_timeout_timer()
+        timer.reset()
 
     if log_steps:
         if log_steps == "full":
@@ -1953,27 +1999,16 @@ async def _async_tool_use_loop_inner(
                         continue  # top-of-loop, still paused
 
             # 0-α. **Global timeout**
-            if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
-                if raise_on_limit:
-                    raise asyncio.TimeoutError(
-                        f"Loop exceeded {timeout}s wall-clock limit",
-                    )
-                else:
-                    return await _handle_limit_reached(
-                        f"timeout ({timeout}s) exceeded",
-                    )
+            if timer.has_exceeded_time():
+                return await _handle_limit_reached(
+                    f"timeout ({timeout}s) exceeded",
+                )
 
             # 0-β. **Chat history length**
-            if max_steps is not None and len(client.messages) >= max_steps:
-                if raise_on_limit:
-                    raise RuntimeError(
-                        f"Conversation exceeded max_steps={max_steps} "
-                        f"(len(client.messages)={len(client.messages)})",
-                    )
-                else:
-                    return await _handle_limit_reached(
-                        f"max_steps ({max_steps}) exceeded",
-                    )
+            if timer.has_exceeded_msgs():
+                return await _handle_limit_reached(
+                    f"max_steps ({max_steps}) exceeded",
+                )
 
             # 0-γ. Repair any outstanding assistant tool_calls missing replies
             #      before we allow new user interjections to be appended.
@@ -2098,23 +2133,14 @@ async def _async_tool_use_loop_inner(
                 )
 
                 # ── honour global *timeout* while we wait for tools ───────────
-                wait_timeout: Optional[float] = None
-                if timeout is not None:
-                    wait_timeout = timeout - (time.perf_counter() - last_activity_ts)
-                    # already exceeded?
-                    if wait_timeout <= 0:
-                        if raise_on_limit:
-                            raise asyncio.TimeoutError(
-                                f"Loop exceeded {timeout}s wall-clock limit",
-                            )
-                        else:
-                            return await _handle_limit_reached(
-                                f"timeout ({timeout}s) exceeded",
-                            )
+                if timer.has_exceeded_time():
+                    return await _handle_limit_reached(
+                        f"timeout ({timeout}s) exceeded",
+                    )
 
                 done, _ = await asyncio.wait(
                     waiters,
-                    timeout=wait_timeout,
+                    timeout=timer.remaining_time(),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
@@ -2822,15 +2848,10 @@ async def _async_tool_use_loop_inner(
                     )
 
             # ── timeout guard (post-LLM) ───────────────────────────────
-            if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
-                if raise_on_limit:
-                    raise asyncio.TimeoutError(
-                        f"Loop exceeded {timeout}s wall-clock limit",
-                    )
-                else:
-                    return await _handle_limit_reached(
-                        f"timeout ({timeout}s) exceeded",
-                    )
+            if timer.has_exceeded_time():
+                return await _handle_limit_reached(
+                    f"timeout ({timeout}s) exceeded",
+                )
 
             # LLM has just spoken – reset the flag
             llm_turn_required = False
@@ -3419,26 +3440,15 @@ async def _async_tool_use_loop_inner(
                     pending.clear()
 
             # ── timeout guard (final turn) ──────────────────────────────────
-            if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
-                if raise_on_limit:
-                    raise asyncio.TimeoutError(
-                        f"Loop exceeded {timeout}s wall-clock limit",
-                    )
-                else:
-                    return await _handle_limit_reached(
-                        f"timeout ({timeout}s) exceeded",
-                    )
+            if timer.has_exceeded_time():
+                return await _handle_limit_reached(
+                    f"timeout ({timeout}s) exceeded",
+                )
 
-            if max_steps is not None and len(client.messages) >= max_steps:
-                if raise_on_limit:
-                    raise RuntimeError(
-                        f"Conversation exceeded max_steps={max_steps} "
-                        f"(len(client.messages)={len(client.messages)})",
-                    )
-                else:
-                    return await _handle_limit_reached(
-                        f"max_steps ({max_steps}) exceeded",
-                    )
+            if timer.has_exceeded_msgs():
+                return await _handle_limit_reached(
+                    f"max_steps ({max_steps}) exceeded",
+                )
 
             final_answer = msg["content"]
 
