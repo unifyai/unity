@@ -895,6 +895,48 @@ async def _append_msgs(
     timer.reset()
 
 
+# Remove any tool_calls in an assistant message that would exceed the
+# hidden per-tool total-call quota. Operates in-place on asst_msg.
+def _prune_over_quota_tool_calls(asst_msg: dict, norm_tools, call_counts) -> None:
+    try:
+        tool_calls = asst_msg.get("tool_calls") or []
+        if not isinstance(tool_calls, list) or not tool_calls:
+            return
+
+        # Compute remaining budget per base tool (in this loop instance)
+        remaining: Dict[str, int] = {}
+        for name, spec in norm_tools.items():
+            lim = spec.max_total_calls
+            if lim is None:
+                continue
+            remaining[name] = max(0, lim - call_counts.get(name, 0))
+
+        kept: list = []
+        for call in tool_calls:
+            try:
+                fn_name = call.get("function", {}).get("name")
+            except Exception:
+                fn_name = None
+
+            # Only enforce quota on base tools that define a limit
+            if fn_name in remaining:
+                if remaining[fn_name] > 0:
+                    kept.append(call)
+                    remaining[fn_name] -= 1
+                else:
+                    # drop this over-quota call silently
+                    continue
+            else:
+                kept.append(call)
+
+        # In-place update only if changed
+        if len(kept) != len(tool_calls):
+            asst_msg["tool_calls"] = kept
+    except Exception:
+        # Defensive: never let pruning break the loop
+        pass
+
+
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
 
@@ -1552,47 +1594,6 @@ async def _async_tool_use_loop_inner(
 
         return created
 
-    # Remove any tool_calls in an assistant message that would exceed the
-    # hidden per-tool total-call quota. Operates in-place on asst_msg.
-    def _prune_over_quota_tool_calls(asst_msg: dict) -> None:
-        try:
-            tool_calls = asst_msg.get("tool_calls") or []
-            if not isinstance(tool_calls, list) or not tool_calls:
-                return
-
-            # Compute remaining budget per base tool (in this loop instance)
-            remaining: Dict[str, int] = {}
-            for name, spec in norm_tools.items():
-                lim = spec.max_total_calls
-                if lim is None:
-                    continue
-                remaining[name] = max(0, lim - call_counts.get(name, 0))
-
-            kept: list = []
-            for call in tool_calls:
-                try:
-                    fn_name = call.get("function", {}).get("name")
-                except Exception:
-                    fn_name = None
-
-                # Only enforce quota on base tools that define a limit
-                if fn_name in remaining:
-                    if remaining[fn_name] > 0:
-                        kept.append(call)
-                        remaining[fn_name] -= 1
-                    else:
-                        # drop this over-quota call silently
-                        continue
-                else:
-                    kept.append(call)
-
-            # In-place update only if changed
-            if len(kept) != len(tool_calls):
-                asst_msg["tool_calls"] = kept
-        except Exception:
-            # Defensive: never let pruning break the loop
-            pass
-
     # Helper: insert a tool-acknowledgement message for helper tools
     async def _acknowledge_helper_call(
         asst_msg: dict,
@@ -1859,7 +1860,7 @@ async def _async_tool_use_loop_inner(
             for entry in unreplied:
                 amsg = entry["assistant_msg"]
                 # Before scheduling, drop any over-quota tool calls in this message
-                _prune_over_quota_tool_calls(amsg)
+                _prune_over_quota_tool_calls(amsg, norm_tools, call_counts)
                 missing_ids = set(entry["missing"])
                 await _schedule_missing_for_message(amsg, missing_ids)
     except Exception:
@@ -2883,12 +2884,12 @@ async def _async_tool_use_loop_inner(
                     msg["tool_calls"] = unique_calls
 
                 # After deduplication, prune any calls exceeding hidden quotas
-                _prune_over_quota_tool_calls(msg)
+                _prune_over_quota_tool_calls(msg, norm_tools, call_counts)
 
             # Always ensure over-quota tool calls are removed regardless of
             # deduplication settings, before any scheduling occurs.
             if msg.get("tool_calls"):
-                _prune_over_quota_tool_calls(msg)
+                _prune_over_quota_tool_calls(msg, norm_tools, call_counts)
 
             # ── E.  Launch any new tool calls  ──────────────────────────────
             # NOTE: The model returned `tool_calls`.  For *each* call we:
