@@ -283,12 +283,6 @@ def pytest_sessionstart(session):
         else "UnityTests"
     )
 
-    if os.environ.get("CI"):
-        # In CI, always generate a fresh writecache file.
-        # This ensures old cache entries are removed, keeping only those actually used.
-        # The cache file can be manually updated when necessary.
-        unify.set_cache_backend("local_separate")
-
     unify.activate(
         project_name,
         overwrite=SETTINGS.UNIFY_OVERWRITE_PROJECT,
