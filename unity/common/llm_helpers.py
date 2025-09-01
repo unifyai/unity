@@ -983,6 +983,21 @@ async def _emit_completion_pair(
     await msg_dispatcher.append_msgs([assistant_stub, tool_msg])
     return tool_msg
 
+# ── small helper: keep assistant→tool chronology DRY ────────────────────
+async def _insert_after_assistant(assistant_meta: dict, parent_msg: dict, tool_msg: dict, client, msg_dispatcher: _AsyncToolLoopMessageDispatcher) -> None:
+    """
+    Append *tool_msg* and move it directly after *parent_msg*, while
+    updating the per-assistant `results_count` bookkeeping.
+    """
+    meta = assistant_meta.setdefault(
+        id(parent_msg),
+        {"results_count": 0},
+    )
+    await msg_dispatcher.append_msgs([tool_msg])
+    insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
+    client.messages.insert(insert_pos, client.messages.pop())
+    meta["results_count"] += 1
+
 
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
@@ -1277,21 +1292,6 @@ async def _async_tool_use_loop_inner(
     # propagating context further down (avoids duplication).
     # -----------------------------------------------------------------------
 
-    # ── small helper: keep assistant→tool chronology DRY ────────────────────
-    async def _insert_after_assistant(parent_msg: dict, tool_msg: dict) -> None:
-        """
-        Append *tool_msg* and move it directly after *parent_msg*, while
-        updating the per-assistant `results_count` bookkeeping.
-        """
-        meta = assistant_meta.setdefault(
-            id(parent_msg),
-            {"results_count": 0},
-        )
-        await _msg_dispatcher.append_msgs([tool_msg])
-        insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
-        client.messages.insert(insert_pos, client.messages.pop())
-        meta["results_count"] += 1
-
     # ── *single* authoritative implementation of "task finished" handling ──
     async def _process_completed_task(task: asyncio.Task) -> bool:
         """
@@ -1383,7 +1383,7 @@ async def _async_tool_use_loop_inner(
                             "Nested async tool loop started… waiting for result."
                         ),
                     }
-                    await _insert_after_assistant(info["assistant_msg"], ph)
+                    await _insert_after_assistant(assistant_meta, info["assistant_msg"], ph, client, _msg_dispatcher)
                     info["tool_reply_msg"] = ph  # remember on *parent*
                 else:
                     ph["content"] = (
@@ -1496,7 +1496,7 @@ async def _async_tool_use_loop_inner(
                 "name": name,
                 "content": result,
             }
-            await _insert_after_assistant(asst_msg, tool_msg)
+            await _insert_after_assistant(assistant_meta, asst_msg, tool_msg, client, _msg_dispatcher)
 
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
@@ -1603,7 +1603,7 @@ async def _async_tool_use_loop_inner(
                 "name": _inf["name"],
                 "content": placeholder_content,
             }
-            await _insert_after_assistant(_inf["assistant_msg"], placeholder)
+            await _insert_after_assistant(assistant_meta, _inf["assistant_msg"], placeholder, client, _msg_dispatcher)
             _inf["tool_reply_msg"] = placeholder
             created.append(_inf["call_id"])
 
@@ -1622,7 +1622,7 @@ async def _async_tool_use_loop_inner(
             "name": name,
             "content": _build_helper_ack_content(name, args_json),
         }
-        await _insert_after_assistant(asst_msg, tool_msg)
+        await _insert_after_assistant(assistant_meta, asst_msg, tool_msg, client, _msg_dispatcher)
 
     # Helper: schedule a base tool call (shared by main path and backfill)
     async def _schedule_base_tool_call(
@@ -2235,8 +2235,11 @@ async def _async_tool_use_loop_inner(
                                 "content": "",  # will fill below
                             }
                             await _insert_after_assistant(
+                                assistant_meta,
                                 task_info[src_task]["assistant_msg"],
                                 ph,
+                                client,
+                                _msg_dispatcher,
                             )
                             task_info[src_task]["tool_reply_msg"] = ph
 
@@ -2946,7 +2949,7 @@ async def _async_tool_use_loop_inner(
                                 "name": "final_answer",
                                 "content": _dumps(payload, indent=4),
                             }
-                            await _insert_after_assistant(msg, tool_msg)
+                            await _insert_after_assistant(assistant_meta, msg, tool_msg, client, _msg_dispatcher)
 
                             return json.dumps(payload)
                         except Exception as _exc:
@@ -2959,7 +2962,7 @@ async def _async_tool_use_loop_inner(
                                     + str(_exc)
                                 ),
                             }
-                            await _insert_after_assistant(msg, tool_msg)
+                            await _insert_after_assistant(assistant_meta, msg, tool_msg, client, _msg_dispatcher)
                             continue
 
                     # ── Special-case dynamic helpers ──────────────────────
@@ -3002,7 +3005,7 @@ async def _async_tool_use_loop_inner(
                                     f" • {name}({arg_json}) → cancel_{call['id']} / continue_{call['id']}"
                                 ),
                             }
-                            await _insert_after_assistant(msg, tool_reply_msg)
+                            await _insert_after_assistant(assistant_meta, msg, tool_reply_msg, client, _msg_dispatcher)
                             info["continue_msg"] = tool_reply_msg
                         else:  # the original tool already finished
                             # Lookup finished result by matching call-id suffix
@@ -3028,8 +3031,11 @@ async def _async_tool_use_loop_inner(
                                 "content": finished,
                             }
                             await _insert_after_assistant(
+                                assistant_meta,
                                 msg,
                                 tool_msg,
+                                client,
+                                _msg_dispatcher,
                             )
                         continue  # completed handling of this _continue
 
@@ -3096,7 +3102,7 @@ async def _async_tool_use_loop_inner(
                                 f"The tool call [{call_id_suffix}] has been stopped successfully."
                             ),
                         }
-                        await _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(assistant_meta, msg, tool_msg, client, _msg_dispatcher)
 
                         continue  # nothing else to schedule
 
@@ -3141,7 +3147,7 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f"The tool call [{call_id_suffix}] has been paused successfully.",
                         }
-                        await _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(assistant_meta, msg, tool_msg, _msg_dispatcher)
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
@@ -3185,7 +3191,7 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f"The tool call [{call_id_suffix}] has been resumed successfully.",
                         }
-                        await _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(assistant_meta, msg, tool_msg, _msg_dispatcher)
                         continue  # helper handled
 
                     if name.startswith("clarify_"):
@@ -3232,7 +3238,7 @@ async def _async_tool_use_loop_inner(
                                 "⏳ Waiting for the original tool to finish…"
                             ),
                         }
-                        await _insert_after_assistant(msg, tool_reply_msg)
+                        await _insert_after_assistant(assistant_meta, msg, tool_reply_msg, _msg_dispatcher)
                         if tgt_task is not None:
                             task_info[tgt_task]["clarify_placeholder"] = tool_reply_msg
                         continue
