@@ -2,6 +2,7 @@ import pytest
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor
+from unity.task_scheduler.types.status import Status
 
 
 @pytest.mark.asyncio
@@ -55,3 +56,23 @@ async def test_orphan_active_guard_prevents_new_execution(monkeypatch):
     # Now, attempt to start another task should be rejected
     with pytest.raises(RuntimeError):
         await ts.execute_task(text=str(tid))
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_disallow_internal_status_edits_on_active_task(monkeypatch):
+    """Direct updates to the active task's status should be refused and must go through the live handle."""
+
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
+
+    tid = ts._create_task(name="B", description="B")["details"]["task_id"]
+    h = await ts.execute_task(text=str(tid))
+
+    # Attempt to change status away from active via update API should raise
+    with pytest.raises(RuntimeError):
+        ts._update_task_status(task_ids=tid, new_status=Status.paused)
+
+    # Clean stop to avoid leaking background threads
+    h.stop(cancel=False)
+    await h.result()
