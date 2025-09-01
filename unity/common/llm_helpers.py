@@ -893,9 +893,8 @@ class _AsyncToolLoopConfig:
     def __init__(self, loop_id, lineage, parent_lineage):
         self._loop_id = loop_id if loop_id is not None else short_id()
         self._lineage = (
-            list(lineage) if lineage is not None else [*parent_lineage, loop_id]
+            list(lineage) if lineage is not None else [*parent_lineage, self.loop_id]
         )
-        self._log_label = "->".join(self._lineage) if self._lineage else (loop_id or "")
 
     @property
     def loop_id(self):
@@ -905,9 +904,22 @@ class _AsyncToolLoopConfig:
     def lineage(self):
         return self._lineage
 
+
+class _AsyncToolLoopLogger:
+    def __init__(self, cfg: _AsyncToolLoopConfig) -> None:
+        self._label = "->".join(cfg.lineage) if cfg.lineage else (self.loop_id or "")
+
     @property
     def log_label(self):
-        return self._log_label
+        return self._label
+
+    def info(self, msg, prefix=""):
+        txt = f"{prefix} [{self._label}] {msg}"
+        LOGGER.info(txt)
+
+    def error(self, msg, prefix=""):
+        txt = f"{prefix} [{self._label}] {msg}"
+        LOGGER.error(txt)
 
 
 async def _async_tool_use_loop_inner(
@@ -1049,6 +1061,7 @@ async def _async_tool_use_loop_inner(
     # unique id / lineage
     _parent_lineage = TOOL_LOOP_LINEAGE.get([])
     cfg = _AsyncToolLoopConfig(loop_id, lineage, parent_lineage)
+    logger = _AsyncToolLoopLogger(cfg)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # normalise optional graceful stop event
@@ -1078,7 +1091,7 @@ async def _async_tool_use_loop_inner(
 
             client.set_system_message((client.system_message or "") + _hint)
         except Exception as _exc:  # noqa: BLE001
-            LOGGER.error(f"response_format hint failed: {_exc!r}")
+            logger.error(f"response_format hint failed: {_exc!r}")
 
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
@@ -1101,11 +1114,12 @@ async def _async_tool_use_loop_inner(
     if log_steps:
         if log_steps == "full":
             if parent_chat_context:
-                LOGGER.info(
-                    f"⬇️ [{log_label}] Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
+                logger.info(
+                    f"Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
+                    prefix="⬇️",
                 )
-            LOGGER.info(f"📋 [{log_label}] System Message: {client.system_message}\n")
-        LOGGER.info(f"🧑‍💻 [{log_label}] User Message: {message}\n")
+            logger.info(f"System Message: {client.system_message}\n", prefix="📋")
+        logger.info(f"User Message: {message}\n", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
@@ -1304,9 +1318,10 @@ async def _async_tool_use_loop_inner(
             consecutive_failures += 1
             result = traceback.format_exc()
             if log_steps:
-                LOGGER.error(
-                    f"❌ [{log_label}] Error: {name} failed "
+                logger.error(
+                    f"Error: {name} failed "
                     f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
+                    prefix="❌",
                 )
                 # Additional debug context: show the exact tool schema and arguments
                 # that were presented to the LLM for this failed call. This helps
@@ -1319,8 +1334,9 @@ async def _async_tool_use_loop_inner(
                         "llm_arguments": info.get("llm_arguments"),
                         "raw_arguments_json": info.get("raw_arguments_json"),
                     }
-                    LOGGER.error(
-                        f"🧩 [{log_label}] FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
+                    logger.error(
+                        f"FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
+                        prefix="🧩",
                     )
                 except Exception:
                     pass
@@ -1380,14 +1396,15 @@ async def _async_tool_use_loop_inner(
                     for item in tool_msg_for_logging["content"]
                     if item.get("type") != "image_url"
                 ]
-            LOGGER.info(
-                f"🛠️ [{cfg.loop_id}] {json.dumps(tool_msg_for_logging, indent=4)}\n",
+            logger.info(
+                f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
+                prefix="🛠️",
             )
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures >= max_consecutive_failures:
             if log_steps:
-                LOGGER.error(f"🚨 [{log_label}] Aborting: too many tool failures.")
+                logger.error(f"Aborting: too many tool failures.", prefix="🚨")
             raise RuntimeError(
                 "Aborted after too many consecutive tool failures.",
             )
@@ -1826,7 +1843,7 @@ async def _async_tool_use_loop_inner(
         }
         await _append_msgs([notice])
         if log_steps:
-            LOGGER.info(f"⏹️ [{log_label}] Early exit – {reason}")
+            logger.info(f"Early exit – {reason}", prefix="⏹️")
         return notice["content"]
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
@@ -2232,7 +2249,7 @@ async def _async_tool_use_loop_inner(
                         {n: s.fn for n, s in norm_tools.items()},
                     )
                 except Exception as _e:  # never abort the loop on mis-behaving policies
-                    LOGGER.error(
+                    logger.error(
                         f"tool_policy raised on turn {step_index}: {_e!r}",
                     )
                     tool_choice_mode, filtered = "auto", {
@@ -2288,7 +2305,7 @@ async def _async_tool_use_loop_inner(
                         },
                     )
                 except Exception as _injection_exc:  # noqa: BLE001
-                    LOGGER.error(
+                    logger.error(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
 
@@ -2683,7 +2700,7 @@ async def _async_tool_use_loop_inner(
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
-                LOGGER.info(f"🔄 [{log_label}] LLM thinking…")
+                logger.info(f"LLM thinking…", prefix="🔄")
 
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
@@ -2797,10 +2814,11 @@ async def _async_tool_use_loop_inner(
 
             if log_steps:
                 try:
-                    LOGGER.info(f"🤖 [{log_label}] {json.dumps(msg, indent=4)}\n")
+                    logger.info(f"{json.dumps(msg, indent=4)}\n", prefix="🤖")
                 except Exception:
-                    LOGGER.info(
-                        f"🤖 [{log_label}] Assistant message appended (unserializable)",
+                    logger.info(
+                        f"Assistant message appended (unserializable)",
+                        prefix="🤖",
                     )
 
             # ── timeout guard (post-LLM) ───────────────────────────────
@@ -3367,7 +3385,7 @@ async def _async_tool_use_loop_inner(
                         content="Pending… tool call accepted. Working on it.",
                     )
                 except Exception as _ph_exc:
-                    LOGGER.error(
+                    logger.error(
                         f"Failed to insert immediate placeholders: {_ph_exc!r}",
                     )
 
