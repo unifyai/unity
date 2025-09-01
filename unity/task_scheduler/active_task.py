@@ -136,9 +136,34 @@ class ActiveTask(BaseActiveTask):
                         self._mirror_status("cancelled")
                     else:
                         # Defer: restore prior queue/schedule position via public API when available.
-                        self._call_reinstate_public(task_id=self._task_id)
+                        try:
+                            self._call_reinstate_public(task_id=self._task_id)
+                        except Exception:
+                            # Fallback: downgrade status to prior state from plan or 'queued'.
+                            try:
+                                plan = None
+                                if self._instance_id is not None:
+                                    plan = (self._scheduler._reintegration_plans or {}).get(  # type: ignore[attr-defined]
+                                        (self._task_id, self._instance_id),
+                                    )
+                                prior_status = (
+                                    str(getattr(plan, "original_status", ""))
+                                    if plan is not None
+                                    else ""
+                                )
+                                target_status = (
+                                    prior_status if prior_status else "queued"
+                                )
+                                if self._instance_id is not None:
+                                    self._scheduler._update_task_status_instance(  # type: ignore[attr-defined]
+                                        task_id=self._task_id,
+                                        instance_id=self._instance_id,
+                                        new_status=target_status,
+                                    )
+                            except Exception:
+                                pass
             except Exception:
-                # Best-effort: failure to reinstate must not break stop semantics
+                # Best-effort: failure to reinstate or fallback must not break stop semantics
                 pass
 
             self._clear_active_pointer()
