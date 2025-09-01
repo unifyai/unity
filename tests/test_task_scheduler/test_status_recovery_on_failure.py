@@ -34,3 +34,24 @@ async def test_defer_reinstate_failure_fallback_downgrades_status(monkeypatch):
     rows = ts._filter_tasks(filter=f"task_id == {tid}")
     assert any(r.get("status") != "active" for r in rows)
     assert any(r.get("status") in ("queued", "scheduled", "primed") for r in rows)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_orphan_active_guard_prevents_new_execution(monkeypatch):
+    """If a row is marked 'active' without an active pointer, execute_task should refuse to start a new task."""
+
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
+
+    # Create task and manually simulate an orphan 'active' row by updating instance status via internal instance method
+    tid = ts._create_task(name="A", description="A")["details"]["task_id"]
+
+    # Promote to active through normal execute
+    h = await ts.execute_task(text=str(tid))
+    # Immediately clear the pointer to simulate crash-after-activation
+    ts._active_task = None  # type: ignore[attr-defined]
+
+    # Now, attempt to start another task should be rejected
+    with pytest.raises(RuntimeError):
+        await ts.execute_task(text=str(tid))
