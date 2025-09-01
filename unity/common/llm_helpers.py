@@ -934,7 +934,7 @@ class _TimeoutTimer:
         if self._timeout is None:
             return None
 
-        return self._timeout - (time.perf_counter() - self._last_activity_ts)
+        return self._timeout - (time.perf_counter() - self.last_activity_ts)
 
     def reset(self):
         """Refresh the rolling timeout."""
@@ -955,7 +955,7 @@ class _TimeoutTimer:
             raise asyncio.TimeoutError(
                 f"Loop exceeded {self._timeout}s wall-clock limit",
             )
-        return True
+        return ret
 
     def has_exceeded_msgs(self) -> bool:
         """
@@ -970,7 +970,7 @@ class _TimeoutTimer:
                 f"Conversation exceeded max_steps={self._max_steps} "
                 f"(len(client.messages)={len(self._client.messages)})",
             )
-        return True
+        return ret
 
 
 async def _async_tool_use_loop_inner(
@@ -2836,7 +2836,7 @@ async def _async_tool_use_loop_inner(
                     )
 
             msg = client.messages[-1]
-            await _to_event_bus(msg, cfg.loop_id, cfg.lineage, log_label)
+            await _to_event_bus(msg, cfg.loop_id, cfg.lineage, logger.log_label)
 
             if log_steps:
                 try:
