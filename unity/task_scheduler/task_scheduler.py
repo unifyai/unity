@@ -7,6 +7,7 @@ import functools
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
+from typing import cast
 
 
 from ..common.embed_utils import list_private_fields
@@ -710,7 +711,7 @@ class TaskScheduler(BaseTaskScheduler):
         return outer_handle
 
     # ------------------------------------------------------------------ #
-    #  Scope classification helper                                        #
+    #  Scope classification helper (LLM-routed)                           #
     # ------------------------------------------------------------------ #
     async def _decide_execution_scope(
         self,
@@ -718,28 +719,70 @@ class TaskScheduler(BaseTaskScheduler):
         request_text: str,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Literal["isolate", "chain"]:
-        """
-        Decide whether to execute a task in "isolate" or "chain" mode.
-
-        Default behaviour is environment-controlled for determinism in tests:
-        set UNITY_TS_EXEC_CHAIN=true to opt into "chain"; otherwise "isolate".
-        """
+        """Use an LLM router to decide execution scope: "isolate" vs "chain"."""
         try:
-            env = os.environ.get("UNITY_TS_EXEC_CHAIN", "").lower()
-            if env == "true":
-                return "chain"
-        except Exception:
-            pass
+            client = self._new_llm_client("gpt-5@openai")
+            system = (
+                "You are a router that selects an execution scope for starting a queued task.\n"
+                "Choices:\n"
+                "- isolate: Start only the selected task now, detach its followers. The next task becomes the new head and inherits any queue-level start_at timestamp (becomes scheduled).\n"
+                "- chain: Start the selected task now and KEEP the follower chain attached behind it. The started task keeps the queue-level start_at; the immediate successor MUST NOT carry start_at.\n"
+                "Guidelines:\n"
+                "- Phrases like 'do them all now', 'do the whole set/sequence now', lists of multiple tasks to run now => chain.\n"
+                "- Phrases like 'just this one now', 'leave the rest for later/Monday' => isolate.\n"
+                "- If ambiguous, prefer chain when the user implies batch execution; otherwise isolate.\n"
+                'Return ONLY JSON with rationale first: {"rationale": <short string>, "execution_scope": "isolate|chain"}\n'
+                "Be concise and deterministic."
+            )
+            client.set_system_message(system)
 
-        # Lightweight heuristic: let explicit mentions opt into chaining.
-        try:
-            txt = (request_text or "").lower()
-            if any(k in txt for k in ("chain", "keep followers", "follow me")):
-                return "chain"
-        except Exception:
-            pass
+            # Build a compact, recent-first transcript for added context
+            def _format_ctx(
+                ctx: Optional[List[Dict[str, Any]]],
+                limit_chars: int = 2000,
+            ) -> str:
+                try:
+                    if not ctx:
+                        return "(no prior context)"
+                    lines: List[str] = []
+                    total = 0
+                    for msg in reversed(ctx[-20:]):
+                        role = str(msg.get("role", "")).strip() or "user"
+                        content = str(msg.get("content", "")).strip()
+                        line = f"{role}: {content}"
+                        if total + len(line) > limit_chars:
+                            break
+                        lines.append(line)
+                        total += len(line)
+                    return "\n".join(reversed(lines)) if lines else "(no prior context)"
+                except Exception:
+                    return "(no prior context)"
 
-        return "isolate"
+            ctx_block = _format_ctx(parent_chat_context)
+            user = (
+                "Recent conversation (most recent last):\n"
+                f"{ctx_block}\n\n"
+                "User request (free-form):\n"
+                f"{(request_text or '').strip()}"
+            )
+            raw = await client.generate(user)
+            import json as _json
+
+            scope = "isolate"
+            try:
+                data = _json.loads(raw)
+                token = str(data.get("execution_scope", "")).strip().lower()
+                if token in {"isolate", "chain"}:
+                    scope = token  # type: ignore[assignment]
+            except Exception:
+                # attempt to extract simple token
+                low = (raw or "").lower()
+                if '"chain"' in low or 'execution_scope": "chain"' in low:
+                    scope = "chain"
+            return cast(Literal["isolate", "chain"], scope)
+        except Exception:
+            # Conservative fallback
+            return "isolate"
 
     #  Per-instance helpers
 
@@ -2480,7 +2523,7 @@ class TaskScheduler(BaseTaskScheduler):
     # (Removed) LLM-based scope classifier
 
     # ------------------------------------------------------------------ #
-    #  Steering intent classification (0-shot + heuristics)               #
+    #  Steering intent classification (LLM-routed)                        #
     # ------------------------------------------------------------------ #
 
     async def _classify_steering_intent(
@@ -2488,55 +2531,80 @@ class TaskScheduler(BaseTaskScheduler):
         message: str,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> tuple[str, str]:
-        """
-        Classify a steering message into one of:
-          cancel | defer | pause | resume | continue | none
-        Returns (intent, reason_summary). On failure, falls back to heuristics.
-        """
-        text = (message or "").strip().lower()
+        """Classify steering into: cancel | defer | pause | resume | continue | none."""
+        try:
+            client = self._new_llm_client("gpt-5@openai")
+            system = (
+                "You are a router that classifies an in-flight steering message.\n"
+                "Labels: cancel | defer | pause | resume | continue | none.\n"
+                "Definitions:\n"
+                "- cancel: abandon/kill/drop the task (terminal).\n"
+                "- defer: stop for now but resume later / return to prior queue/schedule.\n"
+                "- pause: temporarily pause, expecting explicit resume soon.\n"
+                "- resume: continue after a pause.\n"
+                "- continue: keep going (no change).\n"
+                "- none: message is not a steering instruction.\n"
+                'Output ONLY JSON with rationale first: {"rationale": <short string>, "action": <label>, "reason": <short substring or null>}'
+            )
+            client.set_system_message(system)
 
-        def _heur() -> Optional[str]:
-            if any(
-                k in text
-                for k in (
+            # Build a compact, recent-first transcript for added context
+            def _format_ctx(
+                ctx: Optional[List[Dict[str, Any]]],
+                limit_chars: int = 2000,
+            ) -> str:
+                try:
+                    if not ctx:
+                        return "(no prior context)"
+                    lines: List[str] = []
+                    total = 0
+                    for msg in reversed(ctx[-20:]):
+                        role = str(msg.get("role", "")).strip() or "user"
+                        content = str(msg.get("content", "")).strip()
+                        line = f"{role}: {content}"
+                        if total + len(line) > limit_chars:
+                            break
+                        lines.append(line)
+                        total += len(line)
+                    return "\n".join(reversed(lines)) if lines else "(no prior context)"
+                except Exception:
+                    return "(no prior context)"
+
+            ctx_block = _format_ctx(parent_chat_context)
+            user = (
+                "Recent conversation (most recent last):\n"
+                f"{ctx_block}\n\n"
+                "Steering message:\n"
+                f"{(message or '').strip()}"
+            )
+            raw = await client.generate(user)
+            import json as _json
+
+            data = None
+            try:
+                data = _json.loads(raw)
+                action = str(data.get("action", "none")).strip().lower()
+                reason = data.get("reason")
+                if action not in {
                     "cancel",
-                    "abandon",
-                    "drop it",
-                    "not needed",
-                    "forget it",
-                    "never mind",
-                )
-            ):
-                return "cancel"
-            if any(
-                k in text
-                for k in (
-                    "do it later",
-                    "later",
-                    "postpone",
                     "defer",
-                    "as per our original schedule",
-                    "back into the queue",
-                    "reinsert",
-                    "re-insert",
-                    "return to schedule",
-                    "continue as scheduled",
-                    "put back",
-                )
-            ):
-                return "defer"
-            if "pause" in text:
-                return "pause"
-            if "resume" in text:
-                return "resume"
-            if any(
-                k in text for k in ("keep going", "continue", "carry on", "proceed")
-            ):
-                return "continue"
-            return None
-
-        guess = _heur()
-        if guess is not None:
-            return guess, message
-        # Pure heuristic classifier: default when no heuristic matches
-        return "none", message
+                    "pause",
+                    "resume",
+                    "continue",
+                    "none",
+                }:
+                    action = "none"
+                if reason is not None:
+                    reason = str(reason)
+                else:
+                    reason = message
+                return action, cast(str, reason)
+            except Exception:
+                # fallback: pattern match a minimal token
+                low = (raw or "").lower()
+                for tok in ["cancel", "defer", "pause", "resume", "continue"]:
+                    if tok in low:
+                        return tok, message
+                return "none", message
+        except Exception:
+            return "none", message
