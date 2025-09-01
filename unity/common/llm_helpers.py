@@ -710,9 +710,7 @@ def _chat_context_repr(
 # ── small helper: publish to the EventBus (if configured) ──────────────
 async def _to_event_bus(
     messages: Union[Dict, List[Dict]],
-    loop_id: str,
-    lineage: list[str],
-    log_label: str,
+    loop_cfg: _AsyncToolLoopConfig,
 ) -> None:
     """
     Emit *messages* to the shared EventBus (if configured).
@@ -731,9 +729,9 @@ async def _to_event_bus(
                 type="ToolLoop",
                 payload={
                     "message": message,
-                    "method": loop_id,
-                    "hierarchy": list(lineage),
-                    "hierarchy_label": log_label,
+                    "method": loop_cfg.loop_id,
+                    "hierarchy": list(loop_cfg.lineage),
+                    "hierarchy_label": loop_cfg.label,
                 },
             ),
         )
@@ -893,7 +891,10 @@ class _AsyncToolLoopConfig:
     def __init__(self, loop_id, lineage, parent_lineage):
         self._loop_id = loop_id if loop_id is not None else short_id()
         self._lineage = (
-            list(lineage) if lineage is not None else [*parent_lineage, self.loop_id]
+            list(lineage) if lineage is not None else [*parent_lineage, self._loop_id]
+        )
+        self._label = (
+            "->".join(self._lineage) if self._lineage else (self._loop_id or "")
         )
 
     @property
@@ -904,10 +905,14 @@ class _AsyncToolLoopConfig:
     def lineage(self):
         return self._lineage
 
+    @property
+    def label(self):
+        return self._label
+
 
 class _AsyncToolLoopLogger:
     def __init__(self, cfg: _AsyncToolLoopConfig) -> None:
-        self._label = "->".join(cfg.lineage) if cfg.lineage else (cfg.loop_id or "")
+        self._label = cfg.label
 
     @property
     def log_label(self):
@@ -1154,7 +1159,7 @@ async def _async_tool_use_loop_inner(
 
     async def _append_msgs(msgs: list[dict]) -> None:
         client.append_messages(msgs)
-        await _to_event_bus(msgs, cfg.loop_id, cfg.lineage, logger.log_label)
+        await _to_event_bus(msgs, cfg)
         timer.reset()
 
     if log_steps:
@@ -2836,7 +2841,7 @@ async def _async_tool_use_loop_inner(
                     )
 
             msg = client.messages[-1]
-            await _to_event_bus(msg, cfg.loop_id, cfg.lineage, logger.log_label)
+            await _to_event_bus(msg, cfg)
 
             if log_steps:
                 try:
