@@ -127,7 +127,7 @@ jobs:
         rm temp_requirements.txt
 
     - name: Restore .cache.ndjson
-      id: cache
+      id: cache-read
       uses: actions/cache/restore@v4
       with:
         path: .cache.ndjson
@@ -173,14 +173,12 @@ jobs:
         REGISTER_SUMMARY_CALLBACKS: false
         REGISTER_UPDATE_CALLBACKS: false
 
-    - name: Restore .cache.ndjson
-      id: cache
-      uses: actions/cache/restore@v4
+    - name: Save updated .cache.ndjson
+      if: always()
+      uses: actions/cache/save@v4
       with:
         path: .cache.ndjson
         key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
-        restore-keys: |
-          cache-ndjson-${{ runner.os }}-
 
     - name: Upload test artifact
       if: always()
