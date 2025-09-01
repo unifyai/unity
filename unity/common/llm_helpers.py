@@ -946,6 +946,44 @@ def _prune_over_quota_tool_calls(asst_msg: dict, norm_tools, call_counts) -> Non
         pass
 
 
+# ── small helper: add completion tool message pair ──────────────
+async def _emit_completion_pair(
+    result: str,
+    call_id: str,
+    msg_dispatcher: _AsyncToolLoopMessageDispatcher,
+) -> dict:
+    """
+    Append a synthetic assistant→tool pair that carries the *final*
+    outcome for `call_id`.  Returns the tool-message so callers can
+    reuse it for logging / event-bus.
+    """
+    dummy_id = f"{call_id}_status"
+
+    assistant_stub = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": dummy_id,
+                "type": "function",
+                "function": {
+                    "name": f"check_status_{call_id}",
+                    "arguments": "{}",
+                },
+            },
+        ],
+        "content": "",
+    }
+    tool_msg = {
+        "role": "tool",
+        "tool_call_id": dummy_id,
+        "name": f"check_status_{call_id}",
+        "content": result,
+    }
+
+    await msg_dispatcher.append_msgs([assistant_stub, tool_msg])
+    return tool_msg
+
+
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
 
@@ -1254,39 +1292,6 @@ async def _async_tool_use_loop_inner(
         client.messages.insert(insert_pos, client.messages.pop())
         meta["results_count"] += 1
 
-    # ── small helper: add completion tool message pair ──────────────
-    async def _emit_completion_pair(result: str, call_id: str) -> dict:
-        """
-        Append a synthetic assistant→tool pair that carries the *final*
-        outcome for `call_id`.  Returns the tool-message so callers can
-        reuse it for logging / event-bus.
-        """
-        dummy_id = f"{call_id}_status"
-
-        assistant_stub = {
-            "role": "assistant",
-            "tool_calls": [
-                {
-                    "id": dummy_id,
-                    "type": "function",
-                    "function": {
-                        "name": f"check_status_{call_id}",
-                        "arguments": "{}",
-                    },
-                },
-            ],
-            "content": "",
-        }
-        tool_msg = {
-            "role": "tool",
-            "tool_call_id": dummy_id,
-            "name": f"check_status_{call_id}",
-            "content": result,
-        }
-
-        await _msg_dispatcher.append_msgs([assistant_stub, tool_msg])
-        return tool_msg
-
     # ── *single* authoritative implementation of "task finished" handling ──
     async def _process_completed_task(task: asyncio.Task) -> bool:
         """
@@ -1468,21 +1473,21 @@ async def _async_tool_use_loop_inner(
                 )
                 tool_msg = continue_msg
             else:  # 🆕 keep history stable
-                tool_msg = await _emit_completion_pair(result, call_id)
+                tool_msg = await _emit_completion_pair(result, call_id, _msg_dispatcher)
 
         elif clarify_ph is not None:
             if _at_tail(clarify_ph):
                 clarify_ph["content"] = result
                 tool_msg = clarify_ph
             else:
-                tool_msg = await _emit_completion_pair(result, call_id)
+                tool_msg = await _emit_completion_pair(result, call_id, _msg_dispatcher)
 
         elif tool_reply_msg is not None:
             if _at_tail(tool_reply_msg):
                 tool_reply_msg["content"] = result
                 tool_msg = tool_reply_msg
             else:
-                tool_msg = await _emit_completion_pair(result, call_id)
+                tool_msg = await _emit_completion_pair(result, call_id, _msg_dispatcher)
 
         else:
             tool_msg = {
