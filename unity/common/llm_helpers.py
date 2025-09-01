@@ -983,8 +983,15 @@ async def _emit_completion_pair(
     await msg_dispatcher.append_msgs([assistant_stub, tool_msg])
     return tool_msg
 
+
 # ── small helper: keep assistant→tool chronology DRY ────────────────────
-async def _insert_after_assistant(assistant_meta: dict, parent_msg: dict, tool_msg: dict, client, msg_dispatcher: _AsyncToolLoopMessageDispatcher) -> None:
+async def _insert_after_assistant(
+    assistant_meta: dict,
+    parent_msg: dict,
+    tool_msg: dict,
+    client,
+    msg_dispatcher: _AsyncToolLoopMessageDispatcher,
+) -> None:
     """
     Append *tool_msg* and move it directly after *parent_msg*, while
     updating the per-assistant `results_count` bookkeeping.
@@ -997,6 +1004,262 @@ async def _insert_after_assistant(assistant_meta: dict, parent_msg: dict, tool_m
     insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
     client.messages.insert(insert_pos, client.messages.pop())
     meta["results_count"] += 1
+
+
+# ── *single* authoritative implementation of "task finished" handling ──
+async def _process_completed_task(
+    # ACTUALLY Task related
+    task: asyncio.Task,
+    task_info,
+    consecutive_failures: _AsyncToolLoopToolFailureTracker,
+    # Loop & State related
+    pending_tasks,
+    outer_handle_container,
+    assistant_meta,
+    clarification_channels,
+    completed_results,
+    #
+    client,
+    msg_dispatcher,
+    logger,
+) -> bool:
+    """
+    Deal with a finished tool *task* exactly once:
+
+    1.  Pop bookkeeping (``pending`` / ``task_info``).
+    2.  Serialise *success* or *exception* into ``result``.
+    3.  Patch or insert the correct **tool** message so the transcript
+        stays perfectly chronological.
+    4.  Emit the event-bus hook (if configured).
+    5.  Record the payload in ``completed_results`` for later
+        `_continue_<id>` helpers.
+    6.  Enforce the *max_consecutive_failures* safety valve.
+    """
+
+    def _at_tail(msg: dict) -> bool:
+        """True when *msg* is the very last entry in client.messages."""
+        return bool(client.messages) and client.messages[-1] is msg
+
+    pending_tasks.discard(task)
+    info = task_info.pop(task)
+    name = info["name"]
+    call_id = info["call_id"]
+    fn = info["call_dict"]["function"]["name"]
+    arg = info["call_dict"]["function"]["arguments"]
+
+    # 2️⃣  obtain result -------------------------------------------------
+    try:
+        raw = task.result()
+
+        # ───────────────────────────────────────────────────────────────
+        #  NEW:  the tool *did not really finish* – it returned *another*
+        #        AsyncToolLoopHandle.  We:
+        #        (1) schedule `handle.result()` as a *new* task,
+        #        (2) keep the **same** `call_id` so the continue/-cancel
+        #            helpers keep working,
+        #        (3) create / patch one placeholder "still running…"
+        #            tool-message in the transcript.
+        # ───────────────────────────────────────────────────────────────
+        # treat ANY AsyncToolLoopHandle (or subclass) as a nested loop
+        from unity.common.llm_helpers import SteerableToolHandle
+
+        if isinstance(raw, SteerableToolHandle):
+            # If the nested handle explicitly requests pass-through behaviour
+            # expose it directly to the outer caller *immediately*.
+            if (
+                getattr(raw, "__passthrough__", False)
+                and outer_handle_container
+                and outer_handle_container[0] is not None
+            ):
+                outer_handle_container[0]._adopt(raw)
+            # ── upgrade interject / clarification flags from handle ─────
+            if hasattr(raw, "interject"):
+                info["is_interjectable"] = True
+
+            h_up_q = getattr(raw, "clarification_up_q", info.get("clar_up_q"))
+            h_down_q = getattr(raw, "clarification_down_q", info.get("clar_down_q"))
+
+            if (h_up_q is not None) ^ (h_down_q is not None):
+                raise AttributeError(
+                    f"Handle returned by tool {info['name']!r} exposes only "
+                    "one of 'clarification_up_q' / 'clarification_down_q'. "
+                    "Both queues are required (or neither).",
+                )
+
+            # 1️⃣ spawn the nested waiter
+            #
+            # ⤷ `handle.result` can now be **sync OR async**:
+            #    • async ⇒ use the coroutine directly,
+            #    • sync  ⇒ run it in a worker-thread so the event-loop never blocks.
+            if inspect.iscoroutinefunction(raw.result):
+                nested_coro = raw.result()  # already a coroutine
+            else:
+                nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
+
+            nested_task = asyncio.create_task(nested_coro)
+            pending_tasks.add(nested_task)
+
+            # 2️⃣ insert / update a single placeholder
+            ph = info.get("tool_reply_msg")
+            if ph is None:
+                ph = {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": info["name"],
+                    "content": ("Nested async tool loop started… waiting for result."),
+                }
+                await _insert_after_assistant(
+                    assistant_meta,
+                    info["assistant_msg"],
+                    ph,
+                    client,
+                    msg_dispatcher,
+                )
+                info["tool_reply_msg"] = ph  # remember on *parent*
+            else:
+                ph["content"] = "Nested async tool loop started… waiting for result."
+
+            # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
+            task_info[nested_task] = {
+                **info,
+                "handle": raw,
+                "is_interjectable": hasattr(raw, "interject"),
+                "tool_reply_msg": ph,
+                "clar_up_q": h_up_q,
+                "clar_down_q": h_down_q,
+            }
+            if h_up_q is not None:
+                clarification_channels[call_id] = (h_up_q, h_down_q)
+            return False  # ⬅️  no LLM turn required
+
+        # ───────────────────────────────────────────────────────────────
+        #  Normal (non-handle) result – unchanged path
+        # ───────────────────────────────────────────────────────────────
+        # ── finished successfully – promote any embedded images ─────────
+        images: list[str] = []
+        _collect_images(raw, images)
+
+        text_repr = _dumps(_strip_image_keys(raw), indent=4)
+
+        if images:
+            content_blocks: list = []
+            if text_repr and text_repr != "{}":
+                content_blocks.append({"type": "text", "text": text_repr})
+            content_blocks.extend(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                }
+                for b64 in images
+            )
+            result = content_blocks
+        else:
+            result = text_repr
+
+        consecutive_failures.reset_failures()
+    except Exception:
+        consecutive_failures.increment_failures()
+        result = traceback.format_exc()
+        if logger.log_steps:
+            logger.error(
+                f"Error: {name} failed "
+                f"(attempt {consecutive_failures.current_failures}/{consecutive_failures.max_failures}):\n{result}",
+                prefix="❌",
+            )
+            # Additional debug context: show the exact tool schema and arguments
+            # that were presented to the LLM for this failed call. This helps
+            # diagnose docstrings/argspec mismatches that cause tool misuse.
+            try:
+                debug_payload = {
+                    "tool_name": name,
+                    "call_id": call_id,
+                    "llm_function_schema": info.get("tool_schema"),
+                    "llm_arguments": info.get("llm_arguments"),
+                    "raw_arguments_json": info.get("raw_arguments_json"),
+                }
+                logger.error(
+                    f"FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
+                    prefix="🧩",
+                )
+            except Exception:
+                pass
+
+    # 3️⃣  remember so later `_continue_*` helpers can answer instantly
+    completed_results[call_id] = result
+
+    # 4️⃣  update / insert tool-result message --------------------------
+    asst_msg = info["assistant_msg"]
+    continue_msg = info.get("continue_msg")
+    clarify_ph = info.get("clarify_placeholder")
+    tool_reply_msg = info.get("tool_reply_msg")
+
+    if continue_msg is not None:
+        if _at_tail(continue_msg):  # ✅ safe to overwrite
+            continue_msg["content"] = result
+            continue_msg["name"] = (
+                f"{fn}({arg}) completed successfully, "
+                "the return values are in the `content` field below."
+            )
+            tool_msg = continue_msg
+        else:  # 🆕 keep history stable
+            tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+
+    elif clarify_ph is not None:
+        if _at_tail(clarify_ph):
+            clarify_ph["content"] = result
+            tool_msg = clarify_ph
+        else:
+            tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+
+    elif tool_reply_msg is not None:
+        if _at_tail(tool_reply_msg):
+            tool_reply_msg["content"] = result
+            tool_msg = tool_reply_msg
+        else:
+            tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+
+    else:
+        tool_msg = {
+            "role": "tool",
+            "tool_call_id": call_id,
+            "name": name,
+            "content": result,
+        }
+        await _insert_after_assistant(
+            assistant_meta,
+            asst_msg,
+            tool_msg,
+            client,
+            msg_dispatcher,
+        )
+
+    # ── optional console logging for every finished tool call ────────────
+    #     (mirrors the assistant-message logging above)
+    if logger.log_steps:
+        # Create a clean version of tool_msg for logging (strip image data)
+        tool_msg_for_logging = tool_msg.copy()
+        if isinstance(tool_msg_for_logging.get("content"), list):
+            # Filter out image_url items and keep only text content
+            tool_msg_for_logging["content"] = [
+                item
+                for item in tool_msg_for_logging["content"]
+                if item.get("type") != "image_url"
+            ]
+        logger.info(
+            f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
+            prefix="🛠️",
+        )
+
+    # 6️⃣  failure guard -------------------------------------------------
+    if consecutive_failures.has_exceeded_failures():
+        if logger.log_steps:
+            logger.error(f"Aborting: too many tool failures.", prefix="🚨")
+        raise RuntimeError(
+            "Aborted after too many consecutive tool failures.",
+        )
+
+    # successful (or failed) *final* result → LLM may need to react
+    return True
 
 
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
@@ -1026,8 +1289,13 @@ class _AsyncToolLoopConfig:
 
 
 class _AsyncToolLoopLogger:
-    def __init__(self, cfg: _AsyncToolLoopConfig) -> None:
+    def __init__(self, cfg: _AsyncToolLoopConfig, log_steps: bool | str) -> None:
         self._label = cfg.label
+        self._log_steps = log_steps
+
+    @property
+    def log_steps(self):
+        return self._log_steps
 
     @property
     def log_label(self):
@@ -1091,6 +1359,30 @@ class _TimeoutTimer:
                 f"(len(client.messages)={len(self._client.messages)})",
             )
         return ret
+
+
+# TODO this is not really required, but this just simplifies the extraction of the logic from the loop.
+class _AsyncToolLoopToolFailureTracker:
+    def __init__(self, max_consecutive_failures: int):
+        self._consecutive_failures = 0
+        self._max_consecutive_failures = max_consecutive_failures
+
+    @property
+    def current_failures(self):
+        return self._consecutive_failures
+
+    @property
+    def max_failures(self):
+        return self._max_consecutive_failures
+
+    def has_exceeded_failures(self) -> bool:
+        return self._consecutive_failures >= self._max_consecutive_failures
+
+    def increment_failures(self):
+        self._consecutive_failures += 1
+
+    def reset_failures(self):
+        self._consecutive_failures = 0
 
 
 async def _async_tool_use_loop_inner(
@@ -1231,7 +1523,7 @@ async def _async_tool_use_loop_inner(
     """
     # unique id / lineage
     cfg = _AsyncToolLoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
-    logger = _AsyncToolLoopLogger(cfg)
+    logger = _AsyncToolLoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # normalise optional graceful stop event
@@ -1291,240 +1583,6 @@ async def _async_tool_use_loop_inner(
     # The special marker ``_ctx_header=True`` lets us later strip it when
     # propagating context further down (avoids duplication).
     # -----------------------------------------------------------------------
-
-    # ── *single* authoritative implementation of "task finished" handling ──
-    async def _process_completed_task(task: asyncio.Task) -> bool:
-        """
-        Deal with a finished tool *task* exactly once:
-
-        1.  Pop bookkeeping (``pending`` / ``task_info``).
-        2.  Serialise *success* or *exception* into ``result``.
-        3.  Patch or insert the correct **tool** message so the transcript
-            stays perfectly chronological.
-        4.  Emit the event-bus hook (if configured).
-        5.  Record the payload in ``completed_results`` for later
-            `_continue_<id>` helpers.
-        6.  Enforce the *max_consecutive_failures* safety valve.
-        """
-
-        def _at_tail(msg: dict) -> bool:
-            """True when *msg* is the very last entry in client.messages."""
-            return bool(client.messages) and client.messages[-1] is msg
-
-        nonlocal consecutive_failures
-
-        pending.discard(task)
-        info = task_info.pop(task)
-        name = info["name"]
-        call_id = info["call_id"]
-        fn = info["call_dict"]["function"]["name"]
-        arg = info["call_dict"]["function"]["arguments"]
-
-        # 2️⃣  obtain result -------------------------------------------------
-        try:
-            raw = task.result()
-
-            # ───────────────────────────────────────────────────────────────
-            #  NEW:  the tool *did not really finish* – it returned *another*
-            #        AsyncToolLoopHandle.  We:
-            #        (1) schedule `handle.result()` as a *new* task,
-            #        (2) keep the **same** `call_id` so the continue/-cancel
-            #            helpers keep working,
-            #        (3) create / patch one placeholder "still running…"
-            #            tool-message in the transcript.
-            # ───────────────────────────────────────────────────────────────
-            # treat ANY AsyncToolLoopHandle (or subclass) as a nested loop
-            from unity.common.llm_helpers import SteerableToolHandle
-
-            if isinstance(raw, SteerableToolHandle):
-                # If the nested handle explicitly requests pass-through behaviour
-                # expose it directly to the outer caller *immediately*.
-                if (
-                    getattr(raw, "__passthrough__", False)
-                    and outer_handle_container
-                    and outer_handle_container[0] is not None
-                ):
-                    outer_handle_container[0]._adopt(raw)
-                # ── upgrade interject / clarification flags from handle ─────
-                if hasattr(raw, "interject"):
-                    info["is_interjectable"] = True
-
-                h_up_q = getattr(raw, "clarification_up_q", info.get("clar_up_q"))
-                h_down_q = getattr(raw, "clarification_down_q", info.get("clar_down_q"))
-
-                if (h_up_q is not None) ^ (h_down_q is not None):
-                    raise AttributeError(
-                        f"Handle returned by tool {info['name']!r} exposes only "
-                        "one of 'clarification_up_q' / 'clarification_down_q'. "
-                        "Both queues are required (or neither).",
-                    )
-
-                # 1️⃣ spawn the nested waiter
-                #
-                # ⤷ `handle.result` can now be **sync OR async**:
-                #    • async ⇒ use the coroutine directly,
-                #    • sync  ⇒ run it in a worker-thread so the event-loop never blocks.
-                if inspect.iscoroutinefunction(raw.result):
-                    nested_coro = raw.result()  # already a coroutine
-                else:
-                    nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
-
-                nested_task = asyncio.create_task(nested_coro)
-                pending.add(nested_task)
-
-                # 2️⃣ insert / update a single placeholder
-                ph = info.get("tool_reply_msg")
-                if ph is None:
-                    ph = {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "name": info["name"],
-                        "content": (
-                            "Nested async tool loop started… waiting for result."
-                        ),
-                    }
-                    await _insert_after_assistant(assistant_meta, info["assistant_msg"], ph, client, _msg_dispatcher)
-                    info["tool_reply_msg"] = ph  # remember on *parent*
-                else:
-                    ph["content"] = (
-                        "Nested async tool loop started… waiting for result."
-                    )
-
-                # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
-                task_info[nested_task] = {
-                    **info,
-                    "handle": raw,
-                    "is_interjectable": hasattr(raw, "interject"),
-                    "tool_reply_msg": ph,
-                    "clar_up_q": h_up_q,
-                    "clar_down_q": h_down_q,
-                }
-                if h_up_q is not None:
-                    clarification_channels[call_id] = (h_up_q, h_down_q)
-                return False  # ⬅️  no LLM turn required
-
-            # ───────────────────────────────────────────────────────────────
-            #  Normal (non-handle) result – unchanged path
-            # ───────────────────────────────────────────────────────────────
-            # ── finished successfully – promote any embedded images ─────────
-            images: list[str] = []
-            _collect_images(raw, images)
-
-            text_repr = _dumps(_strip_image_keys(raw), indent=4)
-
-            if images:
-                content_blocks: list = []
-                if text_repr and text_repr != "{}":
-                    content_blocks.append({"type": "text", "text": text_repr})
-                content_blocks.extend(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}"},
-                    }
-                    for b64 in images
-                )
-                result = content_blocks
-            else:
-                result = text_repr
-
-            consecutive_failures = 0
-        except Exception:
-            consecutive_failures += 1
-            result = traceback.format_exc()
-            if log_steps:
-                logger.error(
-                    f"Error: {name} failed "
-                    f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
-                    prefix="❌",
-                )
-                # Additional debug context: show the exact tool schema and arguments
-                # that were presented to the LLM for this failed call. This helps
-                # diagnose docstrings/argspec mismatches that cause tool misuse.
-                try:
-                    debug_payload = {
-                        "tool_name": name,
-                        "call_id": call_id,
-                        "llm_function_schema": info.get("tool_schema"),
-                        "llm_arguments": info.get("llm_arguments"),
-                        "raw_arguments_json": info.get("raw_arguments_json"),
-                    }
-                    logger.error(
-                        f"FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
-                        prefix="🧩",
-                    )
-                except Exception:
-                    pass
-
-        # 3️⃣  remember so later `_continue_*` helpers can answer instantly
-        completed_results[call_id] = result
-
-        # 4️⃣  update / insert tool-result message --------------------------
-        asst_msg = info["assistant_msg"]
-        continue_msg = info.get("continue_msg")
-        clarify_ph = info.get("clarify_placeholder")
-        tool_reply_msg = info.get("tool_reply_msg")
-
-        if continue_msg is not None:
-            if _at_tail(continue_msg):  # ✅ safe to overwrite
-                continue_msg["content"] = result
-                continue_msg["name"] = (
-                    f"{fn}({arg}) completed successfully, "
-                    "the return values are in the `content` field below."
-                )
-                tool_msg = continue_msg
-            else:  # 🆕 keep history stable
-                tool_msg = await _emit_completion_pair(result, call_id, _msg_dispatcher)
-
-        elif clarify_ph is not None:
-            if _at_tail(clarify_ph):
-                clarify_ph["content"] = result
-                tool_msg = clarify_ph
-            else:
-                tool_msg = await _emit_completion_pair(result, call_id, _msg_dispatcher)
-
-        elif tool_reply_msg is not None:
-            if _at_tail(tool_reply_msg):
-                tool_reply_msg["content"] = result
-                tool_msg = tool_reply_msg
-            else:
-                tool_msg = await _emit_completion_pair(result, call_id, _msg_dispatcher)
-
-        else:
-            tool_msg = {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "name": name,
-                "content": result,
-            }
-            await _insert_after_assistant(assistant_meta, asst_msg, tool_msg, client, _msg_dispatcher)
-
-        # ── optional console logging for every finished tool call ────────────
-        #     (mirrors the assistant-message logging above)
-        if log_steps:
-            # Create a clean version of tool_msg for logging (strip image data)
-            tool_msg_for_logging = tool_msg.copy()
-            if isinstance(tool_msg_for_logging.get("content"), list):
-                # Filter out image_url items and keep only text content
-                tool_msg_for_logging["content"] = [
-                    item
-                    for item in tool_msg_for_logging["content"]
-                    if item.get("type") != "image_url"
-                ]
-            logger.info(
-                f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
-                prefix="🛠️",
-            )
-
-        # 6️⃣  failure guard -------------------------------------------------
-        if consecutive_failures >= max_consecutive_failures:
-            if log_steps:
-                logger.error(f"Aborting: too many tool failures.", prefix="🚨")
-            raise RuntimeError(
-                "Aborted after too many consecutive tool failures.",
-            )
-
-        # successful (or failed) *final* result → LLM may need to react
-        return True
 
     if parent_chat_context:
         sys_msg = {
@@ -1603,7 +1661,13 @@ async def _async_tool_use_loop_inner(
                 "name": _inf["name"],
                 "content": placeholder_content,
             }
-            await _insert_after_assistant(assistant_meta, _inf["assistant_msg"], placeholder, client, _msg_dispatcher)
+            await _insert_after_assistant(
+                assistant_meta,
+                _inf["assistant_msg"],
+                placeholder,
+                client,
+                _msg_dispatcher,
+            )
             _inf["tool_reply_msg"] = placeholder
             created.append(_inf["call_id"])
 
@@ -1622,7 +1686,13 @@ async def _async_tool_use_loop_inner(
             "name": name,
             "content": _build_helper_ack_content(name, args_json),
         }
-        await _insert_after_assistant(assistant_meta, asst_msg, tool_msg, client, _msg_dispatcher)
+        await _insert_after_assistant(
+            assistant_meta,
+            asst_msg,
+            tool_msg,
+            client,
+            _msg_dispatcher,
+        )
 
     # Helper: schedule a base tool call (shared by main path and backfill)
     async def _schedule_base_tool_call(
@@ -1815,7 +1885,7 @@ async def _async_tool_use_loop_inner(
         return scheduled
 
     # Initialise loop state early so preflight backfill can schedule tasks
-    consecutive_failures = 0
+    consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
     pending: Set[asyncio.Task] = set()
     # Note: removed unused total_tool_calls_made counter
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
@@ -1970,7 +2040,19 @@ async def _async_tool_use_loop_inner(
 
                     # tool finished?
                     for t in done & pending:
-                        await _process_completed_task(t)
+                        await _process_completed_task(
+                            task=t,
+                            task_info=task_info,
+                            consecutive_failures=consecutive_failures,
+                            pending_tasks=pending,
+                            outer_handle_container=outer_handle_container,
+                            assistant_meta=assistant_meta,
+                            clarification_channels=clarification_channels,
+                            completed_results=completed_results,
+                            client=client,
+                            msg_dispatcher=_msg_dispatcher,
+                            logger=logger,
+                        )
                     if cancel_event.is_set():
                         # Forward stop to any nested handles before aborting
                         try:
@@ -2257,7 +2339,19 @@ async def _async_tool_use_loop_inner(
 
                 needs_turn = False
                 for task in done:  # finished tool(s)
-                    if await _process_completed_task(task):
+                    if await _process_completed_task(
+                        task=task,
+                        task_info=task_info,
+                        consecutive_failures=consecutive_failures,
+                        pending_tasks=pending,
+                        outer_handle_container=outer_handle_container,
+                        assistant_meta=assistant_meta,
+                        clarification_channels=clarification_channels,
+                        completed_results=completed_results,
+                        client=client,
+                        msg_dispatcher=_msg_dispatcher,
+                        logger=logger,
+                    ):
                         needs_turn = True
 
                 # Other tools may still be running.
@@ -2814,7 +2908,19 @@ async def _async_tool_use_loop_inner(
                     # — handle each newly-finished task exactly as branch A does
                     needs_turn = False
                     for task in done & pending_snapshot:
-                        if await _process_completed_task(task):
+                        if await _process_completed_task(
+                            task=task,
+                            task_info=task_info,
+                            consecutive_failures=consecutive_failures,
+                            pending_tasks=pending,
+                            outer_handle_container=outer_handle_container,
+                            assistant_meta=assistant_meta,
+                            clarification_channels=clarification_channels,
+                            completed_results=completed_results,
+                            client=client,
+                            msg_dispatcher=_msg_dispatcher,
+                            logger=logger,
+                        ):
                             needs_turn = True
 
                     # …then restart the main loop so the model sees the new info
@@ -2949,7 +3055,13 @@ async def _async_tool_use_loop_inner(
                                 "name": "final_answer",
                                 "content": _dumps(payload, indent=4),
                             }
-                            await _insert_after_assistant(assistant_meta, msg, tool_msg, client, _msg_dispatcher)
+                            await _insert_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
 
                             return json.dumps(payload)
                         except Exception as _exc:
@@ -2962,7 +3074,13 @@ async def _async_tool_use_loop_inner(
                                     + str(_exc)
                                 ),
                             }
-                            await _insert_after_assistant(assistant_meta, msg, tool_msg, client, _msg_dispatcher)
+                            await _insert_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
                             continue
 
                     # ── Special-case dynamic helpers ──────────────────────
@@ -3005,7 +3123,13 @@ async def _async_tool_use_loop_inner(
                                     f" • {name}({arg_json}) → cancel_{call['id']} / continue_{call['id']}"
                                 ),
                             }
-                            await _insert_after_assistant(assistant_meta, msg, tool_reply_msg, client, _msg_dispatcher)
+                            await _insert_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_reply_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
                             info["continue_msg"] = tool_reply_msg
                         else:  # the original tool already finished
                             # Lookup finished result by matching call-id suffix
@@ -3102,7 +3226,13 @@ async def _async_tool_use_loop_inner(
                                 f"The tool call [{call_id_suffix}] has been stopped successfully."
                             ),
                         }
-                        await _insert_after_assistant(assistant_meta, msg, tool_msg, client, _msg_dispatcher)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
 
                         continue  # nothing else to schedule
 
@@ -3147,7 +3277,13 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f"The tool call [{call_id_suffix}] has been paused successfully.",
                         }
-                        await _insert_after_assistant(assistant_meta, msg, tool_msg, _msg_dispatcher)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
@@ -3191,7 +3327,13 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f"The tool call [{call_id_suffix}] has been resumed successfully.",
                         }
-                        await _insert_after_assistant(assistant_meta, msg, tool_msg, _msg_dispatcher)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
                         continue  # helper handled
 
                     if name.startswith("clarify_"):
@@ -3238,7 +3380,13 @@ async def _async_tool_use_loop_inner(
                                 "⏳ Waiting for the original tool to finish…"
                             ),
                         }
-                        await _insert_after_assistant(assistant_meta, msg, tool_reply_msg, _msg_dispatcher)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_reply_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
                         if tgt_task is not None:
                             task_info[tgt_task]["clarify_placeholder"] = tool_reply_msg
                         continue
@@ -3295,7 +3443,13 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f'Guidance "{new_text}" forwarded to the running tool.',
                         }
-                        await _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
 
                         continue  # nothing else to schedule
 
@@ -3326,7 +3480,13 @@ async def _async_tool_use_loop_inner(
                                 "finish or stop one before retrying."
                             ),
                         }
-                        await _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
                         continue
 
                     # first check any dynamic helpers we generated for long-running handles
@@ -3383,7 +3543,13 @@ async def _async_tool_use_loop_inner(
                                         call["function"]["arguments"],
                                     ),
                                 }
-                                await _insert_after_assistant(msg, tool_msg)
+                                await _insert_after_assistant(
+                                    assistant_meta,
+                                    msg,
+                                    tool_msg,
+                                    client,
+                                    _msg_dispatcher,
+                                )
                             except Exception:
                                 pass
                             try:
