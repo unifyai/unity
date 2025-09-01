@@ -1144,12 +1144,30 @@ def steering_controls_hint(
 
 # Shared steering intent model and router system prompt
 class _SteeringIntent(BaseModel):
-    action: str = Field(..., pattern="^(ask|interject|pause|resume|stop|status)$")
+    action: str = Field(
+        ...,
+        pattern="^(ask|interject|pause|resume|stop|status|sim_rule)$",
+    )
     # Optional free-form reason only used when action == "stop"
     reason: Optional[str] = None
     # When action == "stop", router MUST set this boolean:
     # True ⇒ cancel/abandon (terminal); False ⇒ defer/postpone (non-terminal)
     cancel: Optional[bool] = None
+    # When action == "sim_rule": selector + params (all optional; router fills what applies)
+    selector_type: Optional[str] = Field(
+        default=None,
+        description="one of: task_id | queue_index | search_query | name_regex | scheduled_window",
+    )
+    task_id: Optional[int] = None
+    queue_index: Optional[int] = None  # 1-based
+    search_query: Optional[str] = None
+    name_regex: Optional[str] = None
+    window_start_iso: Optional[str] = None
+    window_end_iso: Optional[str] = None
+    sim_steps: Optional[int] = None
+    sim_duration_seconds: Optional[float] = None
+    sim_guidance: Optional[str] = None
+    sim_one_shot: Optional[bool] = None
 
 
 def _steering_router_sys() -> str:
@@ -1373,6 +1391,101 @@ async def _route_freeform_and_apply(
                 reason_override = text.strip()
         except Exception:
             reason_override = None
+
+    # Handle simulation rule creation (does not steer the running handle)
+    if intent.action == "sim_rule":
+        try:
+            selector = None
+            if (
+                getattr(intent, "selector_type", None) == "task_id"
+                and intent.task_id is not None
+            ):
+                selector = SimulationSelector(by_task_id=int(intent.task_id))
+            elif (
+                getattr(intent, "selector_type", None) == "queue_index"
+                and intent.queue_index is not None
+            ):
+                selector = SimulationSelector(by_queue_index=int(intent.queue_index))
+            elif (
+                getattr(intent, "selector_type", None) == "search_query"
+                and intent.search_query
+            ):
+                selector = SimulationSelector(by_search_query=str(intent.search_query))
+            elif (
+                getattr(intent, "selector_type", None) == "name_regex"
+                and intent.name_regex
+            ):
+                selector = SimulationSelector(by_name_regex=str(intent.name_regex))
+            elif (
+                getattr(intent, "selector_type", None) == "scheduled_window"
+                and intent.window_start_iso
+                and intent.window_end_iso
+            ):
+                selector = SimulationSelector(
+                    by_scheduled_window_iso=(
+                        str(intent.window_start_iso),
+                        str(intent.window_end_iso),
+                    ),
+                )
+
+            params = SimulationParams(
+                steps=(
+                    int(intent.sim_steps)
+                    if getattr(intent, "sim_steps", None) is not None
+                    else None
+                ),
+                duration_seconds=(
+                    float(intent.sim_duration_seconds)
+                    if getattr(intent, "sim_duration_seconds", None) is not None
+                    else None
+                ),
+                guidance=(
+                    str(intent.sim_guidance)
+                    if getattr(intent, "sim_guidance", None)
+                    else None
+                ),
+                one_shot=(
+                    bool(intent.sim_one_shot)
+                    if getattr(intent, "sim_one_shot", None) is not None
+                    else True
+                ),
+            )
+
+            if selector is None:
+                print("⚠️  No selector extracted for sim_rule – ignoring")
+            else:
+                # Idempotency: avoid duplicate rules (same selector+params)
+                try:
+                    sel_dump = selector.model_dump()
+                except Exception:
+                    sel_dump = str(selector)
+                try:
+                    par_dump = params.model_dump()
+                except Exception:
+                    par_dump = str(params)
+                existing = False
+                try:
+                    for r in SIMULATION_PLANS.list_rules():
+                        try:
+                            if (
+                                r.selector.model_dump() == sel_dump
+                                and r.params.model_dump() == par_dump
+                            ):
+                                existing = True
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                if existing:
+                    print("ℹ️  Simulation rule already present; no change")
+                else:
+                    rid = SIMULATION_PLANS.add_rule(selector, params)
+                    # Single compact line; application happens in TaskScheduler sandbox when starting tasks
+                    print(f"✅ Simulation rule stored ({rid})")
+        except Exception as exc:
+            print(f"⚠️  Failed to add simulation rule: {exc}")
+        return False
 
     return await _apply_steering_action(
         handle,
@@ -2463,3 +2576,211 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     import unify as _unify
 
     _unify.set_trace_context("Traces")
+
+
+# ===========================================================================
+#  Simulation planning (sandbox-only; does not touch TaskScheduler)
+# ===========================================================================
+
+
+class SimulationParams(BaseModel):
+    """Simulation parameters applied to a specific task execution.
+
+    All fields are optional; unset values mean "no override".
+
+    Notes
+    -----
+    - steps: maximum simulated tool steps before auto-completion
+    - duration_seconds: wall-clock limit; pauses do not count towards this
+    - guidance: free-form text that influences simulated behaviour only
+    - one_shot: whether to consume the rule after first successful application
+    """
+
+    steps: int | None = None
+    duration_seconds: float | None = None
+    guidance: str | None = None
+    one_shot: bool = True
+
+
+class SimulationSelector(BaseModel):
+    """Flexible, id-free ways to target tasks for simulation overrides.
+
+    Only one field needs to be set; multiple may be set to narrow down.
+    Resolution happens in the sandbox by consulting the current task list.
+    """
+
+    by_task_id: int | None = None
+    by_queue_index: int | None = None  # 1-based index in runnable queue
+    by_name_regex: str | None = None
+    by_search_query: str | None = None
+    # ISO-8601 (UTC) window for scheduled tasks: [start_iso, end_iso]
+    by_scheduled_window_iso: tuple[str, str] | None = None
+
+
+class _SimulationRule(BaseModel):
+    selector: SimulationSelector
+    params: SimulationParams
+    label: str | None = None
+    created_at: float = Field(default_factory=lambda: time.time())
+
+
+class SimulationPlanStore:
+    """In-memory registry of simulation rules for sandbox runs.
+
+    This lives entirely in the sandbox layer. It provides helper methods to
+    attach rules without knowing task ids (e.g., queue index), and resolve them
+    just-in-time before starting a task. The TaskScheduler itself remains
+    unaware of these parameters.
+    """
+
+    def __init__(self) -> None:
+        self._rules: list[_SimulationRule] = []
+        self._lock = threading.Lock()
+
+    # --------------- authoring --------------- #
+    def add_rule(
+        self,
+        selector: SimulationSelector,
+        params: SimulationParams,
+        *,
+        label: str | None = None,
+    ) -> str:
+        """Add a rule and return a short identifier string."""
+        rule = _SimulationRule(selector=selector, params=params, label=label)
+        with self._lock:
+            self._rules.append(rule)
+        rid = f"r{int(rule.created_at)}_{len(self._rules)}"
+        return rid
+
+    def list_rules(self) -> list[_SimulationRule]:
+        with self._lock:
+            return list(self._rules)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._rules.clear()
+
+    # --------------- resolution helpers --------------- #
+    def resolve_for_task_id(self, task_id: int) -> SimulationParams | None:
+        """Return the most recent params that target this task_id, if any."""
+        with self._lock:
+            matches = [r for r in self._rules if r.selector.by_task_id == task_id]
+        if not matches:
+            return None
+        # Newest wins
+        return matches[-1].params
+
+    def resolve_for_queue_index(
+        self,
+        ts: "Any",
+        index_1_based: int,
+    ) -> tuple[int | None, SimulationParams | None]:
+        """Return (task_id, params) for the Nth runnable task if a rule exists.
+
+        Safe to call against both real and simulated schedulers. Uses
+        ``_get_task_queue`` which is available on the concrete class.
+        """
+        try:
+            q = ts._get_task_queue()  # type: ignore[attr-defined]
+        except Exception:
+            return None, None
+        if not q or index_1_based < 1 or index_1_based > len(q):
+            return None, None
+        task_id = int(getattr(q[index_1_based - 1], "task_id", -1))
+        if task_id < 0:
+            return None, None
+        # Find most recent queue-index rule that matches exactly
+        with self._lock:
+            matches = [
+                r for r in self._rules if r.selector.by_queue_index == index_1_based
+            ]
+        if not matches:
+            return task_id, None
+        return task_id, matches[-1].params
+
+    def consume_one_shot_for(
+        self,
+        selector: SimulationSelector,
+        *,
+        task_id: int | None = None,
+    ) -> None:
+        """Remove matching one-shot rules after they have been applied."""
+
+        def _match(r: _SimulationRule) -> bool:
+            sel = r.selector
+            if selector.by_task_id is not None:
+                return sel.by_task_id == selector.by_task_id and bool(r.params.one_shot)
+            if selector.by_queue_index is not None:
+                return sel.by_queue_index == selector.by_queue_index and bool(
+                    r.params.one_shot,
+                )
+            # When we resolved a selector to a concrete task_id, allow consuming by that id
+            if (
+                task_id is not None
+                and sel.by_task_id == task_id
+                and bool(r.params.one_shot)
+            ):
+                return True
+            return False
+
+        with self._lock:
+            self._rules = [r for r in self._rules if not _match(r)]
+
+
+# Global, sandbox-wide plan store instance
+SIMULATION_PLANS = SimulationPlanStore()
+
+
+def parse_simulation_params_kv(arg_str: str) -> SimulationParams:
+    """Parse a simple "k=v" string into SimulationParams.
+
+    Accepted keys: steps, timeout, duration, duration_seconds, guidance, one_shot
+    """
+    steps: int | None = None
+    duration_seconds: float | None = None
+    guidance: str | None = None
+    one_shot: bool = True
+
+    def _to_bool(v: str) -> bool:
+        return v.strip().lower() in {"1", "true", "yes", "on"}
+
+    for token in [t for t in arg_str.split() if "=" in t]:
+        k, v = token.split("=", 1)
+        k = k.strip().lower()
+        v = v.strip()
+        if k == "steps":
+            try:
+                steps = int(v)
+            except Exception:
+                pass
+        elif k in {"timeout", "duration", "duration_seconds"}:
+            try:
+                # allow shorthand like 90s / 1.5m
+                if v.endswith("s"):
+                    duration_seconds = float(v[:-1])
+                elif v.endswith("m"):
+                    duration_seconds = float(v[:-1]) * 60.0
+                else:
+                    duration_seconds = float(v)
+            except Exception:
+                pass
+        elif k == "guidance":
+            # Allow quoted or unquoted; strip surrounding quotes if present
+            if (v.startswith('"') and v.endswith('"')) or (
+                v.startswith("'") and v.endswith("'")
+            ):
+                guidance = v[1:-1]
+            else:
+                guidance = v
+        elif k == "one_shot":
+            try:
+                one_shot = _to_bool(v)
+            except Exception:
+                pass
+
+    return SimulationParams(
+        steps=steps,
+        duration_seconds=duration_seconds,
+        guidance=guidance,
+        one_shot=one_shot,
+    )

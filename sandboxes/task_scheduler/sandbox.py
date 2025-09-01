@@ -51,6 +51,11 @@ from sandboxes.utils import (
     configure_sandbox_logging,
     call_manager_with_optional_clarifications,
     pydantic_response_format,
+    # Simulation planning (sandbox-only)
+    SIMULATION_PLANS,
+    SimulationParams,
+    SimulationSelector,
+    parse_simulation_params_kv,
 )
 
 LG = logging.getLogger("task_scheduler_sandbox")
@@ -326,13 +331,30 @@ async def _dispatch_with_context(
         parsed = _parse_simulation_config(raw)
         # Mask only steps/timeout control phrases; pass the remaining text as-is
         core_text = parsed.core_text if parsed.core_text != "" else raw
-        # Build a one-off actor using extracted controls falling back to defaults
+        # Build a one-off actor using extracted controls falling back to defaults,
+        # and merge with any stored plan for a numeric task id if provided.
         eff_steps = parsed.steps if parsed.steps is not None else _DEFAULT_SIM_STEPS
         eff_timeout = (
             parsed.timeout_seconds
             if parsed.timeout_seconds is not None
             else _DEFAULT_SIM_TIMEOUT
         )
+        eff_guidance = parsed.simulation_guidance
+
+        stripped_id = core_text.strip()
+        if stripped_id.isdigit():
+            try:
+                tid_int = int(stripped_id)
+                stored = SIMULATION_PLANS.resolve_for_task_id(tid_int)
+                if stored is not None:
+                    if eff_steps is None and stored.steps is not None:
+                        eff_steps = stored.steps
+                    if eff_timeout is None and stored.duration_seconds is not None:
+                        eff_timeout = stored.duration_seconds
+                    if not eff_guidance and stored.guidance:
+                        eff_guidance = stored.guidance
+            except Exception:
+                pass
 
         try:
             LG.info(
@@ -357,13 +379,9 @@ async def _dispatch_with_context(
             if eff_timeout is not None:
                 origin = "parsed" if parsed.timeout_seconds is not None else "default"
                 print(f"   ⏱️ Timeout ({origin}): {eff_timeout}s")
-            if parsed.simulation_guidance:
-                print(f"   🧠 Guidance: {parsed.simulation_guidance}")
-            if (
-                eff_steps is None
-                and eff_timeout is None
-                and not parsed.simulation_guidance
-            ):
+            if eff_guidance:
+                print(f"   🧠 Guidance: {eff_guidance}")
+            if eff_steps is None and eff_timeout is None and not eff_guidance:
                 print("   ℹ️ No step limit, no timeout, no guidance")
         except Exception:
             pass
@@ -375,7 +393,7 @@ async def _dispatch_with_context(
         override_actor = SimulatedActor(
             steps=eff_steps,
             duration=eff_timeout,
-            simulation_guidance=parsed.simulation_guidance,
+            simulation_guidance=eff_guidance,
             log_mode="print",
         )
         setattr(ts, "_actor", override_actor)
@@ -400,6 +418,19 @@ async def _dispatch_with_context(
 
         # Fire-and-forget restoration
         asyncio.create_task(_restore_actor_when_done())
+
+        # Consume one-shot rule for numeric id if applicable
+        try:
+            if stripped_id.isdigit():
+                tid_int = int(stripped_id)
+                params = SIMULATION_PLANS.resolve_for_task_id(tid_int)
+                if params and params.one_shot:
+                    SIMULATION_PLANS.consume_one_shot_for(
+                        SimulationSelector(by_task_id=tid_int),
+                        task_id=tid_int,
+                    )
+        except Exception:
+            pass
     else:  # ask
         handle, clar_up_q, clar_down_q = (
             await call_manager_with_optional_clarifications(
