@@ -884,15 +884,24 @@ def _build_helper_ack_content(name: str, args_json: Any) -> str:
     return ack_content
 
 
-async def _append_msgs(
-    msgs: list[dict],
-    client: unify.AsyncUnify,
-    cfg: _AsyncToolLoopConfig,
-    timer: _TimeoutTimer,
-) -> None:
-    client.append_messages(msgs)
-    await _to_event_bus(msgs, cfg)
-    timer.reset()
+class _AsyncToolLoopMessageDispatcher:
+    def __init__(
+        self,
+        client: unify.AsyncUnify,
+        cfg: _AsyncToolLoopConfig,
+        timer: _TimeoutTimer,
+    ):
+        self._client = client
+        self._cfg = cfg
+        self._timer = timer
+
+    async def append_msgs(
+        self,
+        msgs: list[dict],
+    ) -> None:
+        self._client.append_messages(msgs)
+        await _to_event_bus(msgs, self._cfg)
+        self._timer.reset()
 
 
 # Remove any tool_calls in an assistant message that would exceed the
@@ -1209,6 +1218,7 @@ async def _async_tool_use_loop_inner(
         raise_on_limit=raise_on_limit,
         client=client,
     )
+    _msg_dispatcher = _AsyncToolLoopMessageDispatcher(client, cfg, timer)
 
     if log_steps:
         if log_steps == "full":
@@ -1239,7 +1249,7 @@ async def _async_tool_use_loop_inner(
             id(parent_msg),
             {"results_count": 0},
         )
-        await _append_msgs([tool_msg], client, cfg, timer)
+        await _msg_dispatcher.append_msgs([tool_msg])
         insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
         client.messages.insert(insert_pos, client.messages.pop())
         meta["results_count"] += 1
@@ -1274,7 +1284,7 @@ async def _async_tool_use_loop_inner(
             "content": result,
         }
 
-        await _append_msgs([assistant_stub, tool_msg], client, cfg, timer)
+        await _msg_dispatcher.append_msgs([assistant_stub, tool_msg])
         return tool_msg
 
     # ── *single* authoritative implementation of "task finished" handling ──
@@ -1521,7 +1531,7 @@ async def _async_tool_use_loop_inner(
                 "Resolve the *next* user request in light of this."
             ),
         }
-        await _append_msgs([sys_msg], client, cfg, timer)
+        await _msg_dispatcher.append_msgs([sys_msg])
 
     # ── initial prompt ───────────────────────────────────────────────────────
     # ── 0-b. Coerce tools → ToolSpec & helper lambdas ───────────────────────
@@ -1872,7 +1882,7 @@ async def _async_tool_use_loop_inner(
     else:
         initial_user_msg = {"role": "user", "content": message}
 
-    await _append_msgs([initial_user_msg], client, cfg, timer)
+    await _msg_dispatcher.append_msgs([initial_user_msg])
 
     # ── helper: graceful early-exit when limits are hit ────────────────────
     async def _handle_limit_reached(reason: str) -> str:
@@ -1899,7 +1909,7 @@ async def _async_tool_use_loop_inner(
             "role": "assistant",
             "content": f"🔚 Terminating early: {reason}",
         }
-        await _append_msgs([notice], client, cfg, timer)
+        await _msg_dispatcher.append_msgs([notice])
         if log_steps:
             logger.info(f"Early exit – {reason}", prefix="⏹️")
         return notice["content"]
@@ -2094,7 +2104,7 @@ async def _async_tool_use_loop_inner(
                     "any conflicting comments/requests across the different interjections."
                 )
                 interjection_msg = {"role": "system", "content": sys_content}
-                await _append_msgs([interjection_msg], client, cfg, timer)
+                await _msg_dispatcher.append_msgs([interjection_msg])
 
                 # Append this interjection to the user-visible history for future context
                 try:
