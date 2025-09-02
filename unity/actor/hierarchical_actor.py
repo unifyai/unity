@@ -12,6 +12,7 @@ import logging
 import sys
 import textwrap
 import traceback
+from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import typing
 import types
@@ -60,6 +61,8 @@ class PlanRuntime:
         self.action_counter = 0
         self.cache_miss_counter = 0
         self.path_context: List[str] = []
+        self.call_stacks = defaultdict(list)
+        self.frame_id_counter = 0
 
     async def checkpoint(self, label: str = ""):
         """
@@ -295,13 +298,9 @@ class InterjectionDecision(BaseModel):
         "refactor_and_generalize",
     ] = Field(..., description="The chosen action based on the user's interjection.")
     reason: str = Field(..., description="A brief justification for the chosen action.")
-    modification_request: Optional[str] = Field(
+    patches: Optional[List[FunctionPatch]] = Field(
         None,
-        description="The user's request, rephrased as a direct instruction to modify the plan.",
-    )
-    target_function: Optional[str] = Field(
-        None,
-        description="The name of the function in the call stack that is most relevant to the modification.",
+        description="A list of functions to be updated. Required for 'modify_task'.",
     )
     new_goal: Optional[str] = Field(
         None,
@@ -2957,30 +2956,18 @@ class HierarchicalActor(BaseActor):
             raise _ForcedRetryException("Retrying after receiving user clarification.")
         if assessment.status == "ok":
             try:
-
-                async def _capture_success_state(
-                    plan: "HierarchicalPlan",
-                    fn_name: str,
-                ):
-                    try:
-                        current_url = (
-                            await self.action_provider.browser.get_current_url()
-                        )
-                        plan.last_verified_function_name = fn_name
-                        plan.last_verified_url = current_url
-                        logger.info(
-                            f"STATE CAPTURE: Stored successful state after '{fn_name}' at URL {current_url}.",
-                        )
-                        plan.action_log.append(
-                            f"STATE CAPTURE: Stored successful state after '{fn_name}' at URL {current_url}.",
-                        )
-
-                    except Exception as e:
-                        logger.warning(
-                            f"Could not capture successful state after '{fn_name}': {e}",
-                        )
-
-                asyncio.create_task(_capture_success_state(plan, fn.__name__))
+                current_url = await self.action_provider.browser.get_current_url()
+                plan.last_verified_function_name = fn.__name__
+                plan.last_verified_url = current_url
+                plan.last_verified_screenshot = (
+                    await self.action_provider.browser.get_screenshot()
+                )
+                logger.info(
+                    f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
+                )
+                plan.action_log.append(
+                    f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
+                )
             except Exception as e:
                 logger.warning(
                     f"Could not capture successful state after '{fn.__name__}': {e}",
