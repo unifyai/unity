@@ -313,6 +313,7 @@ class CommsAgent:
         if not self.meet_browser:
             return
         try:
+            await asyncio.sleep(2)
             await self.meet_browser.act("Turn on captions")
         except Exception:
             ...
@@ -355,6 +356,7 @@ class CommsAgent:
         if not self.meet_browser:
             return
         try:
+            await asyncio.sleep(2)
             await self.meet_browser.act("Turn on captions")
         except Exception:
             ...
@@ -400,7 +402,7 @@ class CommsAgent:
                     print("speaker buffer", self.speaker_buffer)
             except Exception:
                 ...
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)
 
     async def listen_for_events(self):
         print("COLLECTING...")
