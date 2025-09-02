@@ -5,13 +5,15 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any
 from typing import Optional
-
+import logging
 import aiohttp
 import requests
 from pydantic import BaseModel, PydanticUserError
 import asyncio
 import websockets
 from .controller import Controller
+
+logger = logging.getLogger("websockets")
 
 
 class BrowserAgentError(Exception):
@@ -220,11 +222,11 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 self._log_consumer_task = asyncio.create_task(self._log_consumer())
 
                 self._async_initialized = True
-                print("⚙️ Initialized async log streaming components")
+                logger.info("⚙️ Initialized async log streaming components")
             except Exception as e:
-                print(f"⚠️ Failed to initialize async components: {e}")
+                logger.warning(f"⚠️ Failed to initialize async components: {e}")
         elif websockets is None and not self._async_initialized:
-            print("⚠️ Websockets not available, log streaming disabled")
+            logger.warning("⚠️ Websockets not available, log streaming disabled")
             self._async_initialized = True
 
     async def _start_log_stream_listener(self):
@@ -233,10 +235,22 @@ class MagnitudeBrowserBackend(BrowserBackend):
         Includes reconnection logic.
         """
         ws_url = self.agent_base_url.replace("http", "ws") + "/logs/stream"
+        logger.info(f"🔌 Starting log stream listener for {ws_url}")
+
+        # Prepare authentication headers
+        auth_key = os.getenv("UNIFY_KEY", "")
+        assistant_email = os.getenv("ASSISTANT_EMAIL", "")
+        headers = {
+            "Authorization": f"Bearer {auth_key} {assistant_email}".strip(),
+        }
+
         while True:
             try:
-                async with websockets.connect(ws_url) as websocket:
-                    print(f"🔌 Connected to Magnitude log stream at {ws_url}")
+                async with websockets.connect(
+                    ws_url,
+                    additional_headers=headers,
+                ) as websocket:
+                    logger.info(f"🔌 Connected to Magnitude log stream at {ws_url}")
                     async for message in websocket:
                         # The message from the WebSocket is put into our internal queue
                         if self._network_log_queue is not None:
@@ -245,10 +259,12 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 websockets.exceptions.ConnectionClosedError,
                 ConnectionRefusedError,
             ) as e:
-                print(f"⚠️ Log stream disconnected: {e}. Reconnecting in 5 seconds...")
+                logger.warning(
+                    f"⚠️ Log stream disconnected: {e}. Reconnecting in 5 seconds...",
+                )
                 await asyncio.sleep(5)
             except Exception as e:
-                print(
+                logger.error(
                     f"🚨 An unexpected error occurred in the log streamer: {e}. Retrying in 10 seconds...",
                 )
                 await asyncio.sleep(10)
@@ -268,17 +284,18 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
                 # If the actor is currently capturing, put it in its queue
                 if self._current_capture_queue is not None:
+                    logger.debug(f"📥 Capturing magnitude log: {log_line[:100]}...")
                     self._current_capture_queue.put_nowait(log_line)
                 else:
-                    # Otherwise, print to the console
-                    print(log_line)
+                    # Otherwise, log to console (this will show up as regular logs)
+                    logger.info(f"🔍 Magnitude: {log_line}")
 
                 self._network_log_queue.task_done()
             except asyncio.CancelledError:
-                print("Log consumer task cancelled.")
+                logger.info("Log consumer task cancelled.")
                 break
             except Exception as e:
-                print(f"[MagnitudeLogConsumerError] {e}")
+                logger.error(f"[MagnitudeLogConsumerError] {e}")
                 await asyncio.sleep(1)  # Prevent rapid-fire error loops
 
     async def _request(
