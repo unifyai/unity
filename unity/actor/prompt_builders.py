@@ -513,6 +513,21 @@ def _build_initial_plan_rules_and_examples(
                 raise NotImplementedError("Extract shipping options from checkout page")
             ```
 
+            **CRITICAL**: **Purity of Stubs**: A stubbed function MUST contain ONLY a `raise NotImplementedError(...)` statement and its docstring. Do not include ANY `await action_provider` calls or other logic inside a stub.
+
+            ```python
+            # ❌ WRONG: Stub with a side-effect
+            async def my_stub():
+                "\"\"\"This is a bad stub.\"\"\""
+                await action_provider.browser_navigate("...")  # NEVER DO THIS
+                raise NotImplementedError("Implement me")
+
+            # ✅ CORRECT: A pure stub
+            async def my_stub():
+                "\"\"\"This is a perfect stub.\"\"\""
+                raise NotImplementedError("Implement me")
+            ```
+
         6.  **Decorators & Docstrings:** EVERY function needs proper documentation.
             ```python
             # ✅ CORRECT: Clear docstring with Args and Returns
