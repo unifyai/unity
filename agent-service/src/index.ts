@@ -252,8 +252,35 @@ console.warn = (...args: any[]) => {
 };
 
 // --- WebSocket Endpoint Handler ---
-wsInstance.app.ws('/logs/stream', (ws: WebSocket, req: Request) => {
-  console.log('Log stream client connected.');
+wsInstance.app.ws('/logs/stream', async (ws: WebSocket, req: Request) => {
+  // Authenticate WebSocket connection
+  const authHeader = req.header('authorization') || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+
+  if (!match) {
+    console.log('WebSocket connection rejected: No auth header');
+    ws.close(1008, 'Missing or invalid API key');
+    return;
+  }
+
+  const keys = match[1].split(' ');
+  const apikey = keys[0];
+  const assistant_email = keys[1];
+
+  try {
+    const ok = await verifyApiKeyWithUnify(apikey, assistant_email);
+    if (!ok) {
+      console.log('WebSocket connection rejected: Auth failed');
+      ws.close(1008, 'API key verification failed');
+      return;
+    }
+  } catch (e) {
+    console.log('WebSocket connection rejected: Auth error');
+    ws.close(1008, 'API key verification failed');
+    return;
+  }
+
+  console.log('Log stream client connected and authenticated.');
   logClients.add(ws);
 
   ws.on('close', () => {
