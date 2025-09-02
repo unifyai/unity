@@ -99,6 +99,37 @@ class PlanRuntime:
         if self.path_context:
             self.path_context.pop()
 
+    def push_frame(self, run_id: int, func_name: str) -> tuple:
+        """Pushes a new frame with a unique token onto the correct run's stack."""
+        self.frame_id_counter += 1
+        frame_token = (self.frame_id_counter, func_name)
+        self.call_stacks[run_id].append(frame_token)
+        return frame_token
+
+    def pop_frame(self, run_id: int, frame_token: tuple):
+        """Safely pops a frame, only if the run_id and token match."""
+        stack = self.call_stacks.get(run_id)
+
+        if not stack:
+            logger.warning(
+                f"[STACK_GUARD] Attempted to pop from an empty or unknown stack for run_id={run_id}",
+            )
+            return
+
+        if stack[-1] != frame_token:
+            logger.warning(
+                f"[STACK_GUARD] Ignoring stale pop for run_id={run_id}. Expected {frame_token}, found {stack[-1]}.",
+            )
+            return
+
+        stack.pop()
+
+    def get_current_stack_tuple(self, run_id: int) -> tuple:
+        """Gets the function names from the current run's stack as a tuple."""
+        return tuple(
+            func_name for frame_id, func_name in self.call_stacks.get(run_id, [])
+        )
+
 
 def format_pydantic_model(
     model: BaseModel,
@@ -1689,6 +1720,9 @@ class HierarchicalPlan(BaseActiveTask):
                     f"🔄 RUN TRANSITION: run_id={old_run_id} -> run_id={self.run_id} (modify_task interjection)",
                 )
 
+            if old_run_id in self.runtime.call_stacks:
+                del self.runtime.call_stacks[old_run_id]
+
             self.interaction_stack.clear()
             self.call_stack.clear()
 
@@ -1772,8 +1806,13 @@ class HierarchicalPlan(BaseActiveTask):
                     f"🔄 RUN TRANSITION: run_id={old_run_id} -> run_id={self.run_id} (refactor_and_generalize interjection)",
                 )
 
+            if old_run_id in self.runtime.call_stacks:
+                del self.runtime.call_stacks[old_run_id]
+
             self.interaction_stack.clear()
             self.call_stack.clear()
+            self.runtime.path_context.clear()
+
             self.replay_keys = list(self.execution_key_log)
             self.execution_key_log.clear()
             self.interaction_stack.append([])
@@ -2195,7 +2234,9 @@ class HierarchicalActor(BaseActor):
         kwargs: dict,
     ) -> tuple:
         """Generates the composite cache key for a tool call."""
-        call_stack_tuple = tuple(plan.call_stack)
+
+        run_id = current_run_id_var.get()
+        call_stack_tuple = plan.runtime.get_current_stack_tuple(run_id)
 
         execution_path_tuple = (
             *plan.runtime.path_context,
@@ -2386,7 +2427,9 @@ class HierarchicalActor(BaseActor):
 
         async def _int(func_name: str):
             req = plan.interruption_request
-            if req and req.get("target_function") == func_name:
+            if req and any(
+                patch.function_name == func_name for patch in req.get("patches", [])
+            ):
                 plan.interruption_request = None
                 raise _ControlledInterruptionException(
                     req.get("reason", "Interjection"),
@@ -2550,6 +2593,17 @@ class HierarchicalActor(BaseActor):
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
                 """The wrapper that performs verification and correction."""
+                context_rid = current_run_id_var.get()
+                plan_rid = plan.run_id
+                if context_rid != plan_rid:
+                    logger.warning(
+                        f"Blocked stale function call to '{fn.__name__}'. "
+                        f"Context run_id={context_rid} does not match plan run_id={plan_rid}.",
+                    )
+                    raise asyncio.CancelledError(
+                        f"Stale function call to '{fn.__name__}' blocked by run_id gate.",
+                    )
+
                 func_name = fn.__name__
                 if func_name in plan.skipped_functions:
                     plan.action_log.append(f"SKIPPING function '{func_name}'.")
@@ -2558,6 +2612,15 @@ class HierarchicalActor(BaseActor):
 
                 plan.invocation_counter += 1
                 invocation_id = f"{func_name}_{plan.invocation_counter}"
+
+                frame_token = plan.runtime.push_frame(plan.run_id, func_name)
+                plan.call_stack.append(func_name)
+
+                local_interactions = []
+
+                run_id_token = current_run_id_var.set(plan.run_id)
+                sink_token = current_interaction_sink_var.set(local_interactions)
+                invoc_token = current_invocation_id_var.set(invocation_id)
 
                 diag_prefix = (
                     f"[run_id={plan.run_id} invoc={invocation_id}]"
@@ -2571,13 +2634,6 @@ class HierarchicalActor(BaseActor):
                 plan.action_log.append(
                     f"{diag_prefix} -> Entering '{func_name}' with args: ({all_args})",
                 )
-                plan.call_stack.append(func_name)
-
-                local_interactions = []
-
-                run_id_token = current_run_id_var.set(plan.run_id)
-                sink_token = current_interaction_sink_var.set(local_interactions)
-                invoc_token = current_invocation_id_var.set(invocation_id)
 
                 entry_screenshot = None
                 if "action_provider.browser" in plan.plan_source_code:
