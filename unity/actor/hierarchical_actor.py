@@ -549,7 +549,7 @@ class PlanSanitizer(ast.NodeTransformer):
         block: List[ast.stmt],
         context_id: str,
     ) -> List[ast.stmt]:
-        """Injects push/pop context calls around a block of statements."""
+        """Injects push/pop context calls around a block of statements GUARANTEED to run."""
         if not block:
             return []
         push_call = self._make_runtime_call_expr(
@@ -557,22 +557,33 @@ class PlanSanitizer(ast.NodeTransformer):
             [ast.Constant(value=context_id)],
         )
         pop_call = self._make_runtime_call_expr("pop_path_context", [])
-        return [push_call] + block + [pop_call]
+
+        # Wrap the original block in a try...finally structure to guarantee cleanup.
+        finalized_block = ast.Try(
+            body=[push_call] + block,  # Push context, then run original code
+            handlers=[],
+            orelse=[],
+            finalbody=[pop_call],  # ALWAYS pop the context in the finally block
+        )
+
+        # Return the new Try node as a list containing a single statement
+        return [finalized_block]
 
     def visit_If(self, node: ast.If) -> ast.If:
         self._if_counter += 1
         if_id = f"if_{self._if_counter}"
+        self.generic_visit(node)
 
         node.body = self._wrap_block_with_context(node.body, f"{if_id}_true")
         if node.orelse:
             node.orelse = self._wrap_block_with_context(node.orelse, f"{if_id}_false")
 
-        self.generic_visit(node)
         return node
 
     def visit_Try(self, node: ast.Try) -> ast.Try:
         self._try_counter += 1
         try_id = f"try_{self._try_counter}"
+        self.generic_visit(node)
 
         node.body = self._wrap_block_with_context(node.body, f"{try_id}_try")
         for i, handler in enumerate(node.handlers):
@@ -586,7 +597,6 @@ class PlanSanitizer(ast.NodeTransformer):
                 f"{try_id}_finally",
             )
 
-        self.generic_visit(node)
         return node
 
     def _inject_loop_probes(self, node: typing.Union[ast.For, ast.While, ast.AsyncFor]):
