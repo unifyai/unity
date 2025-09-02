@@ -798,18 +798,43 @@ class TaskScheduler(BaseTaskScheduler):
         client = self._new_llm_client("gpt-5@openai")
 
         # ── tool definitions ────────────────────────────────────────────────
-        async def _execute_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
-            """Start the task with *task_id*, adopting inner handle (isolate or chain)."""
+        async def _execute_by_id(
+            *,
+            task_id: int,
+            execution_scope: "Literal['auto','isolate','chain']" = "auto",
+        ) -> SteerableToolHandle:  # type: ignore[valid-type]
+            """Start the task with *task_id*, adopting inner handle (isolate or chain).
+
+            Parameters
+            ----------
+            task_id : int
+                Identifier of the task to start.
+            execution_scope : Literal['auto','isolate','chain'], default "auto"
+                Routing hint selected by the LLM after inspecting queue context with `ask`:
+                - 'chain': start and keep followers attached (sequence runs in order)
+                - 'isolate': start only this task; detach followers
+                - 'auto': delegate to the scheduler's router based on the request text and context
+
+            Behavioural rules
+            -----------------
+            - Never modify scheduling/ordering or `start_at` to begin execution. Scope selection
+              dictates activation behaviour; schema remains unchanged.
+            - If the user wants the whole sequence now, prefer calling this on the chain head
+              (where `prev_task` is None) with execution_scope='chain'.
+            """
 
             # Decide execution scope strictly via LLM when not provided
-            scope = (
-                execution_scope
-                if execution_scope is not None
-                else await self._decide_execution_scope(
-                    request_text=freeform_text,
-                    parent_chat_context=parent_chat_context,
+            if execution_scope in ("isolate", "chain"):
+                scope = execution_scope
+            else:
+                scope = (
+                    execution_scope
+                    if execution_scope in ("isolate", "chain")
+                    else await self._decide_execution_scope(
+                        request_text=freeform_text,
+                        parent_chat_context=parent_chat_context,
+                    )
                 )
-            )
             if scope == "chain":
                 handle = await self._execute_chain_internal(
                     task_id=task_id,
@@ -838,15 +863,8 @@ class TaskScheduler(BaseTaskScheduler):
             )
             return await rc(question)
 
-        # Wrap update to hard-code tool_policy=None while preserving metadata
-        @functools.wraps(self.update, updated=())
-        async def _update_no_forcing(*args, **kwargs):  # type: ignore[valid-type]
-            kwargs["tool_policy"] = None
-            return await self.update(*args, **kwargs)
-
         tools = methods_to_tool_dict(
             self.ask,
-            _update_no_forcing,
             _execute_by_id,
             include_class_name=False,
         )
