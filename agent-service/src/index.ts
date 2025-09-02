@@ -1,5 +1,8 @@
 import express, { Request, Response } from 'express';
 import https from 'https';
+import expressWs from 'express-ws';
+import WebSocket from 'ws';
+import util from 'util';
 import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserOptions } from 'magnitude-core';
 import { z, ZodTypeAny, ZodAny } from 'zod';
 import dotenv from 'dotenv';
@@ -139,6 +142,7 @@ function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new S
 }
 
 const app = express();
+const wsInstance = expressWs(app);
 app.use(express.json({ limit: '10mb' }));
 
 // --- Authorization (Bearer) middleware ---
@@ -212,6 +216,57 @@ let agentMode: string | null = null;
 let browserAgent: BrowserAgent | null = null;
 let desktopBrowserAgent: BrowserAgent | null = null;
 const port = process.env.PORT || 3000;
+
+// --- WebSocket Log Broadcasting Logic ---
+const logClients = new Set<WebSocket>();
+
+function broadcastLog(message: string) {
+  logClients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+}
+
+// Monkey-patch console methods to capture and broadcast logs
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+
+console.log = (...args: any[]) => {
+  const message = util.format(...args);
+  broadcastLog(message);
+  originalLog.apply(console, args);
+};
+
+console.error = (...args: any[]) => {
+  const message = util.format(...args);
+  broadcastLog(message);
+  originalError.apply(console, args);
+};
+
+console.warn = (...args: any[]) => {
+  const message = util.format(...args);
+  broadcastLog(message);
+  originalWarn.apply(console, args);
+};
+
+// --- WebSocket Endpoint Handler ---
+wsInstance.app.ws('/logs/stream', (ws: WebSocket, req: Request) => {
+  console.log('Log stream client connected.');
+  logClients.add(ws);
+
+  ws.on('close', () => {
+    console.log('Log stream client disconnected.');
+    logClients.delete(ws);
+  });
+
+  ws.on('error', (error: Error) => {
+    console.error('Log stream client error:', error);
+    logClients.delete(ws);
+  });
+});
+
 
 // --- Agent Initialization ---
 console.log(`Starting Magnitude BrowserAgent...`);
