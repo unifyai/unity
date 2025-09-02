@@ -1188,9 +1188,10 @@ class HierarchicalPlan(BaseActiveTask):
         self.course_correction_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
         )
-        self.modification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
-        self.exploration_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
-        self.ask_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
+        self.modification_client: unify.AsyncUnify = unify.AsyncUnify(
+            "gemini-2.5-pro@vertex-ai",
+        )
+        self.ask_client: unify.AsyncUnify = unify.AsyncUnify("gemini-2.5-pro@vertex-ai")
 
     def _set_final_result(self, result: str):
         """Sets the final result and the completion event."""
@@ -3512,9 +3513,7 @@ import textwrap
 
 async def course_correction_plan():
     # This is a sequence of actions to restore the state.
-    print("--- Starting Course Correction ---")
-{textwrap.indent(code, '    ')}
-    print("--- Course Correction Finished ---")
+    {textwrap.indent(code, '    ')}
 
 """
         correction_file_path.write_text(textwrap.dedent(script_to_write).strip())
@@ -3536,7 +3535,7 @@ async def course_correction_plan():
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
-        for plan in self._plan_handles:
-            if hasattr(plan, "_cleanup_temp_file"):
-                plan._cleanup_temp_file()
+        # for plan in self._plan_handles:
+        #     if hasattr(plan, "_cleanup_temp_file"):
+        #         plan._cleanup_temp_file()
         self.action_provider.browser.stop()
