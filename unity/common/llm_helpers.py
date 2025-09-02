@@ -1278,6 +1278,41 @@ def _register_tool(
     dynamic_tools[key.lstrip("_")] = fn
 
 
+# Helper: propagate a stop request to any nested SteerableToolHandle returned
+# by base tools. This ensures outer stop/cancel signals reach inner loops.
+async def _propagate_stop_to_nested_handles(
+    task_info,
+    reason: Optional[str] = None,
+) -> None:
+    try:
+        for _t, _inf in list(task_info.items()):
+            h = _inf.get("handle")
+            if h is not None and hasattr(h, "stop"):
+                try:
+                    await _forward_handle_call(
+                        h,
+                        "stop",
+                        {"reason": reason} if reason is not None else {},
+                        fallback_positional_keys=["reason"],
+                    )
+                except Exception:
+                    # Best effort – never let propagation failure crash the loop
+                    pass
+    except Exception:
+        pass
+
+
+async def _propagate_stop_once(
+    task_info,
+    stop_forward_once,
+    reason: Optional[str],
+) -> bool:
+    if stop_forward_once:
+        return stop_forward_once
+    await _propagate_stop_to_nested_handles(task_info, reason)
+    return True
+
+
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
 
@@ -1922,36 +1957,9 @@ async def _async_tool_use_loop_inner(
     except Exception:
         pass
 
-    # Helper: propagate a stop request to any nested SteerableToolHandle returned
-    # by base tools. This ensures outer stop/cancel signals reach inner loops.
-    async def _propagate_stop_to_nested_handles(reason: Optional[str] = None) -> None:
-        try:
-            for _t, _inf in list(task_info.items()):
-                h = _inf.get("handle")
-                if h is not None and hasattr(h, "stop"):
-                    try:
-                        await _forward_handle_call(
-                            h,
-                            "stop",
-                            {"reason": reason} if reason is not None else {},
-                            fallback_positional_keys=["reason"],
-                        )
-                    except Exception:
-                        # Best effort – never let propagation failure crash the loop
-                        pass
-        except Exception:
-            pass
-
     # Ensure we forward stop to nested handles at most once, even if multiple
     # branches detect cancellation/stop around the same time.
     _stop_forwarded_once: bool = False
-
-    async def _propagate_stop_once(reason: Optional[str]) -> None:
-        nonlocal _stop_forwarded_once
-        if _stop_forwarded_once:
-            return
-        await _propagate_stop_to_nested_handles(reason)
-        _stop_forwarded_once = True
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     try:
@@ -2072,13 +2080,21 @@ async def _async_tool_use_loop_inner(
                     if cancel_event.is_set():
                         # Forward stop to any nested handles before aborting
                         try:
-                            await _propagate_stop_once("outer-loop cancelled")
+                            _stop_forwarded_once = await _propagate_stop_once(
+                                task_info,
+                                _stop_forwarded_once,
+                                "outer-loop cancelled",
+                            )
                         except Exception:
                             pass
                         raise asyncio.CancelledError
                     if stop_event.is_set() and persist:
                         try:
-                            await _propagate_stop_once("outer-loop stopped")
+                            _stop_forwarded_once = await _propagate_stop_once(
+                                task_info,
+                                _stop_forwarded_once,
+                                "outer-loop stopped",
+                            )
                         except Exception:
                             pass
                         # Graceful stop requested during pause
@@ -2111,13 +2127,21 @@ async def _async_tool_use_loop_inner(
                     # cancelled?
                     if cancel_event.is_set():
                         try:
-                            await _propagate_stop_once("outer-loop cancelled")
+                            _stop_forwarded_once = await _propagate_stop_once(
+                                task_info,
+                                _stop_forwarded_once,
+                                "outer-loop cancelled",
+                            )
                         except Exception:
                             pass
                         raise asyncio.CancelledError
                     if stop_event.is_set() and persist:
                         try:
-                            await _propagate_stop_once("outer-loop stopped")
+                            _stop_forwarded_once = await _propagate_stop_once(
+                                task_info,
+                                _stop_forwarded_once,
+                                "outer-loop stopped",
+                            )
                         except Exception:
                             pass
                         return last_final_answer or ""
@@ -2301,13 +2325,21 @@ async def _async_tool_use_loop_inner(
 
                 if cancel_waiter in done:
                     try:
-                        await _propagate_stop_once("outer-loop cancelled")
+                        _stop_forwarded_once = await _propagate_stop_once(
+                            task_info,
+                            _stop_forwarded_once,
+                            "outer-loop cancelled",
+                        )
                     except Exception:
                         pass
                     raise asyncio.CancelledError  # cancellation wins
                 if graceful_stop_waiter in done and persist:
                     try:
-                        await _propagate_stop_once("outer-loop stopped")
+                        _stop_forwarded_once = await _propagate_stop_once(
+                            task_info,
+                            _stop_forwarded_once,
+                            "outer-loop stopped",
+                        )
                     except Exception:
                         pass
                     return last_final_answer or ""
@@ -3717,7 +3749,11 @@ async def _async_tool_use_loop_inner(
         # we re-raise the same `CancelledError`, preserving expected asyncio
         # semantics for upstream callers.
         try:
-            await _propagate_stop_once("outer-loop cancelled")
+            _stop_forwarded_once = await _propagate_stop_once(
+                task_info,
+                _stop_forwarded_once,
+                "outer-loop cancelled",
+            )
         except Exception:
             pass
         for t in pending:
