@@ -313,7 +313,7 @@ class CommsAgent:
         if not self.meet_browser:
             return
         try:
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
             await self.meet_browser.act("Turn on captions")
         except Exception:
             ...
@@ -356,7 +356,7 @@ class CommsAgent:
         if not self.meet_browser:
             return
         try:
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
             await self.meet_browser.act("Turn on captions")
         except Exception:
             ...
@@ -497,10 +497,8 @@ class CommsAgent:
                                 "Click 'your name' textbox",
                             )
                             await self.meet_browser.act(
-                                f"Enter your name as {self.assistant_name} and press enter",
+                                f"Input your name as {self.assistant_name} and press enter",
                             )
-
-                            # await self.meet_browser.act("Click the 'Join' button")
 
                             asyncio.create_task(self.inactivity_check_for_meet())
                             await asyncio.sleep(5)
