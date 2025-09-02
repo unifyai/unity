@@ -3082,6 +3082,7 @@ class HierarchicalActor(BaseActor):
                         current_url=current_url,
                         failed_function_name=fn.__name__,
                         failed_function_docstring=fn.__doc__,
+                        verification_reason=assessment.reason,
                         tools=self.tools,
                     )
 
