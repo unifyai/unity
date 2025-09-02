@@ -61,6 +61,7 @@ echo "Redis started with PID: $REDIS_PID"
 echo "Starting virtual desktop and Magnitude server..."
 bash desktop/startup.sh &
 DESKTOP_PID=$!
+sleep 2
 
 
 # Start the main application in parallel
