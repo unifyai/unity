@@ -1638,10 +1638,16 @@ class HierarchicalPlan(BaseActiveTask):
             await self.pause()
             decision = None
             try:
+                clean_plan_source_for_prompt = "\n\n".join(
+                    self.clean_function_source_map.get(func_name, "")
+                    for func_name in self.function_source_map
+                    if func_name in self.clean_function_source_map
+                )
+
                 prompt = prompt_builders.build_interjection_prompt(
                     interjection=message,
                     parent_chat_context=self.parent_chat_context,
-                    plan_source_code=self.plan_source_code,
+                    plan_source_code=clean_plan_source_for_prompt,
                     call_stack=self.call_stack,
                     action_log=self.action_log[-10:],
                     is_teaching_session=self.is_teaching_session,
