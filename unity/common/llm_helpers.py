@@ -1262,6 +1262,22 @@ async def _process_completed_task(
     return True
 
 
+# helper: register a freshly-minted coroutine as a *temporary* tool
+def _register_tool(
+    key: str,
+    func_name: str,
+    doc: str,
+    fn: Callable,
+    dynamic_tools,
+) -> None:
+    # prefer the function's own docstring if it exists, else fall back
+    existing = inspect.getdoc(fn)
+    fn.__doc__ = existing.strip() if existing else doc
+    fn.__name__ = func_name[:64]
+    fn.__qualname__ = func_name[:64]
+    dynamic_tools[key.lstrip("_")] = fn
+
+
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
 
@@ -2459,15 +2475,6 @@ async def _async_tool_use_loop_inner(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
 
-            # helper: register a freshly-minted coroutine as a *temporary* tool
-            def _reg_tool(key: str, func_name: str, doc: str, fn: Callable) -> None:
-                # prefer the function's own docstring if it exists, else fall back
-                existing = inspect.getdoc(fn)
-                fn.__doc__ = existing.strip() if existing else doc
-                fn.__name__ = func_name[:64]
-                fn.__qualname__ = func_name[:64]
-                dynamic_tools[key.lstrip("_")] = fn
-
             for _task in list(pending):
                 info = task_info[_task]
                 handle = info.get("handle")
@@ -2535,11 +2542,12 @@ async def _async_tool_use_loop_inner(
                     async def _continue() -> Dict[str, str]:
                         return {"status": "continue", "call_id": _call_id}
 
-                    _reg_tool(
+                    _register_tool(
                         key=f"continue_{_fn_name}_{_safe_call_id}",
                         func_name=f"continue_{_fn_name}_{_safe_call_id}",
                         doc=_continue_doc,
                         fn=_continue,
+                        dynamic_tools=dynamic_tools,
                     )
 
                 # ––– 2. stop helper –––––––––––––––––––––––––––––––––––––
@@ -2560,11 +2568,12 @@ async def _async_tool_use_loop_inner(
                     task_info.pop(_task, None)
                     return {"status": "stopped", "call_id": _call_id, **_kw}
 
-                _reg_tool(
+                _register_tool(
                     key=f"stop_{_fn_name}_{_safe_call_id}",
                     func_name=f"stop_{_fn_name}_{_safe_call_id}",
                     doc=_stop_doc,
                     fn=_stop,
+                    dynamic_tools=dynamic_tools,
                 )
                 # Expose full argspec of handle.stop in the helper schema
                 try:
@@ -2619,11 +2628,12 @@ async def _async_tool_use_loop_inner(
                                 "content": content,
                             }
 
-                    _reg_tool(
+                    _register_tool(
                         key=f"interject_{_fn_name}_{_safe_call_id}",
                         func_name=f"interject_{_fn_name}_{_safe_call_id}",
                         doc=_interject_doc,
                         fn=_interject,
+                        dynamic_tools=dynamic_tools,
                     )
 
                 # ––– 4. clarification-answer helper (optional) ––––––––––
@@ -2640,11 +2650,12 @@ async def _async_tool_use_loop_inner(
                             "answer": answer,
                         }
 
-                    _reg_tool(
+                    _register_tool(
                         key=f"clarify_{_fn_name}_{_safe_call_id}",
                         func_name=f"clarify_{_fn_name}_{_safe_call_id}",
                         doc=_clarify_doc,
                         fn=_clarify,
+                        dynamic_tools=dynamic_tools,
                     )
 
                 # ––– 5. pause helper –––––––––––––––––––––––––––––––––––––––––––
@@ -2681,11 +2692,12 @@ async def _async_tool_use_loop_inner(
                                 ev.clear()
                             return {"status": "paused", "call_id": _call_id}
 
-                    _reg_tool(
+                    _register_tool(
                         key=f"pause_{_fn_name}_{_safe_call_id}",
                         func_name=f"pause_{_fn_name}_{_safe_call_id}",
                         doc=_pause_doc,
                         fn=_pause,
+                        dynamic_tools=dynamic_tools,
                     )
 
                 # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
@@ -2720,11 +2732,12 @@ async def _async_tool_use_loop_inner(
                                 ev.set()
                             return {"status": "resumed", "call_id": _call_id}
 
-                    _reg_tool(
+                    _register_tool(
                         key=f"resume_{_fn_name}_{_safe_call_id}",
                         func_name=f"resume_{_fn_name}_{_safe_call_id}",
                         doc=_resume_doc,
                         fn=_resume,
+                        dynamic_tools=dynamic_tools,
                     )
 
                 # 7.  expose *all* other public methods of the handle
@@ -2807,7 +2820,7 @@ async def _async_tool_use_loop_inner(
                         # override the wrapper's signature to match the real method
                         _invoke_handle_method.__signature__ = inspect.signature(bound)
 
-                        _reg_tool(
+                        _register_tool(
                             key=helper_key,
                             func_name=func_name,
                             doc=(
@@ -2822,6 +2835,7 @@ async def _async_tool_use_loop_inner(
                                 )
                             ),
                             fn=_invoke_handle_method,
+                            dynamic_tools=dynamic_tools,
                         )
                         # Mark write-only helpers so scheduling can acknowledge and avoid tracking
                         if meth_name in write_only_set:
