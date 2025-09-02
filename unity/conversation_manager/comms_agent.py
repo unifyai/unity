@@ -363,6 +363,28 @@ class CommsAgent:
 
         js_snippet = """
 (() => {
+  // 1) Prefer aria-labels like "Name is speaking"
+  const ariaNodes = Array.from(document.querySelectorAll('[aria-label]'));
+  for (const el of ariaNodes) {
+    const label = (el.getAttribute('aria-label') || '').trim();
+    const m = label.match(/^(.*?)\s+is\s+speaking/i);
+    if (m && m[1]) return m[1].trim();
+  }
+
+  // 2) Try active-speaker tile heuristics
+  const tiles = Array.from(document.querySelectorAll('[data-speaking="true"], [data-audio-level], [role="listitem"] [aria-label]'));
+  for (const el of tiles) {
+    const label = (el.getAttribute('aria-label') || '').trim();
+    const m = label.match(/^(.*?)\s+is\s+speaking/i);
+    if (m && m[1]) return m[1].trim();
+    const nameNode = el.querySelector('[data-self-name], [data-participant-id], [jsname], [class*="displayName"], [class*="participant"]');
+    if (nameNode && nameNode.textContent) {
+      const name = nameNode.textContent.trim();
+      if (name) return name;
+    }
+  }
+
+  // 3) Fallback to captions
   const roots = Array.from(document.querySelectorAll('[role="region"], [aria-live="polite"], [data-is-caption]'));
   const nodes = roots.flatMap(r => Array.from(r.querySelectorAll('*')));
   const candidates = nodes
