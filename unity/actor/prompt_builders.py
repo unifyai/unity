@@ -2511,6 +2511,7 @@ def build_course_correction_prompt(
     current_url: str,
     failed_function_name: str,
     failed_function_docstring: str,
+    verification_reason: str,
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -2528,12 +2529,15 @@ def build_course_correction_prompt(
         ---
         ### State Analysis
 
-        **1. The "Last Known Good" State (BEFORE the failure):**
+         **1. Reason for Failure (from Verification):** CRITICAL: The verification step determined the function failed for the following reason. Use this as your primary guide.
+        "{verification_reason}"
+
+        **2. The "Last Known Good" State (BEFORE the failure):**
         This is the state after the function `{last_verified_function_name}` completed successfully.
         - **URL:** `{last_verified_url}`
         - **Screenshot:** A screenshot of this state is provided. (1st image)
 
-        **2. The "Current / Corrupted" State (AFTER the failure):**
+        **3. The "Current / Corrupted" State (AFTER the failure):**
         This is the state where the function `{failed_function_name}` (Purpose: "{failed_function_docstring}") failed.
         - **URL:** `{current_url}`
         - **Screenshot:** A screenshot of this current state is also provided. (2nd image)
@@ -2541,10 +2545,11 @@ def build_course_correction_prompt(
         ---
         ### Your Task
 
-        1.  **Compare the two states.** Did the failed function navigate away from the correct page, open an unexpected modal, or otherwise alter the page structure in a way that prevents the *next* attempt from succeeding?
-        2.  **Decide if correction is needed.**
-            - If the states are the same or the changes are irrelevant, set `correction_needed` to `false`.
-            - If the states are different and the browser needs to be returned to the "Last Known Good" state, set `correction_needed` to `true`.
+        1.  **Analyze the Failure.** Did the failed function navigate away to a completely wrong page, or did it just fail an *interaction* on the correct page (e.g., couldn't click a button, a popup appeared)?
+        2.  **Decide if Correction is Needed.**
+            - If the browser is on a **completely irrelevant page**, set `correction_needed` to `true` and write code to navigate back to the "Last Known Good" state.
+            - **IMPORTANT:** If the browser is still on the **correct page** and the failure was just a faulty interaction, the best course of action is often **no correction**. Set `correction_needed` to `false`. This allows the actor to immediately retry implementing the function on the correct page without wasting a navigation step.
+            - If a popup or modal appeared that needs to be closed, set `correction_needed` to `true` and write a script to close it.
         3.  **If correction is needed, write `correction_code`.**
             - This must be a simple, self-contained Python script.
             - Use `action_provider.browser_navigate` or `action_provider.browser_act`.
