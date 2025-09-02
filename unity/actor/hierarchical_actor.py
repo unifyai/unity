@@ -2642,201 +2642,229 @@ class HierarchicalActor(BaseActor):
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
                 """The wrapper that performs verification and correction."""
-                context_rid = current_run_id_var.get()
-                plan_rid = plan.run_id
-                if context_rid != plan_rid:
-                    logger.warning(
-                        f"Blocked stale function call to '{fn.__name__}'. "
-                        f"Context run_id={context_rid} does not match plan run_id={plan_rid}.",
-                    )
-                    raise asyncio.CancelledError(
-                        f"Stale function call to '{fn.__name__}' blocked by run_id gate.",
-                    )
-
-                func_name = fn.__name__
-                if func_name in plan.skipped_functions:
-                    plan.action_log.append(f"SKIPPING function '{func_name}'.")
-                    plan.skipped_functions.remove(func_name)
-                    return
-
-                plan.invocation_counter += 1
-                invocation_id = f"{func_name}_{plan.invocation_counter}"
-
-                frame_token = plan.runtime.push_frame(plan.run_id, func_name)
-                plan.call_stack.append(func_name)
-
-                local_interactions = []
-
-                run_id_token = current_run_id_var.set(plan.run_id)
-                sink_token = current_interaction_sink_var.set(local_interactions)
-                invoc_token = current_invocation_id_var.set(invocation_id)
-
-                diag_prefix = (
-                    f"[run_id={plan.run_id} invoc={invocation_id}]"
-                    if DIAGNOSTIC_MODE
-                    else ""
-                )
-
-                args_repr = [repr(a) for a in args]
-                kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
-                all_args = ", ".join(args_repr + kwargs_repr)
-                plan.action_log.append(
-                    f"{diag_prefix} -> Entering '{func_name}' with args: ({all_args})",
-                )
-
-                entry_screenshot = None
-                if "action_provider.browser" in plan.plan_source_code:
-                    try:
-                        entry_screenshot = (
-                            await self.action_provider.browser.get_screenshot()
-                        )
-                    except Exception as e:
+                while True:
+                    context_rid = current_run_id_var.get()
+                    plan_rid = plan.run_id
+                    if context_rid != plan_rid:
                         logger.warning(
-                            f"Could not capture entry screenshot for '{func_name}': {e}",
+                            f"Blocked stale function call to '{fn.__name__}'. "
+                            f"Context run_id={context_rid} does not match plan run_id={plan_rid}.",
                         )
-                logger.info(f"{diag_prefix} VERIFY: Entering '{func_name}'")
-                parent_action_counter = plan.runtime.action_counter
-                plan.runtime.action_counter = 0
-                plan.runtime.cache_miss_counter = 0
+                        raise asyncio.CancelledError(
+                            f"Stale function call to '{fn.__name__}' blocked by run_id gate.",
+                        )
 
-                await self._ensure_precondition(plan, func_name)
+                    func_name = fn.__name__
+                    if func_name in plan.skipped_functions:
+                        plan.action_log.append(f"SKIPPING function '{func_name}'.")
+                        plan.skipped_functions.remove(func_name)
+                        return
 
-                try:
-                    last_error_reason = ""
-                    for i in range(plan.MAX_LOCAL_RETRIES):
-                        plan.runtime.action_counter = 0
-                        if i > 0:
-                            local_interactions.clear()
+                    plan.invocation_counter += 1
+                    invocation_id = f"{func_name}_{plan.invocation_counter}"
 
-                        try:
-                            captured_run_id = current_run_id_var.get()
+                    frame_token = plan.runtime.push_frame(plan.run_id, func_name)
+                    plan.call_stack.append(func_name)
 
-                            current_fn_for_execution = plan.execution_namespace[
-                                func_name
-                            ]
-                            func_source = plan.function_source_map.get(func_name)
+                    local_interactions = []
+                    parent_sink = current_interaction_sink_var.get(None)
 
-                            result = await self._execute_and_verify_step(
-                                plan,
-                                inspect.unwrap(current_fn_for_execution),
-                                func_source,
-                                args,
-                                kwargs,
-                                local_interactions,
-                                entry_screenshot=entry_screenshot,
-                            )
+                    run_id_token = current_run_id_var.set(plan.run_id)
+                    sink_token = current_interaction_sink_var.set(local_interactions)
+                    invoc_token = current_invocation_id_var.set(invocation_id)
 
-                            if captured_run_id != plan.run_id:
-                                logger.warning(
-                                    f"Discarding stale verification for '{func_name}' from a previous run (ID: {captured_run_id}).",
-                                )
-                                plan.action_log.append(
-                                    f"Stale verification for '{func_name}' discarded.",
-                                )
-                                raise _ControlledInterruptionException(
-                                    "Stale verification.",
-                                )
-
-                            parent_sink = (
-                                plan.interaction_stack[-1]
-                                if plan.interaction_stack
-                                else None
-                            )
-                            if parent_sink is not None:
-                                parent_sink.extend(local_interactions)
-
-                            return result
-
-                        except _ControlledInterruptionException:
-                            plan.action_log.append(
-                                f"{diag_prefix} Retrying '{func_name}' after user interjection.",
-                            )
-                            logger.info(
-                                f"{diag_prefix} Retrying '{func_name}' after user interjection.",
-                            )
-                            local_interactions.clear()
-                            continue
-
-                        except _ForcedRetryException:
-                            plan.action_log.append(
-                                f"{diag_prefix} Retrying '{func_name}' after successful reimplementation.",
-                            )
-                            logger.info(
-                                f"{diag_prefix} Retrying '{func_name}' after successful reimplementation.",
-                            )
-                            local_interactions.clear()
-                            continue
-
-                        except NotImplementedError as e:
-                            plan.action_log.append(
-                                f"{diag_prefix} '{func_name}' not implemented. Implementing JIT.",
-                            )
-                            logger.info(
-                                f"{diag_prefix} '{func_name}' not implemented. Implementing JIT.",
-                            )
-                            last_error_reason = str(e) or "Function is a stub."
-                            await plan._handle_dynamic_implementation(
-                                func_name,
-                                replan_reason=f"Implement from stub: {last_error_reason}",
-                            )
-                            local_interactions.clear()
-                            continue
-
-                        except ReplanFromParentException as e:
-                            plan.action_log.append(
-                                f"Child of '{func_name}' requested strategic replan.",
-                            )
-                            last_error_reason = e.reason
-                            existing_code = plan.clean_function_source_map.get(
-                                func_name,
-                            )
-                            await plan._handle_dynamic_implementation(
-                                func_name,
-                                is_strategic_replan=True,
-                                replan_reason=last_error_reason,
-                                failed_interactions=e.failed_interactions,
-                                existing_code_for_modification=existing_code,
-                            )
-                            local_interactions.clear()
-                            continue
-
-                        except FatalVerificationError:
-                            raise
-
-                        except (BrowserAgentError, Exception) as e:
-                            logger.error(
-                                f"Function '{func_name}' failed with a runtime error on attempt {i+1}: {e}",
-                                exc_info=True,
-                            )
-                            last_error_reason = traceback.format_exc()
-                            existing_code = plan.clean_function_source_map.get(
-                                func_name,
-                            )
-                            await plan._handle_dynamic_implementation(
-                                func_name,
-                                replan_reason=f"Function crashed. Fix bug:\n{last_error_reason}",
-                                existing_code_for_modification=existing_code,
-                            )
-                            local_interactions.clear()
-                            continue
-
-                    raise ReplanFromParentException(
-                        f"Function '{func_name}' failed after {plan.MAX_LOCAL_RETRIES} retries.",
-                        reason=f"Final error:\n{last_error_reason}",
+                    diag_prefix = (
+                        f"[run_id={plan.run_id} invoc={invocation_id}]"
+                        if DIAGNOSTIC_MODE
+                        else ""
                     )
 
-                finally:
-                    current_run_id_var.reset(run_id_token)
-                    current_interaction_sink_var.reset(sink_token)
-                    current_invocation_id_var.reset(invoc_token)
-                    plan.runtime.pop_frame(plan.run_id, frame_token)
-                    if plan.call_stack and plan.call_stack[-1] == func_name:
-                        plan.call_stack.pop()
-
+                    args_repr = [repr(a) for a in args]
+                    kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
+                    all_args = ", ".join(args_repr + kwargs_repr)
                     plan.action_log.append(
-                        f"[run_id={plan.run_id} invoc={invocation_id}] <- Exiting '{func_name}'",
+                        f"{diag_prefix} -> Entering '{func_name}' with args: ({all_args})",
                     )
-                    plan.runtime.action_counter = parent_action_counter
+
+                    entry_screenshot = None
+                    if "action_provider.browser" in plan.plan_source_code:
+                        try:
+                            entry_screenshot = (
+                                await self.action_provider.browser.get_screenshot()
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Could not capture entry screenshot for '{func_name}': {e}",
+                            )
+                    logger.info(f"{diag_prefix} VERIFY: Entering '{func_name}'")
+                    parent_action_counter = plan.runtime.action_counter
+                    plan.runtime.action_counter = 0
+                    plan.runtime.cache_miss_counter = 0
+
+                    await self._ensure_precondition(plan, func_name)
+
+                    last_error_reason = ""
+                    try:
+                        for i in range(plan.MAX_LOCAL_RETRIES):
+                            plan.runtime.action_counter = 0
+                            if i > 0:
+                                local_interactions.clear()
+
+                            try:
+                                captured_run_id = current_run_id_var.get()
+
+                                current_fn_for_execution = plan.execution_namespace[
+                                    func_name
+                                ]
+                                func_source = plan.function_source_map.get(func_name)
+
+                                result = await self._execute_and_verify_step(
+                                    plan,
+                                    inspect.unwrap(current_fn_for_execution),
+                                    func_source,
+                                    args,
+                                    kwargs,
+                                    local_interactions,
+                                    entry_screenshot=entry_screenshot,
+                                )
+
+                                if captured_run_id != plan.run_id:
+                                    logger.warning(
+                                        f"Discarding stale verification for '{func_name}' from a previous run (ID: {captured_run_id}).",
+                                    )
+                                    plan.action_log.append(
+                                        f"Stale verification for '{func_name}' discarded.",
+                                    )
+                                    raise _ControlledInterruptionException(
+                                        "Stale verification.",
+                                    )
+
+                                return result
+
+                            except _ControlledInterruptionException:
+                                plan.action_log.append(
+                                    f"{diag_prefix} Retrying '{func_name}' after user interjection.",
+                                )
+                                logger.info(
+                                    f"{diag_prefix} Retrying '{func_name}' after user interjection.",
+                                )
+                                local_interactions.clear()
+                                continue
+
+                            except _ForcedRetryException:
+                                plan.action_log.append(
+                                    f"{diag_prefix} Retrying '{func_name}' after successful reimplementation.",
+                                )
+                                logger.info(
+                                    f"{diag_prefix} Retrying '{func_name}' after successful reimplementation.",
+                                )
+                                local_interactions.clear()
+                                continue
+
+                            except NotImplementedError as e:
+                                plan.action_log.append(
+                                    f"{diag_prefix} '{func_name}' not implemented. Implementing JIT.",
+                                )
+                                logger.info(
+                                    f"{diag_prefix} '{func_name}' not implemented. Implementing JIT.",
+                                )
+                                last_error_reason = str(e) or "Function is a stub."
+                                await plan._handle_dynamic_implementation(
+                                    func_name,
+                                    replan_reason=f"Implement from stub: {last_error_reason}",
+                                )
+                                local_interactions.clear()
+                                continue
+
+                            except ReplanFromParentException as e:
+                                plan.action_log.append(
+                                    f"Child of '{func_name}' requested strategic replan.",
+                                )
+                                last_error_reason = e.reason
+                                existing_code = plan.clean_function_source_map.get(
+                                    func_name,
+                                )
+                                await plan._handle_dynamic_implementation(
+                                    func_name,
+                                    is_strategic_replan=True,
+                                    replan_reason=last_error_reason,
+                                    failed_interactions=e.failed_interactions,
+                                    existing_code_for_modification=existing_code,
+                                )
+                                local_interactions.clear()
+                                continue
+
+                            except FatalVerificationError:
+                                raise
+
+                            except (BrowserAgentError, Exception) as e:
+                                logger.error(
+                                    f"Function '{func_name}' failed with a runtime error on attempt {i+1}: {e}",
+                                    exc_info=True,
+                                )
+                                last_error_reason = traceback.format_exc()
+                                existing_code = plan.clean_function_source_map.get(
+                                    func_name,
+                                )
+                                await plan._handle_dynamic_implementation(
+                                    func_name,
+                                    replan_reason=f"Function crashed. Fix bug:\n{last_error_reason}",
+                                    existing_code_for_modification=existing_code,
+                                )
+                                local_interactions.clear()
+                                continue
+
+                        if plan.clarification_enabled:
+                            plan.action_log.append(
+                                f"Function '{func_name}' has failed all {plan.MAX_LOCAL_RETRIES} retries. Asking user for guidance.",
+                            )
+                            clarification_question = (
+                                f"I've been unable to complete the step '{func_name}'. "
+                                f"The last issue was: {last_error_reason}. How should I proceed?"
+                            )
+                            user_answer = await plan.execution_namespace[
+                                "request_clarification"
+                            ](clarification_question)
+                            plan.action_log.append(
+                                f"Received user guidance: {user_answer}",
+                            )
+
+                            existing_code = plan.clean_function_source_map.get(
+                                func_name,
+                            )
+                            await plan._handle_dynamic_implementation(
+                                func_name,
+                                replan_reason=f"Function failed all retries. User provided new guidance: {user_answer}",
+                                failed_interactions=local_interactions,
+                                existing_code_for_modification=existing_code,
+                                clarification_question=clarification_question,
+                                clarification_answer=user_answer,
+                            )
+                            plan.action_log.append(
+                                f"Restarting execution of '{func_name}' after user guidance.",
+                            )
+                            continue
+                        else:
+                            raise ReplanFromParentException(
+                                f"Function '{func_name}' failed after {plan.MAX_LOCAL_RETRIES} retries.",
+                                reason=f"Final error:\n{last_error_reason}",
+                            )
+
+                    finally:
+                        if parent_sink is not None:
+                            parent_sink.extend(local_interactions)
+
+                        current_run_id_var.reset(run_id_token)
+                        current_interaction_sink_var.reset(sink_token)
+                        current_invocation_id_var.reset(invoc_token)
+                        plan.runtime.pop_frame(plan.run_id, frame_token)
+                        if plan.call_stack and plan.call_stack[-1] == func_name:
+                            plan.call_stack.pop()
+
+                        plan.action_log.append(
+                            f"[run_id={plan.run_id} invoc={invocation_id}] <- Exiting '{func_name}'",
+                        )
+                        plan.runtime.action_counter = parent_action_counter
 
             return wrapper
 
@@ -2851,6 +2879,8 @@ class HierarchicalActor(BaseActor):
         kwargs,
         interactions: list,
         entry_screenshot: Optional[bytes] = None,
+        clarification_question: Optional[str] = None,
+        clarification_answer: Optional[str] = None,
     ):
         """
         Executes one function call and verifies its outcome.
@@ -2863,6 +2893,8 @@ class HierarchicalActor(BaseActor):
             kwargs: Keyword arguments for the function.
             interactions: A list to log interactions within this step.
             entry_screenshot: Screenshot captured right when the function was entered.
+            clarification_question: An optional question that was asked to the user.
+            clarification_answer: An optional answer received from the user.
         """
         result = await fn(*args, **kwargs)
         if inspect.isawaitable(result):
@@ -2898,7 +2930,7 @@ class HierarchicalActor(BaseActor):
 
         was_fully_cached = plan.runtime.cache_miss_counter == 0
 
-        if was_fully_cached and plan.replay_keys:
+        if was_fully_cached:
             logger.info(
                 f"VERIFICATION SKIPPED for '{fn.__name__}' because it was fully executed from cache replay.",
             )
@@ -2921,6 +2953,8 @@ class HierarchicalActor(BaseActor):
                 interactions=interactions_for_this_step,
                 screenshot=final_screenshot,
                 function_return_value=result,
+                clarification_question=clarification_question,
+                clarification_answer=clarification_answer,
             )
         logger.info(
             f"🕵️ VERIFICATION ASSESSMENT for '{fn.__name__}':\n{format_pydantic_model(assessment, indent=2)}",
@@ -2929,11 +2963,12 @@ class HierarchicalActor(BaseActor):
             f"Verification for {fn.__name__}: {assessment.status} - '{assessment.reason}'",
         )
 
-        if assessment.status == "request_clarification":
+        while assessment.status == "request_clarification":
             if not assessment.clarification_question:
                 raise FatalVerificationError(
                     "Verification assessment requested clarification but provided no question.",
                 )
+
             plan.action_log.append(
                 f"Verification requires clarification: {assessment.clarification_question}",
             )
@@ -2942,16 +2977,26 @@ class HierarchicalActor(BaseActor):
             )
             plan.action_log.append(f"Received user clarification: {user_answer}")
 
-            existing_code = plan.clean_function_source_map.get(fn.__name__)
-            await plan._handle_dynamic_implementation(
+            plan.action_log.append("Re-assessing function with new user context.")
+            logger.info("Re-assessing function with new user context.")
+
+            assessment = await self._check_state_against_goal(
+                plan,
                 fn.__name__,
-                replan_reason=assessment.reason,
-                failed_interactions=interactions,
-                existing_code_for_modification=existing_code,
+                fn.__doc__,
+                function_source_code=func_source,
+                interactions=interactions_for_this_step,
+                screenshot=final_screenshot,
+                function_return_value=result,
                 clarification_question=assessment.clarification_question,
                 clarification_answer=user_answer,
             )
-            raise _ForcedRetryException("Retrying after receiving user clarification.")
+            logger.info(
+                f"🕵️ RE-VERIFICATION ASSESSMENT for '{fn.__name__}':\n{format_pydantic_model(assessment, indent=2)}",
+            )
+            plan.action_log.append(
+                f"Re-Verification for {fn.__name__}: {assessment.status} - '{assessment.reason}'",
+            )
         if assessment.status == "ok":
             try:
                 current_url = await self.action_provider.browser.get_current_url()
@@ -3193,6 +3238,10 @@ class HierarchicalActor(BaseActor):
                     failed_interactions=interactions,
                     existing_code_for_modification=existing_code,
                 )
+                if clarification_question and clarification_answer:
+                    kwargs["clarification_question"] = clarification_question
+                    kwargs["clarification_answer"] = clarification_answer
+
                 raise _ForcedRetryException("Forced retry after local reimplementation")
 
         elif assessment.status == "fatal_error":
@@ -3329,7 +3378,7 @@ class HierarchicalActor(BaseActor):
                 for interaction in kwargs["failed_interactions"]:
                     if (
                         len(interaction) > 3 and interaction[3]
-                    ):  # Check if magnitude logs exist
+                    ):
                         action_summary = interaction[1]
                         magnitude_logs = interaction[3]
                         for log_line in magnitude_logs:
@@ -3410,6 +3459,8 @@ class HierarchicalActor(BaseActor):
         interactions: list,
         screenshot: bytes | str | None = None,
         function_return_value: Any = None,
+        clarification_question: Optional[str] = None,
+        clarification_answer: Optional[str] = None,
     ) -> VerificationAssessment:
         """
         Uses an LLM to assess if a function's execution achieved its goal.
@@ -3422,6 +3473,8 @@ class HierarchicalActor(BaseActor):
             interactions: A log of interactions that occurred.
             function_return_value: The return value of the function.
             screenshot: The screenshot of the current state of the browser.
+            clarification_question: An optional question that was previously asked.
+            clarification_answer: An optional answer that was received.
 
         Returns:
             A VerificationAssessment object with the outcome.
@@ -3445,6 +3498,8 @@ class HierarchicalActor(BaseActor):
             function_return_value=function_return_value,
             recent_transcript=recent_transcript,
             parent_chat_context=plan.parent_chat_context,
+            clarification_question=clarification_question,
+            clarification_answer=clarification_answer,
         )
 
         plan.verification_client.set_response_format(VerificationAssessment)
