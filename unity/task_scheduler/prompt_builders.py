@@ -358,14 +358,13 @@ def build_execute_prompt(
 
     # Resolve names dynamically
     ask_fname = _tool_name(tools, "ask")
-    update_fname = _tool_name(tools, "update")
+    update_fname = None  # update is intentionally NOT exposed to execute
     execute_by_id_fname = _tool_name(tools, "execute_by_id")
     request_clar_fname = _tool_name(tools, "request_clarification")
 
     _require_tools(
         {
             "ask": ask_fname,
-            "update": update_fname,
             "execute_by_id": execute_by_id_fname,
         },
         tools,
@@ -378,11 +377,15 @@ def build_execute_prompt(
         "",
         "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
         "Do not ask the user questions in your final response. If no clarification tool is available in this outer loop, make a best‑guess attempt using sensible defaults and state your assumptions; if an inner tool asks questions, inform it that no clarification channel exists and provide defaults/best guesses.",
+        "\nCRITICAL EXECUTION RULES (must follow):",
+        f"• Never attempt to modify `start_at`, `prev_task`/`next_task`, or any scheduling/ordering purely to begin execution. Execution scope (isolate vs chain) is handled by the scheduler when you call `{execute_by_id_fname}`.",
+        f"• When the user implies 'start all/these now' or a sequence (e.g., 'do them in order'), select the chain head (the task with `prev_task == None`) and call `{execute_by_id_fname}`; do not rewrite schedules.",
+        f"• A future `start_at` MUST NOT be rewritten to 'now' during execution. Simply call `{execute_by_id_fname}` — the scheduler starts immediately and records activation without changing the task definition.",
         "Use the tools below, step-by-step, following these rules:",
         "",
         "A. If the request contains a *numeric task_id*:",
         f"   • **First** call `{ask_fname}` (or another suitable read-only tool) to confirm the task exists.",
-        f"   • If exactly one matching task is found → call `{execute_by_id_fname}`.",
+        f"   • If exactly one matching task is found → call `{execute_by_id_fname}`. When appropriate, set its `execution_scope` parameter to 'isolate' or 'chain' based on the user's intent and the observed queue structure (default: 'auto').",
     ]
 
     if request_clar_fname:
@@ -404,7 +407,8 @@ def build_execute_prompt(
             "B. If **no numeric id** is given:",
             f"   1. Call `{ask_fname}` with the free-form description to search for matching task(s).",
             "   2. Based on the result:",
-            f"      • **Exactly one** clear match → call `{execute_by_id_fname}` with that id, do *not* bother the user with a clarification call.",
+            f"      • **Exactly one** clear match → call `{execute_by_id_fname}` with that id (and set `execution_scope` = 'isolate' | 'chain' when clear; else omit to use 'auto').",
+            f"      • **Multiple tasks that form a chain** and the user wants to start them in order → pick the chain head (task where `prev_task` is None) and call `{execute_by_id_fname}(task_id=<head>, execution_scope='chain')`. Do not reorder or set `start_at`.",
         ],
     )
 
@@ -414,7 +418,7 @@ def build_execute_prompt(
                 f"      • **Multiple / ambiguous** matches → call `{request_clar_fname}` so the user can disambiguate, only do so if it's *genuinely* unclear.",
                 f"      • **No match**:",
                 f"          – If it's ambiguous whether a task should be created/updated → `{request_clar_fname}`.",
-                f"          – If it is obvious we need to *create* a new task or *update* an existing one → call `{update_fname}` to create/update the task, **then** call `{execute_by_id_fname}` with the returned/newly discovered id.",
+                f"          – If it is obvious we need to *create* a new task → the system will handle creation implicitly outside this tool list; once created, call `{execute_by_id_fname}` with its id.",
             ],
         )
     else:
@@ -423,14 +427,14 @@ def build_execute_prompt(
                 "      • **Multiple / ambiguous** matches → do not ask questions in your final response; proceed with sensible defaults or best‑guess identification, and state your assumptions.",
                 "      • **No match**:",
                 f"          – If it's ambiguous whether a task should be created/updated → do not ask questions; make a best‑guess decision, state assumptions, and continue.",
-                f"          – If it is obvious we need to *create* a new task or *update* an existing one → call `{update_fname}` to create/update the task, **then** call `{execute_by_id_fname}` with the returned/newly discovered id.",
+                f"          – If it is obvious we need to *create* a new task → the system will handle creation implicitly outside this tool list; once created, call `{execute_by_id_fname}` with its id.",
             ],
         )
 
     lines.extend(
         [
             "",
-            f"C. After creating a task with `{update_fname}`, you may either read its id from the update response *or* call `{ask_fname}` again to retrieve it before starting it.",
+            f"C. The Tasks list is updated implicitly by the system. Do NOT attempt to tweak schedules/ordering/start_at to start – call `{execute_by_id_fname}`. If a new task is clearly required, creation happens outside this tool list; then call `{ask_fname}` to find its id (if needed) and `{execute_by_id_fname}` to start.",
             "",
             "Stopping semantics (required):",
             "--------------------------------",

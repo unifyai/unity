@@ -169,6 +169,15 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         describe the desired end-state in natural language and allow the
         `update` method to determine the best method to apply it.
 
+        Important execution boundary
+        ----------------------------
+        This method is not intended to be used by `execute` to rewrite
+        schedules/ordering/start_at purely to begin execution. The `execute`
+        flow determines the correct execution scope (isolate vs chain) and
+        starts the task via an execution tool without mutating scheduling.
+        Only use `update` within `execute` when the user explicitly asked to
+        create a missing task or to change task fields before running.
+
         Please always be explicit about the *ordering* of tasks.
         If the order *doesn't* matter please say so explicitly.
         If the order *does* matter, and the tasks are given in the correct number order,
@@ -216,6 +225,27 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
            :class:`SteerableToolHandle` **and marks it
            for pass-through** so that the outer handle is upgraded transparently
            once the real execution begins.
+
+        Chain vs isolate (rules)
+        ------------------------
+        - The `execute` flow decides between "isolate" and "chain" execution.
+          Phrases like "start them all now" or an explicit ordered sequence
+          imply chain (start the head and keep followers attached). Requests
+          like "just this one now" imply isolate.
+        - Never rewrite a task's `start_at` or queue links (prev/next) purely
+          to begin execution. Starting is an activation event, not a schema
+          edit. The scheduler handles immediate start without mutating fields.
+        - When the user wants to run a chain, select the chain head (where
+          `prev_task` is None) and execute that id; do not reorder via `update`.
+
+        Tool behaviour
+        --------------
+        The execute toolset exposes two tools:
+        - `ask` – to discover the relevant task and queue context
+        - `execute_by_id(task_id, execution_scope='auto'|'isolate'|'chain')` – to start
+          the task, with an optional routing hint. Prefer setting `execution_scope`
+          after inspecting queue context with `ask`. If omitted, the scheduler
+          will select automatically.
 
         Implementations MUST return a *live* steerable handle whose public
         methods (pause, resume, interject, stop, result, …) continue to work
