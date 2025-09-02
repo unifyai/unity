@@ -141,7 +141,7 @@ def build_request_prompt(
     knowledge_update_fname = _tool_name(tools, "knowledgemanager_update")
     task_ask_fname = _tool_name(tools, "taskscheduler_ask")
     task_update_fname = _tool_name(tools, "taskscheduler_update")
-    task_execute_fname = _tool_name(tools, "taskscheduler_execute_task")
+    task_execute_fname = _tool_name(tools, "taskscheduler_execute")
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "clarification")
@@ -158,7 +158,7 @@ def build_request_prompt(
             "ContactManager.update": contact_update_fname,
             "KnowledgeManager.update": knowledge_update_fname,
             "TaskScheduler.update": task_update_fname,
-            "TaskScheduler.execute_task": task_execute_fname,
+            "TaskScheduler.execute": task_execute_fname,
         },
         tools,
     )

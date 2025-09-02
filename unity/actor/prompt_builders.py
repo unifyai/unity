@@ -2123,13 +2123,14 @@ def build_verification_prompt(
 
     agent_trace_section = "No low-level agent trace was recorded for this step."
     if formatted_agent_traces:
+        traces_joined = "\n".join(formatted_agent_traces)
         agent_trace_section = textwrap.dedent(
             f"""
         ---
         ### 🔬 Low-Level Agent Trace (Ground Truth)
         This is the detailed "thought process" from the underlying browser agent as it performed the actions. **This is your most important source of truth.** It reveals *why* an action was taken and what the agent observed at a micro-level. Analyze it carefully to understand the root cause of any success or failure.
 
-        {"\n".join(formatted_agent_traces)}
+        {traces_joined}
         ---
         """,
         )

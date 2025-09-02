@@ -475,10 +475,10 @@ class MockHierarchicalPlan(HierarchicalPlan):
 
 
 # 3. Patch the actor to use our mock plan
-original_execute_task = HierarchicalActor._execute_task_and_return_handle
+original_execute = HierarchicalActor._execute_and_return_handle
 
 
-async def patched_execute_task(self, task_description: str, **kwargs):
+async def patched_execute(self, task_description: str, **kwargs):
     """Return our mock plan instead of the real one."""
     return MockHierarchicalPlan(
         actor=self,
@@ -491,7 +491,7 @@ async def patched_execute_task(self, task_description: str, **kwargs):
     )
 
 
-HierarchicalActor._execute_task_and_return_handle = patched_execute_task
+HierarchicalActor._execute_and_return_handle = patched_execute
 
 # 4. Also patch the execute method to bypass the active task check for batch processing
 original_execute = HierarchicalActor.execute

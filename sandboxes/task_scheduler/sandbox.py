@@ -5,7 +5,7 @@ Interactive sandbox for **TaskScheduler**.
 It supports:
 • Fixed or LLM‑generated seed data.
 • Voice or plain‑text input (same helpers as the other sandboxes).
-• Automatic dispatch to `ask`, `update` *or* `execute_task` depending on intent.
+• Automatic dispatch to `ask`, `update` *or* `execute` depending on intent.
 • Mid‑conversation interruption (pause / interject / cancel).
 """
 
@@ -287,7 +287,7 @@ async def _dispatch_with_context(
     Optional[asyncio.Queue[str]],
 ]:
     """
-    Decide whether to call `ask`, `update` or `execute_task`, forwarding
+    Decide whether to call `ask`, `update` or `execute`, forwarding
     *parent_chat_context* to the TaskScheduler methods. Always pass the original
     user input (*raw*) unchanged to the selected method.
     """
@@ -304,7 +304,7 @@ async def _dispatch_with_context(
 
     # Immediate terminal confirmation of selected method
     try:
-        _selected = "execute_task" if intent.action == "start" else intent.action
+        _selected = "execute" if intent.action == "start" else intent.action
         print(f"➡️  Selected: {_selected}")
     except Exception:
         pass
@@ -374,7 +374,7 @@ async def _dispatch_with_context(
         # Print immediately so the user sees what was captured and what will be used
         try:
             print("🧭 Simulation:")
-            # Always show the exact text that will be sent to execute_task
+            # Always show the exact text that will be sent to execute
             print(f"   📝 Parsed text: {core_text}")
             # Only show values that will be used; annotate source
             if eff_steps is not None:
@@ -401,7 +401,7 @@ async def _dispatch_with_context(
             log_mode="print",
         )
         setattr(ts, "_actor", override_actor)
-        handle = await ts.execute_task(
+        handle = await ts.execute(
             core_text,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clar_up_q,
@@ -454,7 +454,7 @@ async def _dispatch_with_context(
             pass
 
     return (
-        "execute_task" if intent.action == "start" else intent.action,
+        "execute" if intent.action == "start" else intent.action,
         handle,
         clar_up_q,
         clar_down_q,
