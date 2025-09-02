@@ -2118,6 +2118,7 @@ def build_verification_prompt(
 
     agent_trace_section = "No low-level agent trace was recorded for this step."
     if formatted_agent_traces:
+        multi_line_formatted_agent_traces = "\n".join(formatted_agent_traces)
         agent_trace_section = textwrap.dedent(
             f"""
         ---
@@ -2125,7 +2126,7 @@ def build_verification_prompt(
         The following is the detailed "thought process" from the browser agent as it performed the actions.
         This is the GROUND TRUTH of what happened on the page. Use it to understand *why* an action succeeded or failed.
 
-        {"\n".join(formatted_agent_traces)}
+        {multi_line_formatted_agent_traces}
         ---
         """,
         )
