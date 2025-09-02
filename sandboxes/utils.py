@@ -2784,3 +2784,179 @@ def parse_simulation_params_kv(arg_str: str) -> SimulationParams:
         guidance=guidance,
         one_shot=one_shot,
     )
+
+
+# --------------------------------------------------------------------------- #
+#  Sandbox-only monkey patch for per-task simulation (TaskScheduler only)     #
+# --------------------------------------------------------------------------- #
+
+
+def _merge_sim_params_for_task(
+    scheduler: Any,
+    task_id: Optional[int],
+    per_call: Optional[SimulationParams],
+) -> tuple[Optional[int], Optional[float], Optional[str]]:
+    """Compute effective (steps, duration_seconds, guidance) for a task.
+
+    Merge priority:
+        1) Per-call overrides (from the current 'start' request)
+        2) Rule targeting this task_id
+        3) Rule targeting this queue index (resolved from the runnable queue)
+        4) Fallback default (duration=20.0 if neither steps nor duration set)
+    """
+
+    steps: Optional[int] = getattr(per_call, "steps", None) if per_call else None
+    duration: Optional[float] = (
+        getattr(per_call, "duration_seconds", None) if per_call else None
+    )
+    guidance: Optional[str] = getattr(per_call, "guidance", None) if per_call else None
+
+    # Merge params by concrete task id
+    try:
+        if task_id is not None:
+            rule = SIMULATION_PLANS.resolve_for_task_id(int(task_id))
+            if rule is not None:
+                if steps is None and rule.steps is not None:
+                    steps = rule.steps
+                if duration is None and rule.duration_seconds is not None:
+                    duration = rule.duration_seconds
+                if not guidance and rule.guidance:
+                    guidance = rule.guidance
+    except Exception:
+        pass
+
+    # Merge params by queue index (Nth runnable task)
+    try:
+        if scheduler is not None and task_id is not None:
+            q = scheduler._get_task_queue()  # type: ignore[attr-defined]
+            idx = None
+            try:
+                for i, t in enumerate(q, 1):
+                    if getattr(t, "task_id", None) == task_id:
+                        idx = i
+                        break
+            except Exception:
+                idx = None
+            if idx is not None:
+                _tid, qparams = SIMULATION_PLANS.resolve_for_queue_index(scheduler, idx)
+                if qparams is not None:
+                    if steps is None and qparams.steps is not None:
+                        steps = qparams.steps
+                    if duration is None and qparams.duration_seconds is not None:
+                        duration = qparams.duration_seconds
+                    if not guidance and qparams.guidance:
+                        guidance = qparams.guidance
+    except Exception:
+        pass
+
+    if steps is None and duration is None:
+        duration = 20.0
+
+    return steps, duration, guidance
+
+
+def apply_per_task_simulation_patch(
+    *,
+    per_call_overrides: Optional[SimulationParams],
+    log_mode: "str | None" = "print",
+):
+    """Monkey-patch ActiveTask.create so each task starts with its own SimulatedActor.
+
+    Scope this patch to a single execute flow by calling the returned restore()
+    function once the outer handle completes.
+    """
+
+    # Imports kept local to avoid pulling these modules for other sandboxes
+    from unity.task_scheduler.active_task import ActiveTask  # noqa: WPS433
+    from unity.actor.simulated import SimulatedActor  # noqa: WPS433
+
+    _orig_create_cm = ActiveTask.create  # classmethod descriptor
+    _orig_create_fn = (
+        _orig_create_cm.__func__
+        if hasattr(_orig_create_cm, "__func__")
+        else _orig_create_cm
+    )
+
+    async def _wrapped_create(
+        cls,  # type: ignore[no-redef]
+        actor,  # ignored during simulation
+        *,
+        task_description: str,
+        parent_chat_context: Optional[list[dict]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        task_id: Optional[int] = None,
+        instance_id: Optional[int] = None,
+        scheduler: Optional["TaskScheduler"] = None,  # type: ignore[name-defined]
+    ):
+        s, d, g = _merge_sim_params_for_task(scheduler, task_id, per_call_overrides)
+        sim_actor = SimulatedActor(
+            steps=s,
+            duration=d,
+            simulation_guidance=g,
+            log_mode=log_mode,
+        )
+        # Best-effort: consume one-shot rules that apply to this task
+        try:
+            if task_id is not None:
+                tid_int = int(task_id)
+                _tid_params = SIMULATION_PLANS.resolve_for_task_id(tid_int)
+                if _tid_params is not None and bool(
+                    getattr(_tid_params, "one_shot", False),
+                ):
+                    SIMULATION_PLANS.consume_one_shot_for(
+                        SimulationSelector(by_task_id=tid_int),
+                        task_id=tid_int,
+                    )
+            if scheduler is not None and task_id is not None:
+                # Resolve queue index and consume if a queue-index rule applied
+                try:
+                    q = scheduler._get_task_queue()  # type: ignore[attr-defined]
+                    idx = None
+                    for i, t in enumerate(q, 1):
+                        if getattr(t, "task_id", None) == task_id:
+                            idx = i
+                            break
+                    if idx is not None:
+                        _resolved_tid, qparams = (
+                            SIMULATION_PLANS.resolve_for_queue_index(
+                                scheduler,
+                                idx,
+                            )
+                        )
+                        if qparams is not None and bool(
+                            getattr(qparams, "one_shot", False),
+                        ):
+                            SIMULATION_PLANS.consume_one_shot_for(
+                                SimulationSelector(by_queue_index=idx),
+                            )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return await _orig_create_fn(
+            cls,
+            sim_actor,
+            task_description=task_description,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+            task_id=task_id,
+            instance_id=instance_id,
+            scheduler=scheduler,
+        )
+
+    ActiveTask.create = classmethod(_wrapped_create)  # type: ignore[assignment]
+
+    def restore() -> None:
+        try:
+            from unity.task_scheduler.active_task import (
+                ActiveTask as _AT,
+            )  # noqa: WPS433
+
+            _AT.create = _orig_create_cm  # type: ignore[assignment]
+        except Exception:
+            pass
+
+    return restore

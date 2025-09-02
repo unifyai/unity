@@ -56,6 +56,7 @@ from sandboxes.utils import (
     SimulationParams,
     SimulationSelector,
     parse_simulation_params_kv,
+    apply_per_task_simulation_patch,
 )
 
 LG = logging.getLogger("task_scheduler_sandbox")
@@ -390,17 +391,18 @@ async def _dispatch_with_context(
         except Exception:
             pass
 
-        # Swap the actor on the instance and keep it until the task completes.
-        # We cannot restore immediately after returning the outer handle because the
-        # inner ActiveTask is only created when the LLM later calls the by-id tool.
-        original_actor = getattr(ts, "_actor", None)
-        override_actor = SimulatedActor(
+        # Apply sandbox-only per-task simulation monkey-patch for the lifetime of this execute call
+        per_call = SimulationParams(
             steps=eff_steps,
-            duration=eff_timeout,
-            simulation_guidance=eff_guidance,
+            duration_seconds=eff_timeout,
+            guidance=eff_guidance,
+            one_shot=False,
+        )
+        _restore_patch = apply_per_task_simulation_patch(
+            per_call_overrides=per_call,
             log_mode="print",
         )
-        setattr(ts, "_actor", override_actor)
+
         handle = await ts.execute(
             core_text,
             parent_chat_context=parent_chat_context,
@@ -415,8 +417,7 @@ async def _dispatch_with_context(
                 # Restore even if the call was stopped/cancelled/errored
                 pass
             try:
-                if original_actor is not None:
-                    setattr(ts, "_actor", original_actor)
+                _restore_patch()
             except Exception:
                 pass
 
