@@ -513,6 +513,21 @@ def _build_initial_plan_rules_and_examples(
                 raise NotImplementedError("Extract shipping options from checkout page")
             ```
 
+            **CRITICAL**: **Purity of Stubs**: A stubbed function MUST contain ONLY a `raise NotImplementedError(...)` statement and its docstring. Do not include ANY `await action_provider` calls or other logic inside a stub.
+
+            ```python
+            # ❌ WRONG: Stub with a side-effect
+            async def my_stub():
+                "\"\"\"This is a bad stub.\"\"\""
+                await action_provider.browser_navigate("...")  # NEVER DO THIS
+                raise NotImplementedError("Implement me")
+
+            # ✅ CORRECT: A pure stub
+            async def my_stub():
+                "\"\"\"This is a perfect stub.\"\"\""
+                raise NotImplementedError("Implement me")
+            ```
+
         6.  **Decorators & Docstrings:** EVERY function needs proper documentation.
             ```python
             # ✅ CORRECT: Clear docstring with Args and Returns
@@ -1872,6 +1887,7 @@ def build_initial_plan_prompt(
 
 
 def build_dynamic_implement_prompt(
+    goal: str,
     full_plan_source: str,
     call_stack: list[str],
     function_name: str,
@@ -1887,6 +1903,7 @@ def build_dynamic_implement_prompt(
     existing_code_for_modification: Optional[str] = None,
     recent_transcript: Optional[str] = None,
     parent_chat_context: Optional[list] = None,
+    failed_interactions_trace: Optional[list] = None,
 ) -> str:
     """Builds the system prompt for dynamically implementing or modifying a function."""
 
@@ -1926,6 +1943,19 @@ def build_dynamic_implement_prompt(
             """,
         )
 
+    debugging_trace_section = ""
+    if failed_interactions_trace:
+        formatted_trace = "\n".join(f"- {log}" for log in failed_interactions_trace)
+        debugging_trace_section = textwrap.dedent(
+            f"""
+        ---
+        ### 🕵️ Debugging Context: Agent Trace from Failed Attempt
+        CRITICAL: The previous attempt to run this function failed. The following is the detailed trace from the browser agent during the failure. Analyze it carefully to understand the exact problem on the page and design a robust solution. This is your primary debugging tool.
+
+        {formatted_trace}
+        ---
+        """,
+        )
     clarification_section = ""
     if clarification_question and clarification_answer:
         clarification_section = textwrap.dedent(
@@ -2003,6 +2033,13 @@ def build_dynamic_implement_prompt(
         f"""
         You are an expert Python programmer and a master strategist. Your task is to analyze the state of a running plan and decide the best course of action for the function `{function_name}`.
 
+        ---
+        ### Overall Goal (Source of Truth)
+        Your implementation MUST satisfy all of the following requirements.
+
+        {goal}
+        ---
+
         **CRITICAL: You must choose one of four actions:**
         1.  **`implement_function`**: Write the Python code for `{function_name}`. Choose this if the function's goal is achievable from the current browser state. **Your code MUST be a single, self-contained `async def` function block. DO NOT include top-level imports or class definitions outside the function.** All necessary imports and helper classes MUST be defined *inside* the function.
         2.  **`skip_function`**: Bypass this function entirely. Choose this if you observe that the function's goal is **already completed** or is now **irrelevant**. For example, skip a "log in" function if you are already logged in.
@@ -2010,6 +2047,7 @@ def build_dynamic_implement_prompt(
         4.  **`request_clarification`**: Ask the user for help. Choose this if you cannot devise a reliable strategy to fix the function from the available information. For example, if required UI elements are missing or behaving unexpectedly, or if there are multiple possible approaches and you're unsure which the user prefers. **You must provide a clear, specific `clarification_question`.**
 
         {modification_instructions}
+        {debugging_trace_section}
         {clarification_section}
         {transcript_section}
         {chat_context_section}
@@ -2054,6 +2092,7 @@ def build_verification_prompt(
         The complete prompt string for the verification LLM call.
     """
     formatted_interactions = []
+    formatted_agent_traces = []
     for interaction in interactions:
         kind, act, obs, *logs = interaction
         logs = logs[0] if logs else []
@@ -2067,6 +2106,8 @@ def build_verification_prompt(
         if logs:
             log_details = "\n".join([f"    {line}" for line in logs])
             log_entry += f"\n  - Agent Logs:\n{log_details}"
+            trace_log = "\n".join(f"  {line}" for line in logs)
+            formatted_agent_traces.append(f"- For Action: `{act}`\n{trace_log}")
 
         formatted_interactions.append(log_entry)
 
@@ -2074,6 +2115,21 @@ def build_verification_prompt(
         "\n".join(formatted_interactions)
         or "No browser actions were logged for this step."
     )
+
+    agent_trace_section = "No low-level agent trace was recorded for this step."
+    if formatted_agent_traces:
+        multi_line_formatted_agent_traces = "\n".join(formatted_agent_traces)
+        agent_trace_section = textwrap.dedent(
+            f"""
+        ---
+        ### 🔬 Low-Level Agent Trace
+        The following is the detailed "thought process" from the browser agent as it performed the actions.
+        This is the GROUND TRUTH of what happened on the page. Use it to understand *why* an action succeeded or failed.
+
+        {multi_line_formatted_agent_traces}
+        ---
+        """,
+        )
     screenshot_context_section = ""
     if has_browser_screenshot:
         screenshot_context_section = textwrap.dedent(
@@ -2132,6 +2188,7 @@ The full source code of the function that was just executed is provided below. A
         **Purpose of this function (Intent):** {function_docstring or 'No docstring provided.'}
 
         {source_code_section}
+        {agent_trace_section}
         {screenshot_context_section}
         {transcript_section}
         {chat_context_section}
@@ -2253,13 +2310,9 @@ def build_interjection_prompt(
     call_stack: list[str],
     action_log: list[str],
     is_teaching_session: bool,
+    goal: str,
 ) -> str:
-    """
-    Builds the system prompt for the Interjection Handler LLM.
-    This prompt provides the LLM with full context of the plan and conversation,
-    and instructs it to follow a specific decision tree to handle a user's
-    interjection, outputting a structured JSON response.
-    """
+    """Builds the system prompt for the Interjection Handler LLM."""
     call_stack_str = (
         " -> ".join(call_stack) if call_stack else "Not inside any function."
     )
@@ -2273,21 +2326,22 @@ def build_interjection_prompt(
     teaching_session_rule = ""
     if is_teaching_session:
         teaching_session_rule = textwrap.dedent(
-            """
+            f"""
         ---
         ### 📌 SPECIAL INSTRUCTIONS FOR THIS INTERJECTION
 
         **You are in a "Teaching Session".** The user is building a plan step-by-step.
-        - If the user provides a new instruction to add to the plan (e.g., "now search for..."), you **MUST** choose the `modify_task` action.
+        - The user is providing the next logical step. You **MUST** choose the `modify_task` action and generate a patch to add this new logic. The patch will typically modify the `main_plan` function.
         - If the user signals they are finished (e.g., "we're done", "that's all"), you **MUST** choose the `complete_task` action.
         ---
         """,
         )
 
-    prompt = f"""
-    You are an expert assistant responsible for steering a live-running automated plan.
-    A user has interjected with a new instruction while a plan was executing.
-    Your task is to analyze the user's intent and the current state of the plan, then decide on the correct course of action by following a strict decision tree.
+    return textwrap.dedent(
+        f"""
+    You are an expert Python programmer and a master strategist responsible for steering a live-running automated plan. A user has interjected with a new instruction while the plan was executing.
+
+    Your task is to perform a **global analysis** of the entire plan, the user's request, and the current execution state. You must then generate a set of **code patches** to update the plan's source code to reflect the user's intent, ensuring the entire plan remains logically consistent.
 
     {teaching_session_rule}
 
@@ -2296,78 +2350,121 @@ def build_interjection_prompt(
     **1. User's Interjection:**
     "{interjection}"
 
-    **2. Full Conversation History (for semantic context):**
+    **2. Current Goal (Source of Truth):**
+    {goal}
+
+    **3. Full Conversation History (for semantic context):**
     ```json
     {chat_history}
     ```
 
-    **3. Current Plan Source Code:**
+    **4. Current Plan Source Code:**
     ```python
     {plan_source_code}
     ```
 
-    **4. Current Execution Point (Call Stack):**
+    **5. Current Execution Point (Call Stack):**
     `{call_stack_str}`
 
-    **5. Most Recent Plan Actions:**
+    **6. Most Recent Plan Actions:**
     {recent_actions}
     ---
 
-    ### Your Task: Follow This Decision Tree Precisely
+    ### Your Task: Follow This Decision Tree and Generate Patches
 
-    **Question 1: Is the user signaling the end of the task or interactive session?**
-    - Example: The user says, "That's it," "We're done," "End the session," or "Complete the task."
-    - If YES, choose the `complete_task` action. This will allow the plan to execute its final version to completion.
-    - If NO, proceed to Question 2.
+    **1. Analyze Intent:** First, determine the user's primary intent based on the decision tree below.
 
-    **Question 2: Is the user's request a fundamental change of goal that abandons or replaces the current task?**
-    - Example: The plan is booking a flight, and the user says, "Actually, just look up recipes for me."
-    - If YES, choose the `replace_task` action. For the `new_goal`, provide the user's new high-level objective.
-    - If NO, proceed to Question 3.
+    **2. Perform Global Code Analysis:** Once you've chosen `modify_task` or `refactor_and_generalize`, you must act like an expert developer.
+    - **Read the ENTIRE `plan_source_code`**.
+    - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstring of `main_plan`.
+    - **Generate Patches:** For every function that needs to be changed, create a `FunctionPatch` object containing its full, updated source code.
 
-    **Question 3: Is the user asking to generalize, repeat, or refactor the previously taught steps for a new subject or context?**
-    - Example: After teaching a multi-step process for one item, the user says, "Now do the same for 'Sam Parker'," or "Great, now apply that to all other files in the folder."
-    - If YES, choose the `refactor_and_generalize` action. For `generalization_context`, provide the new context (e.g., "Sam Parker", "all other files in the folder").
-    - If NO, proceed to Question 4.
-
-    **Question 4: Is the request a direct modification, a new step, or a correction for the *current* task?**
-    - Example: The plan is researching on a website, and the user says, "No, use my LinkedIn profile for this research," or "Now, put those findings into a presentation."
-    - If YES, choose the `modify_task` action. For `modification_request`, rephrase the user's instruction as a clear, actionable request for the actor to implement. For `target_function`, identify the most relevant function from the call stack to modify.
-    - If NO, proceed to Question 5.
-
-    **Question 5: Is the request a temporary, exploratory side-quest that doesn't alter the main goal?**
-    - Example: The plan is creating a presentation, and the user says, "Quickly run the slide show so I can see how it looks."
-    - If YES, choose the `explore_detached` action. For `new_goal`, provide the specific, temporary goal of the side-quest.
-    - If NO, proceed to Question 6.
-
-    **Question 6: Is the user's intent unclear, or does it require more information to proceed confidently?**
-    - Example: The user says, "Make it better."
-    - If YES, choose the `clarify` action. For `clarification_question`, formulate a concise, multiple-choice or open-ended question to ask the user.
+    ---
+    ### Decision Tree
+    - **Is the user signaling completion?** (e.g., "We're done," "That's all.") -> Choose `complete_task`.
+    - **Is this a fundamental goal change?** (e.g., "Forget the recipe, book me a flight.") -> Choose `replace_task`.
+    - **Is this a request to generalize the whole process for a new input?** (e.g., "Great, now do the same for 'beef stew'.") -> Choose `refactor_and_generalize`.
+    - **Is this a modification, correction, or new step for the current goal?** (e.g., "Change the guests to 4," "No, sort by rating first.") -> Choose `modify_task` and generate the necessary patches.
+    - **Is this a temporary side-quest?** (e.g., "Quickly check the weather.") -> Choose `explore_detached`.
+    - **Is the request ambiguous?** (e.g., "Make it better.") -> Choose `clarify`.
 
     ---
     ### Output Format
 
-    You MUST respond with a JSON object that strictly adheres to the `InterjectionDecision` Pydantic model. Do not add any other text or explanation.
+    You MUST respond with a JSON object that strictly adheres to the `InterjectionDecision` Pydantic model. **Provide the `reason` field as a concise summary of the user's request.**
 
-    **Example `modify_task` response:**
+    ### Examples
+
+    **Example 1: Correcting a Parameter (Multi-Function Patch)**
+    - **Context:** The plan was to book a hotel for 2 guests. The user interjects to change it to 4 guests.
+    - **Analysis:** This requires changing the `search_hotels_by_capacity` function's default parameter AND the call to it in `main_plan`.
     ```json
     {{
         "action": "modify_task",
-        "reason": "The user wants to add a new step to the existing plan: creating a presentation from the research findings.",
-        "modification_request": "After extracting the research findings, create a new Google Slides presentation and summarize the key points on the first slide.",
-        "target_function": "main_plan"
+        "reason": "User wants to change the guest count from 2 to 4 people.",
+        "patches": [
+            {{
+                "function_name": "main_plan",
+                "new_code": "async def main_plan():\\n    ...\\n    # The call site must be updated\\n    hotels = await search_hotels_by_capacity(4)\\n    ..."
+            }},
+            {{
+                "function_name": "search_hotels_by_capacity",
+                "new_code": "# The function signature and logic must be updated\\nasync def search_hotels_by_capacity(guest_count: int = 4) -> list:\\n    ..."
+            }}
+        ]
     }}
     ```
 
-    **Example `complete_task` response:**
+    **Example 2: Adding a New Step in the Middle**
+    - **Context:** The plan is about to submit a job application. User says, "Wait, before you submit, check the salary range first."
+    - **Analysis:** This requires modifying the function that submits applications, inserting a salary check before the existing logic.
+    ```json
+    {{
+        "action": "modify_task",
+        "reason": "User wants to check salary range before submitting the application.",
+        "patches": [
+            {{
+                "function_name": "submit_job_application",
+                "new_code": "async def submit_job_application() -> dict:\\n    ...\\n    # New step inserted here\\n    await action_provider.browser_act(\\\"Click on 'Salary Information' to check the range\\\")\\n    # Original logic continues...\\n    result = await action_provider.browser_act(\\\"Click Submit Application\\\")"
+            }}
+        ]
+    }}
+    ```
+
+    **Example 3: A Simple "Teaching Session" Step**
+    - **Context:** Teaching session is paused, awaiting instructions. User says, "Navigate to LinkedIn.com".
+    - **Analysis:** This is a new step. It should be appended to the end of the `main_plan` body.
+    ```json
+    {{
+        "action": "modify_task",
+        "reason": "User wants to navigate to LinkedIn.com as the next step in the teaching session.",
+        "patches": [
+            {{
+                "function_name": "main_plan",
+                "new_code": "async def main_plan():\\n    \\\"\\\"\\\"Main entry point...\\\"\\\"\\\"\\n    # Previous steps would be here...\\n    await action_provider.browser_navigate(\\\"https://linkedin.com\\\")"
+            }}
+        ]
+    }}
+    ```
+
+    **Example 4: Goal Replacement**
+    ```json
+    {{
+        "action": "replace_task",
+        "reason": "User completely changed the goal from hotel booking to flight booking.",
+        "new_goal": "Book a flight from New York to London for next week"
+    }}
+    ```
+
+    **Example 5: Completion Signal**
     ```json
     {{
         "action": "complete_task",
-        "reason": "The user has indicated that the teaching session is finished and the plan should now execute to completion."
+        "reason": "User has indicated that the teaching session is finished and the plan should now execute to completion."
     }}
     ```
-    """
-    return textwrap.dedent(prompt).strip()
+    """,
+    ).strip()
 
 
 def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
@@ -2415,6 +2512,7 @@ def build_course_correction_prompt(
     current_url: str,
     failed_function_name: str,
     failed_function_docstring: str,
+    verification_reason: str,
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -2432,12 +2530,15 @@ def build_course_correction_prompt(
         ---
         ### State Analysis
 
-        **1. The "Last Known Good" State (BEFORE the failure):**
+         **1. Reason for Failure (from Verification):** CRITICAL: The verification step determined the function failed for the following reason. Use this as your primary guide.
+        "{verification_reason}"
+
+        **2. The "Last Known Good" State (BEFORE the failure):**
         This is the state after the function `{last_verified_function_name}` completed successfully.
         - **URL:** `{last_verified_url}`
         - **Screenshot:** A screenshot of this state is provided. (1st image)
 
-        **2. The "Current / Corrupted" State (AFTER the failure):**
+        **3. The "Current / Corrupted" State (AFTER the failure):**
         This is the state where the function `{failed_function_name}` (Purpose: "{failed_function_docstring}") failed.
         - **URL:** `{current_url}`
         - **Screenshot:** A screenshot of this current state is also provided. (2nd image)
@@ -2445,10 +2546,11 @@ def build_course_correction_prompt(
         ---
         ### Your Task
 
-        1.  **Compare the two states.** Did the failed function navigate away from the correct page, open an unexpected modal, or otherwise alter the page structure in a way that prevents the *next* attempt from succeeding?
-        2.  **Decide if correction is needed.**
-            - If the states are the same or the changes are irrelevant, set `correction_needed` to `false`.
-            - If the states are different and the browser needs to be returned to the "Last Known Good" state, set `correction_needed` to `true`.
+        1.  **Analyze the Failure.** Did the failed function navigate away to a completely wrong page, or did it just fail an *interaction* on the correct page (e.g., couldn't click a button, a popup appeared)?
+        2.  **Decide if Correction is Needed.**
+            - If the browser is on a **completely irrelevant page**, set `correction_needed` to `true` and write code to navigate back to the "Last Known Good" state.
+            - **IMPORTANT:** If the browser is still on the **correct page** and the failure was just a faulty interaction, the best course of action is often **no correction**. Set `correction_needed` to `false`. This allows the actor to immediately retry implementing the function on the correct page without wasting a navigation step.
+            - If a popup or modal appeared that needs to be closed, set `correction_needed` to `true` and write a script to close it.
         3.  **If correction is needed, write `correction_code`.**
             - This must be a simple, self-contained Python script.
             - Use `action_provider.browser_navigate` or `action_provider.browser_act`.

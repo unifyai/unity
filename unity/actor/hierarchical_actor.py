@@ -12,6 +12,7 @@ import logging
 import sys
 import textwrap
 import traceback
+from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import typing
 import types
@@ -60,6 +61,8 @@ class PlanRuntime:
         self.action_counter = 0
         self.cache_miss_counter = 0
         self.path_context: List[str] = []
+        self.call_stacks = defaultdict(list)
+        self.frame_id_counter = 0
 
     async def checkpoint(self, label: str = ""):
         """
@@ -98,6 +101,37 @@ class PlanRuntime:
         """Pops the latest context from the execution path stack."""
         if self.path_context:
             self.path_context.pop()
+
+    def push_frame(self, run_id: int, func_name: str) -> tuple:
+        """Pushes a new frame with a unique token onto the correct run's stack."""
+        self.frame_id_counter += 1
+        frame_token = (self.frame_id_counter, func_name)
+        self.call_stacks[run_id].append(frame_token)
+        return frame_token
+
+    def pop_frame(self, run_id: int, frame_token: tuple):
+        """Safely pops a frame, only if the run_id and token match."""
+        stack = self.call_stacks.get(run_id)
+
+        if not stack:
+            logger.warning(
+                f"[STACK_GUARD] Attempted to pop from an empty or unknown stack for run_id={run_id}",
+            )
+            return
+
+        if stack[-1] != frame_token:
+            logger.warning(
+                f"[STACK_GUARD] Ignoring stale pop for run_id={run_id}. Expected {frame_token}, found {stack[-1]}.",
+            )
+            return
+
+        stack.pop()
+
+    def get_current_stack_tuple(self, run_id: int) -> tuple:
+        """Gets the function names from the current run's stack as a tuple."""
+        return tuple(
+            func_name for frame_id, func_name in self.call_stacks.get(run_id, [])
+        )
 
 
 def format_pydantic_model(
@@ -239,6 +273,19 @@ class ImplementationDecision(BaseModel):
     )
 
 
+class FunctionPatch(BaseModel):
+    """Represents a single function's code to be updated in the plan."""
+
+    function_name: str = Field(
+        ...,
+        description="The name of the function to be replaced.",
+    )
+    new_code: str = Field(
+        ...,
+        description="The full, new source code for this function, including the signature.",
+    )
+
+
 class InterjectionDecision(BaseModel):
     """A structured decision for how to proceed with a user interjection."""
 
@@ -251,13 +298,9 @@ class InterjectionDecision(BaseModel):
         "refactor_and_generalize",
     ] = Field(..., description="The chosen action based on the user's interjection.")
     reason: str = Field(..., description="A brief justification for the chosen action.")
-    modification_request: Optional[str] = Field(
+    patches: Optional[List[FunctionPatch]] = Field(
         None,
-        description="The user's request, rephrased as a direct instruction to modify the plan.",
-    )
-    target_function: Optional[str] = Field(
-        None,
-        description="The name of the function in the call stack that is most relevant to the modification.",
+        description="A list of functions to be updated. Required for 'modify_task'.",
     )
     new_goal: Optional[str] = Field(
         None,
@@ -1113,6 +1156,9 @@ class HierarchicalPlan(BaseActiveTask):
         self._interject_lock = asyncio.Lock()
         self._completion_event = asyncio.Event()
         self.skipped_functions: set = set()
+
+        self._child_tasks: set[asyncio.Task] = set()
+
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations or 2
         self.MAX_LOCAL_RETRIES = max_local_retries or 3
@@ -1175,6 +1221,7 @@ class HierarchicalPlan(BaseActiveTask):
         """
         Manages the entire lifecycle of the plan from initialization to completion.
         """
+        token = current_run_id_var.set(self.run_id)
         try:
             if self.goal:
                 if not self._is_complete:
@@ -1221,6 +1268,11 @@ class HierarchicalPlan(BaseActiveTask):
             logger.error(f"Plan initialization failed: {e}", exc_info=True)
             self._set_state(_HierarchicalPlanState.ERROR)
             self._set_final_result(f"ERROR: Plan initialization failed: {e}")
+        finally:
+            try:
+                current_run_id_var.reset(token)
+            except Exception:
+                pass
 
     async def _start_main_execution_loop(self):
         """
@@ -1236,16 +1288,20 @@ class HierarchicalPlan(BaseActiveTask):
             main_fn(),
             name=f"MainPlanTask-{self._module_name}",
         )
+        self._child_tasks.add(main_task)
 
         while not main_task.done():
             checkpoint_waiter = asyncio.create_task(
                 self.runtime._checkpoint_event.wait(),
             )
+            self._child_tasks.add(checkpoint_waiter)
+
             done, pending = await asyncio.wait(
                 {main_task, checkpoint_waiter},
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
+            self._child_tasks.remove(checkpoint_waiter)
             if checkpoint_waiter in pending:
                 checkpoint_waiter.cancel()
 
@@ -1255,6 +1311,9 @@ class HierarchicalPlan(BaseActiveTask):
             if checkpoint_waiter in done:
                 if self._state == _HierarchicalPlanState.RUNNING:
                     self.runtime._release_from_checkpoint()
+
+        if main_task in self._child_tasks:
+            self._child_tasks.remove(main_task)
 
         try:
             result = main_task.result()
@@ -1270,13 +1329,14 @@ class HierarchicalPlan(BaseActiveTask):
             self._set_final_result(f"Plan completed. Result: {result}")
 
         except Exception as e:
-            logger.error(
-                f"Plan execution failed with unhandled exception: {e}",
-                exc_info=True,
-            )
-            self._set_state(_HierarchicalPlanState.ERROR)
-            self.action_log.append(f"ERROR: Plan execution failed: {e}")
-            self._set_final_result(f"ERROR: Plan execution failed: {e}")
+            if not isinstance(e, asyncio.CancelledError):
+                logger.error(
+                    f"Plan execution failed with unhandled exception: {e}",
+                    exc_info=True,
+                )
+                self._set_state(_HierarchicalPlanState.ERROR)
+                self.action_log.append(f"ERROR: Plan execution failed: {e}")
+                self._set_final_result(f"ERROR: Plan execution failed: {e}")
 
     async def _handle_dynamic_implementation(self, function_name: str, **kwargs):
         """
@@ -1497,7 +1557,8 @@ class HierarchicalPlan(BaseActiveTask):
         )
 
         try:
-            old_tree = ast.parse(self.plan_source_code or "pass")
+            clean_source_to_parse = "\n\n".join(self.clean_function_source_map.values())
+            old_tree = ast.parse(clean_source_to_parse or "pass")
             new_tree = ast.parse(textwrap.dedent(new_code))
 
             final_nodes = {
@@ -1514,7 +1575,8 @@ class HierarchicalPlan(BaseActiveTask):
             final_tree = ast.Module(body=list(final_nodes.values()), type_ignores=[])
             ast.fix_missing_locations(final_tree)
 
-            self.plan_source_code = ast.unparse(final_tree)
+            unsanitized_code = ast.unparse(final_tree)
+            self.plan_source_code = self.actor._sanitize_code(unsanitized_code, self)
             self.actor._load_plan_module(self)
 
         except (SyntaxError, ValueError, RuntimeError) as e:
@@ -1588,13 +1650,20 @@ class HierarchicalPlan(BaseActiveTask):
             await self.pause()
             decision = None
             try:
+                clean_plan_source_for_prompt = "\n\n".join(
+                    self.clean_function_source_map.get(func_name, "")
+                    for func_name in self.function_source_map
+                    if func_name in self.clean_function_source_map
+                )
+
                 prompt = prompt_builders.build_interjection_prompt(
                     interjection=message,
                     parent_chat_context=self.parent_chat_context,
-                    plan_source_code=self.plan_source_code,
+                    plan_source_code=clean_plan_source_for_prompt,
                     call_stack=self.call_stack,
                     action_log=self.action_log[-10:],
                     is_teaching_session=self.is_teaching_session,
+                    goal=self.goal,
                 )
 
                 self.modification_client.set_response_format(InterjectionDecision)
@@ -1633,36 +1702,43 @@ class HierarchicalPlan(BaseActiveTask):
         decision: InterjectionDecision,
     ) -> str:
         """Executes the action decided by the Interjection Handler LLM."""
-        if decision.action == "modify_task":
+        if decision.action == "modify_task" and decision.patches:
             self.action_log.append("Executing stateful decision: modify_task.")
 
-            target_function = decision.target_function or (
-                self.call_stack[-1]
-                if self.call_stack
-                else self._get_main_function_name() or "main_plan"
+            modification_summary = ", ".join(
+                [p.function_name for p in decision.patches],
+            )
+            self.action_log.append(
+                f"Applying patches for functions: {modification_summary}",
             )
 
-            if not target_function:
-                return "Error: Could not determine a target function to modify."
+            for patch in decision.patches:
+                self._update_plan_with_new_code(patch.function_name, patch.new_code)
 
-            existing_code = self.clean_function_source_map.get(target_function)
+            modification_reason = decision.reason
             if self.is_teaching_session:
-                reason = f"The user is teaching a new step. Add this instruction to the function: '{decision.modification_request}'"
-            else:
-                reason = f"User interjected with a new instruction: '{decision.modification_request}'"
-
-            if self.goal and decision.modification_request:
-                new_goal = f"{self.goal}\n\nIMPORTANT UPDATE: The user has provided a new instruction to modify the plan: '{decision.modification_request}'"
+                if self.goal:
+                    self.goal += f"\n- {modification_reason}"
+                else:
+                    self.goal = f"Incrementally taught plan:\n- {modification_reason}"
+            elif self.goal:
+                new_goal = (
+                    f"{self.goal}\n\nIMPORTANT UPDATE: The user has provided a new instruction to modify the "
+                    f"plan: '{modification_reason}'"
+                )
                 self.action_log.append(
                     f"Updating plan goal to reflect interjection. New goal: '{new_goal}'",
                 )
                 self.goal = new_goal
 
-            await self._handle_dynamic_implementation(
-                target_function,
-                replan_reason=reason,
-                existing_code_for_modification=existing_code,
-            )
+            if self._child_tasks:
+                self.action_log.append(
+                    f"Cancelling {len(self._child_tasks)} child tasks.",
+                )
+                for task in self._child_tasks:
+                    task.cancel()
+                await asyncio.gather(*self._child_tasks, return_exceptions=True)
+                self._child_tasks.clear()
 
             if self._execution_task and not self._execution_task.done():
                 self.action_log.append(
@@ -1689,18 +1765,22 @@ class HierarchicalPlan(BaseActiveTask):
                     f"🔄 RUN TRANSITION: run_id={old_run_id} -> run_id={self.run_id} (modify_task interjection)",
                 )
 
+            if old_run_id in self.runtime.call_stacks:
+                del self.runtime.call_stacks[old_run_id]
+
             self.interaction_stack.clear()
             self.call_stack.clear()
+            self.runtime.path_context.clear()
 
-            self.replay_keys = list(self.execution_key_log)
+            self.replay_keys.clear()
             self.execution_key_log.clear()
-
             self.interaction_stack.append([])
 
             self._execution_task = asyncio.create_task(self._initialize_and_run())
-            self.runtime.resume()
+            if self._state == _HierarchicalPlanState.PAUSED:
+                self.runtime.resume()
 
-            return f"Plan modification for '{target_function}' applied. Resuming execution from a clean state."
+            return f"Plan modification for '{modification_summary}' applied. Resuming execution from a clean state."
 
         elif decision.action == "replace_task":
             if self._execution_task and not self._execution_task.done():
@@ -1772,8 +1852,13 @@ class HierarchicalPlan(BaseActiveTask):
                     f"🔄 RUN TRANSITION: run_id={old_run_id} -> run_id={self.run_id} (refactor_and_generalize interjection)",
                 )
 
+            if old_run_id in self.runtime.call_stacks:
+                del self.runtime.call_stacks[old_run_id]
+
             self.interaction_stack.clear()
             self.call_stack.clear()
+            self.runtime.path_context.clear()
+
             self.replay_keys = list(self.execution_key_log)
             self.execution_key_log.clear()
             self.interaction_stack.append([])
@@ -1861,8 +1946,13 @@ class HierarchicalPlan(BaseActiveTask):
                     new_interjection = InterjectionDecision(
                         action="modify_task",
                         reason=merge_decision.reason,
-                        modification_request=merge_decision.modification_request,
-                        target_function=self._get_main_function_name() or "main_plan",
+                        patches=[
+                            FunctionPatch(
+                                function_name=self._get_main_function_name()
+                                or "main_plan",
+                                new_code=merge_decision.modification_request or "",
+                            ),
+                        ],
                     )
                     self._sandbox_merge_result = "Detached exploration completed and findings are being merged into the main plan."
                     self._pending_merge_interjection = new_interjection
@@ -2195,7 +2285,9 @@ class HierarchicalActor(BaseActor):
         kwargs: dict,
     ) -> tuple:
         """Generates the composite cache key for a tool call."""
-        call_stack_tuple = tuple(plan.call_stack)
+
+        run_id = current_run_id_var.get()
+        call_stack_tuple = plan.runtime.get_current_stack_tuple(run_id)
 
         execution_path_tuple = (
             *plan.runtime.path_context,
@@ -2386,7 +2478,9 @@ class HierarchicalActor(BaseActor):
 
         async def _int(func_name: str):
             req = plan.interruption_request
-            if req and req.get("target_function") == func_name:
+            if req and any(
+                patch.function_name == func_name for patch in req.get("patches", [])
+            ):
                 plan.interruption_request = None
                 raise _ControlledInterruptionException(
                     req.get("reason", "Interjection"),
@@ -2550,6 +2644,17 @@ class HierarchicalActor(BaseActor):
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
                 """The wrapper that performs verification and correction."""
+                context_rid = current_run_id_var.get()
+                plan_rid = plan.run_id
+                if context_rid != plan_rid:
+                    logger.warning(
+                        f"Blocked stale function call to '{fn.__name__}'. "
+                        f"Context run_id={context_rid} does not match plan run_id={plan_rid}.",
+                    )
+                    raise asyncio.CancelledError(
+                        f"Stale function call to '{fn.__name__}' blocked by run_id gate.",
+                    )
+
                 func_name = fn.__name__
                 if func_name in plan.skipped_functions:
                     plan.action_log.append(f"SKIPPING function '{func_name}'.")
@@ -2558,6 +2663,15 @@ class HierarchicalActor(BaseActor):
 
                 plan.invocation_counter += 1
                 invocation_id = f"{func_name}_{plan.invocation_counter}"
+
+                frame_token = plan.runtime.push_frame(plan.run_id, func_name)
+                plan.call_stack.append(func_name)
+
+                local_interactions = []
+
+                run_id_token = current_run_id_var.set(plan.run_id)
+                sink_token = current_interaction_sink_var.set(local_interactions)
+                invoc_token = current_invocation_id_var.set(invocation_id)
 
                 diag_prefix = (
                     f"[run_id={plan.run_id} invoc={invocation_id}]"
@@ -2571,13 +2685,6 @@ class HierarchicalActor(BaseActor):
                 plan.action_log.append(
                     f"{diag_prefix} -> Entering '{func_name}' with args: ({all_args})",
                 )
-                plan.call_stack.append(func_name)
-
-                local_interactions = []
-
-                run_id_token = current_run_id_var.set(plan.run_id)
-                sink_token = current_interaction_sink_var.set(local_interactions)
-                invoc_token = current_invocation_id_var.set(invocation_id)
 
                 entry_screenshot = None
                 if "action_provider.browser" in plan.plan_source_code:
@@ -2599,6 +2706,10 @@ class HierarchicalActor(BaseActor):
                 try:
                     last_error_reason = ""
                     for i in range(plan.MAX_LOCAL_RETRIES):
+                        plan.runtime.action_counter = 0
+                        if i > 0:
+                            local_interactions.clear()
+
                         try:
                             captured_run_id = current_run_id_var.get()
 
@@ -2642,6 +2753,9 @@ class HierarchicalActor(BaseActor):
                             plan.action_log.append(
                                 f"{diag_prefix} Retrying '{func_name}' after user interjection.",
                             )
+                            logger.info(
+                                f"{diag_prefix} Retrying '{func_name}' after user interjection.",
+                            )
                             local_interactions.clear()
                             continue
 
@@ -2649,11 +2763,17 @@ class HierarchicalActor(BaseActor):
                             plan.action_log.append(
                                 f"{diag_prefix} Retrying '{func_name}' after successful reimplementation.",
                             )
+                            logger.info(
+                                f"{diag_prefix} Retrying '{func_name}' after successful reimplementation.",
+                            )
                             local_interactions.clear()
                             continue
 
                         except NotImplementedError as e:
                             plan.action_log.append(
+                                f"{diag_prefix} '{func_name}' not implemented. Implementing JIT.",
+                            )
+                            logger.info(
                                 f"{diag_prefix} '{func_name}' not implemented. Implementing JIT.",
                             )
                             last_error_reason = str(e) or "Function is a stub."
@@ -2711,11 +2831,13 @@ class HierarchicalActor(BaseActor):
                     current_run_id_var.reset(run_id_token)
                     current_interaction_sink_var.reset(sink_token)
                     current_invocation_id_var.reset(invoc_token)
-
+                    plan.runtime.pop_frame(plan.run_id, frame_token)
                     if plan.call_stack and plan.call_stack[-1] == func_name:
                         plan.call_stack.pop()
 
-                    plan.action_log.append(f"{diag_prefix} <- Exiting '{func_name}'")
+                    plan.action_log.append(
+                        f"[run_id={plan.run_id} invoc={invocation_id}] <- Exiting '{func_name}'",
+                    )
                     plan.runtime.action_counter = parent_action_counter
 
             return wrapper
@@ -2834,30 +2956,18 @@ class HierarchicalActor(BaseActor):
             raise _ForcedRetryException("Retrying after receiving user clarification.")
         if assessment.status == "ok":
             try:
-
-                async def _capture_success_state(
-                    plan: "HierarchicalPlan",
-                    fn_name: str,
-                ):
-                    try:
-                        current_url = (
-                            await self.action_provider.browser.get_current_url()
-                        )
-                        plan.last_verified_function_name = fn_name
-                        plan.last_verified_url = current_url
-                        logger.info(
-                            f"STATE CAPTURE: Stored successful state after '{fn_name}' at URL {current_url}.",
-                        )
-                        plan.action_log.append(
-                            f"STATE CAPTURE: Stored successful state after '{fn_name}' at URL {current_url}.",
-                        )
-
-                    except Exception as e:
-                        logger.warning(
-                            f"Could not capture successful state after '{fn_name}': {e}",
-                        )
-
-                asyncio.create_task(_capture_success_state(plan, fn.__name__))
+                current_url = await self.action_provider.browser.get_current_url()
+                plan.last_verified_function_name = fn.__name__
+                plan.last_verified_url = current_url
+                plan.last_verified_screenshot = (
+                    await self.action_provider.browser.get_screenshot()
+                )
+                logger.info(
+                    f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
+                )
+                plan.action_log.append(
+                    f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
+                )
             except Exception as e:
                 logger.warning(
                     f"Could not capture successful state after '{fn.__name__}': {e}",
@@ -2959,6 +3069,7 @@ class HierarchicalActor(BaseActor):
                         current_url=current_url,
                         failed_function_name=fn.__name__,
                         failed_function_docstring=fn.__doc__,
+                        verification_reason=assessment.reason,
                         tools=self.tools,
                     )
 
@@ -3214,7 +3325,22 @@ class HierarchicalActor(BaseActor):
                 pass
             except Exception as e:
                 logger.warning(f"Could not fetch recent transcript: {e}")
+            failed_interactions_trace = None
+            if "failed_interactions" in kwargs and kwargs["failed_interactions"]:
+                failed_interactions_trace = []
+                for interaction in kwargs["failed_interactions"]:
+                    if (
+                        len(interaction) > 3 and interaction[3]
+                    ):  # Check if magnitude logs exist
+                        action_summary = interaction[1]
+                        magnitude_logs = interaction[3]
+                        for log_line in magnitude_logs:
+                            failed_interactions_trace.append(
+                                f"[{action_summary}] {log_line}",
+                            )
+
             prompt = prompt_builders.build_dynamic_implement_prompt(
+                goal=plan.goal,
                 full_plan_source=clean_full_plan_source,
                 call_stack=plan.call_stack,
                 function_name=function_name,
@@ -3231,6 +3357,7 @@ class HierarchicalActor(BaseActor):
                 clarification_answer=kwargs.get("clarification_answer"),
                 recent_transcript=recent_transcript,
                 parent_chat_context=plan.parent_chat_context,
+                failed_interactions_trace=failed_interactions_trace,
             )
             plan.implementation_client.set_response_format(ImplementationDecision)
             try:
@@ -3256,7 +3383,7 @@ class HierarchicalActor(BaseActor):
                             .replace("```", "")
                             .strip()
                         )
-                        decision.code = self._sanitize_code(clean_code, plan)
+                        decision.code = clean_code
                         return decision
                     except SyntaxError as e:
                         last_syntax_error = f"Invalid Python code provided.\nError: {e}\nProblematic Code Snippet:\n---\n{decision.code}\n---"
