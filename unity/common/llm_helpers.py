@@ -1621,6 +1621,19 @@ async def _async_tool_use_loop_inner(
     #   by comparing the live count with max_concurrent.
     # -----------------------------------------------------------------------
 
+    # Initialise loop state early so preflight backfill can schedule tasks
+    consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
+    pending: Set[asyncio.Task] = set()
+    # Note: removed unused total_tool_calls_made counter
+    task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
+    clarification_channels: Dict[
+        str,
+        Tuple[asyncio.Queue[str], asyncio.Queue[str]],
+    ] = {}
+    completed_results: Dict[str, str] = {}
+    assistant_meta: Dict[int, Dict[str, Any]] = {}
+    step_index: int = 0  # per assistant turn
+
     norm_tools: Dict[str, ToolSpec] = _normalise_tools(tools)
 
     def _active_count(t_name: str) -> int:
@@ -1899,19 +1912,6 @@ async def _async_tool_use_loop_inner(
         except Exception:
             pass
         return scheduled
-
-    # Initialise loop state early so preflight backfill can schedule tasks
-    consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
-    pending: Set[asyncio.Task] = set()
-    # Note: removed unused total_tool_calls_made counter
-    task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
-    clarification_channels: Dict[
-        str,
-        Tuple[asyncio.Queue[str], asyncio.Queue[str]],
-    ] = {}
-    completed_results: Dict[str, str] = {}
-    assistant_meta: Dict[int, Dict[str, Any]] = {}
-    step_index: int = 0  # per assistant turn
 
     # Expose live task_info mapping on the current Task so outer handles/tests
     # can introspect currently running nested handles (used by ask/stop helpers).
