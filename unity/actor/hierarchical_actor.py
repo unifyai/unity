@@ -3368,7 +3368,7 @@ class HierarchicalActor(BaseActor):
                             .replace("```", "")
                             .strip()
                         )
-                        decision.code = self._sanitize_code(clean_code, plan)
+                        decision.code = clean_code
                         return decision
                     except SyntaxError as e:
                         last_syntax_error = f"Invalid Python code provided.\nError: {e}\nProblematic Code Snippet:\n---\n{decision.code}\n---"
