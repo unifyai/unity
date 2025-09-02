@@ -1313,6 +1313,32 @@ async def _propagate_stop_once(
     return True
 
 
+# Helper: insert a tool-acknowledgement message for helper tools
+async def _acknowledge_helper_call(
+    asst_msg: dict,
+    call_id: str,
+    name: str,
+    args_json: Any,
+    *,
+    assistant_meta,
+    client,
+    msg_dispatcher,
+) -> None:
+    tool_msg = {
+        "role": "tool",
+        "tool_call_id": call_id,
+        "name": name,
+        "content": _build_helper_ack_content(name, args_json),
+    }
+    await _insert_after_assistant(
+        assistant_meta,
+        asst_msg,
+        tool_msg,
+        client,
+        msg_dispatcher,
+    )
+
+
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
 
@@ -1737,27 +1763,6 @@ async def _async_tool_use_loop_inner(
 
         return created
 
-    # Helper: insert a tool-acknowledgement message for helper tools
-    async def _acknowledge_helper_call(
-        asst_msg: dict,
-        call_id: str,
-        name: str,
-        args_json: Any,
-    ) -> None:
-        tool_msg = {
-            "role": "tool",
-            "tool_call_id": call_id,
-            "name": name,
-            "content": _build_helper_ack_content(name, args_json),
-        }
-        await _insert_after_assistant(
-            assistant_meta,
-            asst_msg,
-            tool_msg,
-            client,
-            _msg_dispatcher,
-        )
-
     # Helper: schedule a base tool call (shared by main path and backfill)
     async def _schedule_base_tool_call(
         asst_msg: dict,
@@ -1918,7 +1923,15 @@ async def _async_tool_use_loop_inner(
                 if _is_helper_tool(name):
                     # Do not execute helpers during backfill, only acknowledge
                     try:
-                        await _acknowledge_helper_call(asst_msg, cid, name, args_json)
+                        await _acknowledge_helper_call(
+                            asst_msg,
+                            cid,
+                            name,
+                            args_json,
+                            assistant_meta=assitant_meta,
+                            client=client,
+                            msg_dispatcher=_msg_dispatcher,
+                        )
                     except Exception:
                         pass
                     scheduled.append(cid)
