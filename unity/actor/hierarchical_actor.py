@@ -270,6 +270,19 @@ class ImplementationDecision(BaseModel):
     )
 
 
+class FunctionPatch(BaseModel):
+    """Represents a single function's code to be updated in the plan."""
+
+    function_name: str = Field(
+        ...,
+        description="The name of the function to be replaced.",
+    )
+    new_code: str = Field(
+        ...,
+        description="The full, new source code for this function, including the signature.",
+    )
+
+
 class InterjectionDecision(BaseModel):
     """A structured decision for how to proceed with a user interjection."""
 
@@ -1651,6 +1664,7 @@ class HierarchicalPlan(BaseActiveTask):
                     call_stack=self.call_stack,
                     action_log=self.action_log[-10:],
                     is_teaching_session=self.is_teaching_session,
+                    goal=self.goal,
                 )
 
                 self.modification_client.set_response_format(InterjectionDecision)
@@ -1689,36 +1703,43 @@ class HierarchicalPlan(BaseActiveTask):
         decision: InterjectionDecision,
     ) -> str:
         """Executes the action decided by the Interjection Handler LLM."""
-        if decision.action == "modify_task":
+        if decision.action == "modify_task" and decision.patches:
             self.action_log.append("Executing stateful decision: modify_task.")
 
-            target_function = decision.target_function or (
-                self.call_stack[-1]
-                if self.call_stack
-                else self._get_main_function_name() or "main_plan"
+            modification_summary = ", ".join(
+                [p.function_name for p in decision.patches],
+            )
+            self.action_log.append(
+                f"Applying patches for functions: {modification_summary}",
             )
 
-            if not target_function:
-                return "Error: Could not determine a target function to modify."
+            for patch in decision.patches:
+                self._update_plan_with_new_code(patch.function_name, patch.new_code)
 
-            existing_code = self.clean_function_source_map.get(target_function)
+            modification_reason = decision.reason
             if self.is_teaching_session:
-                reason = f"The user is teaching a new step. Add this instruction to the function: '{decision.modification_request}'"
-            else:
-                reason = f"User interjected with a new instruction: '{decision.modification_request}'"
-
-            if self.goal and decision.modification_request:
-                new_goal = f"{self.goal}\n\nIMPORTANT UPDATE: The user has provided a new instruction to modify the plan: '{decision.modification_request}'"
+                if self.goal:
+                    self.goal += f"\n- {modification_reason}"
+                else:
+                    self.goal = f"Incrementally taught plan:\n- {modification_reason}"
+            elif self.goal:
+                new_goal = (
+                    f"{self.goal}\n\nIMPORTANT UPDATE: The user has provided a new instruction to modify the "
+                    f"plan: '{modification_reason}'"
+                )
                 self.action_log.append(
                     f"Updating plan goal to reflect interjection. New goal: '{new_goal}'",
                 )
                 self.goal = new_goal
 
-            await self._handle_dynamic_implementation(
-                target_function,
-                replan_reason=reason,
-                existing_code_for_modification=existing_code,
-            )
+            if self._child_tasks:
+                self.action_log.append(
+                    f"Cancelling {len(self._child_tasks)} child tasks.",
+                )
+                for task in self._child_tasks:
+                    task.cancel()
+                await asyncio.gather(*self._child_tasks, return_exceptions=True)
+                self._child_tasks.clear()
 
             if self._execution_task and not self._execution_task.done():
                 self.action_log.append(
@@ -1750,16 +1771,17 @@ class HierarchicalPlan(BaseActiveTask):
 
             self.interaction_stack.clear()
             self.call_stack.clear()
+            self.runtime.path_context.clear()
 
-            self.replay_keys = list(self.execution_key_log)
+            self.replay_keys.clear()
             self.execution_key_log.clear()
-
             self.interaction_stack.append([])
 
             self._execution_task = asyncio.create_task(self._initialize_and_run())
-            self.runtime.resume()
+            if self._state == _HierarchicalPlanState.PAUSED:
+                self.runtime.resume()
 
-            return f"Plan modification for '{target_function}' applied. Resuming execution from a clean state."
+            return f"Plan modification for '{modification_summary}' applied. Resuming execution from a clean state."
 
         elif decision.action == "replace_task":
             if self._execution_task and not self._execution_task.done():
@@ -1925,8 +1947,13 @@ class HierarchicalPlan(BaseActiveTask):
                     new_interjection = InterjectionDecision(
                         action="modify_task",
                         reason=merge_decision.reason,
-                        modification_request=merge_decision.modification_request,
-                        target_function=self._get_main_function_name() or "main_plan",
+                        patches=[
+                            FunctionPatch(
+                                function_name=self._get_main_function_name()
+                                or "main_plan",
+                                new_code=merge_decision.modification_request or "",
+                            ),
+                        ],
                     )
                     self._sandbox_merge_result = "Detached exploration completed and findings are being merged into the main plan."
                     self._pending_merge_interjection = new_interjection
