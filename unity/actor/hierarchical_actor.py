@@ -3214,7 +3214,22 @@ class HierarchicalActor(BaseActor):
                 pass
             except Exception as e:
                 logger.warning(f"Could not fetch recent transcript: {e}")
+            failed_interactions_trace = None
+            if "failed_interactions" in kwargs and kwargs["failed_interactions"]:
+                failed_interactions_trace = []
+                for interaction in kwargs["failed_interactions"]:
+                    if (
+                        len(interaction) > 3 and interaction[3]
+                    ):  # Check if magnitude logs exist
+                        action_summary = interaction[1]
+                        magnitude_logs = interaction[3]
+                        for log_line in magnitude_logs:
+                            failed_interactions_trace.append(
+                                f"[{action_summary}] {log_line}",
+                            )
+
             prompt = prompt_builders.build_dynamic_implement_prompt(
+                goal=plan.goal,
                 full_plan_source=clean_full_plan_source,
                 call_stack=plan.call_stack,
                 function_name=function_name,
@@ -3231,6 +3246,7 @@ class HierarchicalActor(BaseActor):
                 clarification_answer=kwargs.get("clarification_answer"),
                 recent_transcript=recent_transcript,
                 parent_chat_context=plan.parent_chat_context,
+                failed_interactions_trace=failed_interactions_trace,
             )
             plan.implementation_client.set_response_format(ImplementationDecision)
             try:

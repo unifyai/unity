@@ -1872,6 +1872,7 @@ def build_initial_plan_prompt(
 
 
 def build_dynamic_implement_prompt(
+    goal: str,
     full_plan_source: str,
     call_stack: list[str],
     function_name: str,
@@ -1887,6 +1888,7 @@ def build_dynamic_implement_prompt(
     existing_code_for_modification: Optional[str] = None,
     recent_transcript: Optional[str] = None,
     parent_chat_context: Optional[list] = None,
+    failed_interactions_trace: Optional[list] = None,
 ) -> str:
     """Builds the system prompt for dynamically implementing or modifying a function."""
 
@@ -1926,6 +1928,19 @@ def build_dynamic_implement_prompt(
             """,
         )
 
+    debugging_trace_section = ""
+    if failed_interactions_trace:
+        formatted_trace = "\n".join(f"- {log}" for log in failed_interactions_trace)
+        debugging_trace_section = textwrap.dedent(
+            f"""
+        ---
+        ### 🕵️ Debugging Context: Agent Trace from Failed Attempt
+        CRITICAL: The previous attempt to run this function failed. The following is the detailed trace from the browser agent during the failure. Analyze it carefully to understand the exact problem on the page and design a robust solution. This is your primary debugging tool.
+
+        {formatted_trace}
+        ---
+        """,
+        )
     clarification_section = ""
     if clarification_question and clarification_answer:
         clarification_section = textwrap.dedent(
@@ -2003,6 +2018,13 @@ def build_dynamic_implement_prompt(
         f"""
         You are an expert Python programmer and a master strategist. Your task is to analyze the state of a running plan and decide the best course of action for the function `{function_name}`.
 
+        ---
+        ### Overall Goal (Source of Truth)
+        Your implementation MUST satisfy all of the following requirements.
+
+        {goal}
+        ---
+
         **CRITICAL: You must choose one of four actions:**
         1.  **`implement_function`**: Write the Python code for `{function_name}`. Choose this if the function's goal is achievable from the current browser state. **Your code MUST be a single, self-contained `async def` function block. DO NOT include top-level imports or class definitions outside the function.** All necessary imports and helper classes MUST be defined *inside* the function.
         2.  **`skip_function`**: Bypass this function entirely. Choose this if you observe that the function's goal is **already completed** or is now **irrelevant**. For example, skip a "log in" function if you are already logged in.
@@ -2010,6 +2032,7 @@ def build_dynamic_implement_prompt(
         4.  **`request_clarification`**: Ask the user for help. Choose this if you cannot devise a reliable strategy to fix the function from the available information. For example, if required UI elements are missing or behaving unexpectedly, or if there are multiple possible approaches and you're unsure which the user prefers. **You must provide a clear, specific `clarification_question`.**
 
         {modification_instructions}
+        {debugging_trace_section}
         {clarification_section}
         {transcript_section}
         {chat_context_section}
@@ -2054,6 +2077,7 @@ def build_verification_prompt(
         The complete prompt string for the verification LLM call.
     """
     formatted_interactions = []
+    formatted_agent_traces = []
     for interaction in interactions:
         kind, act, obs, *logs = interaction
         logs = logs[0] if logs else []
@@ -2067,6 +2091,8 @@ def build_verification_prompt(
         if logs:
             log_details = "\n".join([f"    {line}" for line in logs])
             log_entry += f"\n  - Agent Logs:\n{log_details}"
+            trace_log = "\n".join(f"  {line}" for line in logs)
+            formatted_agent_traces.append(f"- For Action: `{act}`\n{trace_log}")
 
         formatted_interactions.append(log_entry)
 
@@ -2074,6 +2100,20 @@ def build_verification_prompt(
         "\n".join(formatted_interactions)
         or "No browser actions were logged for this step."
     )
+
+    agent_trace_section = "No low-level agent trace was recorded for this step."
+    if formatted_agent_traces:
+        agent_trace_section = textwrap.dedent(
+            f"""
+        ---
+        ### 🔬 Low-Level Agent Trace
+        The following is the detailed "thought process" from the browser agent as it performed the actions.
+        This is the GROUND TRUTH of what happened on the page. Use it to understand *why* an action succeeded or failed.
+
+        {"\n".join(formatted_agent_traces)}
+        ---
+        """,
+        )
     screenshot_context_section = ""
     if has_browser_screenshot:
         screenshot_context_section = textwrap.dedent(
@@ -2132,6 +2172,7 @@ The full source code of the function that was just executed is provided below. A
         **Purpose of this function (Intent):** {function_docstring or 'No docstring provided.'}
 
         {source_code_section}
+        {agent_trace_section}
         {screenshot_context_section}
         {transcript_section}
         {chat_context_section}
