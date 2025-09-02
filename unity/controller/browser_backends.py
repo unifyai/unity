@@ -4,15 +4,13 @@ import subprocess
 import time
 from abc import ABC, abstractmethod
 from typing import Any
-import queue
 from typing import Optional
-import threading
 
 import aiohttp
 import requests
 from pydantic import BaseModel, PydanticUserError
 import asyncio
-
+import websockets
 from .controller import Controller
 
 
@@ -144,48 +142,50 @@ class LegacyBrowserBackend(BrowserBackend):
 
 class MagnitudeBrowserBackend(BrowserBackend):
     _agent_base_url = "http://localhost:3000"
-    _lock = threading.Lock()
-    _process = None  # Add this for the subprocess management
-
-    # Logging infrastructure
-    _thread_log_queue = queue.Queue()
-    _log_consumer_task = None
+    _process = None  # Keep for process management if needed
 
     def __init__(
         self,
         agent_server_url: str = "http://localhost:3000",
         headless: bool = False,
         agent_mode: str = "browser",
-        start_service: bool = False,  # Add this parameter for compatibility
         **kwargs,
     ):
         self.agent_mode = agent_mode
+
+        # Network-based logging infrastructure
+        self._network_log_queue: Optional[asyncio.Queue] = None
+        self._log_stream_task: Optional[asyncio.Task] = None
         self._current_capture_queue: Optional[asyncio.Queue] = None
+        self._log_consumer_task: Optional[asyncio.Task] = None
+        self._async_initialized: bool = False
 
         # Keep the simpler initialization from HEAD but add logging support
         MagnitudeBrowserBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
 
         print(
-            f"🔗 Using existing Magnitude service at {self.agent_base_url} (Mode: {self.agent_mode})",
+            f"🔗 Connecting to Magnitude service at {self.agent_base_url} (Mode: {self.agent_mode})",
         )
 
-        self._sync_request(
-            "POST",
-            "/start",
-            {"headless": headless, "mode": self.agent_mode},
-        )
-        self._check_service_ready()
+        try:
+            self._sync_request(
+                "POST",
+                "/start",
+                {"headless": headless, "mode": self.agent_mode},
+            )
+            self._check_service_ready()
 
-        # Initialize the log consumer task if not already running
-        if MagnitudeBrowserBackend._log_consumer_task is None:
-            try:
-                MagnitudeBrowserBackend._log_consumer_task = asyncio.create_task(
-                    self._log_consumer(),
-                )
-            except RuntimeError:
-                # If we're not in an async context, skip the log consumer for now
-                pass
+            # Initialize the network log queue - defer creation until event loop is available
+            self._network_log_queue = None
+
+            # Mark that async initialization is needed
+            self._async_initialized = False
+
+        except Exception as e:
+            print(f"❌ Failed to initialize MagnitudeBrowserBackend: {e}")
+            self.stop()
+            raise
 
     def _check_service_ready(self):
         deadline = time.time() + 30
@@ -203,59 +203,83 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 f"Magnitude BrowserAgent failed to become ready within 30 seconds on {self.agent_base_url}",
             )
 
-    def _start_output_readers(self):
-        """Start threads to read stdout/stderr and put lines into the central thread-safe queue."""
-        # Only start readers if we have a process
-        if MagnitudeBrowserBackend._process is None:
-            return
+    async def _ensure_async_initialized(self):
+        """
+        Initialize async components when event loop is available.
+        This is called lazily from async methods.
+        """
+        if not self._async_initialized and websockets is not None:
+            try:
+                # Initialize the network log queue
+                self._network_log_queue = asyncio.Queue()
 
-        def read_output(pipe, prefix):
-            for line in iter(pipe.readline, ""):
-                if line:
-                    log_line = f"[{prefix}] {line.strip()}"
-                    self._thread_log_queue.put(log_line)
-                    if "listening on http://localhost:" in line:
-                        import re
+                # Start the network log streaming and consumption tasks
+                self._log_stream_task = asyncio.create_task(
+                    self._start_log_stream_listener(),
+                )
+                self._log_consumer_task = asyncio.create_task(self._log_consumer())
 
-                        match = re.search(r"http://localhost:(\d+)", line)
-                        if match:
-                            MagnitudeBrowserBackend._agent_base_url = (
-                                f"http://localhost:{match.group(1)}"
-                            )
-                            self._thread_log_queue.put(
-                                f"✨ Detected service running on {MagnitudeBrowserBackend._agent_base_url}",
-                            )
-            pipe.close()
+                self._async_initialized = True
+                print("⚙️ Initialized async log streaming components")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize async components: {e}")
+        elif websockets is None and not self._async_initialized:
+            print("⚠️ Websockets not available, log streaming disabled")
+            self._async_initialized = True
 
-        stdout_thread = threading.Thread(
-            target=read_output,
-            args=(MagnitudeBrowserBackend._process.stdout, "Magnitude"),
-            daemon=True,
-        )
-        stderr_thread = threading.Thread(
-            target=read_output,
-            args=(MagnitudeBrowserBackend._process.stderr, "Magnitude-ERR"),
-            daemon=True,
-        )
-        stdout_thread.start()
-        stderr_thread.start()
-
-    async def _log_consumer(self):
-        """Consumes logs from the thread-safe queue and directs them appropriately."""
-        loop = asyncio.get_running_loop()
+    async def _start_log_stream_listener(self):
+        """
+        Connects to the Magnitude WebSocket and streams logs into an async queue.
+        Includes reconnection logic.
+        """
+        ws_url = self.agent_base_url.replace("http", "ws") + "/logs/stream"
         while True:
             try:
-                # Use a blocking get in an executor to bridge thread-to-async
-                log_line = await loop.run_in_executor(None, self._thread_log_queue.get)
+                async with websockets.connect(ws_url) as websocket:
+                    print(f"🔌 Connected to Magnitude log stream at {ws_url}")
+                    async for message in websocket:
+                        # The message from the WebSocket is put into our internal queue
+                        if self._network_log_queue is not None:
+                            await self._network_log_queue.put(str(message))
+            except (
+                websockets.exceptions.ConnectionClosedError,
+                ConnectionRefusedError,
+            ) as e:
+                print(f"⚠️ Log stream disconnected: {e}. Reconnecting in 5 seconds...")
+                await asyncio.sleep(5)
+            except Exception as e:
+                print(
+                    f"🚨 An unexpected error occurred in the log streamer: {e}. Retrying in 10 seconds...",
+                )
+                await asyncio.sleep(10)
 
-                # Check the shared instance attribute directly
+    async def _log_consumer(self):
+        """
+        Consumes logs from the internal network queue and directs them either
+        to the actor's temporary capture queue or to stdout.
+        """
+        while True:
+            try:
+                if self._network_log_queue is None:
+                    await asyncio.sleep(1)
+                    continue
+
+                log_line = await self._network_log_queue.get()
+
+                # If the actor is currently capturing, put it in its queue
                 if self._current_capture_queue is not None:
                     self._current_capture_queue.put_nowait(log_line)
                 else:
-                    # Default behavior if not capturing
+                    # Otherwise, print to the console
                     print(log_line)
+
+                self._network_log_queue.task_done()
+            except asyncio.CancelledError:
+                print("Log consumer task cancelled.")
+                break
             except Exception as e:
                 print(f"[MagnitudeLogConsumerError] {e}")
+                await asyncio.sleep(1)  # Prevent rapid-fire error loops
 
     async def _request(
         self,
@@ -568,6 +592,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             # Avoid breaking down simple actions. Let the agent handle it.
             - instruction: "Move the mouse to coordinate 250, 400, then click."
         """
+        await self._ensure_async_initialized()
         response = await self._request("POST", "/act", {"task": instruction})
         return response.get("status", "success")
 
@@ -634,6 +659,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             response_format: Optional. A Pydantic model to structure the output.
                              **Highly recommended for reliable extraction.**
         """
+        await self._ensure_async_initialized()
 
         def _safe_model_json_schema(model: type[BaseModel]):
             try:
@@ -654,6 +680,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         return data
 
     async def get_screenshot(self) -> str:
+        await self._ensure_async_initialized()
         response = await self._request("GET", "/screenshot")
         return response.get("screenshot")
 
@@ -667,6 +694,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
     async def navigate(self, url: str) -> str:
         """Navigates the browser using the dedicated /nav endpoint."""
+        await self._ensure_async_initialized()
         print(f"🐍 PYTHON: Navigating to URL: {url}")
 
         if self.agent_mode == "desktop":
