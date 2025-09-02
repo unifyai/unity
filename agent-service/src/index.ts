@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import https from 'https';
+import http from 'http';
 import expressWs from 'express-ws';
 import WebSocket from 'ws';
 import util from 'util';
@@ -149,15 +150,19 @@ app.use(express.json({ limit: '10mb' }));
 function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise<boolean> {
   return new Promise((resolve) => {
     const url = new URL(`${process.env.UNIFY_BASE_URL}/assistant?email=${assistant_email}`);
-    const options: https.RequestOptions = {
+    const options = {
       method: 'GET',
       hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
       path: url.pathname + url.search,
       headers: {
         Authorization: `Bearer ${apiKey}`,
       },
     };
-    const req = https.request(options, (res) => {
+
+    // Use the appropriate request method based on protocol
+    const requestLib = url.protocol === 'https:' ? https : http;
+    const req = requestLib.request(options, (res) => {
       const code = res.statusCode || 0;
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
@@ -166,7 +171,9 @@ function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise
         if (!body || body.trim().length === 0) return resolve(false);
         try {
           // Using default assistant for testing, auth passes since apikey is valid
-          if (assistant_email.includes('agent') || assistant_email.includes('assistant')) return resolve(true);
+          if (assistant_email.includes('agent') || assistant_email.includes('assistant')) {
+            return resolve(true);
+          }
 
           const json = JSON.parse(body);
           // Treat empty payloads as invalid: {"info": []}, {}, []
@@ -183,7 +190,10 @@ function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise
         }
       });
     });
-    req.on('error', () => resolve(false));
+    req.on('error', (err) => {
+
+      resolve(false);
+    });
     req.end();
   });
 }
@@ -203,7 +213,8 @@ async function auth(req: Request, res: Response, next: Function) {
     if (!ok) {
       return res.status(401).json({ error: 'unauthorized', message: 'API key verification failed' });
     }
-  } catch (_e) {
+  } catch (e) {
+
     return res.status(401).json({ error: 'unauthorized', message: 'API key verification failed' });
   }
 
