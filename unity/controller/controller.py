@@ -158,6 +158,53 @@ class Controller(threading.Thread):
             pass
 
     # ------------------------------------------------------------------
+    #  Public helper – evaluate arbitrary JS in the active page context
+    # ------------------------------------------------------------------
+    async def eval_js(self, script: str, timeout: float = 10.0) -> Any:  # noqa: ANN401
+        """Evaluate JavaScript in the active page and return the result.
+
+        Uses a lightweight Redis RPC to ask the BrowserWorker to run
+        `page.evaluate(script)` and publishes the result on a reply channel.
+        """
+        request_id = str(uuid.uuid4())
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+
+        ps = self._redis_client.pubsub(ignore_subscribe_messages=True)
+
+        def _on_result(msg):
+            try:
+                data = json.loads(msg["data"])  # {request_id, result|error}
+                if data.get("request_id") == request_id:
+                    loop.call_soon_threadsafe(fut.set_result, data)
+            except Exception:
+                pass
+
+        # listen for our result
+        await asyncio.to_thread(
+            ps.subscribe,
+            **{f"browser_eval_result_{self._redis_db}": _on_result},
+        )
+        listener_thread = ps.run_in_thread(daemon=True)
+
+        # dispatch eval request
+        payload = json.dumps({"eval_js": script, "request_id": request_id})
+        await asyncio.to_thread(
+            self._redis_client.publish,
+            f"browser_command_{self._redis_db}",
+            payload,
+        )
+
+        try:
+            data = await asyncio.wait_for(fut, timeout)
+        finally:
+            listener_thread.stop()
+
+        if data.get("error"):
+            raise Exception(f"eval_js error: {data['error']}")
+        return data.get("result")
+
+    # ------------------------------------------------------------------
     # Internal helper – perform one or more low-level primitives (in order)
     # ------------------------------------------------------------------
     def _perform_action(self, actions: str | list[str], request_id: str) -> None:
