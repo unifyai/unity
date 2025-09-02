@@ -437,6 +437,28 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: asyncio.Queue[str] | None = None,
         execution_scope: Optional[Literal["isolate", "chain"]] = None,
     ) -> SteerableToolHandle:
+        # Delegate to the single high-level entrypoint that performs LLM-only routing.
+        return await self.execute(
+            text=text,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+            execution_scope=execution_scope,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  Public unified execution (LLM-routed, no heuristics)               #
+    # ------------------------------------------------------------------ #
+
+    async def execute(
+        self,
+        text: str,
+        *,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+        execution_scope: Optional[Literal["isolate", "chain"]] = None,
+    ) -> SteerableToolHandle:
         freeform_text: str = text
 
         # Refuse execution when a task is already active.
@@ -456,17 +478,10 @@ class TaskScheduler(BaseTaskScheduler):
                 "A task is marked as active, but no active handle is present – reconcile state before starting another task.",
             )
 
-        # ── Fast-path: direct numeric task_id ───────────────────────────────
-        # When the user input *is* a plain integer we can skip the full
-        # tool-resolution loop, execute the task immediately and hand back
-        # the live ActiveTask handle.  This guarantees that callers who know
-        # the id (including the unit-tests) observe the task promotion and
-        # instance cloning *synchronously* after awaiting this method.
-
+        # Fast path: numeric task_id provided → execute directly after LLM scope routing
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
-                # Decide execution scope (allows tests to monkeypatch)
                 scope = (
                     execution_scope
                     if execution_scope is not None
@@ -475,23 +490,26 @@ class TaskScheduler(BaseTaskScheduler):
                         parent_chat_context=parent_chat_context,
                     )
                 )
-                direct_handle = await self._execute_task_internal(
+                if scope == "chain":
+                    return await self._execute_chain_internal(
+                        task_id=int(stripped),
+                        parent_chat_context=parent_chat_context,
+                        clarification_up_q=clarification_up_q,
+                        clarification_down_q=clarification_down_q,
+                    )
+                return await self._execute_task_internal(
                     task_id=int(stripped),
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
                     clarification_down_q=clarification_down_q,
                     activated_by=ActivatedBy.explicit,
-                    execution_scope=scope,
+                    execution_scope="isolate",
                 )
-
-                return direct_handle
-
             except (ValueError, RuntimeError):
-                # Fall back to the slower, reasoning-based path when the id is
-                # unknown or the task cannot be started directly (e.g. already
-                # active).  Let the LLM ask for clarification / create a task.
-                pass  # ↴ continue with regular flow
+                # Fall back to the outer loop (will ask/clarify/create)
+                pass
 
+        # Start LLM-driven outer loop which will resolve id and scope, then adopt the inner handle.
         return self._start_execute_task_loop(
             freeform_text=freeform_text,
             parent_chat_context=parent_chat_context,
@@ -628,6 +646,165 @@ class TaskScheduler(BaseTaskScheduler):
         return handle
 
     # ------------------------------------------------------------------ #
+    #  Chain orchestrator: sequentially executes the follower chain       #
+    # ------------------------------------------------------------------ #
+
+    class _ChainHandle(SteerableToolHandle):  # type: ignore[abstract-method]
+        def __init__(
+            self,
+            scheduler: "TaskScheduler",
+            *,
+            first_task_id: int,
+            first_handle: SteerableToolHandle,
+            parent_chat_context: Optional[List[Dict[str, Any]]],
+            clarification_up_q: Optional[asyncio.Queue[str]],
+            clarification_down_q: Optional[asyncio.Queue[str]],
+        ) -> None:
+            self._s = scheduler
+            self._current_task_id = first_task_id
+            self._current_handle: SteerableToolHandle = first_handle
+            self._parent_ctx = parent_chat_context
+            self._clar_up = clarification_up_q
+            self._clar_down = clarification_down_q
+            self._done_evt: asyncio.Event = asyncio.Event()
+            self._final_result: Optional[str] = None
+            # Background driver
+            self._driver = asyncio.create_task(self._drive())
+
+        async def _drive(self) -> None:
+            try:
+                while True:
+                    try:
+                        result = await self._current_handle.result()
+                    except asyncio.CancelledError:
+                        self._final_result = "Stopped."
+                        break
+
+                    text = str(result or "")
+                    # If ActiveTask flagged an explicit stop/defer, end the chain immediately
+                    try:
+                        was_stopped = bool(
+                            getattr(self._current_handle, "_was_stopped", False),
+                        )
+                    except Exception:
+                        was_stopped = False
+                    if was_stopped:
+                        self._final_result = text or "Stopped."
+                        break
+                    # If the stop/defer path was taken, end the chain here
+                    if "stopped" in text.lower():
+                        self._final_result = text
+                        break
+
+                    # Find next runnable in the same chain (head->tail from current)
+                    queue = self._s._get_task_queue(task_id=self._current_task_id)
+                    next_tid = None
+                    for t in queue:
+                        if t.task_id != self._current_task_id:
+                            next_tid = t.task_id
+                            break
+                    if next_tid is None:
+                        # Chain exhausted
+                        self._final_result = text or "Chain completed."
+                        break
+
+                    # Start next task using CHAIN linkage semantics
+                    self._current_task_id = next_tid
+                    self._current_handle = await self._s._execute_task_internal(
+                        task_id=next_tid,
+                        parent_chat_context=self._parent_ctx,
+                        clarification_up_q=self._clar_up,
+                        clarification_down_q=self._clar_down,
+                        activated_by=ActivatedBy.explicit,
+                        execution_scope="chain",
+                    )
+            finally:
+                self._done_evt.set()
+
+        # ----- Steerable surface proxies -----
+        async def interject(self, message: str) -> None:  # type: ignore[override]
+            await self._current_handle.interject(message)
+
+        def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
+            try:
+                return self._current_handle.stop(cancel=cancel, reason=reason)
+            except Exception:
+                return "Stopped."
+
+        def pause(self) -> Optional[str]:  # type: ignore[override]
+            try:
+                if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
+                    return "Already completed."
+            except Exception:
+                pass
+            try:
+                ret = self._current_handle.pause()
+                return ret
+            except Exception:
+                return "Already completed."
+
+        def resume(self) -> Optional[str]:  # type: ignore[override]
+            try:
+                if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
+                    return "Already completed."
+            except Exception:
+                pass
+            try:
+                ret = self._current_handle.resume()
+                return ret
+            except Exception:
+                return "Already completed."
+
+        def done(self) -> bool:  # type: ignore[override]
+            return self._done_evt.is_set()
+
+        async def result(self):  # type: ignore[override]
+            await self._done_evt.wait()
+            return self._final_result or ""
+
+        async def ask(self, question: str) -> "SteerableToolHandle":  # type: ignore[override]
+            return await self._current_handle.ask(question)
+
+        @property
+        def valid_tools(self) -> Dict[str, Callable]:  # type: ignore[override]
+            tools = {
+                self.interject.__name__: self.interject,
+                self.stop.__name__: self.stop,
+            }
+            paused_flag = getattr(self._current_handle, "_paused", False)
+            if paused_flag:
+                tools[self.resume.__name__] = self.resume
+            else:
+                tools[self.pause.__name__] = self.pause
+            return tools
+
+    async def _execute_chain_internal(
+        self,
+        *,
+        task_id: int,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
+        """Start chain execution at `task_id` and return a composite chain handle."""
+        first = await self._execute_task_internal(
+            task_id=task_id,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+            activated_by=ActivatedBy.explicit,
+            execution_scope="chain",
+        )
+        return TaskScheduler._ChainHandle(
+            self,
+            first_task_id=task_id,
+            first_handle=first,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+
+    # ------------------------------------------------------------------ #
     #  Helper – build and start the execute_task outer tool-use loop      #
     # ------------------------------------------------------------------ #
     def _start_execute_task_loop(
@@ -644,9 +821,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ── tool definitions ────────────────────────────────────────────────
         async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
-            """Start the task with *task_id* and bubble up its handle (passthrough)."""
+            """Start the task with *task_id*, adopting inner handle (isolate or chain)."""
 
-            # Decide execution scope using the same helper as the fast-path
+            # Decide execution scope strictly via LLM when not provided
             scope = (
                 execution_scope
                 if execution_scope is not None
@@ -655,14 +832,22 @@ class TaskScheduler(BaseTaskScheduler):
                     parent_chat_context=parent_chat_context,
                 )
             )
-            handle = await self._execute_task_internal(
-                task_id=task_id,
-                parent_chat_context=parent_chat_context,
-                clarification_up_q=clarification_up_q,
-                clarification_down_q=clarification_down_q,
-                activated_by=ActivatedBy.explicit,
-                execution_scope=scope,
-            )
+            if scope == "chain":
+                handle = await self._execute_chain_internal(
+                    task_id=task_id,
+                    parent_chat_context=parent_chat_context,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
+                )
+            else:
+                handle = await self._execute_task_internal(
+                    task_id=task_id,
+                    parent_chat_context=parent_chat_context,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
+                    activated_by=ActivatedBy.explicit,
+                    execution_scope="isolate",
+                )
             # 💡 signal pass-through so the outer loop adopts this handle
             setattr(handle, "__passthrough__", True)
             return handle
@@ -703,7 +888,7 @@ class TaskScheduler(BaseTaskScheduler):
             client,
             freeform_text,
             tools,
-            loop_id=f"{self.__class__.__name__}.{self.execute_task.__name__}",
+            loop_id=f"{self.__class__.__name__}.execute",
             parent_chat_context=parent_chat_context,
             log_steps=True,
         )
