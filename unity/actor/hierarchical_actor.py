@@ -1545,7 +1545,8 @@ class HierarchicalPlan(BaseActiveTask):
         )
 
         try:
-            old_tree = ast.parse(self.plan_source_code or "pass")
+            clean_source_to_parse = "\n\n".join(self.clean_function_source_map.values())
+            old_tree = ast.parse(clean_source_to_parse or "pass")
             new_tree = ast.parse(textwrap.dedent(new_code))
 
             final_nodes = {
@@ -1562,7 +1563,8 @@ class HierarchicalPlan(BaseActiveTask):
             final_tree = ast.Module(body=list(final_nodes.values()), type_ignores=[])
             ast.fix_missing_locations(final_tree)
 
-            self.plan_source_code = ast.unparse(final_tree)
+            unsanitized_code = ast.unparse(final_tree)
+            self.plan_source_code = self.actor._sanitize_code(unsanitized_code, self)
             self.actor._load_plan_module(self)
 
         except (SyntaxError, ValueError, RuntimeError) as e:
