@@ -721,7 +721,30 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 raise
 
     def stop(self):
-        """Stops the Node.js service subprocess."""
+        """Stops the Node.js service subprocess and cancels background tasks."""
         # if "localhost:3000" in self.agent_base_url:
         #     self._save_persistent_data()
-        self._sync_request("POST", "/stop")
+
+        # Cancel the new asyncio tasks
+        if self._log_stream_task and not self._log_stream_task.done():
+            self._log_stream_task.cancel()
+        if self._log_consumer_task and not self._log_consumer_task.done():
+            self._log_consumer_task.cancel()
+
+        try:
+            self._sync_request("POST", "/stop")
+        except Exception as e:
+            # Don't fail stop() if the request fails
+            print(f"Warning: Failed to send stop request: {e}")
+
+        # If the backend started the process, terminate it
+        if MagnitudeBrowserBackend._process:
+            print(
+                f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
+            )
+            MagnitudeBrowserBackend._process.terminate()
+            try:
+                MagnitudeBrowserBackend._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                MagnitudeBrowserBackend._process.kill()
+            MagnitudeBrowserBackend._process = None
