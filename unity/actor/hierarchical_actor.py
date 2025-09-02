@@ -2655,6 +2655,10 @@ class HierarchicalActor(BaseActor):
                 try:
                     last_error_reason = ""
                     for i in range(plan.MAX_LOCAL_RETRIES):
+                        plan.runtime.action_counter = 0
+                        if i > 0:
+                            local_interactions.clear()
+
                         try:
                             captured_run_id = current_run_id_var.get()
 
@@ -2698,6 +2702,9 @@ class HierarchicalActor(BaseActor):
                             plan.action_log.append(
                                 f"{diag_prefix} Retrying '{func_name}' after user interjection.",
                             )
+                            logger.info(
+                                f"{diag_prefix} Retrying '{func_name}' after user interjection.",
+                            )
                             local_interactions.clear()
                             continue
 
@@ -2705,11 +2712,17 @@ class HierarchicalActor(BaseActor):
                             plan.action_log.append(
                                 f"{diag_prefix} Retrying '{func_name}' after successful reimplementation.",
                             )
+                            logger.info(
+                                f"{diag_prefix} Retrying '{func_name}' after successful reimplementation.",
+                            )
                             local_interactions.clear()
                             continue
 
                         except NotImplementedError as e:
                             plan.action_log.append(
+                                f"{diag_prefix} '{func_name}' not implemented. Implementing JIT.",
+                            )
+                            logger.info(
                                 f"{diag_prefix} '{func_name}' not implemented. Implementing JIT.",
                             )
                             last_error_reason = str(e) or "Function is a stub."
@@ -2767,11 +2780,13 @@ class HierarchicalActor(BaseActor):
                     current_run_id_var.reset(run_id_token)
                     current_interaction_sink_var.reset(sink_token)
                     current_invocation_id_var.reset(invoc_token)
-
+                    plan.runtime.pop_frame(plan.run_id, frame_token)
                     if plan.call_stack and plan.call_stack[-1] == func_name:
                         plan.call_stack.pop()
 
-                    plan.action_log.append(f"{diag_prefix} <- Exiting '{func_name}'")
+                    plan.action_log.append(
+                        f"[run_id={plan.run_id} invoc={invocation_id}] <- Exiting '{func_name}'",
+                    )
                     plan.runtime.action_counter = parent_action_counter
 
             return wrapper
