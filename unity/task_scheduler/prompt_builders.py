@@ -348,25 +348,25 @@ def build_update_prompt(
     return "\n".join(parts)
 
 
-def build_execute_task_prompt(
+def build_execute_prompt(
     tools: Dict[str, Callable],
 ) -> str:
     """
-    Build the **system** prompt for the `execute_task` method.
+    Build the **system** prompt for the `execute` method.
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     # Resolve names dynamically
     ask_fname = _tool_name(tools, "ask")
     update_fname = _tool_name(tools, "update")
-    execute_by_id_fname = _tool_name(tools, "execute_task_by_id")
+    execute_by_id_fname = _tool_name(tools, "execute_by_id")
     request_clar_fname = _tool_name(tools, "request_clarification")
 
     _require_tools(
         {
             "ask": ask_fname,
             "update": update_fname,
-            "execute_task_by_id": execute_by_id_fname,
+            "execute_by_id": execute_by_id_fname,
         },
         tools,
     )

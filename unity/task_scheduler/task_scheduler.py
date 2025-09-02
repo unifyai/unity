@@ -43,7 +43,7 @@ from ..common.model_to_fields import model_to_fields
 from .prompt_builders import (
     build_ask_prompt,
     build_update_prompt,
-    build_execute_task_prompt,
+    build_execute_prompt,
 )
 from .base import BaseTaskScheduler
 from ..actor.base import BaseActor
@@ -424,32 +424,10 @@ class TaskScheduler(BaseTaskScheduler):
 
         return handle
 
-    # Start Task
+    # Execute
 
-    @functools.wraps(BaseTaskScheduler.execute_task, updated=())
-    @_log_manager_call.__func__("execute_task", "request")  # type: ignore[attr-defined]
-    async def execute_task(
-        self,
-        text: str,
-        *,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
-        execution_scope: Optional[Literal["isolate", "chain"]] = None,
-    ) -> SteerableToolHandle:
-        # Delegate to the single high-level entrypoint that performs LLM-only routing.
-        return await self.execute(
-            text=text,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
-            execution_scope=execution_scope,
-        )
-
-    # ------------------------------------------------------------------ #
-    #  Public unified execution (LLM-routed, no heuristics)               #
-    # ------------------------------------------------------------------ #
-
+    @functools.wraps(BaseTaskScheduler.execute, updated=())
+    @_log_manager_call.__func__("execute", "request")
     async def execute(
         self,
         text: str,
@@ -497,7 +475,7 @@ class TaskScheduler(BaseTaskScheduler):
                         clarification_up_q=clarification_up_q,
                         clarification_down_q=clarification_down_q,
                     )
-                return await self._execute_task_internal(
+                return await self._execute_internal(
                     task_id=int(stripped),
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
@@ -510,7 +488,7 @@ class TaskScheduler(BaseTaskScheduler):
                 pass
 
         # Start LLM-driven outer loop which will resolve id and scope, then adopt the inner handle.
-        return self._start_execute_task_loop(
+        return self._start_execute_loop(
             freeform_text=freeform_text,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
@@ -522,7 +500,7 @@ class TaskScheduler(BaseTaskScheduler):
     #  Internal helper – run existing *by-id* logic without event logging   #
     # ------------------------------------------------------------------ #
 
-    async def _execute_task_internal(
+    async def _execute_internal(
         self,
         *,
         task_id: int,
@@ -710,7 +688,7 @@ class TaskScheduler(BaseTaskScheduler):
 
                     # Start next task using CHAIN linkage semantics
                     self._current_task_id = next_tid
-                    self._current_handle = await self._s._execute_task_internal(
+                    self._current_handle = await self._s._execute_internal(
                         task_id=next_tid,
                         parent_chat_context=self._parent_ctx,
                         clarification_up_q=self._clar_up,
@@ -787,7 +765,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
         """Start chain execution at `task_id` and return a composite chain handle."""
-        first = await self._execute_task_internal(
+        first = await self._execute_internal(
             task_id=task_id,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
@@ -805,9 +783,9 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
     # ------------------------------------------------------------------ #
-    #  Helper – build and start the execute_task outer tool-use loop      #
+    #  Helper – build and start the execute outer tool-use loop      #
     # ------------------------------------------------------------------ #
-    def _start_execute_task_loop(
+    def _start_execute_loop(
         self,
         *,
         freeform_text: str,
@@ -816,11 +794,11 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         execution_scope: Optional[Literal["isolate", "chain"]] = None,
     ) -> SteerableToolHandle:
-        """Compose tools and prompt, then start the execute_task reasoning loop."""
+        """Compose tools and prompt, then start the execute reasoning loop."""
         client = self._new_llm_client("gpt-5@openai")
 
         # ── tool definitions ────────────────────────────────────────────────
-        async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
+        async def _execute_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
             """Start the task with *task_id*, adopting inner handle (isolate or chain)."""
 
             # Decide execution scope strictly via LLM when not provided
@@ -840,7 +818,7 @@ class TaskScheduler(BaseTaskScheduler):
                     clarification_down_q=clarification_down_q,
                 )
             else:
-                handle = await self._execute_task_internal(
+                handle = await self._execute_internal(
                     task_id=task_id,
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
@@ -869,7 +847,7 @@ class TaskScheduler(BaseTaskScheduler):
         tools = methods_to_tool_dict(
             self.ask,
             _update_no_forcing,
-            _execute_task_by_id,
+            _execute_by_id,
             include_class_name=False,
         )
         # Only expose clarification tool when both queues are available
@@ -881,7 +859,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ── dynamic system prompt ───────────────────────────────────────────
         client.set_system_message(
-            build_execute_task_prompt(tools),
+            build_execute_prompt(tools),
         )
 
         outer_handle = self._start_loop(
@@ -2083,7 +2061,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         Notes:
         - Setting status to 'active' directly is forbidden. Activation is performed
-          exclusively by the execution path (execute_task / execute_task_by_id).
+          exclusively by the execution path (execute / execute_by_id).
         """
         # Forbid making anything active (unless explicitly allowed)
         new_status_enum = self._to_status(new_status)

@@ -1,6 +1,6 @@
 """
 System prompts for the **real** Conductor's three public
-entry-points – ask, request and execute_task.
+entry-points – ask, request and execute.
 
 The Conductor orchestrates four sub-managers:
 • TaskScheduler         – tasks / queue / activation
@@ -8,7 +8,7 @@ The Conductor orchestrates four sub-managers:
 • TranscriptManager     – conversation search & summarisation
 • KnowledgeManager     – structured facts store
 
-`ask` is read-only; `request` and `execute_task` may mutate state.
+`ask` is read-only; `request` and `execute` may mutate state.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ Extra mutation tools (in addition to the read-only set):
 • create_contact / update_contact                        (ContactManager)
 • summarize(exchanges, guidance?)                        (TranscriptManager)
 • store_knowledge(text)                                  (KnowledgeManager)
-• _execute_task_call_(task_id)                             – promotes a task to
+• _execute_call_(task_id)                             – promotes a task to
   **active** and returns an ActiveTask handle.
 
 Refer again to the Task schema when filtering:
@@ -87,15 +87,15 @@ If helpful, the current date and time is <datetime>.
 """
 
 # ──────────────────────────────────────────────────────────────────────
-#  execute_task (prompt for the specialised "start a task" surface)
+#  execute (prompt for the specialised "start a task" surface)
 # ──────────────────────────────────────────────────────────────────────
-execute_task = f"""
+execute = f"""
 Your job is to **launch a task** so that it becomes the single *active* task.
 
 Tools available:
 • {TaskScheduler._filter_tasks.__name__.lstrip('_')}(filter?) /
   {TaskScheduler._search_tasks.__name__.lstrip('_')}(references) – locate the task.
-• _execute_task_call_(task_id)                  – call **exactly once**.
+• _execute_call_(task_id)                  – call **exactly once**.
 
 Important rules
 • Only one active task is permitted.  If another is active, explain the error

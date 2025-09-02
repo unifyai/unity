@@ -191,7 +191,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         """
 
     @abstractmethod
-    async def execute_task(
+    async def execute(
         self,
         text: str,
         *,
@@ -203,7 +203,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         Start a **task** given a *free-form* textual instruction (*text*).
 
         Do *not* request *how* the task should be executed; state what you
-        want to run in natural language and allow the `execute_task` method to
+        want to run in natural language and allow the `execute` method to
         determine the best method and steps.
 
         The assistant should interpret *text* to figure out which task the user
@@ -212,7 +212,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         1. Call :py:meth:`TaskScheduler.ask` to identify the `task_id` (if the
            id is not explicitly mentioned in *text*).
         2. Internally execute the task – the implementation SHOULD expose a
-           private ``_execute_task_by_id`` helper that returns a
+           private ``_execute_by_id`` helper that returns a
            :class:`SteerableToolHandle` **and marks it
            for pass-through** so that the outer handle is upgraded transparently
            once the real execution begins.

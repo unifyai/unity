@@ -9,7 +9,7 @@ and it exposes exactly **three** conversational entry-points:
 
 1. `ask`        – read-only Q&A across all domains
 2. `request`    – read-write mutations (plus everything in *ask*)
-3. `execute_task` – specialised surface for activating a queued task
+3. `execute` – specialised surface for activating a queued task
 """
 
 from __future__ import annotations
