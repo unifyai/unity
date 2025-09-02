@@ -1144,6 +1144,9 @@ class HierarchicalPlan(BaseActiveTask):
         self._interject_lock = asyncio.Lock()
         self._completion_event = asyncio.Event()
         self.skipped_functions: set = set()
+
+        self._child_tasks: set[asyncio.Task] = set()
+
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations or 2
         self.MAX_LOCAL_RETRIES = max_local_retries or 3
@@ -1273,16 +1276,20 @@ class HierarchicalPlan(BaseActiveTask):
             main_fn(),
             name=f"MainPlanTask-{self._module_name}",
         )
+        self._child_tasks.add(main_task)
 
         while not main_task.done():
             checkpoint_waiter = asyncio.create_task(
                 self.runtime._checkpoint_event.wait(),
             )
+            self._child_tasks.add(checkpoint_waiter)
+
             done, pending = await asyncio.wait(
                 {main_task, checkpoint_waiter},
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
+            self._child_tasks.remove(checkpoint_waiter)
             if checkpoint_waiter in pending:
                 checkpoint_waiter.cancel()
 
@@ -1292,6 +1299,9 @@ class HierarchicalPlan(BaseActiveTask):
             if checkpoint_waiter in done:
                 if self._state == _HierarchicalPlanState.RUNNING:
                     self.runtime._release_from_checkpoint()
+
+        if main_task in self._child_tasks:
+            self._child_tasks.remove(main_task)
 
         try:
             result = main_task.result()
@@ -1307,13 +1317,14 @@ class HierarchicalPlan(BaseActiveTask):
             self._set_final_result(f"Plan completed. Result: {result}")
 
         except Exception as e:
-            logger.error(
-                f"Plan execution failed with unhandled exception: {e}",
-                exc_info=True,
-            )
-            self._set_state(_HierarchicalPlanState.ERROR)
-            self.action_log.append(f"ERROR: Plan execution failed: {e}")
-            self._set_final_result(f"ERROR: Plan execution failed: {e}")
+            if not isinstance(e, asyncio.CancelledError):
+                logger.error(
+                    f"Plan execution failed with unhandled exception: {e}",
+                    exc_info=True,
+                )
+                self._set_state(_HierarchicalPlanState.ERROR)
+                self.action_log.append(f"ERROR: Plan execution failed: {e}")
+                self._set_final_result(f"ERROR: Plan execution failed: {e}")
 
     async def _handle_dynamic_implementation(self, function_name: str, **kwargs):
         """
