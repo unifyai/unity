@@ -9,6 +9,7 @@ from typing import Callable
 from pathlib import Path
 from pydantic_core import from_json
 import unify
+from collections import deque
 from unity.helpers import run_script, terminate_process
 from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
 from unity.memory_manager.broader_context import get_broader_context
@@ -161,6 +162,10 @@ class CommsAgent:
         self.project_name = project_name
         self.logging_lock = threading.Lock()
 
+        # speaker tracking
+        self.speaker_buffer = deque(maxlen=50)
+        self.current_speaker = None
+
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
 
@@ -299,6 +304,104 @@ class CommsAgent:
                 )
                 break  # Exit the loop after shutdown
 
+    async def track_active_speaker(self):
+        """Track active speaker using Meet captions via screenshot-based observation.
+
+        Attempts to enable captions once, then polls the UI for the current caption
+        speaker label and records it with a timestamp.
+        """
+        if not self.meet_browser:
+            return
+        try:
+            await self.meet_browser.act("Turn on captions")
+        except Exception:
+            ...
+
+        while self.meet_browser:
+            try:
+                name = await self.meet_browser.observe(
+                    (
+                        "From the current Google Meet screen, read the live captions. "
+                        "Return only the current speaker's display name (empty string if none)."
+                    ),
+                    str,
+                )
+                if isinstance(name, str):
+                    name = name.strip().split("\n")[0]
+                if name:
+                    self.current_speaker = name
+                    self.speaker_buffer.append((asyncio.get_event_loop().time(), name))
+                    print("current speaker", name)
+                    print("speaker buffer", self.speaker_buffer)
+            except Exception:
+                ...
+            await asyncio.sleep(0.6)
+
+    def _nearest_speaker(self, t: float, window: float = 3.0):
+        for ts, name in reversed(self.speaker_buffer):
+            if t - ts <= window:
+                return name
+            break
+        return None
+
+    async def track_active_speaker_dom(self):
+        """Track active speaker by scraping Meet captions from the DOM.
+
+        This version tries to execute a small JS snippet to locate caption labels
+        and extract the most recent speaker name. If direct JS evaluation is not
+        available on the controller, it falls back to the screenshot-based observe
+        prompt with the same outcome.
+        """
+        if not self.meet_browser:
+            return
+        try:
+            await self.meet_browser.act("Turn on captions")
+        except Exception:
+            ...
+
+        js_snippet = """
+(() => {
+  const roots = Array.from(document.querySelectorAll('[role="region"], [aria-live="polite"], [data-is-caption]'));
+  const nodes = roots.flatMap(r => Array.from(r.querySelectorAll('*')));
+  const candidates = nodes
+    .map(n => (n.innerText || '').trim())
+    .filter(t => t && /:/.test(t) && t.length < 120);
+  if (candidates.length === 0) return '';
+  const label = candidates[candidates.length - 1];
+  return (label.split(':')[0] || '').trim();
+})()
+            """
+
+        while self.meet_browser:
+            try:
+                name = None
+                # Prefer a native JS evaluate if available on controller/backend
+                if hasattr(self.meet_browser, "eval_js"):
+                    try:
+                        name = await self.meet_browser.eval_js(js_snippet)
+                    except Exception:
+                        name = None
+                # Fallback to observation if eval_js is not present
+                if not name:
+                    name = await self.meet_browser.observe(
+                        (
+                            "In the current Google Meet UI, read the live captions. "
+                            "Return only the current speaker's display name (empty if none)."
+                        ),
+                        str,
+                    )
+
+                if isinstance(name, str):
+                    name = name.strip().split("\n")[0]
+                if name:
+                    self.current_speaker = name
+                    self.speaker_buffer.append((asyncio.get_event_loop().time(), name))
+                    print("current speaker", name)
+                    print("speaker buffer", self.speaker_buffer)
+            except Exception:
+                ...
+            await asyncio.sleep(0.5)
+
     async def listen_for_events(self):
         print("COLLECTING...")
         while True:
@@ -400,6 +503,8 @@ class CommsAgent:
                             asyncio.create_task(self.inactivity_check_for_meet())
                             await asyncio.sleep(5)
                             self.meet_joined.set()
+                            # start captions-based speaker tracking
+                            asyncio.create_task(self.track_active_speaker_dom())
 
                         continue
                     else:
@@ -1292,6 +1397,19 @@ class CommsAgent:
                     "email_address"
                 ],
             }
+
+        # Attach speaker metadata to user phone utterances using recent captions
+        # try:
+        #     if (
+        #         event["event"]["event_name"] == "PhoneUtteranceEvent"
+        #         and event["event"]["payload"].get("role") == "User"
+        #     ):
+        #         now = asyncio.get_event_loop().time()
+        #         speaker = self._nearest_speaker(now)
+        #         if speaker:
+        #             event["event"]["payload"]["speaker"] = speaker
+        # except Exception:
+        #     ...
 
         if to == "past":
             self.past_events.append(event["event"])

@@ -304,8 +304,33 @@ class BrowserWorker(threading.Thread):
                             continue
 
                         try:
-                            # Parse the JSON payload to get action and request_id
+                            # Parse the JSON payload to get action/eval_js and request_id
                             payload = json.loads(msg["data"].decode())
+                            # Handle eval_js RPC
+                            if "eval_js" in payload:
+                                script = payload.get("eval_js", "")
+                                request_id = payload.get("request_id")
+                                try:
+                                    res = self.runner.active.evaluate(script)
+                                    out = {
+                                        "request_id": request_id,
+                                        "result": res,
+                                    }
+                                except Exception as e:
+                                    out = {
+                                        "request_id": request_id,
+                                        "error": str(e),
+                                    }
+                                try:
+                                    self._redis_client.publish(
+                                        f"browser_eval_result_{self._redis_db}",
+                                        json.dumps(out),
+                                    )
+                                except Exception:
+                                    pass
+                                cmd_processed = True
+                                continue
+
                             cmd_str = payload["action"]
                             request_id = payload["request_id"]
                         except (json.JSONDecodeError, KeyError, AttributeError):
