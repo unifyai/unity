@@ -552,21 +552,19 @@ class PlanSanitizer(ast.NodeTransformer):
         """Injects push/pop context calls around a block of statements GUARANTEED to run."""
         if not block:
             return []
+
         push_call = self._make_runtime_call_expr(
             "push_path_context",
             [ast.Constant(value=context_id)],
         )
         pop_call = self._make_runtime_call_expr("pop_path_context", [])
 
-        # Wrap the original block in a try...finally structure to guarantee cleanup.
         finalized_block = ast.Try(
-            body=[push_call] + block,  # Push context, then run original code
+            body=[push_call] + block,
             handlers=[],
             orelse=[],
-            finalbody=[pop_call],  # ALWAYS pop the context in the finally block
+            finalbody=[pop_call],
         )
-
-        # Return the new Try node as a list containing a single statement
         return [finalized_block]
 
     def visit_If(self, node: ast.If) -> ast.If:
@@ -665,18 +663,7 @@ class PlanSanitizer(ast.NodeTransformer):
         """Helper to wrap a tool call statement with instrumentation."""
         label = self._call_to_label(call_node)
 
-        increment_counter = ast.AugAssign(
-            target=ast.Attribute(
-                value=ast.Name(id="runtime", ctx=ast.Load()),
-                attr="action_counter",
-                ctx=ast.Store(),
-            ),
-            op=ast.Add(),
-            value=ast.Constant(value=1),
-        )
-
         return [
-            increment_counter,
             self._make_cp_node(f"Before: {label}"),
             full_statement_node,
             self._make_cp_node(f"After: {label}"),
