@@ -1206,6 +1206,7 @@ class HierarchicalPlan(BaseActiveTask):
         """
         Manages the entire lifecycle of the plan from initialization to completion.
         """
+        token = current_run_id_var.set(self.run_id)
         try:
             if self.goal:
                 if not self._is_complete:
@@ -1252,6 +1253,11 @@ class HierarchicalPlan(BaseActiveTask):
             logger.error(f"Plan initialization failed: {e}", exc_info=True)
             self._set_state(_HierarchicalPlanState.ERROR)
             self._set_final_result(f"ERROR: Plan initialization failed: {e}")
+        finally:
+            try:
+                current_run_id_var.reset(token)
+            except Exception:
+                pass
 
     async def _start_main_execution_loop(self):
         """
