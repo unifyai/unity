@@ -355,7 +355,7 @@ async def ensure_captions_enabled(meet_browser, max_attempts: int = 5):
         if await _is_captions_enabled(meet_browser):
             return True
         try:
-            await meet_browser.act("Turn on captions")
+            await meet_browser.act("Turn on captions. DO NOT CLICK ON SCREEN SHARE.")
         except Exception:
             ...
         await asyncio.sleep(0.6)
