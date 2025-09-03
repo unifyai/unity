@@ -339,7 +339,7 @@ async def _is_captions_enabled(meet_browser) -> bool:
     try:
         status = await meet_browser.observe(
             (
-                "In the current Google Meet UI, are live captions turned on? "
+                "In the current Google Meet UI, are live captions turned on? Popups are not captions."
                 "Return only true or false."
             ),
             bool,

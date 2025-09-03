@@ -343,7 +343,7 @@ class CommsAgent:
                 prompt = (
                     "From the current Google Meet screen, determine the CURRENT speaker and latest caption using BOTH sources: "
                     "(1) live captions/subtitles (use the speaker label preceding the caption), and (2) visual active-speaker indicators "
-                    "(blue outline, speaker badge, audio indicator). Use the following previous context to avoid repeats: "
+                    "(bold outline, speaker badge, audio indicator). Use the following previous context to avoid repeats: "
                     f"recent_captions={json.dumps(recent_caps)} recent_speakers={json.dumps(recent_speakers)}. "
                     "Return STRICT JSON with keys: speaker (string, empty if none), caption (string, empty if none). "
                     "If the detected caption equals the most recent in recent_captions, set caption to an empty string. "
