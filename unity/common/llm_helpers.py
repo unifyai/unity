@@ -1621,6 +1621,18 @@ async def _schedule_missing_for_message(
     return scheduled
 
 
+def _check_valid_response_format(response_format: Any):
+    # Require a Pydantic model class – anything else is a configuration error.
+    if not (
+        isinstance(response_format, type) and issubclass(response_format, BaseModel)
+    ):
+        raise TypeError(
+            "response_format must be a Pydantic BaseModel subclass (e.g. MySchema).",
+        )
+
+    return response_format.model_json_schema()
+
+
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
 
@@ -1893,18 +1905,7 @@ async def _async_tool_use_loop_inner(
     # `set_response_format` still happens at the end of the loop.
     if response_format is not None:
         try:
-            from pydantic import BaseModel  # local import
-
-            # Require a Pydantic model class – anything else is a configuration error.
-            if not (
-                isinstance(response_format, type)
-                and issubclass(response_format, BaseModel)
-            ):
-                raise TypeError(
-                    "response_format must be a Pydantic BaseModel subclass (e.g. MySchema).",
-                )
-
-            _schema = response_format.model_json_schema()
+            _schema = _check_valid_response_format(response_format)
             _hint = (
                 "\n\nNOTE: After completing all tool calls, your **final** assistant reply must be valid JSON that conforms to the following schema. Do NOT include any extra keys or commentary.\n"
                 + json.dumps(_schema, indent=2)
@@ -2550,17 +2551,7 @@ async def _async_tool_use_loop_inner(
             # the provided Pydantic model.
             if response_format is not None:
                 try:
-                    from pydantic import BaseModel  # local import
-
-                    if not (
-                        isinstance(response_format, type)
-                        and issubclass(response_format, BaseModel)
-                    ):
-                        raise TypeError(
-                            "response_format must be a Pydantic BaseModel subclass.",
-                        )
-
-                    _answer_schema = response_format.model_json_schema()
+                    _answer_schema = _check_valid_response_format(response_format)
 
                     visible_base_tools_schema.append(
                         {
