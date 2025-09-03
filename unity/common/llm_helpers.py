@@ -1536,13 +1536,10 @@ async def _schedule_missing_for_message(
     only_ids: set[str],
     *,
     clarification_channels,
-    call_counts,
-    norm_tools,
-    pending,
+    tools_data: _ToolsData,
     completed_results,
     parent_chat_context,
     propagate_chat_context,
-    task_info,
     assistant_meta,
     client,
     msg_dispatcher,
@@ -1556,7 +1553,7 @@ async def _schedule_missing_for_message(
                 continue
 
             # Skip if already pending or completed
-            if any(inf.get("call_id") == cid for _t, inf in task_info.items()):
+            if any(inf.get("call_id") == cid for _t, inf in tools_data.info.items()):
                 continue
             if cid in completed_results:
                 continue
@@ -1583,7 +1580,7 @@ async def _schedule_missing_for_message(
                 continue
 
             # Base tool: locate function
-            if name not in norm_tools:
+            if name not in tools_data.norm_tools:
                 scheduled.append(cid)
                 continue
 
@@ -1593,10 +1590,10 @@ async def _schedule_missing_for_message(
                 args_json=args_json,
                 call_id=cid,
                 call_idx=idx,
-                call_counts=call_counts,
-                norm_tools=norm_tools,
-                task_info=task_info,
-                pending=pending,
+                call_counts=tools_data.call_counts,
+                norm_tools=tools_data.norm_tools,
+                task_info=tools_data.info,
+                pending=tools_data.pending,
                 parent_chat_context=parent_chat_context,
                 propagate_chat_context=propagate_chat_context,
                 assistant_meta=assistant_meta,
@@ -1610,8 +1607,8 @@ async def _schedule_missing_for_message(
     try:
         await _ensure_placeholders_for_pending(
             assistant_msg=asst_msg,
-            pending=pending,
-            task_info=task_info,
+            pending=tools_data.pending,
+            task_info=tools_data.info,
             assistant_meta=assistant_meta,
             client=client,
             msg_dispatcher=msg_dispatcher,
@@ -2032,13 +2029,10 @@ async def _async_tool_use_loop_inner(
                     amsg,
                     missing_ids,
                     clarification_channels=clarification_channels,
-                    call_counts=tools_data.call_counts,
-                    norm_tools=tools_data.norm_tools,
-                    pending=tools_data.pending,
+                    tools_data=tools_data,
                     completed_results=completed_results,
                     parent_chat_context=parent_chat_context,
                     propagate_chat_context=propagate_chat_context,
-                    task_info=tools_data.info,
                     assistant_meta=assistant_meta,
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
@@ -2245,13 +2239,10 @@ async def _async_tool_use_loop_inner(
                             amsg,
                             missing_ids,
                             clarification_channels=clarification_channels,
-                            call_counts=tools_data.call_counts,
-                            norm_tools=tools_data.norm_tools,
-                            pending=tools_data.pending,
+                            tools_data=tools_data,
                             completed_results=completed_results,
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
-                            task_info=tools_data.info,
                             assistant_meta=assistant_meta,
                             client=client,
                             msg_dispatcher=_msg_dispatcher,
