@@ -2629,11 +2629,8 @@ class SimulationSelector(BaseModel):
     """
 
     by_task_id: int | None = None
-    by_queue_index: int | None = None  # 1-based index in runnable queue
-    by_name_regex: str | None = None
-    by_search_query: str | None = None
-    # ISO-8601 (UTC) window for scheduled tasks: [start_iso, end_iso]
-    by_scheduled_window_iso: tuple[str, str] | None = None
+    # 0-based index with negative support (Python-style): 0 is first, -1 is last
+    position: int | None = None
 
 
 class _SimulationRule(BaseModel):
@@ -3014,10 +3011,7 @@ class _SimOverrideParams(BaseModel):
 class _SimOverrideSelector(BaseModel):
     reasoning: Optional[str] = Field(default=None, description="Selector notes")
     by_task_id: Optional[int] = None
-    by_queue_index: Optional[int] = None
-    by_name_regex: Optional[str] = None
-    by_search_query: Optional[str] = None
-    final: Optional[bool] = None
+    position: Optional[int] = None
 
 
 class _SimOverrideRule(BaseModel):
@@ -3055,8 +3049,7 @@ def parse_simulation_overrides(text: str) -> _SimOverrides:
         "You extract simulation overrides for starting a task/chain.\n"
         "Return ONLY JSON matching the schema with fields in this object order: reasoning, core_text, defaults, rules.\n"
         "Field guidance:\n"
-        "- Use 1-based by_queue_index for ordinal references (first=1, second=2, …).\n"
-        "- If guidance targets only the last task, set selector.final=true and omit by_queue_index.\n"
+        "- Use selector.position (0-based; negatives allowed: 0=first, -1=last) for ordinal/relative references; or by_task_id when explicitly provided.\n"
         "- Use duration_seconds for timing; steps for step limits; guidance for behavioral text (e.g., what to say on progress).\n"
         "- Exclude numeric timing directives from guidance.\n"
         "- 'core_text' must be the original user request with simulation control sentences/clauses REMOVED (timeouts, steps, task timing).\n"

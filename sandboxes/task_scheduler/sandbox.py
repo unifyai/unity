@@ -460,17 +460,31 @@ async def _dispatch_with_context(
         except Exception:
             pass
 
-        # Apply rules for by_queue_index and resolved finals
+        # Apply rules for position and resolved finals (no legacy selectors)
         idx_to_params: dict[int, SimulationParams] = {}
         pending_finals: list[object] = []
         for r in overrides.rules or []:
             sel = r.selector
             prm = r.params
-            if sel.by_queue_index is not None:
-                p = idx_to_params.setdefault(
-                    int(sel.by_queue_index),
-                    SimulationParams(),
-                )
+            # Resolve 0-based/negative position → 1-based index
+            target_idx_1_based = None
+            if getattr(sel, "position", None) is not None:
+                try:
+                    # Build a snapshot of the current runnable queue
+                    queue = ts._get_task_queue()
+                    qlen = len(queue)
+                    pos = int(sel.position)
+                    if pos >= 0:
+                        target_idx_1_based = pos + 1
+                    else:
+                        target_idx_1_based = qlen + pos + 1
+                    if target_idx_1_based < 1 or target_idx_1_based > qlen:
+                        target_idx_1_based = None
+                except Exception:
+                    target_idx_1_based = None
+
+            if target_idx_1_based is not None:
+                p = idx_to_params.setdefault(target_idx_1_based, SimulationParams())
                 if prm.steps is not None:
                     p.steps = int(prm.steps)
                 if prm.duration_seconds is not None:
@@ -491,13 +505,27 @@ async def _dispatch_with_context(
                     p.guidance = str(prm.guidance)  # type: ignore[attr-defined]
         if idx_to_params:
             try:
+                # Resolve to concrete task_ids and bind rules
+                try:
+                    current_queue = ts._get_task_queue()  # head→tail runnable
+                except Exception:
+                    current_queue = []
                 for idx, params in idx_to_params.items():
                     params.one_shot = True
-                    SIMULATION_PLANS.add_rule(
-                        SimulationSelector(by_queue_index=int(idx)),
-                        params,
-                        label="per-task overrides from start request",
-                    )
+                    tid = -1
+                    try:
+                        if 1 <= int(idx) <= len(current_queue):
+                            tid = int(
+                                getattr(current_queue[int(idx) - 1], "task_id", -1),
+                            )
+                    except Exception:
+                        tid = -1
+                    if tid >= 0:
+                        SIMULATION_PLANS.add_rule(
+                            SimulationSelector(by_task_id=tid),
+                            params,
+                            label="per-task overrides from start request",
+                        )
             except Exception:
                 pass
 
