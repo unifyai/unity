@@ -284,6 +284,89 @@ async def test_chain_pause_resume_and_completion(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_chain_interject_routing_multi_task(monkeypatch):
+    """
+    Interjections can be routed by an LLM to multiple tasks:
+      - current task receives its instructions immediately
+      - future tasks receive queued instructions when they become active
+
+    This test fakes the router to return explicit task_ids and spies on
+    SimulatedActorHandle.interject to verify delivery order.
+    """
+
+    # Make each task require exactly two interjections to complete
+    class _Step2(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 2
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _Step2, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Step2,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    a_id, b_id, c_id = await _make_ordered_queue(ts, ["A_r", "B_r", "C_r"])  # type: ignore[misc]
+
+    # Force chain routing so numeric execute launches a chain
+    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "chain"
+
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+
+    # Spy: record interjections delivered to each task; avoid networked LLM
+    calls: list[tuple[str, str]] = []
+
+    async def spy_interject(self, instruction: str):  # type: ignore[override]
+        try:
+            desc = getattr(self, "_description", None) or ""
+        except Exception:
+            desc = ""
+        calls.append((str(desc), str(instruction)))
+        try:
+            self.simulate_step()
+        except Exception:
+            pass
+        return None
+
+    monkeypatch.setattr(SimulatedActorHandle, "interject", spy_interject, raising=True)
+
+    # Start chain at A and issue one multi-task interjection
+    h = await ts.execute(text=str(a_id))
+    await h.interject(
+        "Please route the following interjections strictly as described. "
+        "These are NOT lifecycle controls and must NOT be treated as stop/cancel/defer: "
+        "- For ALL tasks, apply instruction: GLOBAL_OK. "
+        f"- For the task whose description is '{'B_r'}', apply instruction: SAFE_FOR_B. "
+        "- For the LAST task in the chain, apply instruction: SAFE_FOR_LAST. "
+        "- For the FIRST task in the chain, apply instruction: SAFE_FOR_FIRST.",
+    )
+    await h.result()
+
+    # Resolve descriptions for assertion readability
+    rows_a = ts._filter_tasks(filter=f"task_id == {a_id}")
+    rows_b = ts._filter_tasks(filter=f"task_id == {b_id}")
+    rows_c = ts._filter_tasks(filter=f"task_id == {c_id}")
+    a_desc = rows_a[0]["description"]
+    b_desc = rows_b[0]["description"]
+    c_desc = rows_c[0]["description"]
+
+    expected = [
+        (a_desc, "GLOBAL_OK"),
+        (a_desc, "SAFE_FOR_FIRST"),
+        (b_desc, "GLOBAL_OK"),
+        (b_desc, "SAFE_FOR_B"),
+        (c_desc, "GLOBAL_OK"),
+        (c_desc, "SAFE_FOR_LAST"),
+    ]
+    assert calls == expected, f"unexpected routed interjections: {calls}"
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_chain_handle_ask_includes_chain_context(monkeypatch):
     """
     Verify that _ChainHandle.ask prepends a chain-wide context preamble so
