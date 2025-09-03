@@ -798,6 +798,17 @@ class TaskScheduler(BaseTaskScheduler):
         client = self._new_llm_client("gpt-5@openai")
 
         # ── tool definitions ────────────────────────────────────────────────
+        def create_task(*, name: str, description: str) -> ToolOutcome:  # type: ignore[valid-type]
+            """Create a brand-new task with minimal inputs (name, description).
+
+            Notes
+            -----
+            - This scoped creator intentionally exposes only name/description to
+              prevent schedule/status/queue manipulation from the execute loop.
+            - Lifecycle values and invariants are inferred by the scheduler.
+            """
+            return self._create_task(name=name, description=description)
+
         async def _execute_by_id(
             *,
             task_id: int,
@@ -866,6 +877,7 @@ class TaskScheduler(BaseTaskScheduler):
         tools = methods_to_tool_dict(
             self.ask,
             _execute_by_id,
+            create_task,
             include_class_name=False,
         )
         # Only expose clarification tool when both queues are available

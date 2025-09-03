@@ -287,17 +287,17 @@ async def test_execute_creates_new_task_and_executes(monkeypatch):
     actor = SimulatedActor(steps=0)
     ts = TaskScheduler(actor=actor)
 
-    # ---- spy on update -----------------------------------------------------
-    calls: Dict[str, int] = {"update": 0}
+    # ---- spy on _create_task -----------------------------------------------
+    calls: Dict[str, int] = {"_create_task": 0}
 
-    original_update = TaskScheduler.update
+    original_create = TaskScheduler._create_task
 
-    @functools.wraps(original_update)
-    async def spy_update(self, text: str, **kw):  # type: ignore[override]
-        calls["update"] += 1
-        return await original_update(self, text, **kw)
+    @functools.wraps(original_create)
+    def spy_create(self, *, name: str, description: str, **kw):  # type: ignore[override]
+        calls["_create_task"] += 1
+        return original_create(self, name=name, description=description, **kw)
 
-    monkeypatch.setattr(TaskScheduler, "update", spy_update, raising=True)
+    monkeypatch.setattr(TaskScheduler, "_create_task", spy_create, raising=True)
 
     # ---- execute (no prior task with that description exists) -------------
     handle = await ts.execute(text=description)
@@ -306,7 +306,9 @@ async def test_execute_creates_new_task_and_executes(monkeypatch):
     await handle.result()
 
     # ---- assertions --------------------------------------------------------
-    assert calls["update"] >= 1, "Expected at least one call to TaskScheduler.update"
+    assert (
+        calls["_create_task"] >= 1
+    ), "Expected at least one call to TaskScheduler._create_task"
 
     # Verify that a task with the expected description now exists
     # Description may be normalised (e.g. trailing period removed).  Accept any
