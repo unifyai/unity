@@ -1732,6 +1732,14 @@ class _TimeoutTimer:
         return ret
 
 
+class _ToolsData:
+    def __init__(self, tools):
+        self.norm_tools = _normalise_tools(tools)
+        self.pending: Set[asyncio.Task] = set()
+        self.info: Dict[asyncio.Task, Dict[str, Any]] = {}
+        self.call_counts: Dict[str, int] = {}
+
+
 # TODO this is not really required, but this just simplifies the extraction of the logic from the loop.
 class _AsyncToolLoopToolFailureTracker:
     def __init__(self, max_consecutive_failures: int):
@@ -1966,9 +1974,9 @@ async def _async_tool_use_loop_inner(
     # -----------------------------------------------------------------------
 
     # Initialise loop state early so preflight backfill can schedule tasks
+    tools_data = _ToolsData(tools)
     consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
     pending: Set[asyncio.Task] = set()
-    # Note: removed unused total_tool_calls_made counter
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
     clarification_channels: Dict[
         str,
