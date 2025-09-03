@@ -1529,6 +1529,98 @@ async def _ensure_placeholders_for_pending(
     return created
 
 
+# Helper: schedule a subset of tool_calls on a past assistant message and
+# insert placeholders immediately. Skips already-scheduled/finished ids.
+async def _schedule_missing_for_message(
+    asst_msg: dict,
+    only_ids: set[str],
+    *,
+    clarification_channels,
+    call_counts,
+    norm_tools,
+    pending,
+    completed_results,
+    parent_chat_context,
+    propagate_chat_context,
+    task_info,
+    assistant_meta,
+    client,
+    msg_dispatcher,
+) -> list[str]:
+    scheduled: list[str] = []
+    try:
+        tool_calls = asst_msg.get("tool_calls") or []
+        for idx, call in enumerate(tool_calls):
+            cid = call.get("id")
+            if cid not in only_ids:
+                continue
+
+            # Skip if already pending or completed
+            if any(inf.get("call_id") == cid for _t, inf in task_info.items()):
+                continue
+            if cid in completed_results:
+                continue
+
+            name = call["function"]["name"]
+            args_json = call["function"].get("arguments", "{}")
+
+            # Handle dynamic helpers similarly to main path
+            if _is_helper_tool(name):
+                # Do not execute helpers during backfill, only acknowledge
+                try:
+                    await _acknowledge_helper_call(
+                        asst_msg,
+                        cid,
+                        name,
+                        args_json,
+                        assistant_meta=assistant_meta,
+                        client=client,
+                        msg_dispatcher=msg_dispatcher,
+                    )
+                except Exception:
+                    pass
+                scheduled.append(cid)
+                continue
+
+            # Base tool: locate function
+            if name not in norm_tools:
+                scheduled.append(cid)
+                continue
+
+            await _schedule_base_tool_call(
+                asst_msg,
+                name=name,
+                args_json=args_json,
+                call_id=cid,
+                call_idx=idx,
+                call_counts=call_counts,
+                norm_tools=norm_tools,
+                task_info=task_info,
+                pending=pending,
+                parent_chat_context=parent_chat_context,
+                propagate_chat_context=propagate_chat_context,
+                assistant_meta=assistant_meta,
+                clarification_channels=clarification_channels,
+                client=client,
+            )
+            scheduled.append(cid)
+    except Exception:
+        pass
+    # Ensure placeholders are present for backfilled items
+    try:
+        await _ensure_placeholders_for_pending(
+            assistant_msg=asst_msg,
+            pending=pending,
+            task_info=task_info,
+            assistant_meta=assistant_meta,
+            client=client,
+            msg_dispatcher=msg_dispatcher,
+        )
+    except Exception:
+        pass
+    return scheduled
+
+
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
 
@@ -1904,89 +1996,6 @@ async def _async_tool_use_loop_inner(
         lim = norm_tools[t_name].max_total_calls
         return lim is None or _quota_count(t_name) < lim
 
-    # Helper: schedule a subset of tool_calls on a past assistant message and
-    # insert placeholders immediately. Skips already-scheduled/finished ids.
-    async def _schedule_missing_for_message(
-        asst_msg: dict,
-        only_ids: set[str],
-        *,
-        task_info,
-        assistant_meta,
-        client,
-        msg_dispatcher,
-    ) -> list[str]:
-        scheduled: list[str] = []
-        try:
-            tool_calls = asst_msg.get("tool_calls") or []
-            for idx, call in enumerate(tool_calls):
-                cid = call.get("id")
-                if cid not in only_ids:
-                    continue
-
-                # Skip if already pending or completed
-                if any(inf.get("call_id") == cid for _t, inf in task_info.items()):
-                    continue
-                if cid in completed_results:
-                    continue
-
-                name = call["function"]["name"]
-                args_json = call["function"].get("arguments", "{}")
-
-                # Handle dynamic helpers similarly to main path
-                if _is_helper_tool(name):
-                    # Do not execute helpers during backfill, only acknowledge
-                    try:
-                        await _acknowledge_helper_call(
-                            asst_msg,
-                            cid,
-                            name,
-                            args_json,
-                            assistant_meta=assitant_meta,
-                            client=client,
-                            msg_dispatcher=_msg_dispatcher,
-                        )
-                    except Exception:
-                        pass
-                    scheduled.append(cid)
-                    continue
-
-                # Base tool: locate function
-                if name not in norm_tools:
-                    scheduled.append(cid)
-                    continue
-
-                await _schedule_base_tool_call(
-                    asst_msg,
-                    name=name,
-                    args_json=args_json,
-                    call_id=cid,
-                    call_idx=idx,
-                    call_counts=call_counts,
-                    norm_tools=norm_tools,
-                    task_info=task_info,
-                    pending=pending,
-                    parent_chat_context=parent_chat_context,
-                    propagate_chat_context=propagate_chat_context,
-                    assistant_meta=assistant_meta,
-                    clarification_channels=clarification_channels,
-                    client=client,
-                )
-                scheduled.append(cid)
-        except Exception:
-            pass
-        # Ensure placeholders are present for backfilled items
-        try:
-            await _ensure_placeholders_for_pending(
-                assistant_msg=asst_msg,
-                task_info=task_info,
-                assistant_meta=assistant_meta,
-                client=client,
-                msg_dispatcher=_msg_dispatcher,
-            )
-        except Exception:
-            pass
-        return scheduled
-
     # Expose live task_info mapping on the current Task so outer handles/tests
     # can introspect currently running nested handles (used by ask/stop helpers).
     try:
@@ -2010,7 +2019,21 @@ async def _async_tool_use_loop_inner(
                 # Before scheduling, drop any over-quota tool calls in this message
                 _prune_over_quota_tool_calls(amsg, norm_tools, call_counts)
                 missing_ids = set(entry["missing"])
-                await _schedule_missing_for_message(amsg, missing_ids)
+                await _schedule_missing_for_message(
+                    amsg,
+                    missing_ids,
+                    clarification_channels=clarification_channels,
+                    call_counts=call_counts,
+                    norm_tools=norm_tools,
+                    pending=pending,
+                    completed_results=completed_results,
+                    parent_chat_context=parent_chat_context,
+                    propagate_chat_context=propagate_chat_context,
+                    task_info=task_info,
+                    assistant_meta=assistant_meta,
+                    client=client,
+                    msg_dispatcher=_msg_dispatcher,
+                )
     except Exception:
         pass
 
@@ -2212,6 +2235,17 @@ async def _async_tool_use_loop_inner(
                         backfilled = await _schedule_missing_for_message(
                             amsg,
                             missing_ids,
+                            clarification_channels=clarification_channels,
+                            call_counts=call_counts,
+                            norm_tools=norm_tools,
+                            pending=pending,
+                            completed_results=completed_results,
+                            parent_chat_context=parent_chat_context,
+                            propagate_chat_context=propagate_chat_context,
+                            task_info=task_info,
+                            assistant_meta=assistant_meta,
+                            client=client,
+                            msg_dispatcher=_msg_dispatcher,
                         )
             except Exception:
                 pass
