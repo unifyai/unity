@@ -1976,7 +1976,6 @@ async def _async_tool_use_loop_inner(
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data = _ToolsData(tools)
     consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
-    pending: Set[asyncio.Task] = set()
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
     clarification_channels: Dict[
         str,
@@ -2032,7 +2031,7 @@ async def _async_tool_use_loop_inner(
                     clarification_channels=clarification_channels,
                     call_counts=call_counts,
                     norm_tools=tools_data.norm_tools,
-                    pending=pending,
+                    pending=tools_data.pending,
                     completed_results=completed_results,
                     parent_chat_context=parent_chat_context,
                     propagate_chat_context=propagate_chat_context,
@@ -2061,7 +2060,7 @@ async def _async_tool_use_loop_inner(
           • cancel waiter coroutines
           • append a short assistant notice
         """
-        for t in list(pending):
+        for t in list(tools_data.pending):
             h = task_info.get(t, {}).get("handle")
             try:
                 if h is not None and hasattr(h, "stop"):
@@ -2070,8 +2069,8 @@ async def _async_tool_use_loop_inner(
                 pass
             if not t.done():
                 t.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
-        pending.clear()
+        await asyncio.gather(*tools_data.pending, return_exceptions=True)
+        tools_data.pending.clear()
 
         notice = {
             "role": "assistant",
@@ -2100,7 +2099,7 @@ async def _async_tool_use_loop_inner(
                 # Give any pending tool tasks a chance to finish OR wait until the
                 # loop is resumed / cancelled.  Every coroutine is wrapped in an
                 # asyncio.Task so `asyncio.wait()` is happy.
-                if pending:
+                if tools_data.pending:
                     pause_waiter = asyncio.create_task(
                         pause_event.wait(),
                         name="PauseEventWait",
@@ -2113,7 +2112,7 @@ async def _async_tool_use_loop_inner(
                         stop_event.wait(),
                         name="StopEventWait",
                     )
-                    waiters = pending | {
+                    waiters = tools_data.pending | {
                         pause_waiter,
                         cancel_waiter,
                         graceful_stop_waiter,
@@ -2132,12 +2131,12 @@ async def _async_tool_use_loop_inner(
                             await asyncio.gather(w, return_exceptions=True)
 
                     # tool finished?
-                    for t in done & pending:
+                    for t in done & tools_data.pending:
                         await _process_completed_task(
                             task=t,
                             task_info=task_info,
                             consecutive_failures=consecutive_failures,
-                            pending_tasks=pending,
+                            pending_tasks=tools_data.pending,
                             outer_handle_container=outer_handle_container,
                             assistant_meta=assistant_meta,
                             clarification_channels=clarification_channels,
@@ -2245,7 +2244,7 @@ async def _async_tool_use_loop_inner(
                             clarification_channels=clarification_channels,
                             call_counts=call_counts,
                             norm_tools=tools_data.norm_tools,
-                            pending=pending,
+                            pending=tools_data.pending,
                             completed_results=completed_results,
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
@@ -2330,7 +2329,7 @@ async def _async_tool_use_loop_inner(
             #       • any tool task finishes
             #       • ``cancel_event`` flips
             #       • a *new* interjection appears
-            if pending and not llm_turn_required:
+            if tools_data.pending and not llm_turn_required:
                 interject_w = asyncio.create_task(
                     interject_queue.get(),
                     name="InterjectQueueGet",
@@ -2344,7 +2343,7 @@ async def _async_tool_use_loop_inner(
                     name="StopEventWait",
                 )
                 clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
-                for _t in pending:
+                for _t in tools_data.pending:
                     # Only listen for *new* clarification questions.
                     # If the task is already awaiting an answer,
                     # `waiting_for_clarification` will be True.
@@ -2356,7 +2355,7 @@ async def _async_tool_use_loop_inner(
                         w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
                         clar_waiters[w] = _t
                 waiters = (
-                    pending
+                    tools_data.pending
                     | set(clar_waiters)
                     | {cancel_waiter, interject_w, graceful_stop_waiter}
                 )
@@ -2471,7 +2470,7 @@ async def _async_tool_use_loop_inner(
                         task=task,
                         task_info=task_info,
                         consecutive_failures=consecutive_failures,
-                        pending_tasks=pending,
+                        pending_tasks=tools_data.pending,
                         outer_handle_container=outer_handle_container,
                         assistant_meta=assistant_meta,
                         clarification_channels=clarification_channels,
@@ -2483,14 +2482,14 @@ async def _async_tool_use_loop_inner(
                         needs_turn = True
 
                 # Other tools may still be running.
-                if pending:
+                if tools_data.pending:
                     if needs_turn:  # only when something new
                         llm_turn_required = True
                     continue  # jump to top-of-loop
 
             # ── B: wait for remaining tools before asking the LLM again,
             # unless the model already deserves a turn
-            if pending and not llm_turn_required:
+            if tools_data.pending and not llm_turn_required:
                 # Ensure placeholders exist for any pending calls before the next assistant turn
                 await _ensure_placeholders_for_pending(
                     content=(
@@ -2498,7 +2497,7 @@ async def _async_tool_use_loop_inner(
                         "to interact with this tool call while it is in progress."
                     ),
                     task_info=task_info,
-                    pending=pending,
+                    pending=tools_data.pending,
                     assistant_meta=assistant_meta,
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
@@ -2582,7 +2581,7 @@ async def _async_tool_use_loop_inner(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
 
-            for _task in list(pending):
+            for _task in list(tools_data.pending):
                 info = task_info[_task]
                 handle = info.get("handle")
                 ev = info.get("pause_event")
@@ -2671,7 +2670,7 @@ async def _async_tool_use_loop_inner(
                         )
                     if not _task.done():
                         _task.cancel()  # kill the waiter coroutine
-                    pending.discard(_task)
+                    tools_data.pending.discard(_task)
                     task_info.pop(_task, None)
                     return {"status": "stopped", "call_id": _call_id, **_kw}
 
@@ -2959,7 +2958,7 @@ async def _async_tool_use_loop_inner(
                     "to interact with this tool call while it is in progress."
                 ),
                 task_info=task_info,
-                pending=pending,
+                pending=tools_data.pending,
                 assistant_meta=assistant_meta,
                 client=client,
                 msg_dispatcher=_msg_dispatcher,
@@ -3004,7 +3003,7 @@ async def _async_tool_use_loop_inner(
                 )
 
                 # ➋ …but ALSO watch the tool tasks that were still pending
-                pending_snapshot = set(pending)
+                pending_snapshot = set(tools_data.pending)
 
                 done, _ = await asyncio.wait(
                     pending_snapshot | {llm_task, interject_w, cancel_waiter},
@@ -3038,7 +3037,7 @@ async def _async_tool_use_loop_inner(
                             task=task,
                             task_info=task_info,
                             consecutive_failures=consecutive_failures,
-                            pending_tasks=pending,
+                            pending_tasks=tools_data.pending,
                             outer_handle_container=outer_handle_container,
                             assistant_meta=assistant_meta,
                             clarification_channels=clarification_channels,
@@ -3334,7 +3333,7 @@ async def _async_tool_use_loop_inner(
                         if task_to_cancel and not task_to_cancel.done():
                             task_to_cancel.cancel()
                         if task_to_cancel:
-                            pending.discard(task_to_cancel)
+                            tools_data.pending.discard(task_to_cancel)
                             task_info.pop(task_to_cancel, None)
 
                         tool_msg = {
@@ -3682,7 +3681,7 @@ async def _async_tool_use_loop_inner(
                         # Scheduling dynamic helper call
 
                         t = asyncio.create_task(coro, name=f"ToolCall_{name}")
-                        pending.add(t)
+                        tools_data.pending.add(t)
                         task_info[t] = {
                             "name": name,
                             "call_id": call["id"],
@@ -3714,7 +3713,7 @@ async def _async_tool_use_loop_inner(
                             call_counts=call_counts,
                             norm_tools=tools_data.norm_tools,
                             task_info=task_info,
-                            pending=pending,
+                            pending=tools_data.pending,
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
@@ -3734,7 +3733,7 @@ async def _async_tool_use_loop_inner(
                         assistant_msg=msg,
                         content="Pending… tool call accepted. Working on it.",
                         task_info=task_info,
-                        pending=pending,
+                        pending=tools_data.pending,
                         assistant_meta=assistant_meta,
                         client=client,
                         msg_dispatcher=_msg_dispatcher,
@@ -3752,9 +3751,9 @@ async def _async_tool_use_loop_inner(
             #     flight; loop back to wait for them.
             #   • `pending` empty        → the model just produced a plain
             #     assistant message; nothing more to do – return it.
-            if pending:  # still running – stop them proactively, then finish
+            if tools_data.pending:  # still running – stop them proactively, then finish
                 try:
-                    for t in list(pending):
+                    for t in list(tools_data.pending):
                         info_t = task_info.get(t, {})
                         nested_handle = info_t.get("handle")
                         try:
@@ -3767,11 +3766,11 @@ async def _async_tool_use_loop_inner(
                             pass
                         if not t.done():
                             t.cancel()
-                    await asyncio.gather(*pending, return_exceptions=True)
+                    await asyncio.gather(*tools_data.pending, return_exceptions=True)
                 except Exception:
                     pass
                 finally:
-                    pending.clear()
+                    tools_data.pending.clear()
 
             # ── timeout guard (final turn) ──────────────────────────────────
             if timer.has_exceeded_time():
@@ -3845,9 +3844,9 @@ async def _async_tool_use_loop_inner(
             )
         except Exception:
             pass
-        for t in pending:
+        for t in tools_data.pending:
             t.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        await asyncio.gather(*tools_data.pending, return_exceptions=True)
         raise
     finally:
         try:
