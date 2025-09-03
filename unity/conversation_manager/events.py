@@ -256,6 +256,7 @@ class PhoneCallInitiatedEvent(Event):
         meet_id: str = None,
         voice_id: str = None,
         tts_provider: str = None,
+        outbound: bool = False,
         **kwargs,
     ):
         kwargs.pop("content", None)
@@ -265,6 +266,7 @@ class PhoneCallInitiatedEvent(Event):
         kwargs.pop("meet_id", None)
         kwargs.pop("voice_id", None)
         kwargs.pop("tts_provider", None)
+        kwargs.pop("outbound", None)
 
         self.purpose = purpose if purpose else "general"
         self.task_context = task_context
@@ -272,6 +274,7 @@ class PhoneCallInitiatedEvent(Event):
         self.meet_id = meet_id
         self.voice_id = voice_id
         self.tts_provider = tts_provider
+        self.outbound = outbound
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -284,6 +287,7 @@ class PhoneCallInitiatedEvent(Event):
                 "meet_id": self.meet_id,
                 "voice_id": self.voice_id,
                 "tts_provider": self.tts_provider,
+                "outbound": self.outbound,
             },
         )
         return base_dict

@@ -324,12 +324,12 @@ class CommsAgent:
                         self.task_context = new_event["payload"]["task_context"]
                         target_number = new_event["payload"]["target_number"]
                         self.meet_id = new_event["payload"]["meet_id"]
+                        outbound = str(new_event["payload"]["outbound"])
 
                         print("call_requested", self.assistant_number)
                         print("new_event", new_event)
                         if not self.start_local:
                             target_path = Path(__file__).parent.resolve() / "call.py"
-
                             self.call_proc = run_script(
                                 str(target_path),
                                 "dev",
@@ -342,6 +342,7 @@ class CommsAgent:
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
                                 self.meet_id if self.meet_id else "None",
+                                outbound,
                             )
                         else:
                             target_path = Path(__file__).parent.resolve() / "call.py"
@@ -353,6 +354,7 @@ class CommsAgent:
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
                                 self.meet_id if self.meet_id else "None",
+                                outbound,
                             )
                         ONGOING_CALL = True
 
@@ -825,7 +827,9 @@ class CommsAgent:
         Args:
             message (str): The message to send.
         """
-        return await _send_sms_message_via_number(self.current_user["user_number"], message)
+        return await _send_sms_message_via_number(
+            self.current_user["user_number"], message
+        )
 
     async def _send_email(self, subject: str, message: str, message_id: str = None):
         """
