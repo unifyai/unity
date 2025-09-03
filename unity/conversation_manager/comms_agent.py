@@ -288,20 +288,17 @@ class CommsAgent:
         return chat_history
 
     async def inactivity_check_for_meet(self):
-        # wait for the agent to be admitted into the meet
-        await asyncio.sleep(20)
-
         while True:
             await asyncio.sleep(10)  # Check every 10 seconds
             if self.meet_browser is None:
                 break  # meet call ended, exit the loop
             ret = await self.meet_browser.observe(
-                f"Is {self.assistant_name} the only participant in the meeting?",
+                f"Is {self.assistant_name} the only participant in the meeting? Ignoring screen share display and captions.",
                 bool,
             )
             print("ASSISTANT ONLY PARTICIPANT:", ret)
             if ret:
-                print("All participants left, shutting down agent...")
+                print("All participants left, shutting down agent and leaving meet...")
                 await self.publish(
                     {
                         "topic": self.user_number,
@@ -309,6 +306,22 @@ class CommsAgent:
                     },
                 )
                 break  # Exit the loop after shutdown
+
+    async def popup_check_for_meet(self):
+        while True:
+            await asyncio.sleep(1)
+            if self.meet_browser is None:
+                break
+            ret = await self.meet_browser.observe(
+                f"Are there any popups on the screen?",
+                bool,
+            )
+            print("POPUPS:", ret)
+            if ret:
+                print("Popups detected, closing popups...")
+                await self.meet_browser.act(
+                    "Close any popup on the screen, usually related to clicking 'OK' or 'Got it'.",
+                )
 
     async def track_active_speaker(self):
         """Track active speaker using Meet captions via screenshot-based observation.
@@ -323,43 +336,38 @@ class CommsAgent:
 
         while self.meet_browser:
             try:
-                # name = await self.meet_browser.observe(
-                #     (
-                #         "From the current Google Meet screen, read the live captions/subtitles. "
-                #         "If someone is currently speaking, return exactly their display name as plain text. "
-                #         "If no one is speaking or no caption is visible, return an empty string. "
-                #         "Do not include any extra words, punctuation, or quotes. Output must be a single line."
-                #     ),
-                #     str,
-                # )
-                # Parallel observation: detect active speaker via blue outline/label indicator
                 name = await self.meet_browser.observe(
                     (
-                        "From the current Google Meet screen, identify the participant visually marked as speaking "
-                        "(e.g., blue outline, speaker badge, or active-speaker indicator). "
-                        "If a participant is visually indicated as speaking, return exactly their display name as plain text. "
-                        "If no one is visually indicated as speaking, return an empty string. "
+                        "From the current Google Meet screen, read the live captions/subtitles. "
+                        "If someone is currently speaking, return exactly their display name as plain text. "
+                        "If no one is speaking or no caption is visible, return an empty string. "
                         "Do not include any extra words, punctuation, or quotes. Output must be a single line."
                     ),
                     str,
                 )
+                # Parallel observation: detect active speaker via blue outline/label indicator
+                # name = await self.meet_browser.observe(
+                #     (
+                #         "From the current Google Meet screen, identify the participant visually marked as speaking "
+                #         "(e.g., blue outline, speaker badge, or active-speaker indicator). "
+                #         "If a participant is visually indicated as speaking, return exactly their display name as plain text. "
+                #         "If no one is visually indicated as speaking, return an empty string. "
+                #         "Do not include any extra words, punctuation, or quotes. Output must be a single line."
+                #     ),
+                #     str,
+                # )
                 if isinstance(name, str):
                     name = name.strip().split("\n")[0]
-                # if name:
-                self.current_speaker = name
-                self.speaker_buffer.append((asyncio.get_event_loop().time(), name))
+                if name and name.strip().lower() not in (
+                    "you",
+                    self.assistant_name.lower(),
+                ):
+                    self.current_speaker = name
+                    self.speaker_buffer.append((asyncio.get_event_loop().time(), name))
                 print("\n\ncurrent speaker (captions)", name)
                 print("speaker buffer", self.speaker_buffer)
             except Exception:
                 print("\nTRACKING ACTIVE SPEAKER ERROR!\n")
-            # await asyncio.sleep(0.5)
-
-    def _nearest_speaker(self, t: float, window: float = 3.0):
-        for ts, name in reversed(self.speaker_buffer):
-            if t - ts <= window:
-                return name
-            break
-        return None
 
     async def listen_for_events(self):
         print("COLLECTING...")
@@ -434,15 +442,18 @@ class CommsAgent:
                                 self.assistant_name,
                                 max_attempts=3,
                             )
+
+                            # Check if agent has been admitted into the meet
                             while (
                                 await get_meet_join_state(self.meet_browser) != "joined"
                             ):
                                 await asyncio.sleep(0.5)
 
-                            asyncio.create_task(self.inactivity_check_for_meet())
                             self.meet_joined.set()
                             # start captions-based speaker tracking
                             asyncio.create_task(self.track_active_speaker())
+                            asyncio.create_task(self.inactivity_check_for_meet())
+                            asyncio.create_task(self.popup_check_for_meet())
 
                         continue
                     else:
@@ -1342,8 +1353,7 @@ class CommsAgent:
                 event["event"]["event_name"] == "PhoneUtteranceEvent"
                 and event["event"]["payload"].get("role") == "User"
             ):
-                now = asyncio.get_event_loop().time()
-                speaker = self._nearest_speaker(now)
+                speaker = self.speaker_buffer[-1][1] if self.speaker_buffer else None
                 print("\n\nuser speaker", speaker, "\n\n")
                 # if speaker:
                 #     event["event"]["payload"]["speaker"] = speaker
