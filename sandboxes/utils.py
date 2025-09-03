@@ -2980,6 +2980,83 @@ def parse_per_task_guidance(text: str) -> dict[int, str]:
 
 
 # --------------------------------------------------------------------------- #
+#  Unified LLM extraction: defaults + per-task rules (selector + params)       #
+# --------------------------------------------------------------------------- #
+
+
+class _SimOverrideParams(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Extractor notes")
+    steps: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    guidance: Optional[str] = None
+    one_shot: Optional[bool] = None
+
+
+class _SimOverrideSelector(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Selector notes")
+    by_task_id: Optional[int] = None
+    by_queue_index: Optional[int] = None
+    by_name_regex: Optional[str] = None
+    by_search_query: Optional[str] = None
+    final: Optional[bool] = None
+
+
+class _SimOverrideRule(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Rule notes")
+    selector: _SimOverrideSelector
+    params: _SimOverrideParams
+
+
+class _SimOverrides(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Global notes")
+    # core_text: original request with any simulation instructions removed
+    core_text: str
+    defaults: Optional[_SimOverrideParams] = None
+    rules: List[_SimOverrideRule] = Field(default_factory=list)
+
+
+def parse_simulation_overrides(text: str) -> _SimOverrides:
+    """LLM-only unified parser for defaults and per-task overrides.
+
+    Returns a structured payload that captures both defaults and a set of
+    per-task rules (selector + params). The LLM must:
+    - Map 'first/second/third/…/final' to 1-based by_queue_index (final → next
+      index after the last explicit ordinal); numeric ordinals (1st/2nd/…)
+      are also 1-based.
+    - Place timing/limits in duration_seconds/steps; place behavioral text in
+      guidance; do not duplicate the same instruction across both fields.
+    - Exclude non-instructions; do not paraphrase unrelated content.
+    - Produce core_text by removing sentences/clauses that describe simulation
+      controls (timeouts, steps, ordered timing for tasks), keeping only the
+      task request itself.
+    """
+    import unify as _unify
+
+    sys_msg = (
+        "You extract simulation overrides for starting a task/chain.\n"
+        "Return ONLY JSON matching the schema with fields in this object order: reasoning, core_text, defaults, rules.\n"
+        "Field guidance:\n"
+        "- Use 1-based by_queue_index for ordinal references (first=1, second=2, …).\n"
+        "- If guidance targets only the last task, set selector.final=true and omit by_queue_index.\n"
+        "- Use duration_seconds for timing; steps for step limits; guidance for behavioral text (e.g., what to say on progress).\n"
+        "- Exclude numeric timing directives from guidance.\n"
+        "- 'core_text' must be the original user request with simulation control sentences/clauses REMOVED (timeouts, steps, task timing).\n"
+        "- defaults params (when present) apply to all tasks unless overridden by a rule's params.\n"
+    )
+
+    judge = _unify.Unify(
+        "gpt-5@openai",
+        response_format=pydantic_response_format(_SimOverrides),
+        reasoning_effort="high",
+        service_tier="priority",
+    )
+    payload = _SimOverrides.model_validate_json(
+        judge.set_system_message(sys_msg).generate(text),
+    )
+    return payload
+
+
+# --------------------------------------------------------------------------- #
 #  Sandbox-only monkey patch for per-task simulation (TaskScheduler only)     #
 # --------------------------------------------------------------------------- #
 
