@@ -1606,7 +1606,13 @@ class _AsyncToolLoopLogger:
 
 
 class _TimeoutTimer:
-    def __init__(self, timeout: int, max_steps: int, raise_on_limit: bool, client):
+    def __init__(
+        self,
+        timeout: Optional[int],
+        max_steps: Optional[int],
+        raise_on_limit: bool,
+        client,
+    ):
         self._timeout = timeout
         self._client = client
         self._max_steps = max_steps
