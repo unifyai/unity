@@ -320,6 +320,7 @@ class CommsAgent:
             return
 
         await ensure_captions_enabled(self.meet_browser)
+        blue_speaker_buffer = deque(maxlen=50)
 
         while self.meet_browser:
             try:
@@ -330,16 +331,34 @@ class CommsAgent:
                     ),
                     str,
                 )
+                # Parallel observation: detect active speaker via blue outline/label indicator
+                blue_name = await self.meet_browser.observe(
+                    (
+                        "From the current Google Meet screen, identify the participant currently marked as speaking "
+                        "using the visual active speaker cue (e.g., blue outline or speaker badge). "
+                        "Return only the current speaker's display name (empty string if none)."
+                    ),
+                    str,
+                )
                 if isinstance(name, str):
                     name = name.strip().split("\n")[0]
+                if isinstance(blue_name, str):
+                    blue_name = blue_name.strip().split("\n")[0]
                 if name:
                     self.current_speaker = name
                     self.speaker_buffer.append((asyncio.get_event_loop().time(), name))
-                print("current speaker", name)
+                if blue_name:
+                    blue_speaker_buffer.append(
+                        (asyncio.get_event_loop().time(), blue_name),
+                    )
+                print("\n\ncurrent speaker (captions)", name)
                 print("speaker buffer", self.speaker_buffer)
+
+                print("\n\ncurrent speaker (visual)", blue_name)
+                print("blue speaker buffer", blue_speaker_buffer)
             except Exception:
-                ...
-            await asyncio.sleep(0.6)
+                print("\nTRACKING ACTIVE SPEAKER ERROR!\n")
+            # await asyncio.sleep(0.5)
 
     def _nearest_speaker(self, t: float, window: float = 3.0):
         for ts, name in reversed(self.speaker_buffer):
