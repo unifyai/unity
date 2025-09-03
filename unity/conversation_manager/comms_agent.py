@@ -33,6 +33,12 @@ from unity.conversation_manager.prompt_builders import (
     build_user_agent_prompt,
     build_action_prompt,
 )
+from unity.conversation_manager.utils import (
+    enter_name_with_retry,
+    get_meet_join_state,
+    join_meet_on_browser,
+    ensure_captions_enabled,
+)
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -312,11 +318,8 @@ class CommsAgent:
         """
         if not self.meet_browser:
             return
-        try:
-            await asyncio.sleep(5)
-            await self.meet_browser.act("Turn on captions")
-        except Exception:
-            ...
+
+        await ensure_captions_enabled(self.meet_browser)
 
         while self.meet_browser:
             try:
@@ -332,8 +335,8 @@ class CommsAgent:
                 if name:
                     self.current_speaker = name
                     self.speaker_buffer.append((asyncio.get_event_loop().time(), name))
-                    print("current speaker", name)
-                    print("speaker buffer", self.speaker_buffer)
+                print("current speaker", name)
+                print("speaker buffer", self.speaker_buffer)
             except Exception:
                 ...
             await asyncio.sleep(0.6)
@@ -355,11 +358,8 @@ class CommsAgent:
         """
         if not self.meet_browser:
             return
-        try:
-            await asyncio.sleep(5)
-            await self.meet_browser.act("Turn on captions")
-        except Exception:
-            ...
+
+        await ensure_captions_enabled(self.meet_browser)
 
         js_snippet = """
 (() => {
@@ -420,8 +420,8 @@ class CommsAgent:
                 if name:
                     self.current_speaker = name
                     self.speaker_buffer.append((asyncio.get_event_loop().time(), name))
-                    print("current speaker", name)
-                    print("speaker buffer", self.speaker_buffer)
+                print("current speaker", name)
+                print("speaker buffer", self.speaker_buffer)
             except Exception:
                 ...
             await asyncio.sleep(1)
@@ -493,40 +493,22 @@ class CommsAgent:
                             self.meet_browser.start()
 
                             # Join meet
-                            await self.meet_browser.act(
-                                f"Go to the page: https://meet.google.com/{self.meet_id}",
+                            await join_meet_on_browser(self.meet_browser, self.meet_id)
+                            await enter_name_with_retry(
+                                self.meet_browser,
+                                self.assistant_name,
+                                max_attempts=3,
                             )
-                            await asyncio.sleep(2)
-
-                            # Set agent mic
-                            await self.meet_browser.act(
-                                "Click on microphone default",
-                            )
-                            await asyncio.sleep(1)
-                            await self.meet_browser.act(
-                                "Select 'agent_sink.monitor'",
-                            )
-
-                            # Set user speaker
-                            await self.meet_browser.act(
-                                "Click on speaker default",
-                            )
-                            await asyncio.sleep(1)
-                            await self.meet_browser.act("Select 'meet_sink'")
-
-                            # Enter name and join
-                            await self.meet_browser.act(
-                                "Click 'your name' textbox",
-                            )
-                            await self.meet_browser.act(
-                                f"Input your name as {self.assistant_name} and press enter",
-                            )
+                            while (
+                                await get_meet_join_state(self.meet_browser) != "joined"
+                            ):
+                                await asyncio.sleep(0.5)
 
                             asyncio.create_task(self.inactivity_check_for_meet())
                             await asyncio.sleep(5)
                             self.meet_joined.set()
                             # start captions-based speaker tracking
-                            asyncio.create_task(self.track_active_speaker_dom())
+                            asyncio.create_task(self.track_active_speaker())
 
                         continue
                     else:
