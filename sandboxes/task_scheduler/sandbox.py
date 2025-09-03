@@ -56,6 +56,8 @@ from sandboxes.utils import (
     SimulationParams,
     SimulationSelector,
     parse_simulation_params_kv,
+    parse_per_task_durations,
+    parse_per_task_guidance,
     apply_per_task_simulation_patch,
 )
 
@@ -342,8 +344,13 @@ async def _dispatch_with_context(
         )
         eff_guidance = parsed.simulation_guidance
 
+        # Extract per-task/ordinal durations from the original raw request
+        per_task_durations = parse_per_task_durations(raw)
+        per_task_guidance = parse_per_task_guidance(raw)
+
         # Default to a 20s duration when no explicit steps or timeout were provided
-        if eff_steps is None and eff_timeout is None:
+        # and no per-task durations were detected.
+        if eff_steps is None and eff_timeout is None and not per_task_durations:
             eff_timeout = 20.0
 
         stripped_id = core_text.strip()
@@ -384,6 +391,15 @@ async def _dispatch_with_context(
             if eff_timeout is not None:
                 origin = "parsed" if parsed.timeout_seconds is not None else "default"
                 print(f"   ⏱️ Timeout ({origin}): {eff_timeout}s")
+            if per_task_durations:
+                # Present sorted by index for clarity
+                print("   📏 Per-task durations (queue index → seconds):")
+                for idx in sorted(per_task_durations):
+                    print(f"      #{idx} → {per_task_durations[idx]}s")
+            if per_task_guidance:
+                print("   🧭 Per-task guidance (queue index → guidance):")
+                for idx in sorted(per_task_guidance):
+                    print(f"      #{idx} → {per_task_guidance[idx]}")
             if eff_guidance:
                 print(f"   🧠 Guidance: {eff_guidance}")
             if eff_steps is None and eff_timeout is None and not eff_guidance:
@@ -391,11 +407,41 @@ async def _dispatch_with_context(
         except Exception:
             pass
 
+        # If the user provided explicit per-task durations, encode them as
+        # queue-index rules so each activation picks the correct duration.
+        # Merge per-index overrides (duration + guidance) into a single rule
+        idx_to_params: dict[int, SimulationParams] = {}
+        if per_task_durations:
+            for idx, secs in per_task_durations.items():
+                idx_to_params.setdefault(idx, SimulationParams()).duration_seconds = (
+                    float(secs)
+                )
+        if per_task_guidance:
+            for idx, g in per_task_guidance.items():
+                idx_to_params.setdefault(idx, SimulationParams()).guidance = g
+        if idx_to_params:
+            try:
+                for idx, params in idx_to_params.items():
+                    params.one_shot = True
+                    SIMULATION_PLANS.add_rule(
+                        SimulationSelector(by_queue_index=int(idx)),
+                        params,
+                        label="per-task overrides from start request",
+                    )
+            except Exception:
+                pass
+
         # Apply sandbox-only per-task simulation monkey-patch for the lifetime of this execute call
         per_call = SimulationParams(
             steps=eff_steps,
-            duration_seconds=eff_timeout,
-            guidance=eff_guidance,
+            # When explicit per-task durations exist, avoid setting a per-call duration.
+            duration_seconds=(None if idx_to_params else eff_timeout),
+            # When explicit per-task guidance exists, avoid setting a per-call guidance.
+            guidance=(
+                None
+                if any(getattr(p, "guidance", None) for p in idx_to_params.values())
+                else eff_guidance
+            ),
             one_shot=False,
         )
         _restore_patch = apply_per_task_simulation_patch(
