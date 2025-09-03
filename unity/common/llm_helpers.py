@@ -1219,22 +1219,6 @@ async def _process_completed_task(
     return True
 
 
-# helper: register a freshly-minted coroutine as a *temporary* tool
-def _register_tool(
-    key: str,
-    func_name: str,
-    doc: str,
-    fn: Callable,
-    dynamic_tools,
-) -> None:
-    # prefer the function's own docstring if it exists, else fall back
-    existing = inspect.getdoc(fn)
-    fn.__doc__ = existing.strip() if existing else doc
-    fn.__name__ = func_name[:64]
-    fn.__qualname__ = func_name[:64]
-    dynamic_tools[key.lstrip("_")] = fn
-
-
 # Helper: propagate a stop request to any nested SteerableToolHandle returned
 # by base tools. This ensures outer stop/cancel signals reach inner loops.
 async def _propagate_stop_to_nested_handles(
@@ -1792,6 +1776,20 @@ class DynamicToolFactory:
         self.dynamic_tools = {}
         self.tools_data = tools_data
 
+    # helper: register a freshly-minted coroutine as a *temporary* tool
+    def _register_tool(
+        self,
+        func_name: str,
+        doc: str,
+        fn: Callable,
+    ) -> None:
+        # prefer the function's own docstring if it exists, else fall back
+        existing = inspect.getdoc(fn)
+        fn.__doc__ = existing.strip() if existing else doc
+        fn.__name__ = func_name[:64]
+        fn.__qualname__ = func_name[:64]
+        self.dynamic_tools[func_name.lstrip("_")] = fn
+
     def _process_task(self, task: asyncio.Task):
         info = self.tools_data.info[task]
         handle = info.get("handle")
@@ -1859,12 +1857,10 @@ class DynamicToolFactory:
             async def _continue() -> Dict[str, str]:
                 return {"status": "continue", "call_id": _call_id}
 
-            _register_tool(
-                key=f"continue_{_fn_name}_{_safe_call_id}",
+            self._register_tool(
                 func_name=f"continue_{_fn_name}_{_safe_call_id}",
                 doc=_continue_doc,
                 fn=_continue,
-                dynamic_tools=self.dynamic_tools,
             )
 
         # ––– 2. stop helper –––––––––––––––––––––––––––––––––––––
@@ -1885,12 +1881,10 @@ class DynamicToolFactory:
             self.tools_data.info.pop(task, None)
             return {"status": "stopped", "call_id": _call_id, **_kw}
 
-        _register_tool(
-            key=f"stop_{_fn_name}_{_safe_call_id}",
+        self._register_tool(
             func_name=f"stop_{_fn_name}_{_safe_call_id}",
             doc=_stop_doc,
             fn=_stop,
-            dynamic_tools=self.dynamic_tools,
         )
         # Expose full argspec of handle.stop in the helper schema
         try:
@@ -1945,12 +1939,10 @@ class DynamicToolFactory:
                         "content": content,
                     }
 
-            _register_tool(
-                key=f"interject_{_fn_name}_{_safe_call_id}",
+            self._register_tool(
                 func_name=f"interject_{_fn_name}_{_safe_call_id}",
                 doc=_interject_doc,
                 fn=_interject,
-                dynamic_tools=self.dynamic_tools,
             )
 
         # ––– 4. clarification-answer helper (optional) ––––––––––
@@ -1967,12 +1959,10 @@ class DynamicToolFactory:
                     "answer": answer,
                 }
 
-            _register_tool(
-                key=f"clarify_{_fn_name}_{_safe_call_id}",
+            self._register_tool(
                 func_name=f"clarify_{_fn_name}_{_safe_call_id}",
                 doc=_clarify_doc,
                 fn=_clarify,
-                dynamic_tools=self.dynamic_tools,
             )
 
         # ––– 5. pause helper –––––––––––––––––––––––––––––––––––––––––––
@@ -2009,12 +1999,10 @@ class DynamicToolFactory:
                         ev.clear()
                     return {"status": "paused", "call_id": _call_id}
 
-            _register_tool(
-                key=f"pause_{_fn_name}_{_safe_call_id}",
+            self._register_tool(
                 func_name=f"pause_{_fn_name}_{_safe_call_id}",
                 doc=_pause_doc,
                 fn=_pause,
-                dynamic_tools=self.dynamic_tools,
             )
 
         # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
@@ -2047,12 +2035,10 @@ class DynamicToolFactory:
                         ev.set()
                     return {"status": "resumed", "call_id": _call_id}
 
-            _register_tool(
-                key=f"resume_{_fn_name}_{_safe_call_id}",
+            self._register_tool(
                 func_name=f"resume_{_fn_name}_{_safe_call_id}",
                 doc=_resume_doc,
                 fn=_resume,
-                dynamic_tools=self.dynamic_tools,
             )
 
         # 7.  expose *all* other public methods of the handle
@@ -2135,8 +2121,7 @@ class DynamicToolFactory:
                 # override the wrapper's signature to match the real method
                 _invoke_handle_method.__signature__ = inspect.signature(bound)
 
-                _register_tool(
-                    key=helper_key,
+                self._register_tool(
                     func_name=func_name,
                     doc=(
                         (
@@ -2150,7 +2135,6 @@ class DynamicToolFactory:
                         )
                     ),
                     fn=_invoke_handle_method,
-                    dynamic_tools=self.dynamic_tools,
                 )
                 # Mark write-only helpers so scheduling can acknowledge and avoid tracking
                 if meth_name in write_only_set:
