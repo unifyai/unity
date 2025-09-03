@@ -971,7 +971,7 @@ async def _process_completed_task(
     task: asyncio.Task,
     consecutive_failures: _AsyncToolLoopToolFailureTracker,
     # Loop & State related
-    tools_data,
+    tools_data: _ToolsData,
     outer_handle_container,
     assistant_meta,
     completed_results,
@@ -997,8 +997,8 @@ async def _process_completed_task(
         """True when *msg* is the very last entry in client.messages."""
         return bool(client.messages) and client.messages[-1] is msg
 
-    tools_data.pending_tasks.discard(task)
-    info: ToolCallMetadata = tools_data.task_info.pop(task)
+    tools_data.pending.discard(task)
+    info: ToolCallMetadata = tools_data.info.pop(task)
     name = info["name"]
     call_id = info["call_id"]
     fn = info["call_dict"]["function"]["name"]
@@ -3019,7 +3019,6 @@ async def _async_tool_use_loop_inner(
                     for task in done & pending_snapshot:
                         if await _process_completed_task(
                             task=task,
-                            task_info=tools_data.info,
                             consecutive_failures=consecutive_failures,
                             tools_data=tools_data,
                             outer_handle_container=outer_handle_container,
