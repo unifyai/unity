@@ -8,6 +8,7 @@ import secrets
 import string
 import traceback
 from enum import Enum
+from typing import TypedDict
 from pydantic import BaseModel
 import time
 from typing import (
@@ -1397,23 +1398,23 @@ async def _schedule_base_tool_call(
 
     t = asyncio.create_task(coro, name=f"ToolCall_{name}")
     tools_data.pending.add(t)
-    tools_data.info[t] = {
-        "name": name,
-        "call_id": call_id,
-        "assistant_msg": asst_msg,
-        "call_dict": call_dict,
-        "call_idx": call_idx,
-        "is_interjectable": sig_accepts_interject_q,
-        "interject_q": sub_q,
-        "chat_ctx": extra_kwargs.get("parent_chat_context"),
-        "clar_up_q": clar_up_q,
-        "clar_down_q": clar_down_q,
-        "pause_event": pause_ev,
+    tools_data.info[t] = ToolCallMetadata(
+        name=name,
+        call_id=call_id,
+        assistant_msg=asst_msg,
+        call_dict=call_dict,
+        call_idx=call_idx,
+        is_interjectable=sig_accepts_interject_q,
+        interject_queue=sub_q,
+        chat_context=extra_kwargs.get("parent_chat_context"),
+        clar_up_queue=clar_up_q,
+        clar_down_queue=clar_down_q,
+        pause_event=pause_ev,
         # Debug helpers for failure logging
-        "tool_schema": method_to_schema(fn, name),
-        "llm_arguments": allowed_call_args,
-        "raw_arguments_json": args_json,
-    }
+        tool_schema=method_to_schema(fn, name),
+        llm_arguments=allowed_call_args,
+        raw_arguments_json=args_json,
+    )
 
     # Increment hidden quota counter only once scheduling succeeds
     try:
@@ -1682,7 +1683,7 @@ class _ToolsData:
     def __init__(self, tools):
         self.norm_tools = _normalise_tools(tools)
         self.pending: Set[asyncio.Task] = set()
-        self.info: Dict[asyncio.Task, Dict[str, Any]] = {}
+        self.info: Dict[asyncio.Task, ToolCallMetadata] = {}
         # Per-tool hidden total-call quotas (counted per loop instance)
         self.call_counts: Dict[str, int] = {}
 
@@ -1767,6 +1768,23 @@ class _AsyncToolLoopToolFailureTracker:
 
     def reset_failures(self):
         self._consecutive_failures = 0
+
+
+class ToolCallMetadata(TypedDict):
+    name: str
+    call_id: str
+    call_dict: dict
+    call_idx: int
+    chat_context: str
+    assistant_msg: dict
+    is_interjectable: bool
+    interject_queue: Optional[asyncio.Queue[str]]
+    clar_up_queue: Optional[asyncio.Queue[str]]
+    clar_down_queue: Optional[asyncio.Queue[str]]
+    pause_event: Optional[asyncio.Event]
+    tool_schema: dict
+    llm_arguments: dict
+    raw_arguments_json: str
 
 
 async def _async_tool_use_loop_inner(
@@ -3673,26 +3691,27 @@ async def _async_tool_use_loop_inner(
 
                         t = asyncio.create_task(coro, name=f"ToolCall_{name}")
                         tools_data.pending.add(t)
-                        tools_data.info[t] = {
-                            "name": name,
-                            "call_id": call["id"],
-                            "assistant_msg": msg,
-                            "call_dict": call_dict,
-                            "call_idx": idx,
-                            "is_interjectable": False,
-                            "interject_q": None,
-                            "chat_ctx": extra_kwargs.get("parent_chat_context"),
-                            "clar_up_q": None,
-                            "clar_down_q": None,
-                            "pause_event": None,
+
+                        tools_data.info[t] = ToolCallMetadata(
+                            name=name,
+                            call_id=call["id"],
+                            assistant_msg=msg,
+                            call_dict=call_dict,
+                            call_idx=idx,
+                            is_interjectable=False,
+                            interject_queue=None,
+                            clar_up_queue=None,
+                            clar_down_queue=None,
+                            chat_context=extra_kwargs.get("parent_chat_context"),
+                            pause_event=None,
                             # Debug helpers for failure logging
-                            "tool_schema": method_to_schema(
+                            tool_schema=method_to_schema(
                                 fn,
                                 include_class_name=include_class_in_dynamic_tool_names,
                             ),
-                            "llm_arguments": allowed_call_args,
-                            "raw_arguments_json": call["function"]["arguments"],
-                        }
+                            llm_arguments=allowed_call_args,
+                            raw_arguments_json=call["function"]["arguments"],
+                        )
                     else:
                         # Use shared helper for base tools
                         await _schedule_base_tool_call(
