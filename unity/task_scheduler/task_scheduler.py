@@ -704,12 +704,258 @@ class TaskScheduler(BaseTaskScheduler):
                         # Do NOT detach followers from each other; keep chain links intact
                         detach=False,
                     )
+                    # Deliver any queued interjections for the newly active task
+                    try:
+                        pending_msgs = getattr(self, "_queued_interjections", {}).pop(
+                            self._current_task_id,
+                            [],
+                        )
+                        for _msg in pending_msgs:
+                            try:
+                                await self._current_handle.interject(_msg)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
             finally:
                 self._done_evt.set()
 
         # ----- Steerable surface proxies -----
         async def interject(self, message: str) -> None:  # type: ignore[override]
-            await self._current_handle.interject(message)
+            """Route interjections to specific tasks in the chain using an LLM router.
+
+            The router receives the full chain snapshot and the user's instruction and
+            returns structured routes of the form:
+
+                {"routes": [{"task_ids": [<int>, ...], "instruction": "..."}, ...]}
+
+            Interjections for the currently active task are delivered immediately.
+            Interjections for future tasks are queued and delivered when those
+            tasks become active.
+            """
+
+            # Fast path: empty/whitespace → no-op
+            if not (message or "").strip():
+                return
+
+            # Build a compact chain snapshot (head→tail) including ids and labels
+            def _safe_dump(value):
+                try:
+                    import json as _json  # local import
+
+                    return _json.dumps(value, default=str)
+                except Exception:
+                    return str(value)
+
+            def _get_row(tid: int):
+                try:
+                    rows = self._s._filter_tasks(
+                        filter=f"task_id == {int(tid)}",
+                        limit=1,
+                    )
+                    return rows[0] if rows else None
+                except Exception:
+                    return None
+
+            try:
+                cur_row = _get_row(self._current_task_id)
+                head_row = cur_row
+                while head_row is not None:
+                    prev_id = self._s._sched_prev((head_row.get("schedule") or {}))
+                    if prev_id is None:
+                        break
+                    prev_row = _get_row(prev_id)
+                    if prev_row is None:
+                        break
+                    head_row = prev_row
+
+                chain_rows: list[dict] = []
+                seen: set[int] = set()
+                node = head_row
+                while node is not None:
+                    tid = node.get("task_id")
+                    try:
+                        tid_int = int(tid)
+                    except Exception:
+                        tid_int = None  # type: ignore[assignment]
+                    if tid_int is not None and tid_int in seen:
+                        break
+                    if tid_int is not None:
+                        seen.add(tid_int)
+                    chain_rows.append(
+                        {
+                            k: v
+                            for k, v in node.items()
+                            if v is not None and not str(k).startswith("_")
+                        },
+                    )
+                    nxt_id = self._s._sched_next((node.get("schedule") or {}))
+                    if nxt_id is None:
+                        break
+                    node = _get_row(nxt_id)
+
+                if not chain_rows:
+                    # Fallback to best-effort non-terminal queue snapshot
+                    queue = self._s._get_task_queue(task_id=self._current_task_id)
+                    chain_rows = [
+                        {
+                            "task_id": getattr(t, "task_id", None),
+                            "name": getattr(t, "name", None),
+                            "description": getattr(t, "description", None),
+                            "status": getattr(t, "status", None),
+                            "schedule": getattr(t, "schedule", None),
+                        }
+                        for t in queue
+                    ]
+            except Exception:
+                chain_rows = []
+
+            # (debug logging removed)
+
+            # Create a dedicated router client with high reasoning and priority tier
+            try:
+                import unify as _unify  # local import to avoid top-level dependency
+
+                client = _unify.AsyncUnify(
+                    "gpt-5@openai",
+                    cache=True,
+                    traced=True,
+                    reasoning_effort="high",
+                    service_tier="priority",
+                )
+                schema_hint = '{\n  "type": "object",\n  "properties": {\n    "routes": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "task_ids": {"type": "array", "items": {"type": "integer"}},\n          "instruction": {"type": "string"}\n        },\n        "required": ["task_ids", "instruction"]\n      }\n    },\n    "directives": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "kind": {"type": "string", "enum": ["all", "first", "last", "by_description"]},\n          "description_match": {"type": "string"}\n        },\n        "required": ["kind"]\n      }\n    },\n    "uncovered_directives": {"type": "array", "items": {"type": "string"}}\n  },\n  "required": ["routes"]\n}'
+                sys = (
+                    "You route user interjections to one or more tasks in a chain.\n"
+                    "Return ONLY JSON matching the schema below. Never include commentary.\n"
+                    f"Schema:\n{schema_hint}\n"
+                    "Guidelines: Select task_ids explicitly from the provided chain.\n"
+                    "- If the instruction applies to all tasks, include all task_ids.\n"
+                    "- If it targets the last task, include ONLY the last task_id.\n"
+                    "- If it mentions a task by name/description, choose the best matching ids.\n"
+                    "- If nothing special is implied, target ONLY the current task.\n"
+                    "- You MUST include a separate route for each distinct directive present in the user's message; list these under 'directives' and set 'uncovered_directives' to [] when all are mapped.\n"
+                )
+                client.set_system_message(sys)
+                # Compute first/last ids for explicit metadata to aid deterministic mapping
+                try:
+                    first_task_id: int | None = None
+                    last_task_id: int | None = None
+                    if chain_rows:
+                        first_task_id = (
+                            int(chain_rows[0].get("task_id"))
+                            if chain_rows[0].get("task_id") is not None
+                            else None
+                        )
+                        last_task_id = (
+                            int(chain_rows[-1].get("task_id"))
+                            if chain_rows[-1].get("task_id") is not None
+                            else None
+                        )
+                except Exception:
+                    first_task_id = None
+                    last_task_id = None
+                user = (
+                    "Chain (head→tail):\n"
+                    + _safe_dump(chain_rows)
+                    + "\nMetadata:\n"
+                    + f"first_task_id: {first_task_id}\n"
+                    + f"last_task_id: {last_task_id}\n"
+                    + "current_task_id: "
+                    + str(self._current_task_id)
+                    + "\nInterjection:"
+                    + f"\n{(message or '').strip()}"
+                )
+                raw = await client.generate(user)
+            except Exception:
+                raw = ""
+
+            # Parse structured routes; fall back to current-only on failure
+            try:
+                import json as _json
+
+                data = _json.loads(raw)
+                # (debug logging removed)
+                routes = data.get("routes") if isinstance(data, dict) else None
+                if not isinstance(routes, list):
+                    raise ValueError("no routes")
+
+                # If the model indicates missing coverage, request a corrected set in a second pass.
+                try:
+                    uncovered = data.get("uncovered_directives") or []
+                except Exception:
+                    uncovered = []
+                if isinstance(uncovered, list) and uncovered:
+                    try:
+                        client2 = _unify.AsyncUnify(
+                            "gpt-5@openai",
+                            cache=True,
+                            traced=True,
+                            reasoning_effort="high",
+                            service_tier="priority",
+                        )
+                        client2.set_system_message(
+                            "You are correcting a routing result to ensure ALL directives are covered.\n"
+                            "Return ONLY JSON with the 'routes' field per the same schema as before; do not include commentary.\n",
+                        )
+                        user2 = (
+                            "Original chain (head→tail):\n"
+                            + _safe_dump(chain_rows)
+                            + "\nMetadata:\n"
+                            + f"first_task_id: {first_task_id}\n"
+                            + f"last_task_id: {last_task_id}\n"
+                            + f"current_task_id: {self._current_task_id}\n"
+                            + "Original interjection:\n"
+                            + (message or "").strip()
+                            + "\nPreviously returned routes:\n"
+                            + _safe_dump(routes)
+                            + "\nUncovered directives to cover now:\n"
+                            + _safe_dump(uncovered)
+                        )
+                        raw2 = await client2.generate(user2)
+                        data2 = _json.loads(raw2)
+                        routes2 = (
+                            data2.get("routes") if isinstance(data2, dict) else None
+                        )
+                        if isinstance(routes2, list) and routes2:
+                            routes = routes2
+                    except Exception:
+                        pass
+
+                # Ensure pending registry exists
+                if not hasattr(self, "_queued_interjections"):
+                    self._queued_interjections = {}
+
+                # Build a set of known ids for safety
+                known_ids = {
+                    int(r.get("task_id"))
+                    for r in chain_rows
+                    if r.get("task_id") is not None
+                }
+                # (debug logging removed)
+
+                for route in routes:
+                    try:
+                        task_ids = [int(t) for t in route.get("task_ids", [])]
+                        instr = str(route.get("instruction", "")).strip()
+                    except Exception:
+                        continue
+                    if not instr:
+                        continue
+                    for tid in task_ids:
+                        if tid not in known_ids:
+                            continue
+                        if tid == self._current_task_id:
+                            try:
+                                await self._current_handle.interject(instr)
+                            except Exception:
+                                pass
+                        else:
+                            self._queued_interjections.setdefault(tid, []).append(instr)
+                # (debug logging removed)
+                return
+            except Exception:
+                # Fallback: deliver to current task only
+                await self._current_handle.interject(message)
 
         def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
             try:
