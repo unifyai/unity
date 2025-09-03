@@ -1976,7 +1976,6 @@ async def _async_tool_use_loop_inner(
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data = _ToolsData(tools)
     consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
-    task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
     clarification_channels: Dict[
         str,
         Tuple[asyncio.Queue[str], asyncio.Queue[str]],
@@ -1986,7 +1985,7 @@ async def _async_tool_use_loop_inner(
     step_index: int = 0  # per assistant turn
 
     def _active_count(t_name: str) -> int:
-        return sum(1 for _t, _inf in task_info.items() if _inf["name"] == t_name)
+        return sum(1 for _t, _inf in tools_data.info.items() if _inf["name"] == t_name)
 
     def _can_offer_tool(t_name: str) -> bool:
         lim = tools_data.norm_tools[t_name].max_concurrent
@@ -2007,7 +2006,7 @@ async def _async_tool_use_loop_inner(
     try:
         _self_task = asyncio.current_task()
         if _self_task is not None:
-            setattr(_self_task, "task_info", task_info)  # type: ignore[attr-defined]
+            setattr(_self_task, "task_info", tools_data.info)  # type: ignore[attr-defined]
     except Exception:
         pass
 
@@ -2035,7 +2034,7 @@ async def _async_tool_use_loop_inner(
                     completed_results=completed_results,
                     parent_chat_context=parent_chat_context,
                     propagate_chat_context=propagate_chat_context,
-                    task_info=task_info,
+                    task_info=tools_data.info,
                     assistant_meta=assistant_meta,
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
@@ -2061,7 +2060,7 @@ async def _async_tool_use_loop_inner(
           • append a short assistant notice
         """
         for t in list(tools_data.pending):
-            h = task_info.get(t, {}).get("handle")
+            h = tools_data.info.get(t, {}).get("handle")
             try:
                 if h is not None and hasattr(h, "stop"):
                     await _maybe_await(h.stop())
@@ -2134,7 +2133,7 @@ async def _async_tool_use_loop_inner(
                     for t in done & tools_data.pending:
                         await _process_completed_task(
                             task=t,
-                            task_info=task_info,
+                            task_info=tools_data.info,
                             consecutive_failures=consecutive_failures,
                             pending_tasks=tools_data.pending,
                             outer_handle_container=outer_handle_container,
@@ -2149,7 +2148,7 @@ async def _async_tool_use_loop_inner(
                         # Forward stop to any nested handles before aborting
                         try:
                             _stop_forwarded_once = await _propagate_stop_once(
-                                task_info,
+                                tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop cancelled",
                             )
@@ -2159,7 +2158,7 @@ async def _async_tool_use_loop_inner(
                     if stop_event.is_set() and persist:
                         try:
                             _stop_forwarded_once = await _propagate_stop_once(
-                                task_info,
+                                tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop stopped",
                             )
@@ -2196,7 +2195,7 @@ async def _async_tool_use_loop_inner(
                     if cancel_event.is_set():
                         try:
                             _stop_forwarded_once = await _propagate_stop_once(
-                                task_info,
+                                tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop cancelled",
                             )
@@ -2206,7 +2205,7 @@ async def _async_tool_use_loop_inner(
                     if stop_event.is_set() and persist:
                         try:
                             _stop_forwarded_once = await _propagate_stop_once(
-                                task_info,
+                                tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop stopped",
                             )
@@ -2248,7 +2247,7 @@ async def _async_tool_use_loop_inner(
                             completed_results=completed_results,
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
-                            task_info=task_info,
+                            task_info=tools_data.info,
                             assistant_meta=assistant_meta,
                             client=client,
                             msg_dispatcher=_msg_dispatcher,
@@ -2347,10 +2346,10 @@ async def _async_tool_use_loop_inner(
                     # Only listen for *new* clarification questions.
                     # If the task is already awaiting an answer,
                     # `waiting_for_clarification` will be True.
-                    if task_info[_t].get("waiting_for_clarification"):
+                    if tools_data.info[_t].get("waiting_for_clarification"):
                         continue
 
-                    cuq = task_info[_t].get("clar_up_q")
+                    cuq = tools_data.info[_t].get("clar_up_q")
                     if cuq is not None:
                         w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
                         clar_waiters[w] = _t
@@ -2405,7 +2404,7 @@ async def _async_tool_use_loop_inner(
                 if cancel_waiter in done:
                     try:
                         _stop_forwarded_once = await _propagate_stop_once(
-                            task_info,
+                            tools_data.info,
                             _stop_forwarded_once,
                             "outer-loop cancelled",
                         )
@@ -2415,7 +2414,7 @@ async def _async_tool_use_loop_inner(
                 if graceful_stop_waiter in done and persist:
                     try:
                         _stop_forwarded_once = await _propagate_stop_once(
-                            task_info,
+                            tools_data.info,
                             _stop_forwarded_once,
                             "outer-loop stopped",
                         )
@@ -2428,13 +2427,13 @@ async def _async_tool_use_loop_inner(
                     for cw in done & clar_waiters.keys():
                         question = cw.result()  # the text from the child
                         src_task = clar_waiters[cw]
-                        call_id = task_info[src_task]["call_id"]
+                        call_id = tools_data.info[src_task]["call_id"]
 
                         # 1️⃣ mark the task as waiting
-                        task_info[src_task]["waiting_for_clarification"] = True
+                        tools_data.info[src_task]["waiting_for_clarification"] = True
 
                         # 2️⃣ REUSE the existing placeholder if we already inserted one
-                        ph = task_info[src_task].get("tool_reply_msg")
+                        ph = tools_data.info[src_task].get("tool_reply_msg")
                         if ph is None:
                             # no placeholder yet → create one exactly once
                             ph = {
@@ -2445,12 +2444,12 @@ async def _async_tool_use_loop_inner(
                             }
                             await _insert_after_assistant(
                                 assistant_meta,
-                                task_info[src_task]["assistant_msg"],
+                                tools_data.info[src_task]["assistant_msg"],
                                 ph,
                                 client,
                                 _msg_dispatcher,
                             )
-                            task_info[src_task]["tool_reply_msg"] = ph
+                            tools_data.info[src_task]["tool_reply_msg"] = ph
 
                         # 3️⃣ turn (or update) the placeholder into the request
                         ph["name"] = f"clarification_request_{call_id}"
@@ -2468,7 +2467,7 @@ async def _async_tool_use_loop_inner(
                 for task in done:  # finished tool(s)
                     if await _process_completed_task(
                         task=task,
-                        task_info=task_info,
+                        task_info=tools_data.info,
                         consecutive_failures=consecutive_failures,
                         pending_tasks=tools_data.pending,
                         outer_handle_container=outer_handle_container,
@@ -2496,7 +2495,7 @@ async def _async_tool_use_loop_inner(
                         "Still running… you can use any of the available helper tools "
                         "to interact with this tool call while it is in progress."
                     ),
-                    task_info=task_info,
+                    task_info=tools_data.info,
                     pending=tools_data.pending,
                     assistant_meta=assistant_meta,
                     client=client,
@@ -2582,7 +2581,7 @@ async def _async_tool_use_loop_inner(
                     )
 
             for _task in list(tools_data.pending):
-                info = task_info[_task]
+                info = tools_data.info[_task]
                 handle = info.get("handle")
                 ev = info.get("pause_event")
 
@@ -2671,7 +2670,7 @@ async def _async_tool_use_loop_inner(
                     if not _task.done():
                         _task.cancel()  # kill the waiter coroutine
                     tools_data.pending.discard(_task)
-                    task_info.pop(_task, None)
+                    tools_data.info.pop(_task, None)
                     return {"status": "stopped", "call_id": _call_id, **_kw}
 
                 _register_tool(
@@ -2957,7 +2956,7 @@ async def _async_tool_use_loop_inner(
                     "Still running… you can use any of the available helper tools "
                     "to interact with this tool call while it is in progress."
                 ),
-                task_info=task_info,
+                task_info=tools_data.info,
                 pending=tools_data.pending,
                 assistant_meta=assistant_meta,
                 client=client,
@@ -3035,7 +3034,7 @@ async def _async_tool_use_loop_inner(
                     for task in done & pending_snapshot:
                         if await _process_completed_task(
                             task=task,
-                            task_info=task_info,
+                            task_info=tools_data.info,
                             consecutive_failures=consecutive_failures,
                             pending_tasks=tools_data.pending,
                             outer_handle_container=outer_handle_container,
@@ -3211,22 +3210,26 @@ async def _async_tool_use_loop_inner(
                         tgt_task = next(
                             (
                                 t
-                                for t, inf in task_info.items()
+                                for t, inf in tools_data.info.items()
                                 if str(inf.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
                         )
 
-                        orig_fn = task_info[tgt_task]["name"] if tgt_task else "unknown"
+                        orig_fn = (
+                            tools_data.info[tgt_task]["name"] if tgt_task else "unknown"
+                        )
                         arg_json = (
-                            task_info[tgt_task]["call_dict"]["function"]["arguments"]
+                            tools_data.info[tgt_task]["call_dict"]["function"][
+                                "arguments"
+                            ]
                             if tgt_task
                             else "{}"
                         )
                         pretty_name = f"continue {orig_fn}({arg_json})"
 
                         if tgt_task:  # still running → insert generated placeholder now
-                            info = task_info[tgt_task]
+                            info = tools_data.info[tgt_task]
                             name = info["name"]
                             arg_json = info["call_dict"]["function"]["arguments"]
                             tool_reply_msg = {
@@ -3291,19 +3294,19 @@ async def _async_tool_use_loop_inner(
                         task_to_cancel = next(
                             (
                                 t
-                                for t, info in task_info.items()
+                                for t, info in tools_data.info.items()
                                 if str(info.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
                         )
 
                         orig_fn = (
-                            task_info[task_to_cancel]["name"]
+                            tools_data.info[task_to_cancel]["name"]
                             if task_to_cancel
                             else "unknown"
                         )
                         arg_json = (
-                            task_info[task_to_cancel]["call_dict"]["function"][
+                            tools_data.info[task_to_cancel]["call_dict"]["function"][
                                 "arguments"
                             ]
                             if task_to_cancel
@@ -3319,7 +3322,9 @@ async def _async_tool_use_loop_inner(
 
                         # ── gracefully shut down any *nested* async-tool loop first ──────
                         if task_to_cancel:
-                            nested_handle = task_info[task_to_cancel].get("handle")
+                            nested_handle = tools_data.info[task_to_cancel].get(
+                                "handle",
+                            )
                             if nested_handle is not None:
                                 # public API call – propagates cancellation downwards
                                 await _forward_handle_call(
@@ -3334,7 +3339,7 @@ async def _async_tool_use_loop_inner(
                             task_to_cancel.cancel()
                         if task_to_cancel:
                             tools_data.pending.discard(task_to_cancel)
-                            task_info.pop(task_to_cancel, None)
+                            tools_data.info.pop(task_to_cancel, None)
 
                         tool_msg = {
                             "role": "tool",
@@ -3362,14 +3367,18 @@ async def _async_tool_use_loop_inner(
                         tgt_task = next(
                             (
                                 t
-                                for t, info in task_info.items()
+                                for t, info in tools_data.info.items()
                                 if call_id_suffix in info["call_id"]
                             ),
                             None,
                         )
-                        orig_fn = task_info[tgt_task]["name"] if tgt_task else "unknown"
+                        orig_fn = (
+                            tools_data.info[tgt_task]["name"] if tgt_task else "unknown"
+                        )
                         arg_json = (
-                            task_info[tgt_task]["call_dict"]["function"]["arguments"]
+                            tools_data.info[tgt_task]["call_dict"]["function"][
+                                "arguments"
+                            ]
                             if tgt_task
                             else "{}"
                         )
@@ -3382,8 +3391,8 @@ async def _async_tool_use_loop_inner(
                             payload = {}
 
                         if tgt_task:
-                            h = task_info[tgt_task].get("handle")
-                            ev = task_info[tgt_task].get("pause_event")
+                            h = tools_data.info[tgt_task].get("handle")
+                            ev = tools_data.info[tgt_task].get("pause_event")
                             if h is not None and hasattr(h, "pause"):
                                 await _forward_handle_call(h, "pause", payload)
                             elif ev is not None:
@@ -3412,14 +3421,18 @@ async def _async_tool_use_loop_inner(
                         tgt_task = next(
                             (
                                 t
-                                for t, info in task_info.items()
+                                for t, info in tools_data.info.items()
                                 if call_id_suffix in info["call_id"]
                             ),
                             None,
                         )
-                        orig_fn = task_info[tgt_task]["name"] if tgt_task else "unknown"
+                        orig_fn = (
+                            tools_data.info[tgt_task]["name"] if tgt_task else "unknown"
+                        )
                         arg_json = (
-                            task_info[tgt_task]["call_dict"]["function"]["arguments"]
+                            tools_data.info[tgt_task]["call_dict"]["function"][
+                                "arguments"
+                            ]
                             if tgt_task
                             else "{}"
                         )
@@ -3432,8 +3445,8 @@ async def _async_tool_use_loop_inner(
                             payload = {}
 
                         if tgt_task:
-                            h = task_info[tgt_task].get("handle")
-                            ev = task_info[tgt_task].get("pause_event")
+                            h = tools_data.info[tgt_task].get("handle")
+                            ev = tools_data.info[tgt_task].get("pause_event")
                             if h is not None and hasattr(h, "resume"):
                                 await _forward_handle_call(h, "resume", payload)
                             elif ev is not None:
@@ -3463,7 +3476,7 @@ async def _async_tool_use_loop_inner(
                         tgt_task = next(  # ← NEW
                             (
                                 t
-                                for t, inf in task_info.items()
+                                for t, inf in tools_data.info.items()
                                 if str(inf.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
@@ -3483,7 +3496,7 @@ async def _async_tool_use_loop_inner(
                                 ans,
                             )  # down-queue
                             # ✔️ the tool is un-blocked – start watching it again
-                            for _t, _inf in task_info.items():
+                            for _t, _inf in tools_data.info.items():
                                 if str(_inf.get("call_id", "")).endswith(
                                     call_id_suffix,
                                 ):
@@ -3506,7 +3519,9 @@ async def _async_tool_use_loop_inner(
                             _msg_dispatcher,
                         )
                         if tgt_task is not None:
-                            task_info[tgt_task]["clarify_placeholder"] = tool_reply_msg
+                            tools_data.info[tgt_task][
+                                "clarify_placeholder"
+                            ] = tool_reply_msg
                         continue
 
                     if name.startswith("interject_"):
@@ -3527,22 +3542,22 @@ async def _async_tool_use_loop_inner(
                         tgt_task = next(
                             (
                                 t
-                                for t, inf in task_info.items()
+                                for t, inf in tools_data.info.items()
                                 if str(inf.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
                         )
 
                         pretty_name = (
-                            f"interject {task_info[tgt_task]['name']}({new_text})"
+                            f"interject {tools_data.info[tgt_task]['name']}({new_text})"
                             if tgt_task
                             else name
                         )
 
                         # ― push guidance onto the private queue or forward to handle with full kwargs -------------
                         if tgt_task:
-                            iq = task_info[tgt_task]["interject_q"]
-                            h = task_info[tgt_task].get("handle")
+                            iq = tools_data.info[tgt_task]["interject_q"]
+                            h = tools_data.info[tgt_task].get("handle")
 
                             if iq is not None:
                                 await iq.put(new_text)
@@ -3682,7 +3697,7 @@ async def _async_tool_use_loop_inner(
 
                         t = asyncio.create_task(coro, name=f"ToolCall_{name}")
                         tools_data.pending.add(t)
-                        task_info[t] = {
+                        tools_data.info[t] = {
                             "name": name,
                             "call_id": call["id"],
                             "assistant_msg": msg,
@@ -3712,7 +3727,7 @@ async def _async_tool_use_loop_inner(
                             call_idx=idx,
                             call_counts=call_counts,
                             norm_tools=tools_data.norm_tools,
-                            task_info=task_info,
+                            task_info=tools_data.info,
                             pending=tools_data.pending,
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
@@ -3732,7 +3747,7 @@ async def _async_tool_use_loop_inner(
                     await _ensure_placeholders_for_pending(
                         assistant_msg=msg,
                         content="Pending… tool call accepted. Working on it.",
-                        task_info=task_info,
+                        task_info=tools_data.info,
                         pending=tools_data.pending,
                         assistant_meta=assistant_meta,
                         client=client,
@@ -3754,7 +3769,7 @@ async def _async_tool_use_loop_inner(
             if tools_data.pending:  # still running – stop them proactively, then finish
                 try:
                     for t in list(tools_data.pending):
-                        info_t = task_info.get(t, {})
+                        info_t = tools_data.info.get(t, {})
                         nested_handle = info_t.get("handle")
                         try:
                             if nested_handle is not None and hasattr(
@@ -3838,7 +3853,7 @@ async def _async_tool_use_loop_inner(
         # semantics for upstream callers.
         try:
             _stop_forwarded_once = await _propagate_stop_once(
-                task_info,
+                tools_data.info,
                 _stop_forwarded_once,
                 "outer-loop cancelled",
             )
