@@ -1035,8 +1035,8 @@ async def _process_completed_task(
             if hasattr(raw, "interject"):
                 info["is_interjectable"] = True
 
-            h_up_q = getattr(raw, "clarification_up_q", info.get("clar_up_q"))
-            h_down_q = getattr(raw, "clarification_down_q", info.get("clar_down_q"))
+            h_up_q = getattr(raw, "clarification_up_q", info.get("clar_up_queue"))
+            h_down_q = getattr(raw, "clarification_down_q", info.get("clar_down_queue"))
 
             if (h_up_q is not None) ^ (h_down_q is not None):
                 raise AttributeError(
@@ -2589,12 +2589,12 @@ async def _async_tool_use_loop_inner(
                     h_up_q = getattr(
                         handle,
                         "clarification_up_q",
-                        info.get("clar_up_q"),
+                        info.get("clar_up_queue"),
                     )
                     h_dn_q = getattr(
                         handle,
                         "clarification_down_q",
-                        info.get("clar_down_q"),
+                        info.get("clar_down_queue"),
                     )
 
                     if (h_up_q is not None) ^ (h_dn_q is not None):
@@ -2604,7 +2604,7 @@ async def _async_tool_use_loop_inner(
                         )
 
                     # update bookkeeping & channel map
-                    prev_up_q = info.get("clar_up_q")
+                    prev_up_q = info.get("clar_up_queue")
                     if h_up_q is not prev_up_q:
                         # remove old mapping if any
                         clarification_channels.pop(info["call_id"], None)
@@ -2721,7 +2721,7 @@ async def _async_tool_use_loop_inner(
 
                         async def _interject(content: str) -> Dict[str, str]:
                             # regular tool: push onto its private queue
-                            await info["interject_q"].put(content)
+                            await info["interject_queue"].put(content)
                             return {
                                 "status": "interjected",
                                 "call_id": _call_id,
@@ -2737,7 +2737,7 @@ async def _async_tool_use_loop_inner(
                     )
 
                 # ––– 4. clarification-answer helper (optional) ––––––––––
-                if info.get("clar_up_q") is not None:
+                if info.get("clar_up_queue") is not None:
                     _clarify_doc = (
                         f"Provide an answer to the clarification which was requested by the (currently pending) tool "
                         f"{_fn_name}({_arg_repr}). Takes a single argument `answer`."
@@ -3550,7 +3550,7 @@ async def _async_tool_use_loop_inner(
 
                         # ― push guidance onto the private queue or forward to handle with full kwargs -------------
                         if tgt_task:
-                            iq = tools_data.info[tgt_task]["interject_q"]
+                            iq = tools_data.info[tgt_task]["interject_queue"]
                             h = tools_data.info[tgt_task].get("handle")
 
                             if iq is not None:
