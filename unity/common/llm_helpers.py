@@ -3114,27 +3114,6 @@ async def _async_tool_use_loop_inner(
             # one full assistant turn completed
             step_index += 1
 
-            # ── De-duplicate tool calls (optional) ────────────────────────
-            if prune_tool_duplicates and msg.get("tool_calls"):
-                seen: Set[tuple[str, str]] = set()
-                unique_calls: list = []
-                for call in msg["tool_calls"]:
-                    sig = (call["function"]["name"], call["function"]["arguments"])
-                    if sig not in seen:
-                        seen.add(sig)
-                        unique_calls.append(call)
-                if len(unique_calls) != len(msg["tool_calls"]):
-                    # mutate in-place so history never contains duplicates
-                    msg["tool_calls"] = unique_calls
-
-                # After deduplication, prune any calls exceeding hidden quotas
-                _prune_over_quota_tool_calls(msg, norm_tools, call_counts)
-
-            # Always ensure over-quota tool calls are removed regardless of
-            # deduplication settings, before any scheduling occurs.
-            if msg.get("tool_calls"):
-                _prune_over_quota_tool_calls(msg, norm_tools, call_counts)
-
             # ── E.  Launch any new tool calls  ──────────────────────────────
             # NOTE: The model returned `tool_calls`.  For *each* call we:
             #   1. JSON-parse the arguments once (costly in Python – do it
@@ -3151,8 +3130,22 @@ async def _async_tool_use_loop_inner(
             # Finally we `continue` so control jumps back to *branch A*
             # where we wait for the **first** task / cancel / interjection.
             if msg["tool_calls"]:
+                # ── De-duplicate tool calls (optional) ────────────────────────
+                if prune_tool_duplicates:
+                    seen: Set[tuple[str, str]] = set()
+                    unique_calls: list = []
+                    for call in msg["tool_calls"]:
+                        sig = (call["function"]["name"], call["function"]["arguments"])
+                        if sig not in seen:
+                            seen.add(sig)
+                            unique_calls.append(call)
+                    if len(unique_calls) != len(msg["tool_calls"]):
+                        # mutate in-place so history never contains duplicates
+                        msg["tool_calls"] = unique_calls
 
-                pass  # removed: original_tool_calls collector no longer used
+                # Always ensure over-quota tool calls are removed regardless of
+                # deduplication settings, before any scheduling occurs.
+                _prune_over_quota_tool_calls(msg, norm_tools, call_counts)
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
