@@ -256,3 +256,107 @@ def dispatch_agent(agent_name: str):
         print(f"Failed to dispatch agent. Status: {response.status_code}")
         return False
     return True
+
+
+# google meet helpers
+async def join_meet_on_browser(meet_browser, meet_id: str):
+    await meet_browser.act(
+        f"Go to the page: https://meet.google.com/{meet_id}",
+    )
+    await asyncio.sleep(2)
+
+    # Set agent mic
+    await meet_browser.act(
+        "Click on microphone default",
+    )
+    await asyncio.sleep(1)
+    await meet_browser.act(
+        "Select 'agent_sink.monitor'",
+    )
+
+    # Set user speaker
+    await meet_browser.act(
+        "Click on speaker default",
+    )
+    await asyncio.sleep(1)
+    await meet_browser.act("Select 'meet_sink'")
+
+    # Enter name and join
+    await meet_browser.act(
+        "Click 'your name' textbox",
+    )
+
+
+async def get_meet_join_state(meet_browser) -> str:
+    """Use observe to determine Meet state: 'asking' (pre-join) or 'joined'."""
+    try:
+        state = await meet_browser.observe(
+            (
+                "In the current Google Meet UI, are we inside the meeting (joined) or still on the pre-join screen asking to join, or name is not filled and join button is not yet active? "
+                "Return exactly one word: 'joined' if inside the call, or 'asking' if on the pre-join screen, or 'filling' if name is not filled and join button is not yet active."
+            ),
+            str,
+        )
+        if isinstance(state, str):
+            s = state.strip().lower()
+            if s in ("joined", "asking", "filling"):
+                return s
+    except Exception:
+        ...
+    return "filling"
+
+
+async def enter_name_with_retry(
+    meet_browser,
+    assistant_name: str,
+    max_attempts: int = 3,
+) -> bool:
+    """Enter name and verify via observe-only whether we've joined or still asking."""
+    if not meet_browser:
+        return False
+
+    for _ in range(max_attempts):
+        try:
+            await meet_browser.act(
+                f"Input your name as {assistant_name} and press enter",
+            )
+            await asyncio.sleep(0.5)
+
+            # Observe-only join state check
+            try:
+                state = await get_meet_join_state(meet_browser)
+                print("STATE:", state)
+                if state in ("joined", "asking"):
+                    return True
+            except Exception:
+                ...
+        except Exception:
+            ...
+        await asyncio.sleep(0.8)
+    return False
+
+
+async def _is_captions_enabled(meet_browser) -> bool:
+    try:
+        status = await meet_browser.observe(
+            (
+                "In the current Google Meet UI, are live captions turned on? "
+                "Return only true or false."
+            ),
+            bool,
+        )
+        return bool(status)
+    except Exception:
+        return False
+
+
+async def ensure_captions_enabled(meet_browser, max_attempts: int = 5):
+    for _ in range(max_attempts):
+        if await _is_captions_enabled(meet_browser):
+            return True
+        try:
+            await meet_browser.act("Turn on captions")
+        except Exception:
+            ...
+        await asyncio.sleep(0.6)
+    return await _is_captions_enabled(meet_browser)
