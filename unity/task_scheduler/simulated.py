@@ -149,7 +149,12 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             tools[self.pause.__name__] = self.pause
         return tools
 
-    async def ask(self, question: str) -> "SteerableToolHandle":
+    async def ask(
+        self,
+        question: str,
+        *,
+        _return_reasoning_steps: bool = False,
+    ) -> "SteerableToolHandle":
         q_msg = (
             f"Your only task is to simulate an answer to the following question: {question}\n\n"
             "However, there is a also ongoing simulated process which had the instructions given below. "
@@ -166,7 +171,9 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             self._llm,
             follow_up_prompt,
             mode=self._mode,
-            _return_reasoning_steps=self._ret_steps,
+            _return_reasoning_steps=(
+                _return_reasoning_steps if _return_reasoning_steps else self._ret_steps
+            ),
             _requests_clarification=False,
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
