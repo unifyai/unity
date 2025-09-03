@@ -1740,6 +1740,23 @@ class _ToolsData:
         # Per-tool hidden total-call quotas (counted per loop instance)
         self.call_counts: Dict[str, int] = {}
 
+    def _quota_count(self, task_name: str) -> int:
+        return self.call_counts.get(task_name, 0)
+
+    def _can_offer_tool(self, task_name: str) -> bool:
+        limit = self.norm_tools[task_name].max_concurrent
+        return limit is None or self.active_count(task_name) < limit
+
+    def active_count(self, task_name: str) -> int:
+        return sum(1 for _t, _inf in self.info.items() if _inf["name"] == task_name)
+
+    def quota_ok(self, task_name: str) -> bool:
+        limit = self.norm_tools[task_name].max_total_calls
+        return limit is None or self._quota_count(task_name) < limit
+
+    def concurrency_ok(self, task_name: str) -> bool:
+        return task_name not in self.norm_tools or self._can_offer_tool(task_name)
+
 
 # TODO this is not really required, but this just simplifies the extraction of the logic from the loop.
 class _AsyncToolLoopToolFailureTracker:
@@ -1975,7 +1992,7 @@ async def _async_tool_use_loop_inner(
     # -----------------------------------------------------------------------
 
     # Initialise loop state early so preflight backfill can schedule tasks
-    tools_data = _ToolsData(tools)
+    tools_data: _ToolsData = _ToolsData(tools)
     consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
     clarification_channels: Dict[
         str,
@@ -1984,21 +2001,6 @@ async def _async_tool_use_loop_inner(
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
-
-    def _active_count(t_name: str) -> int:
-        return sum(1 for _t, _inf in tools_data.info.items() if _inf["name"] == t_name)
-
-    def _can_offer_tool(t_name: str) -> bool:
-        lim = tools_data.norm_tools[t_name].max_concurrent
-        return lim is None or _active_count(t_name) < lim
-
-    def _quota_count(t_name: str) -> int:
-        return tools_data.call_counts.get(t_name, 0)
-
-    def _quota_ok(t_name: str) -> bool:
-        lim = tools_data.norm_tools[t_name].max_total_calls
-        return lim is None or _quota_count(t_name) < lim
-
     # Expose live task_info mapping on the current Task so outer handles/tests
     # can introspect currently running nested handles (used by ask/stop helpers).
     try:
@@ -2543,13 +2545,10 @@ async def _async_tool_use_loop_inner(
                 tool_choice_mode = "auto"
                 policy_tools_norm = tools_data.norm_tools
 
-            def _concurrency_ok(tn: str) -> bool:
-                return tn not in tools_data.norm_tools or _can_offer_tool(tn)
-
             visible_base_tools_schema = [
                 method_to_schema(spec.fn, name)
                 for name, spec in policy_tools_norm.items()
-                if _concurrency_ok(name) and _quota_ok(name)
+                if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
             ]
 
             # Inject `final_answer` tool automatically whenever a `response_format` is
@@ -3605,7 +3604,7 @@ async def _async_tool_use_loop_inner(
                     if (
                         name in tools_data.norm_tools
                         and tools_data.norm_tools[name].max_concurrent is not None
-                        and _active_count(name)
+                        and tools_data.active_count(name)
                         >= tools_data.norm_tools[name].max_concurrent
                     ):
                         # Concurrency cap reached → immediately insert a
