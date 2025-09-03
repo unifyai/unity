@@ -7,6 +7,7 @@ import functools
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
+from typing import cast
 
 
 from ..common.embed_utils import list_private_fields
@@ -42,7 +43,7 @@ from ..common.model_to_fields import model_to_fields
 from .prompt_builders import (
     build_ask_prompt,
     build_update_prompt,
-    build_execute_task_prompt,
+    build_execute_prompt,
 )
 from .base import BaseTaskScheduler
 from ..actor.base import BaseActor
@@ -423,11 +424,11 @@ class TaskScheduler(BaseTaskScheduler):
 
         return handle
 
-    # Start Task
+    # Execute
 
-    @functools.wraps(BaseTaskScheduler.execute_task, updated=())
-    @_log_manager_call.__func__("execute_task", "request")  # type: ignore[attr-defined]
-    async def execute_task(
+    @functools.wraps(BaseTaskScheduler.execute, updated=())
+    @_log_manager_call.__func__("execute", "request")
+    async def execute(
         self,
         text: str,
         *,
@@ -455,17 +456,10 @@ class TaskScheduler(BaseTaskScheduler):
                 "A task is marked as active, but no active handle is present – reconcile state before starting another task.",
             )
 
-        # ── Fast-path: direct numeric task_id ───────────────────────────────
-        # When the user input *is* a plain integer we can skip the full
-        # tool-resolution loop, execute the task immediately and hand back
-        # the live ActiveTask handle.  This guarantees that callers who know
-        # the id (including the unit-tests) observe the task promotion and
-        # instance cloning *synchronously* after awaiting this method.
-
+        # Fast path: numeric task_id provided → execute directly after LLM scope routing
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
-                # Decide execution scope (allows tests to monkeypatch)
                 scope = (
                     execution_scope
                     if execution_scope is not None
@@ -474,24 +468,27 @@ class TaskScheduler(BaseTaskScheduler):
                         parent_chat_context=parent_chat_context,
                     )
                 )
-                direct_handle = await self._execute_task_internal(
+                if scope == "chain":
+                    return await self._execute_chain_internal(
+                        task_id=int(stripped),
+                        parent_chat_context=parent_chat_context,
+                        clarification_up_q=clarification_up_q,
+                        clarification_down_q=clarification_down_q,
+                    )
+                return await self._execute_internal(
                     task_id=int(stripped),
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
                     clarification_down_q=clarification_down_q,
                     activated_by=ActivatedBy.explicit,
-                    execution_scope=scope,
+                    execution_scope="isolate",
                 )
-
-                return direct_handle
-
             except (ValueError, RuntimeError):
-                # Fall back to the slower, reasoning-based path when the id is
-                # unknown or the task cannot be started directly (e.g. already
-                # active).  Let the LLM ask for clarification / create a task.
-                pass  # ↴ continue with regular flow
+                # Fall back to the outer loop (will ask/clarify/create)
+                pass
 
-        return self._start_execute_task_loop(
+        # Start LLM-driven outer loop which will resolve id and scope, then adopt the inner handle.
+        return self._start_execute_loop(
             freeform_text=freeform_text,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
@@ -503,7 +500,7 @@ class TaskScheduler(BaseTaskScheduler):
     #  Internal helper – run existing *by-id* logic without event logging   #
     # ------------------------------------------------------------------ #
 
-    async def _execute_task_internal(
+    async def _execute_internal(
         self,
         *,
         task_id: int,
@@ -512,6 +509,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: asyncio.Queue[str] | None = None,
         activated_by: Optional[ActivatedBy] = None,
         execution_scope: Literal["isolate", "chain"] = "isolate",
+        detach: bool = True,
     ) -> SteerableToolHandle:
         """
         Start the execution of a runnable task by its identifier.
@@ -566,11 +564,16 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] in ("completed", "cancelled", "failed", "active"):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
-        # Adjust queue linkages based on explicit activation scope
-        self._detach_from_queue_for_activation(
-            task_id=task_id,
-            execution_scope=execution_scope,
-        )
+        # Adjust queue linkages based on explicit activation scope.
+        # For chain execution, only the initial chain head should be detached
+        # from its predecessor. Followers started as part of the same chain
+        # must retain their prev/next pointers so the chain structure remains
+        # intact in storage (tests assert this behaviour).
+        if detach:
+            self._detach_from_queue_for_activation(
+                task_id=task_id,
+                execution_scope=execution_scope,
+            )
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
         handle = await ActiveTask.create(
@@ -627,9 +630,170 @@ class TaskScheduler(BaseTaskScheduler):
         return handle
 
     # ------------------------------------------------------------------ #
-    #  Helper – build and start the execute_task outer tool-use loop      #
+    #  Chain orchestrator: sequentially executes the follower chain       #
     # ------------------------------------------------------------------ #
-    def _start_execute_task_loop(
+
+    class _ChainHandle(SteerableToolHandle):  # type: ignore[abstract-method]
+        def __init__(
+            self,
+            scheduler: "TaskScheduler",
+            *,
+            first_task_id: int,
+            first_handle: SteerableToolHandle,
+            parent_chat_context: Optional[List[Dict[str, Any]]],
+            clarification_up_q: Optional[asyncio.Queue[str]],
+            clarification_down_q: Optional[asyncio.Queue[str]],
+        ) -> None:
+            self._s = scheduler
+            self._current_task_id = first_task_id
+            self._current_handle: SteerableToolHandle = first_handle
+            self._parent_ctx = parent_chat_context
+            self._clar_up = clarification_up_q
+            self._clar_down = clarification_down_q
+            self._done_evt: asyncio.Event = asyncio.Event()
+            self._final_result: Optional[str] = None
+            # Background driver
+            self._driver = asyncio.create_task(self._drive())
+
+        async def _drive(self) -> None:
+            try:
+                while True:
+                    try:
+                        result = await self._current_handle.result()
+                    except asyncio.CancelledError:
+                        self._final_result = "Stopped."
+                        break
+
+                    text = str(result or "")
+                    # If ActiveTask flagged an explicit stop/defer, end the chain immediately
+                    try:
+                        was_stopped = bool(
+                            getattr(self._current_handle, "_was_stopped", False),
+                        )
+                    except Exception:
+                        was_stopped = False
+                    if was_stopped:
+                        self._final_result = text or "Stopped."
+                        break
+                    # If the stop/defer path was taken, end the chain here
+                    if "stopped" in text.lower():
+                        self._final_result = text
+                        break
+
+                    # Find next runnable in the same chain (head->tail from current)
+                    queue = self._s._get_task_queue(task_id=self._current_task_id)
+                    next_tid = None
+                    for t in queue:
+                        if t.task_id != self._current_task_id:
+                            next_tid = t.task_id
+                            break
+                    if next_tid is None:
+                        # Chain exhausted
+                        self._final_result = text or "Chain completed."
+                        break
+
+                    # Start next task using CHAIN linkage semantics
+                    self._current_task_id = next_tid
+                    self._current_handle = await self._s._execute_internal(
+                        task_id=next_tid,
+                        parent_chat_context=self._parent_ctx,
+                        clarification_up_q=self._clar_up,
+                        clarification_down_q=self._clar_down,
+                        activated_by=ActivatedBy.explicit,
+                        execution_scope="chain",
+                        # Do NOT detach followers from each other; keep chain links intact
+                        detach=False,
+                    )
+            finally:
+                self._done_evt.set()
+
+        # ----- Steerable surface proxies -----
+        async def interject(self, message: str) -> None:  # type: ignore[override]
+            await self._current_handle.interject(message)
+
+        def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
+            try:
+                return self._current_handle.stop(cancel=cancel, reason=reason)
+            except Exception:
+                return "Stopped."
+
+        def pause(self) -> Optional[str]:  # type: ignore[override]
+            try:
+                if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
+                    return "Already completed."
+            except Exception:
+                pass
+            try:
+                ret = self._current_handle.pause()
+                return ret
+            except Exception:
+                return "Already completed."
+
+        def resume(self) -> Optional[str]:  # type: ignore[override]
+            try:
+                if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
+                    return "Already completed."
+            except Exception:
+                pass
+            try:
+                ret = self._current_handle.resume()
+                return ret
+            except Exception:
+                return "Already completed."
+
+        def done(self) -> bool:  # type: ignore[override]
+            return self._done_evt.is_set()
+
+        async def result(self):  # type: ignore[override]
+            await self._done_evt.wait()
+            return self._final_result or ""
+
+        async def ask(self, question: str) -> "SteerableToolHandle":  # type: ignore[override]
+            return await self._current_handle.ask(question)
+
+        @property
+        def valid_tools(self) -> Dict[str, Callable]:  # type: ignore[override]
+            tools = {
+                self.interject.__name__: self.interject,
+                self.stop.__name__: self.stop,
+            }
+            paused_flag = getattr(self._current_handle, "_paused", False)
+            if paused_flag:
+                tools[self.resume.__name__] = self.resume
+            else:
+                tools[self.pause.__name__] = self.pause
+            return tools
+
+    async def _execute_chain_internal(
+        self,
+        *,
+        task_id: int,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
+        """Start chain execution at `task_id` and return a composite chain handle."""
+        first = await self._execute_internal(
+            task_id=task_id,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+            activated_by=ActivatedBy.explicit,
+            execution_scope="chain",
+        )
+        return TaskScheduler._ChainHandle(
+            self,
+            first_task_id=task_id,
+            first_handle=first,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  Helper – build and start the execute outer tool-use loop      #
+    # ------------------------------------------------------------------ #
+    def _start_execute_loop(
         self,
         *,
         freeform_text: str,
@@ -638,30 +802,74 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         execution_scope: Optional[Literal["isolate", "chain"]] = None,
     ) -> SteerableToolHandle:
-        """Compose tools and prompt, then start the execute_task reasoning loop."""
+        """Compose tools and prompt, then start the execute reasoning loop."""
         client = self._new_llm_client("gpt-5@openai")
 
         # ── tool definitions ────────────────────────────────────────────────
-        async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
-            """Start the task with *task_id* and bubble up its handle (passthrough)."""
+        def create_task(*, name: str, description: str) -> ToolOutcome:  # type: ignore[valid-type]
+            """Create a brand-new task with minimal inputs (name, description).
 
-            # Decide execution scope using the same helper as the fast-path
-            scope = (
-                execution_scope
-                if execution_scope is not None
-                else await self._decide_execution_scope(
-                    request_text=freeform_text,
-                    parent_chat_context=parent_chat_context,
+            Notes
+            -----
+            - This scoped creator intentionally exposes only name/description to
+              prevent schedule/status/queue manipulation from the execute loop.
+            - Lifecycle values and invariants are inferred by the scheduler.
+            """
+            return self._create_task(name=name, description=description)
+
+        async def _execute_by_id(
+            *,
+            task_id: int,
+            execution_scope: "Literal['auto','isolate','chain']" = "auto",
+        ) -> SteerableToolHandle:  # type: ignore[valid-type]
+            """Start the task with *task_id*, adopting inner handle (isolate or chain).
+
+            Parameters
+            ----------
+            task_id : int
+                Identifier of the task to start.
+            execution_scope : Literal['auto','isolate','chain'], default "auto"
+                Routing hint selected by the LLM after inspecting queue context with `ask`:
+                - 'chain': start and keep followers attached (sequence runs in order)
+                - 'isolate': start only this task; detach followers
+                - 'auto': delegate to the scheduler's router based on the request text and context
+
+            Behavioural rules
+            -----------------
+            - Never modify scheduling/ordering or `start_at` to begin execution. Scope selection
+              dictates activation behaviour; schema remains unchanged.
+            - If the user wants the whole sequence now, prefer calling this on the chain head
+              (where `prev_task` is None) with execution_scope='chain'.
+            """
+
+            # Decide execution scope strictly via LLM when not provided
+            if execution_scope in ("isolate", "chain"):
+                scope = execution_scope
+            else:
+                scope = (
+                    execution_scope
+                    if execution_scope in ("isolate", "chain")
+                    else await self._decide_execution_scope(
+                        request_text=freeform_text,
+                        parent_chat_context=parent_chat_context,
+                    )
                 )
-            )
-            handle = await self._execute_task_internal(
-                task_id=task_id,
-                parent_chat_context=parent_chat_context,
-                clarification_up_q=clarification_up_q,
-                clarification_down_q=clarification_down_q,
-                activated_by=ActivatedBy.explicit,
-                execution_scope=scope,
-            )
+            if scope == "chain":
+                handle = await self._execute_chain_internal(
+                    task_id=task_id,
+                    parent_chat_context=parent_chat_context,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
+                )
+            else:
+                handle = await self._execute_internal(
+                    task_id=task_id,
+                    parent_chat_context=parent_chat_context,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
+                    activated_by=ActivatedBy.explicit,
+                    execution_scope="isolate",
+                )
             # 💡 signal pass-through so the outer loop adopts this handle
             setattr(handle, "__passthrough__", True)
             return handle
@@ -674,16 +882,10 @@ class TaskScheduler(BaseTaskScheduler):
             )
             return await rc(question)
 
-        # Wrap update to hard-code tool_policy=None while preserving metadata
-        @functools.wraps(self.update, updated=())
-        async def _update_no_forcing(*args, **kwargs):  # type: ignore[valid-type]
-            kwargs["tool_policy"] = None
-            return await self.update(*args, **kwargs)
-
         tools = methods_to_tool_dict(
             self.ask,
-            _update_no_forcing,
-            _execute_task_by_id,
+            _execute_by_id,
+            create_task,
             include_class_name=False,
         )
         # Only expose clarification tool when both queues are available
@@ -695,14 +897,14 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ── dynamic system prompt ───────────────────────────────────────────
         client.set_system_message(
-            build_execute_task_prompt(tools),
+            build_execute_prompt(tools),
         )
 
         outer_handle = self._start_loop(
             client,
             freeform_text,
             tools,
-            loop_id=f"{self.__class__.__name__}.{self.execute_task.__name__}",
+            loop_id=f"{self.__class__.__name__}.execute",
             parent_chat_context=parent_chat_context,
             log_steps=True,
         )
@@ -710,7 +912,7 @@ class TaskScheduler(BaseTaskScheduler):
         return outer_handle
 
     # ------------------------------------------------------------------ #
-    #  Scope classification helper                                        #
+    #  Scope classification helper (LLM-routed)                           #
     # ------------------------------------------------------------------ #
     async def _decide_execution_scope(
         self,
@@ -718,28 +920,70 @@ class TaskScheduler(BaseTaskScheduler):
         request_text: str,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Literal["isolate", "chain"]:
-        """
-        Decide whether to execute a task in "isolate" or "chain" mode.
-
-        Default behaviour is environment-controlled for determinism in tests:
-        set UNITY_TS_EXEC_CHAIN=true to opt into "chain"; otherwise "isolate".
-        """
+        """Use an LLM router to decide execution scope: "isolate" vs "chain"."""
         try:
-            env = os.environ.get("UNITY_TS_EXEC_CHAIN", "").lower()
-            if env == "true":
-                return "chain"
-        except Exception:
-            pass
+            client = self._new_llm_client("gpt-5@openai")
+            system = (
+                "You are a router that selects an execution scope for starting a queued task.\n"
+                "Choices:\n"
+                "- isolate: Start only the selected task now, detach its followers. The next task becomes the new head and inherits any queue-level start_at timestamp (becomes scheduled).\n"
+                "- chain: Start the selected task now and KEEP the follower chain attached behind it. The started task keeps the queue-level start_at; the immediate successor MUST NOT carry start_at.\n"
+                "Guidelines:\n"
+                "- Phrases like 'do them all now', 'do the whole set/sequence now', lists of multiple tasks to run now => chain.\n"
+                "- Phrases like 'just this one now', 'leave the rest for later/Monday' => isolate.\n"
+                "- If ambiguous, prefer chain when the user implies batch execution; otherwise isolate.\n"
+                'Return ONLY JSON with rationale first: {"rationale": <short string>, "execution_scope": "isolate|chain"}\n'
+                "Be concise and deterministic."
+            )
+            client.set_system_message(system)
 
-        # Lightweight heuristic: let explicit mentions opt into chaining.
-        try:
-            txt = (request_text or "").lower()
-            if any(k in txt for k in ("chain", "keep followers", "follow me")):
-                return "chain"
-        except Exception:
-            pass
+            # Build a compact, recent-first transcript for added context
+            def _format_ctx(
+                ctx: Optional[List[Dict[str, Any]]],
+                limit_chars: int = 2000,
+            ) -> str:
+                try:
+                    if not ctx:
+                        return "(no prior context)"
+                    lines: List[str] = []
+                    total = 0
+                    for msg in reversed(ctx[-20:]):
+                        role = str(msg.get("role", "")).strip() or "user"
+                        content = str(msg.get("content", "")).strip()
+                        line = f"{role}: {content}"
+                        if total + len(line) > limit_chars:
+                            break
+                        lines.append(line)
+                        total += len(line)
+                    return "\n".join(reversed(lines)) if lines else "(no prior context)"
+                except Exception:
+                    return "(no prior context)"
 
-        return "isolate"
+            ctx_block = _format_ctx(parent_chat_context)
+            user = (
+                "Recent conversation (most recent last):\n"
+                f"{ctx_block}\n\n"
+                "User request (free-form):\n"
+                f"{(request_text or '').strip()}"
+            )
+            raw = await client.generate(user)
+            import json as _json
+
+            scope = "isolate"
+            try:
+                data = _json.loads(raw)
+                token = str(data.get("execution_scope", "")).strip().lower()
+                if token in {"isolate", "chain"}:
+                    scope = token  # type: ignore[assignment]
+            except Exception:
+                # attempt to extract simple token
+                low = (raw or "").lower()
+                if '"chain"' in low or 'execution_scope": "chain"' in low:
+                    scope = "chain"
+            return cast(Literal["isolate", "chain"], scope)
+        except Exception:
+            # Conservative fallback
+            return "isolate"
 
     #  Per-instance helpers
 
@@ -787,13 +1031,11 @@ class TaskScheduler(BaseTaskScheduler):
         # Normalise status to enum for consistent comparisons
         new_status_enum = self._to_status(new_status)
         entries: Dict[str, Any] = {"status": new_status_enum}
-        # Only allow `activated_by` to be set during transition to 'active'
+        # Only allow `activated_by` to be set during transition to 'active'.
+        # For transitions away from 'active', preserve the existing value for auditability.
         if new_status_enum == Status.active and activated_by is not None:
             # Set only at the moment of activation; never overwrite later
             entries["activated_by"] = str(activated_by)
-        else:
-            # Ensure non-active rows never carry activation metadata
-            entries["activated_by"] = None
 
         result = self._write_log_entries(
             logs=log_objs[0].id if hasattr(log_objs[0], "id") else log_objs[0],
@@ -1358,13 +1600,6 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        # Enforce activation metadata invariant at the funnel: only 'active' rows may carry it
-        try:
-            eff_status = self._to_status(prospective_status)  # type: ignore[arg-type]
-            if eff_status != Status.active:
-                entries = {**entries, "activated_by": None}
-        except Exception:
-            pass
         result = self._write_log_entries(logs=log_id, entries=entries)
 
         # Ensure neighbour symmetry whenever schedule changed
@@ -1663,10 +1898,6 @@ class TaskScheduler(BaseTaskScheduler):
             payload: Dict[str, Any] = {"schedule": sched_payload}
             if desired_status != existing_status:
                 payload["status"] = desired_status
-            # Ensure activation metadata is absent unless status becomes 'active' (it doesn't here)
-            if desired_status != Status.active:
-                payload["activated_by"] = None
-
             updates_per_log[tid] = payload
 
         # ── Invariant check across the whole queue relink ────────────────────
@@ -1769,10 +2000,6 @@ class TaskScheduler(BaseTaskScheduler):
         elif new_trigger is None and cur_status == Status.triggerable:
             entries["status"] = Status.queued
 
-        # Triggers imply non-active lifecycle. Ensure activation metadata is cleared on write.
-        if entries.get("status", cur_status) != Status.active:
-            entries["activated_by"] = None
-
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         self._store.update(logs=log_id, entries=entries, overwrite=True)
 
@@ -1855,7 +2082,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         Notes:
         - Setting status to 'active' directly is forbidden. Activation is performed
-          exclusively by the execution path (execute_task / execute_task_by_id).
+          exclusively by the execution path (execute / execute_by_id).
         """
         # Forbid making anything active (unless explicitly allowed)
         new_status_enum = self._to_status(new_status)
@@ -1880,9 +2107,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
-        # Clear activation metadata whenever moving to a non-active state
         entries: Dict[str, Any] = {"status": new_status_enum}
-        entries["activated_by"] = None
         return self._store.update(logs=log_ids, entries=entries, overwrite=True)
 
     def _update_task_start_at(
@@ -2480,7 +2705,7 @@ class TaskScheduler(BaseTaskScheduler):
     # (Removed) LLM-based scope classifier
 
     # ------------------------------------------------------------------ #
-    #  Steering intent classification (0-shot + heuristics)               #
+    #  Steering intent classification (LLM-routed)                        #
     # ------------------------------------------------------------------ #
 
     async def _classify_steering_intent(
@@ -2488,55 +2713,80 @@ class TaskScheduler(BaseTaskScheduler):
         message: str,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> tuple[str, str]:
-        """
-        Classify a steering message into one of:
-          cancel | defer | pause | resume | continue | none
-        Returns (intent, reason_summary). On failure, falls back to heuristics.
-        """
-        text = (message or "").strip().lower()
+        """Classify steering into: cancel | defer | pause | resume | continue | none."""
+        try:
+            client = self._new_llm_client("gpt-5@openai")
+            system = (
+                "You are a router that classifies an in-flight steering message.\n"
+                "Labels: cancel | defer | pause | resume | continue | none.\n"
+                "Definitions:\n"
+                "- cancel: abandon/kill/drop the task (terminal).\n"
+                "- defer: stop for now but resume later / return to prior queue/schedule.\n"
+                "- pause: temporarily pause, expecting explicit resume soon.\n"
+                "- resume: continue after a pause.\n"
+                "- continue: keep going (no change).\n"
+                "- none: message is not a steering instruction.\n"
+                'Output ONLY JSON with rationale first: {"rationale": <short string>, "action": <label>, "reason": <short substring or null>}'
+            )
+            client.set_system_message(system)
 
-        def _heur() -> Optional[str]:
-            if any(
-                k in text
-                for k in (
+            # Build a compact, recent-first transcript for added context
+            def _format_ctx(
+                ctx: Optional[List[Dict[str, Any]]],
+                limit_chars: int = 2000,
+            ) -> str:
+                try:
+                    if not ctx:
+                        return "(no prior context)"
+                    lines: List[str] = []
+                    total = 0
+                    for msg in reversed(ctx[-20:]):
+                        role = str(msg.get("role", "")).strip() or "user"
+                        content = str(msg.get("content", "")).strip()
+                        line = f"{role}: {content}"
+                        if total + len(line) > limit_chars:
+                            break
+                        lines.append(line)
+                        total += len(line)
+                    return "\n".join(reversed(lines)) if lines else "(no prior context)"
+                except Exception:
+                    return "(no prior context)"
+
+            ctx_block = _format_ctx(parent_chat_context)
+            user = (
+                "Recent conversation (most recent last):\n"
+                f"{ctx_block}\n\n"
+                "Steering message:\n"
+                f"{(message or '').strip()}"
+            )
+            raw = await client.generate(user)
+            import json as _json
+
+            data = None
+            try:
+                data = _json.loads(raw)
+                action = str(data.get("action", "none")).strip().lower()
+                reason = data.get("reason")
+                if action not in {
                     "cancel",
-                    "abandon",
-                    "drop it",
-                    "not needed",
-                    "forget it",
-                    "never mind",
-                )
-            ):
-                return "cancel"
-            if any(
-                k in text
-                for k in (
-                    "do it later",
-                    "later",
-                    "postpone",
                     "defer",
-                    "as per our original schedule",
-                    "back into the queue",
-                    "reinsert",
-                    "re-insert",
-                    "return to schedule",
-                    "continue as scheduled",
-                    "put back",
-                )
-            ):
-                return "defer"
-            if "pause" in text:
-                return "pause"
-            if "resume" in text:
-                return "resume"
-            if any(
-                k in text for k in ("keep going", "continue", "carry on", "proceed")
-            ):
-                return "continue"
-            return None
-
-        guess = _heur()
-        if guess is not None:
-            return guess, message
-        # Pure heuristic classifier: default when no heuristic matches
-        return "none", message
+                    "pause",
+                    "resume",
+                    "continue",
+                    "none",
+                }:
+                    action = "none"
+                if reason is not None:
+                    reason = str(reason)
+                else:
+                    reason = message
+                return action, cast(str, reason)
+            except Exception:
+                # fallback: pattern match a minimal token
+                low = (raw or "").lower()
+                for tok in ["cancel", "defer", "pause", "resume", "continue"]:
+                    if tok in low:
+                        return tok, message
+                return "none", message
+        except Exception:
+            return "none", message

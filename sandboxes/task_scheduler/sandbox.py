@@ -5,7 +5,7 @@ Interactive sandbox for **TaskScheduler**.
 It supports:
 • Fixed or LLM‑generated seed data.
 • Voice or plain‑text input (same helpers as the other sandboxes).
-• Automatic dispatch to `ask`, `update` *or* `execute_task` depending on intent.
+• Automatic dispatch to `ask`, `update` *or* `execute` depending on intent.
 • Mid‑conversation interruption (pause / interject / cancel).
 """
 
@@ -51,6 +51,12 @@ from sandboxes.utils import (
     configure_sandbox_logging,
     call_manager_with_optional_clarifications,
     pydantic_response_format,
+    # Simulation planning (sandbox-only)
+    SIMULATION_PLANS,
+    SimulationParams,
+    SimulationSelector,
+    parse_simulation_params_kv,
+    apply_per_task_simulation_patch,
 )
 
 LG = logging.getLogger("task_scheduler_sandbox")
@@ -282,7 +288,7 @@ async def _dispatch_with_context(
     Optional[asyncio.Queue[str]],
 ]:
     """
-    Decide whether to call `ask`, `update` or `execute_task`, forwarding
+    Decide whether to call `ask`, `update` or `execute`, forwarding
     *parent_chat_context* to the TaskScheduler methods. Always pass the original
     user input (*raw*) unchanged to the selected method.
     """
@@ -299,7 +305,7 @@ async def _dispatch_with_context(
 
     # Immediate terminal confirmation of selected method
     try:
-        _selected = "execute_task" if intent.action == "start" else intent.action
+        _selected = "execute" if intent.action == "start" else intent.action
         print(f"➡️  Selected: {_selected}")
     except Exception:
         pass
@@ -326,13 +332,34 @@ async def _dispatch_with_context(
         parsed = _parse_simulation_config(raw)
         # Mask only steps/timeout control phrases; pass the remaining text as-is
         core_text = parsed.core_text if parsed.core_text != "" else raw
-        # Build a one-off actor using extracted controls falling back to defaults
+        # Build a one-off actor using extracted controls falling back to defaults,
+        # and merge with any stored plan for a numeric task id if provided.
         eff_steps = parsed.steps if parsed.steps is not None else _DEFAULT_SIM_STEPS
         eff_timeout = (
             parsed.timeout_seconds
             if parsed.timeout_seconds is not None
             else _DEFAULT_SIM_TIMEOUT
         )
+        eff_guidance = parsed.simulation_guidance
+
+        # Default to a 20s duration when no explicit steps or timeout were provided
+        if eff_steps is None and eff_timeout is None:
+            eff_timeout = 20.0
+
+        stripped_id = core_text.strip()
+        if stripped_id.isdigit():
+            try:
+                tid_int = int(stripped_id)
+                stored = SIMULATION_PLANS.resolve_for_task_id(tid_int)
+                if stored is not None:
+                    if eff_steps is None and stored.steps is not None:
+                        eff_steps = stored.steps
+                    if eff_timeout is None and stored.duration_seconds is not None:
+                        eff_timeout = stored.duration_seconds
+                    if not eff_guidance and stored.guidance:
+                        eff_guidance = stored.guidance
+            except Exception:
+                pass
 
         try:
             LG.info(
@@ -348,7 +375,7 @@ async def _dispatch_with_context(
         # Print immediately so the user sees what was captured and what will be used
         try:
             print("🧭 Simulation:")
-            # Always show the exact text that will be sent to execute_task
+            # Always show the exact text that will be sent to execute
             print(f"   📝 Parsed text: {core_text}")
             # Only show values that will be used; annotate source
             if eff_steps is not None:
@@ -357,29 +384,26 @@ async def _dispatch_with_context(
             if eff_timeout is not None:
                 origin = "parsed" if parsed.timeout_seconds is not None else "default"
                 print(f"   ⏱️ Timeout ({origin}): {eff_timeout}s")
-            if parsed.simulation_guidance:
-                print(f"   🧠 Guidance: {parsed.simulation_guidance}")
-            if (
-                eff_steps is None
-                and eff_timeout is None
-                and not parsed.simulation_guidance
-            ):
+            if eff_guidance:
+                print(f"   🧠 Guidance: {eff_guidance}")
+            if eff_steps is None and eff_timeout is None and not eff_guidance:
                 print("   ℹ️ No step limit, no timeout, no guidance")
         except Exception:
             pass
 
-        # Swap the actor on the instance and keep it until the task completes.
-        # We cannot restore immediately after returning the outer handle because the
-        # inner ActiveTask is only created when the LLM later calls the by-id tool.
-        original_actor = getattr(ts, "_actor", None)
-        override_actor = SimulatedActor(
+        # Apply sandbox-only per-task simulation monkey-patch for the lifetime of this execute call
+        per_call = SimulationParams(
             steps=eff_steps,
-            duration=eff_timeout,
-            simulation_guidance=parsed.simulation_guidance,
+            duration_seconds=eff_timeout,
+            guidance=eff_guidance,
+            one_shot=False,
+        )
+        _restore_patch = apply_per_task_simulation_patch(
+            per_call_overrides=per_call,
             log_mode="print",
         )
-        setattr(ts, "_actor", override_actor)
-        handle = await ts.execute_task(
+
+        handle = await ts.execute(
             core_text,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clar_up_q,
@@ -393,13 +417,25 @@ async def _dispatch_with_context(
                 # Restore even if the call was stopped/cancelled/errored
                 pass
             try:
-                if original_actor is not None:
-                    setattr(ts, "_actor", original_actor)
+                _restore_patch()
             except Exception:
                 pass
 
         # Fire-and-forget restoration
         asyncio.create_task(_restore_actor_when_done())
+
+        # Consume one-shot rule for numeric id if applicable
+        try:
+            if stripped_id.isdigit():
+                tid_int = int(stripped_id)
+                params = SIMULATION_PLANS.resolve_for_task_id(tid_int)
+                if params and params.one_shot:
+                    SIMULATION_PLANS.consume_one_shot_for(
+                        SimulationSelector(by_task_id=tid_int),
+                        task_id=tid_int,
+                    )
+        except Exception:
+            pass
     else:  # ask
         handle, clar_up_q, clar_down_q = (
             await call_manager_with_optional_clarifications(
@@ -419,7 +455,7 @@ async def _dispatch_with_context(
             pass
 
     return (
-        "execute_task" if intent.action == "start" else intent.action,
+        "execute" if intent.action == "start" else intent.action,
         handle,
         clar_up_q,
         clar_down_q,

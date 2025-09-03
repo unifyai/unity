@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "ts-node src/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -13,11 +14,15 @@
   "dependencies": {
     "dotenv": "^17.2.0",
     "express": "^5.1.0",
-    "magnitude-core": "^0.2.24",
+    "express-ws": "^5.0.2",
+    "magnitude-core": "^0.2.26",
+    "ws": "^8.18.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
+    "@types/express-ws": "^3.0.5",
+    "@types/ws": "^8.18.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3"
   }

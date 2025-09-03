@@ -121,7 +121,7 @@ class SimulatedConductor:
                 self._contact_manager.update,
                 self._knowledge_manager.update,
                 self._task_scheduler.update,
-                ToolSpec(self._task_scheduler.execute_task, max_concurrent=1),
+                ToolSpec(self._task_scheduler.execute, max_concurrent=1),
                 include_class_name=True,
             ),
         }
@@ -239,7 +239,7 @@ class SimulatedConductor:
     ):
         """
         Full-access entry-point – exposes every passive tool **plus** all
-        write-capable helpers and `execute_task` (which unlocks plan steering).
+        write-capable helpers and `execute` (which unlocks plan steering).
         """
         should_log = self._log_events or log_events
         call_id = None

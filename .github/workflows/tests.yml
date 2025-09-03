@@ -123,8 +123,20 @@ jobs:
         # 5) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 6) cleanup
+        # 6) Install docling package
+        uv pip install "docling>=2.49.0"
+
+        # 7) cleanup
         rm temp_requirements.txt
+
+    - name: Restore .cache.ndjson
+      id: cache-read
+      uses: actions/cache/restore@v4
+      with:
+        path: .cache.ndjson
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+        restore-keys: |
+          cache-ndjson-${{ runner.os }}-
 
     - name: Run unit tests
       run: |
@@ -164,6 +176,13 @@ jobs:
         REGISTER_SUMMARY_CALLBACKS: false
         REGISTER_UPDATE_CALLBACKS: false
 
+    - name: Save updated .cache.ndjson
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: .cache.ndjson
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+
     - name: Upload test artifact
       if: always()
       uses: actions/upload-artifact@v4
@@ -174,5 +193,5 @@ jobs:
           tests.log
           report.xml
           report.html
-          .cache_write.ndjson
+          .cache.ndjson
         retention-days: 7
