@@ -998,7 +998,7 @@ async def _process_completed_task(
         return bool(client.messages) and client.messages[-1] is msg
 
     tools_data.pending_tasks.discard(task)
-    info = tools_data.task_info.pop(task)
+    info: ToolCallMetadata = tools_data.task_info.pop(task)
     name = info["name"]
     call_id = info["call_id"]
     fn = info["call_dict"]["function"]["name"]
@@ -1381,7 +1381,10 @@ async def _schedule_base_tool_call(
     tools_data.pending.add(t)
     tools_data.info[t] = ToolCallMetadata(
         name=name,
+        handle=None,
         call_id=call_id,
+        tool_reply_msg=None,
+        continue_msg=None,
         assistant_msg=asst_msg,
         call_dict=call_dict,
         call_idx=call_idx,
@@ -1753,13 +1756,17 @@ class _AsyncToolLoopToolFailureTracker:
         self._consecutive_failures = 0
 
 
-class ToolCallMetadata(TypedDict, total=False):
+class ToolCallMetadata(TypedDict):
+    # TODO: most of these are not always used
+    # Ideally, not needed to be passed explicitly
     name: str
     call_id: str
     call_dict: dict
     call_idx: int
     chat_context: str
     assistant_msg: dict
+    tool_reply_msg: Optional[dict]
+    continue_msg: Optional[dict]
     is_interjectable: bool
     handle: Optional[Any]
     interject_queue: Optional[asyncio.Queue[str]]
@@ -3677,7 +3684,10 @@ async def _async_tool_use_loop_inner(
 
                         tools_data.info[t] = ToolCallMetadata(
                             name=name,
+                            handle=None,
                             call_id=call["id"],
+                            tool_reply_msg=None,
+                            continue_msg=None,
                             assistant_msg=msg,
                             call_dict=call_dict,
                             call_idx=idx,
