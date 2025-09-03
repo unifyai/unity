@@ -75,19 +75,38 @@ def pydantic_response_format(model_cls: type[BaseModel]) -> dict:
         except Exception:
             schema = {}
 
-    # Ensure OpenAI's stricter requirements on the root schema
+    # Ensure OpenAI's stricter requirements on the root schema and nested objects
+    def _enforce_object_strict(node: Any) -> None:
+        if isinstance(node, dict):
+            t = node.get("type")
+            if t == "object":
+                if not isinstance(node.get("properties"), dict):
+                    node["properties"] = {}
+                node["additionalProperties"] = False
+                # Ensure required includes ALL property keys
+                try:
+                    node["required"] = list(node["properties"].keys())
+                except Exception:
+                    node["required"] = []
+            # Recurse into common schema containers
+            for k, v in list(node.items()):
+                if isinstance(v, (dict, list)):
+                    _enforce_object_strict(v)
+        elif isinstance(node, list):
+            for item in node:
+                _enforce_object_strict(item)
+
     try:
         if not isinstance(schema, dict):
             schema = {}
-        # The schema must be an object and disallow additional properties at the root
+        # Root object constraints
         schema.setdefault("type", "object")
-        schema["additionalProperties"] = False
-        # Ensure properties exists and required lists all properties (OpenAI requirement)
-        props = schema.get("properties")
-        if not isinstance(props, dict):
-            props = {}
-            schema["properties"] = props
-        schema["required"] = list(props.keys())
+        if not isinstance(schema.get("properties"), dict):
+            schema["properties"] = {}
+        # Root: list all properties as required
+        schema["required"] = list(schema["properties"].keys())
+        # Recursively enforce additionalProperties=false on object nodes
+        _enforce_object_strict(schema)
     except Exception:
         pass
     name = getattr(model_cls, "__name__", "Response")
