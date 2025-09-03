@@ -413,7 +413,7 @@ async def _dispatch_with_context(
                 print(f"   ⏱️ Timeout ({origin}): {eff_timeout}s")
             if overrides.rules:
                 by_idx: dict[int, dict] = {}
-                finals: list[str] = []
+                finals_params: list[object] = []
                 for r in overrides.rules:
                     sel = r.selector
                     prm = r.params
@@ -425,7 +425,16 @@ async def _dispatch_with_context(
                         if prm.guidance:
                             by_idx[int(idx)]["guidance"] = str(prm.guidance)
                     elif getattr(sel, "final", False):
-                        finals.append(prm.guidance or "")
+                        finals_params.append(prm)
+                # Resolve any finals to the next index after the highest explicit
+                if finals_params:
+                    target_idx = (max(by_idx.keys()) + 1) if by_idx else 1
+                    by_idx.setdefault(target_idx, {})
+                    for prm in finals_params:
+                        if getattr(prm, "duration_seconds", None) is not None:
+                            by_idx[target_idx]["duration"] = float(prm.duration_seconds)  # type: ignore[attr-defined]
+                        if getattr(prm, "guidance", None):
+                            by_idx[target_idx]["guidance"] = str(prm.guidance)  # type: ignore[attr-defined]
                 if by_idx:
                     print("   📏 Per-task overrides:")
                     for idx in sorted(by_idx):
@@ -438,17 +447,22 @@ async def _dispatch_with_context(
                             f"      #{idx} → "
                             + (", ".join(parts) if parts else "(none)"),
                         )
-                if finals:
-                    print("   🧭 Final-task guidance present")
             if eff_guidance:
                 print(f"   🧠 Guidance: {eff_guidance}")
-            if eff_steps is None and eff_timeout is None and not eff_guidance:
+            has_per_task_rules = bool(overrides.rules)
+            if (
+                eff_steps is None
+                and eff_timeout is None
+                and not eff_guidance
+                and not has_per_task_rules
+            ):
                 print("   ℹ️ No step limit, no timeout, no guidance")
         except Exception:
             pass
 
-        # Apply rules for by_queue_index (other selectors remain future-ready)
+        # Apply rules for by_queue_index and resolved finals
         idx_to_params: dict[int, SimulationParams] = {}
+        pending_finals: list[object] = []
         for r in overrides.rules or []:
             sel = r.selector
             prm = r.params
@@ -463,6 +477,18 @@ async def _dispatch_with_context(
                     p.duration_seconds = float(prm.duration_seconds)
                 if prm.guidance:
                     p.guidance = str(prm.guidance)
+            elif getattr(sel, "final", False):
+                pending_finals.append(prm)
+        if pending_finals:
+            target_idx = (max(idx_to_params.keys()) + 1) if idx_to_params else 1
+            p = idx_to_params.setdefault(target_idx, SimulationParams())
+            for prm in pending_finals:
+                if getattr(prm, "steps", None) is not None:
+                    p.steps = int(prm.steps)  # type: ignore[attr-defined]
+                if getattr(prm, "duration_seconds", None) is not None:
+                    p.duration_seconds = float(prm.duration_seconds)  # type: ignore[attr-defined]
+                if getattr(prm, "guidance", None):
+                    p.guidance = str(prm.guidance)  # type: ignore[attr-defined]
         if idx_to_params:
             try:
                 for idx, params in idx_to_params.items():
