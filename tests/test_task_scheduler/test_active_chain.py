@@ -280,3 +280,78 @@ async def test_chain_pause_resume_and_completion(monkeypatch):
     await h.result()
 
     assert calls == {"pause": 1, "resume": 1}, f"unexpected pause/resume calls: {calls}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_chain_handle_ask_includes_chain_context(monkeypatch):
+    """
+    Verify that _ChainHandle.ask prepends a chain-wide context preamble so
+    questions can be answered about the whole chain, not just the active task.
+    """
+
+    # Step-based actor to avoid wall-clock races
+    class _StepOnly(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 2
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _StepOnly, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _StepOnly,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    a, b, c = await _make_ordered_queue(ts, ["A_ctx", "B_ctx", "C_ctx"])  # type: ignore[misc]
+
+    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "chain"
+
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+
+    captured_questions: list[str] = []
+    orig_actor_ask = SimulatedActorHandle.ask
+
+    async def spy_actor_ask(self, question: str):  # type: ignore[override]
+        captured_questions.append(question)
+        return "OK"
+
+    monkeypatch.setattr(SimulatedActorHandle, "ask", spy_actor_ask, raising=True)
+
+    h = await ts.execute(text=str(a))
+
+    # Wait deterministically until a task becomes active to ensure the scheduler state is populated
+    async def _wait_until_active(max_iters: int = 500):
+        for _ in range(max_iters):
+            try:
+                rows = ts._filter_tasks(filter="status == 'active'", limit=1)
+            except Exception:
+                rows = []
+            if rows:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("No active task detected in time")
+
+    await _wait_until_active()
+
+    ask_handle = await h.ask("How is the chain going?")
+    res = await ask_handle.result()
+    assert res == "OK"
+
+    assert captured_questions, "expected SimulatedActorHandle.ask to be called"
+    q = captured_questions[-1]
+
+    # Preamble markers and structure
+    assert "CHAIN CONTEXT" in q
+    assert "Chain status:" in q
+    assert "Chain tasks (head→tail):" in q
+    # All tasks should be listed with their ids
+    assert f"Task {a}" in q
+    assert f"Task {b}" in q
+    assert f"Task {c}" in q
+    # User question should be preserved at the end
+    assert "USER QUESTION:" in q
+    assert "How is the chain going?" in q
