@@ -364,8 +364,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     # ------------------------------------------------------------------ #
     #  execite_task – delegate to SimulatedActor.act                     #
     # ------------------------------------------------------------------ #
-    @functools.wraps(BaseTaskScheduler.execute_task, updated=())
-    async def execute_task(
+    @functools.wraps(BaseTaskScheduler.execute, updated=())
+    async def execute(
         self,
         text: str,
         *,
@@ -391,7 +391,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             await publish_manager_method_event(
                 call_id,
                 "TaskScheduler",
-                "execute_task",
+                "execute",
                 phase="incoming",
                 request=text,
             )
@@ -416,7 +416,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 handle,
                 call_id,
                 "TaskScheduler",
-                "execute_task",
+                "execute",
             )
 
         return handle

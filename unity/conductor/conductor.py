@@ -126,7 +126,7 @@ class Conductor(BaseConductor):
                 self._contact_manager.update,
                 self._knowledge_manager.update,
                 self._task_scheduler.update,
-                ToolSpec(self._task_scheduler.execute_task, max_concurrent=1),
+                ToolSpec(self._task_scheduler.execute, max_concurrent=1),
                 include_class_name=True,
             ),
         }

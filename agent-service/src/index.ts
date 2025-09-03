@@ -1,5 +1,9 @@
 import express, { Request, Response } from 'express';
 import https from 'https';
+import http from 'http';
+import expressWs from 'express-ws';
+import WebSocket from 'ws';
+import util from 'util';
 import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserOptions } from 'magnitude-core';
 import { z, ZodTypeAny, ZodAny } from 'zod';
 import dotenv from 'dotenv';
@@ -139,21 +143,26 @@ function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new S
 }
 
 const app = express();
+const wsInstance = expressWs(app);
 app.use(express.json({ limit: '10mb' }));
 
 // --- Authorization (Bearer) middleware ---
 function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise<boolean> {
   return new Promise((resolve) => {
     const url = new URL(`${process.env.UNIFY_BASE_URL}/assistant?email=${assistant_email}`);
-    const options: https.RequestOptions = {
+    const options = {
       method: 'GET',
       hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
       path: url.pathname + url.search,
       headers: {
         Authorization: `Bearer ${apiKey}`,
       },
     };
-    const req = https.request(options, (res) => {
+
+    // Use the appropriate request method based on protocol
+    const requestLib = url.protocol === 'https:' ? https : http;
+    const req = requestLib.request(options, (res) => {
       const code = res.statusCode || 0;
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
@@ -162,7 +171,9 @@ function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise
         if (!body || body.trim().length === 0) return resolve(false);
         try {
           // Using default assistant for testing, auth passes since apikey is valid
-          if (assistant_email.includes('agent') || assistant_email.includes('assistant')) return resolve(true);
+          if (assistant_email.includes('agent') || assistant_email.includes('assistant')) {
+            return resolve(true);
+          }
 
           const json = JSON.parse(body);
           // Treat empty payloads as invalid: {"info": []}, {}, []
@@ -179,7 +190,10 @@ function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise
         }
       });
     });
-    req.on('error', () => resolve(false));
+    req.on('error', (err) => {
+
+      resolve(false);
+    });
     req.end();
   });
 }
@@ -199,7 +213,8 @@ async function auth(req: Request, res: Response, next: Function) {
     if (!ok) {
       return res.status(401).json({ error: 'unauthorized', message: 'API key verification failed' });
     }
-  } catch (_e) {
+  } catch (e) {
+
     return res.status(401).json({ error: 'unauthorized', message: 'API key verification failed' });
   }
 
@@ -212,6 +227,84 @@ let agentMode: string | null = null;
 let browserAgent: BrowserAgent | null = null;
 let desktopBrowserAgent: BrowserAgent | null = null;
 const port = process.env.PORT || 3000;
+
+// --- WebSocket Log Broadcasting Logic ---
+const logClients = new Set<WebSocket>();
+
+function broadcastLog(message: string) {
+  logClients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+}
+
+// Monkey-patch console methods to capture and broadcast logs
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+
+console.log = (...args: any[]) => {
+  const message = util.format(...args);
+  broadcastLog(message);
+  originalLog.apply(console, args);
+};
+
+console.error = (...args: any[]) => {
+  const message = util.format(...args);
+  broadcastLog(message);
+  originalError.apply(console, args);
+};
+
+console.warn = (...args: any[]) => {
+  const message = util.format(...args);
+  broadcastLog(message);
+  originalWarn.apply(console, args);
+};
+
+// --- WebSocket Endpoint Handler ---
+wsInstance.app.ws('/logs/stream', async (ws: WebSocket, req: Request) => {
+  // Authenticate WebSocket connection
+  const authHeader = req.header('authorization') || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+
+  if (!match) {
+    console.log('WebSocket connection rejected: No auth header');
+    ws.close(1008, 'Missing or invalid API key');
+    return;
+  }
+
+  const keys = match[1].split(' ');
+  const apikey = keys[0];
+  const assistant_email = keys[1];
+
+  try {
+    const ok = await verifyApiKeyWithUnify(apikey, assistant_email);
+    if (!ok) {
+      console.log('WebSocket connection rejected: Auth failed');
+      ws.close(1008, 'API key verification failed');
+      return;
+    }
+  } catch (e) {
+    console.log('WebSocket connection rejected: Auth error');
+    ws.close(1008, 'API key verification failed');
+    return;
+  }
+
+  console.log('Log stream client connected and authenticated.');
+  logClients.add(ws);
+
+  ws.on('close', () => {
+    console.log('Log stream client disconnected.');
+    logClients.delete(ws);
+  });
+
+  ws.on('error', (error: Error) => {
+    console.error('Log stream client error:', error);
+    logClients.delete(ws);
+  });
+});
+
 
 // --- Agent Initialization ---
 console.log(`Starting Magnitude BrowserAgent...`);

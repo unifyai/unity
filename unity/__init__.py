@@ -1,8 +1,29 @@
 import os
-import requests
-import unify
-from .helpers import _handle_exceptions
 from typing import Optional
+
+# Attempt to import the external 'unify' SDK. If unavailable, provide a minimal
+# no-op shim so importing the 'unity' package does not require extra installs.
+try:  # pragma: no cover - simple import guard
+    import unify  # type: ignore
+except Exception:  # ImportError or others
+
+    class _UnifyShim:
+        def set_client_direct_mode(self, *_args, **_kwargs) -> None:
+            pass
+
+        def active_project(self) -> bool:
+            return False
+
+        def activate(self, *_args, **_kwargs) -> None:
+            pass
+
+        def set_context(self, *_args, **_kwargs) -> None:
+            pass
+
+        def get_active_context(self) -> dict:
+            return {}
+
+    unify = _UnifyShim()  # type: ignore
 
 
 # Set direct mode to True to avoid the overhead of the Unify API.
@@ -25,6 +46,11 @@ def _list_all_assistants() -> list[dict]:
     is returned so that offline test-suites continue to operate.
     """
     try:
+        # Defer optional imports so that the package can be imported without
+        # 'requests' installed (common in offline test environments).
+        import requests  # type: ignore
+        from .helpers import _handle_exceptions  # local, may import requests
+
         url = f"{os.environ['UNIFY_BASE_URL']}/assistant"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
         response = requests.request("GET", url, headers=headers)

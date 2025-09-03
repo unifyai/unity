@@ -543,7 +543,9 @@ class CommsAgent:
             {
                 "topic": "tool_use",
                 "event": ToolUseEndedEvent(
-                    answer, handle_id, call_mode=call_mode
+                    answer,
+                    handle_id,
+                    call_mode=call_mode,
                 ).to_dict(),
             },
         )
@@ -828,7 +830,8 @@ class CommsAgent:
             message (str): The message to send.
         """
         return await _send_sms_message_via_number(
-            self.current_user["user_number"], message
+            self.current_user["user_number"],
+            message,
         )
 
     async def _send_email(self, subject: str, message: str, message_id: str = None):
@@ -1071,7 +1074,6 @@ class CommsAgent:
     def handle_logging(self, event: dict):
         with self.logging_lock:
             import unity
-            from unity.contact_manager.contact_manager import ContactManager
             from unity.transcript_manager.transcript_manager import TranscriptManager
             from unity.events.event_bus import EVENT_BUS
 
