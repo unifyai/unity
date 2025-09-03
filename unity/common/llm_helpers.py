@@ -1986,13 +1986,11 @@ async def _async_tool_use_loop_inner(
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
 
-    norm_tools: Dict[str, ToolSpec] = _normalise_tools(tools)
-
     def _active_count(t_name: str) -> int:
         return sum(1 for _t, _inf in task_info.items() if _inf["name"] == t_name)
 
     def _can_offer_tool(t_name: str) -> bool:
-        lim = norm_tools[t_name].max_concurrent
+        lim = tools_data.norm_tools[t_name].max_concurrent
         return lim is None or _active_count(t_name) < lim
 
     # Per-tool hidden total-call quotas (counted per loop instance)
@@ -2002,7 +2000,7 @@ async def _async_tool_use_loop_inner(
         return call_counts.get(t_name, 0)
 
     def _quota_ok(t_name: str) -> bool:
-        lim = norm_tools[t_name].max_total_calls
+        lim = tools_data.norm_tools[t_name].max_total_calls
         return lim is None or _quota_count(t_name) < lim
 
     # Expose live task_info mapping on the current Task so outer handles/tests
@@ -2026,14 +2024,14 @@ async def _async_tool_use_loop_inner(
             for entry in unreplied:
                 amsg = entry["assistant_msg"]
                 # Before scheduling, drop any over-quota tool calls in this message
-                _prune_over_quota_tool_calls(amsg, norm_tools, call_counts)
+                _prune_over_quota_tool_calls(amsg, tools_data.norm_tools, call_counts)
                 missing_ids = set(entry["missing"])
                 await _schedule_missing_for_message(
                     amsg,
                     missing_ids,
                     clarification_channels=clarification_channels,
                     call_counts=call_counts,
-                    norm_tools=norm_tools,
+                    norm_tools=tools_data.norm_tools,
                     pending=pending,
                     completed_results=completed_results,
                     parent_chat_context=parent_chat_context,
@@ -2246,7 +2244,7 @@ async def _async_tool_use_loop_inner(
                             missing_ids,
                             clarification_channels=clarification_channels,
                             call_counts=call_counts,
-                            norm_tools=norm_tools,
+                            norm_tools=tools_data.norm_tools,
                             pending=pending,
                             completed_results=completed_results,
                             parent_chat_context=parent_chat_context,
@@ -2531,14 +2529,14 @@ async def _async_tool_use_loop_inner(
                 try:
                     tool_choice_mode, filtered = tool_policy(
                         step_index,
-                        {n: s.fn for n, s in norm_tools.items()},
+                        {n: s.fn for n, s in tools_data.norm_tools.items()},
                     )
                 except Exception as _e:  # never abort the loop on mis-behaving policies
                     logger.error(
                         f"tool_policy raised on turn {step_index}: {_e!r}",
                     )
                     tool_choice_mode, filtered = "auto", {
-                        n: s.fn for n, s in norm_tools.items()
+                        n: s.fn for n, s in tools_data.norm_tools.items()
                     }
                 policy_tools_norm = _normalise_tools(filtered)
             else:
@@ -2546,7 +2544,7 @@ async def _async_tool_use_loop_inner(
                 policy_tools_norm = norm_tools
 
             def _concurrency_ok(tn: str) -> bool:
-                return tn not in norm_tools or _can_offer_tool(tn)
+                return tn not in tools_data.norm_tools or _can_offer_tool(tn)
 
             visible_base_tools_schema = [
                 method_to_schema(spec.fn, name)
@@ -3153,7 +3151,7 @@ async def _async_tool_use_loop_inner(
 
                 # Always ensure over-quota tool calls are removed regardless of
                 # deduplication settings, before any scheduling occurs.
-                _prune_over_quota_tool_calls(msg, norm_tools, call_counts)
+                _prune_over_quota_tool_calls(msg, tools_data.norm_tools, call_counts)
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
@@ -3576,17 +3574,19 @@ async def _async_tool_use_loop_inner(
 
                     # Respect hidden per-tool total-call quotas (pre-pruned); guard
                     if (
-                        name in norm_tools
-                        and norm_tools[name].max_total_calls is not None
-                        and call_counts.get(name, 0) >= norm_tools[name].max_total_calls
+                        name in tools_data.norm_tools
+                        and tools_data.norm_tools[name].max_total_calls is not None
+                        and call_counts.get(name, 0)
+                        >= tools_data.norm_tools[name].max_total_calls
                     ):
                         continue
 
                     # Respect *per-tool* concurrency limits  ────────────────
                     if (
-                        name in norm_tools
-                        and norm_tools[name].max_concurrent is not None
-                        and _active_count(name) >= norm_tools[name].max_concurrent
+                        name in tools_data.norm_tools
+                        and tools_data.norm_tools[name].max_concurrent is not None
+                        and _active_count(name)
+                        >= tools_data.norm_tools[name].max_concurrent
                     ):
                         # Concurrency cap reached → immediately insert a
                         # *tool-error* message and **do not** schedule.
@@ -3596,7 +3596,7 @@ async def _async_tool_use_loop_inner(
                             "name": name,
                             "content": (
                                 f"⚠️ Cannot start '{name}': "
-                                f"max_concurrent={norm_tools[name].max_concurrent} "
+                                f"max_concurrent={tools_data.norm_tools[name].max_concurrent} "
                                 "already reached. Wait for an existing call to "
                                 "finish or stop one before retrying."
                             ),
@@ -3712,7 +3712,7 @@ async def _async_tool_use_loop_inner(
                             call_id=call["id"],
                             call_idx=idx,
                             call_counts=call_counts,
-                            norm_tools=norm_tools,
+                            norm_tools=tools_data.norm_tools,
                             task_info=task_info,
                             pending=pending,
                             parent_chat_context=parent_chat_context,
