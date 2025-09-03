@@ -1476,6 +1476,59 @@ async def _schedule_base_tool_call(
     assistant_meta.setdefault(id(asst_msg), {"results_count": 0})
 
 
+# Ensure placeholder tool messages exist for pending tasks. If assistant_msg
+# is provided, only affects tasks spawned by that assistant turn; otherwise
+# applies to all pending tasks. Returns the list of call_ids for which a
+# placeholder was created.
+async def _ensure_placeholders_for_pending(
+    assistant_msg: Optional[dict] = None,
+    *,
+    content: Optional[str] = None,
+    #
+    task_info,
+    pending,
+    assistant_meta,
+    client,
+    msg_dispatcher,
+) -> list[str]:
+    created: list[str] = []
+    placeholder_content = (
+        content
+        if content is not None
+        else "Pending… tool call accepted. Working on it."
+    )
+    for _t in list(pending):
+        _inf = task_info.get(_t)
+        if not _inf:
+            continue
+        if assistant_msg is not None and _inf.get("assistant_msg") is not assistant_msg:
+            continue
+        if (
+            _inf.get("tool_reply_msg")
+            or _inf.get("continue_msg")
+            or _inf.get("clarify_placeholder")
+        ):
+            continue
+
+        placeholder = {
+            "role": "tool",
+            "tool_call_id": _inf["call_id"],
+            "name": _inf["name"],
+            "content": placeholder_content,
+        }
+        await _insert_after_assistant(
+            assistant_meta,
+            _inf["assistant_msg"],
+            placeholder,
+            client,
+            msg_dispatcher,
+        )
+        _inf["tool_reply_msg"] = placeholder
+        created.append(_inf["call_id"])
+
+    return created
+
+
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
 
@@ -1851,55 +1904,6 @@ async def _async_tool_use_loop_inner(
         lim = norm_tools[t_name].max_total_calls
         return lim is None or _quota_count(t_name) < lim
 
-    # Ensure placeholder tool messages exist for pending tasks. If assistant_msg
-    # is provided, only affects tasks spawned by that assistant turn; otherwise
-    # applies to all pending tasks. Returns the list of call_ids for which a
-    # placeholder was created.
-    async def _ensure_placeholders_for_pending(
-        assistant_msg: Optional[dict] = None,
-        *,
-        content: Optional[str] = None,
-    ) -> list[str]:
-        created: list[str] = []
-        placeholder_content = (
-            content
-            if content is not None
-            else "Pending… tool call accepted. Working on it."
-        )
-        for _t in list(pending):
-            _inf = task_info.get(_t)
-            if not _inf:
-                continue
-            if (
-                assistant_msg is not None
-                and _inf.get("assistant_msg") is not assistant_msg
-            ):
-                continue
-            if (
-                _inf.get("tool_reply_msg")
-                or _inf.get("continue_msg")
-                or _inf.get("clarify_placeholder")
-            ):
-                continue
-
-            placeholder = {
-                "role": "tool",
-                "tool_call_id": _inf["call_id"],
-                "name": _inf["name"],
-                "content": placeholder_content,
-            }
-            await _insert_after_assistant(
-                assistant_meta,
-                _inf["assistant_msg"],
-                placeholder,
-                client,
-                _msg_dispatcher,
-            )
-            _inf["tool_reply_msg"] = placeholder
-            created.append(_inf["call_id"])
-
-        return created
-
     # Helper: schedule a subset of tool_calls on a past assistant message and
     # insert placeholders immediately. Skips already-scheduled/finished ids.
     async def _schedule_missing_for_message(
@@ -1974,6 +1978,10 @@ async def _async_tool_use_loop_inner(
         try:
             await _ensure_placeholders_for_pending(
                 assistant_msg=asst_msg,
+                task_info=task_info,
+                assistant_meta=assistant_meta,
+                client=client,
+                msg_dispatcher=_msg_dispatcher,
             )
         except Exception:
             pass
@@ -2448,6 +2456,11 @@ async def _async_tool_use_loop_inner(
                         "Still running… you can use any of the available helper tools "
                         "to interact with this tool call while it is in progress."
                     ),
+                    task_info=task_info,
+                    pending=pending,
+                    assistant_meta=assistant_meta,
+                    client=client,
+                    msg_dispatcher=_msg_dispatcher,
                 )
                 continue  # still waiting for other tool tasks
 
@@ -2914,6 +2927,11 @@ async def _async_tool_use_loop_inner(
                     "Still running… you can use any of the available helper tools "
                     "to interact with this tool call while it is in progress."
                 ),
+                task_info=task_info,
+                pending=pending,
+                assistant_meta=assistant_meta,
+                client=client,
+                msg_dispatcher=_msg_dispatcher,
             )
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
@@ -3689,6 +3707,11 @@ async def _async_tool_use_loop_inner(
                     await _ensure_placeholders_for_pending(
                         assistant_msg=msg,
                         content="Pending… tool call accepted. Working on it.",
+                        task_info=task_info,
+                        pending=pending,
+                        assistant_meta=assistant_meta,
+                        client=client,
+                        msg_dispatcher=_msg_dispatcher,
                     )
                 except Exception as _ph_exc:
                     logger.error(
