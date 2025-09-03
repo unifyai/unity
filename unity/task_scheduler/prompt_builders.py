@@ -360,12 +360,14 @@ def build_execute_prompt(
     ask_fname = _tool_name(tools, "ask")
     update_fname = None  # update is intentionally NOT exposed to execute
     execute_by_id_fname = _tool_name(tools, "execute_by_id")
+    create_task_fname = _tool_name(tools, "create_task")
     request_clar_fname = _tool_name(tools, "request_clarification")
 
     _require_tools(
         {
             "ask": ask_fname,
             "execute_by_id": execute_by_id_fname,
+            "create_task": create_task_fname,
         },
         tools,
     )
@@ -409,6 +411,12 @@ def build_execute_prompt(
             "   2. Based on the result:",
             f"      • **Exactly one** clear match → call `{execute_by_id_fname}` with that id (and set `execution_scope` = 'isolate' | 'chain' when clear; else omit to use 'auto').",
             f"      • **Multiple tasks that form a chain** and the user wants to start them in order → pick the chain head (task where `prev_task` is None) and call `{execute_by_id_fname}(task_id=<head>, execution_scope='chain')`. Do not reorder or set `start_at`.",
+            f"      • **No match** and it is obvious we should create the task → call `{create_task_fname}(name=<short title>, description=<free‑form user request>)`, then call `{ask_fname}` again to retrieve the new id, then `{execute_by_id_fname}`.",
+            "",
+            "   Naming guidance for creation:",
+            "   • Derive a concise `name` by trimming punctuation and capitalising key words from the user's request.",
+            "   • Use the full free‑form request as the `description` (possibly normalised by removing a trailing period).",
+            "   • Do not specify status, schedule, start_at, prev_task/next_task, triggers, or deadlines here; the scheduler infers lifecycle and preserves invariants.",
         ],
     )
 
@@ -434,7 +442,7 @@ def build_execute_prompt(
     lines.extend(
         [
             "",
-            f"C. The Tasks list is updated implicitly by the system. Do NOT attempt to tweak schedules/ordering/start_at to start – call `{execute_by_id_fname}`. If a new task is clearly required, creation happens outside this tool list; then call `{ask_fname}` to find its id (if needed) and `{execute_by_id_fname}` to start.",
+            f"C. The Tasks list is updated implicitly by the system. Do NOT attempt to tweak schedules/ordering/start_at to start – call `{execute_by_id_fname}`. If a new task is clearly required, use `{create_task_fname}` (name + description only), then call `{ask_fname}` to find its id and `{execute_by_id_fname}` to start.",
             "",
             "Stopping semantics (required):",
             "--------------------------------",
