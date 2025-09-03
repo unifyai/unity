@@ -1347,10 +1347,7 @@ async def _schedule_base_tool_call(
     args_json: Any,
     call_id: str,
     call_idx: int,
-    call_counts,
-    norm_tools,
-    task_info,
-    pending,
+    tools_data,
     parent_chat_context,
     propagate_chat_context,
     clarification_channels,
@@ -1358,16 +1355,16 @@ async def _schedule_base_tool_call(
     client,
 ) -> None:
     # Base tool must exist
-    if name not in norm_tools:
+    if name not in tools_data.norm_tools:
         return
 
-    fn = norm_tools[name].fn
+    fn = tools_data.norm_tools[name].fn
 
     # Enforce hidden per-tool total call quota: should be pre-pruned from
     # the assistant message, but guard here as well and simply skip.
     try:
-        lim = norm_tools[name].max_total_calls
-        if lim is not None and call_counts.get(name, 0) >= lim:
+        lim = tools_data.norm_tools[name].max_total_calls
+        if lim is not None and tools_data.call_counts.get(name, 0) >= lim:
             return
     except Exception:
         pass
@@ -1441,8 +1438,8 @@ async def _schedule_base_tool_call(
     }
 
     t = asyncio.create_task(coro, name=f"ToolCall_{name}")
-    pending.add(t)
-    task_info[t] = {
+    tools_data.pending.add(t)
+    tools_data.info[t] = {
         "name": name,
         "call_id": call_id,
         "assistant_msg": asst_msg,
@@ -1462,7 +1459,7 @@ async def _schedule_base_tool_call(
 
     # Increment hidden quota counter only once scheduling succeeds
     try:
-        call_counts[name] = call_counts.get(name, 0) + 1
+        tools_data.call_counts[name] = tools_data.call_counts.get(name, 0) + 1
     except Exception:
         pass
 
@@ -1590,10 +1587,7 @@ async def _schedule_missing_for_message(
                 args_json=args_json,
                 call_id=cid,
                 call_idx=idx,
-                call_counts=tools_data.call_counts,
-                norm_tools=tools_data.norm_tools,
-                task_info=tools_data.info,
-                pending=tools_data.pending,
+                tools_data=tools_data,
                 parent_chat_context=parent_chat_context,
                 propagate_chat_context=propagate_chat_context,
                 assistant_meta=assistant_meta,
@@ -3721,10 +3715,7 @@ async def _async_tool_use_loop_inner(
                             args_json=call["function"]["arguments"],
                             call_id=call["id"],
                             call_idx=idx,
-                            call_counts=tools_data.call_counts,
-                            norm_tools=tools_data.norm_tools,
-                            task_info=tools_data.info,
-                            pending=tools_data.pending,
+                            tools_data=tools_data,
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
