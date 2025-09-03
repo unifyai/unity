@@ -1787,6 +1787,383 @@ class ToolCallMetadata(TypedDict, total=False):
     raw_arguments_json: str
 
 
+class DynamicToolFactory:
+    def __init__(self, tools_data: _ToolsData):
+        self.dynamic_tools = {}
+        self.tools_data = tools_data
+
+    def _process_task(self, task: asyncio.Task):
+        info = self.tools_data.info[task]
+        handle = info.get("handle")
+        ev = info.get("pause_event")
+
+        # ── DYNAMIC capability refresh (handle may change) ─────
+        if handle is not None:
+            # 1. interjection
+            info["is_interjectable"] = hasattr(handle, "interject")
+
+            # 2. clarification queues
+            h_up_q = getattr(
+                handle,
+                "clarification_up_q",
+                info.get("clar_up_queue"),
+            )
+            h_dn_q = getattr(
+                handle,
+                "clarification_down_q",
+                info.get("clar_down_queue"),
+            )
+
+            if (h_up_q is not None) ^ (h_dn_q is not None):
+                raise AttributeError(
+                    f"Handle of call {info['call_id']} now exposes only one "
+                    "of clarification queues; both or neither required.",
+                )
+
+            # update bookkeeping & channel map
+            prev_up_q = info.get("clar_up_queue")
+            if h_up_q is not prev_up_q:
+                # remove old mapping if any
+                self.tools_data.clarification_channels.pop(info["call_id"], None)
+                if h_up_q is not None:
+                    self.tools_data.clarification_channels[info["call_id"]] = (
+                        h_up_q,
+                        h_dn_q,
+                    )
+            info["clar_up_queue"] = h_up_q
+            info["clar_down_queue"] = h_dn_q
+
+        _call_id: str = info["call_id"]
+        # Create a sanitized version of the call_id for use in function names.
+        _safe_call_id: str = _call_id.replace("-", "_").split("_")[-1]
+        _fn_name: str = info["name"]
+        _arg_json: str = info["call_dict"]["function"]["arguments"]
+        try:
+            _arg_dict = json.loads(_arg_json)
+            _arg_repr = ", ".join(f"{k}={v!r}" for k, v in _arg_dict.items())
+        except Exception:
+            _arg_repr = _arg_json  # fallback: raw JSON string
+
+        # concise, informative, single‑line docs  ----------------------
+        _continue_doc = f"Continue waiting for {_fn_name}({_arg_repr})."
+        _stop_doc = (
+            f"Stop pending call {_fn_name}({_arg_repr}). "
+            "Accepts any arguments supported by the underlying handle's `stop` method (e.g. `reason`)."
+        )
+
+        # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
+        # Skip if the task is blocked waiting for clarification; there's
+        # nothing to "continue" until the user answers.
+        if not info.get("waiting_for_clarification"):
+
+            async def _continue() -> Dict[str, str]:
+                return {"status": "continue", "call_id": _call_id}
+
+            _register_tool(
+                key=f"continue_{_fn_name}_{_safe_call_id}",
+                func_name=f"continue_{_fn_name}_{_safe_call_id}",
+                doc=_continue_doc,
+                fn=_continue,
+                dynamic_tools=self.dynamic_tools,
+            )
+
+        # ––– 2. stop helper –––––––––––––––––––––––––––––––––––––
+        async def _stop(
+            **_kw,
+        ) -> Dict[str, str]:
+            # Forward stop intent to the running handle with any extra kwargs
+            if handle is not None and hasattr(handle, "stop"):
+                await _forward_handle_call(
+                    handle,
+                    "stop",
+                    _kw,
+                    fallback_positional_keys=["reason"],
+                )
+            if not task.done():
+                task.cancel()  # kill the waiter coroutine
+            self.tools_data.pending.discard(task)
+            self.tools_data.info.pop(task, None)
+            return {"status": "stopped", "call_id": _call_id, **_kw}
+
+        _register_tool(
+            key=f"stop_{_fn_name}_{_safe_call_id}",
+            func_name=f"stop_{_fn_name}_{_safe_call_id}",
+            doc=_stop_doc,
+            fn=_stop,
+            dynamic_tools=self.dynamic_tools,
+        )
+        # Expose full argspec of handle.stop in the helper schema
+        try:
+            if handle is not None and hasattr(handle, "stop"):
+                _adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
+        except Exception:
+            pass
+
+        # ––– 3. interject helper (optional) ––––––––––––––––––––––
+        if info.get("is_interjectable"):
+            _interject_doc = (
+                f"Inject additional instructions for {_fn_name}({_arg_repr}). "
+                "Accepts any arguments supported by the underlying handle's `interject` method (e.g. `content`)."
+            )
+
+            if handle is not None:
+
+                async def _interject(**_kw) -> Dict[str, str]:
+                    # nested async-tool loop: delegate to its public API with full argspec
+                    try:
+                        await _forward_handle_call(
+                            handle,
+                            "interject",
+                            _kw,
+                            fallback_positional_keys=["content", "message"],
+                        )
+                    except Exception:
+                        pass
+                    return {
+                        "status": "interjected",
+                        "call_id": _call_id,
+                        **{k: v for k, v in _kw.items()},
+                    }
+
+                # Expose the downstream handle's signature to the LLM
+                try:
+                    _adopt_signature_and_annotations(
+                        getattr(handle, "interject"),
+                        _interject,
+                    )
+                except Exception:
+                    pass
+
+            else:
+
+                async def _interject(content: str) -> Dict[str, str]:
+                    # regular tool: push onto its private queue
+                    await info["interject_queue"].put(content)
+                    return {
+                        "status": "interjected",
+                        "call_id": _call_id,
+                        "content": content,
+                    }
+
+            _register_tool(
+                key=f"interject_{_fn_name}_{_safe_call_id}",
+                func_name=f"interject_{_fn_name}_{_safe_call_id}",
+                doc=_interject_doc,
+                fn=_interject,
+                dynamic_tools=self.dynamic_tools,
+            )
+
+        # ––– 4. clarification-answer helper (optional) ––––––––––
+        if info.get("clar_up_queue") is not None:
+            _clarify_doc = (
+                f"Provide an answer to the clarification which was requested by the (currently pending) tool "
+                f"{_fn_name}({_arg_repr}). Takes a single argument `answer`."
+            )
+
+            async def _clarify(answer: str) -> Dict[str, str]:  # type: ignore[valid-type]
+                return {
+                    "status": "clar_answer",
+                    "call_id": _call_id,
+                    "answer": answer,
+                }
+
+            _register_tool(
+                key=f"clarify_{_fn_name}_{_safe_call_id}",
+                func_name=f"clarify_{_fn_name}_{_safe_call_id}",
+                doc=_clarify_doc,
+                fn=_clarify,
+                dynamic_tools=self.dynamic_tools,
+            )
+
+        # ––– 5. pause helper –––––––––––––––––––––––––––––––––––––––––––
+        can_pause = (handle is not None and hasattr(handle, "pause")) or ev
+        can_resume = (handle is not None and hasattr(handle, "resume")) or ev
+
+        if can_pause:
+            _pause_doc = f"Pause the pending call {_fn_name}({_arg_repr})."
+
+            if handle is not None and hasattr(handle, "pause"):
+
+                async def _pause(**_kw) -> Dict[str, str]:
+                    try:
+                        await _forward_handle_call(handle, "pause", _kw)
+                    except Exception:
+                        pass
+                    return {"status": "paused", "call_id": _call_id, **_kw}
+
+                # Reflect downstream signature/annotations
+                try:
+                    _adopt_signature_and_annotations(
+                        getattr(handle, "pause"),
+                        _pause,
+                    )
+                except Exception:
+                    pass
+
+            else:
+
+                async def _pause() -> Dict[str, str]:
+                    if handle is not None and hasattr(handle, "pause"):
+                        await _maybe_await(handle.pause())
+                    elif ev is not None:
+                        ev.clear()
+                    return {"status": "paused", "call_id": _call_id}
+
+            _register_tool(
+                key=f"pause_{_fn_name}_{_safe_call_id}",
+                func_name=f"pause_{_fn_name}_{_safe_call_id}",
+                doc=_pause_doc,
+                fn=_pause,
+                dynamic_tools=self.dynamic_tools,
+            )
+
+        # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
+        if can_resume:
+            _resume_doc = f"Resume the previously paused call {_fn_name}({_arg_repr})."
+
+            if handle is not None and hasattr(handle, "resume"):
+
+                async def _resume(**_kw) -> Dict[str, str]:
+                    try:
+                        await _forward_handle_call(handle, "resume", _kw)
+                    except Exception:
+                        pass
+                    return {"status": "resumed", "call_id": _call_id, **_kw}
+
+                try:
+                    _adopt_signature_and_annotations(
+                        getattr(handle, "resume"),
+                        _resume,
+                    )
+                except Exception:
+                    pass
+
+            else:
+
+                async def _resume() -> Dict[str, str]:
+                    if handle is not None and hasattr(handle, "resume"):
+                        await _maybe_await(handle.resume())
+                    elif ev is not None:
+                        ev.set()
+                    return {"status": "resumed", "call_id": _call_id}
+
+            _register_tool(
+                key=f"resume_{_fn_name}_{_safe_call_id}",
+                func_name=f"resume_{_fn_name}_{_safe_call_id}",
+                doc=_resume_doc,
+                fn=_resume,
+                dynamic_tools=self.dynamic_tools,
+            )
+
+        # 7.  expose *all* other public methods of the handle
+        if handle is not None:
+
+            public_methods = _discover_custom_public_methods(handle)
+
+            # ── honour handle.valid_tools, if present ──────────────
+            if hasattr(handle, "valid_tools"):
+                allowed: set[str] = set(getattr(handle, "valid_tools", []))
+                public_methods = {
+                    name: bound
+                    for name, bound in public_methods.items()
+                    if name in allowed
+                }
+
+            # Identify write-only helpers declared by the handle
+            write_only_set: set[str] = set()
+            try:
+                wo = getattr(handle, "write_only_methods", None)
+                if wo is not None:
+                    write_only_set |= set(wo)
+            except Exception:
+                pass
+            try:
+                wo2 = getattr(handle, "write_only_tools", None)
+                if wo2 is not None:
+                    write_only_set |= set(wo2)
+            except Exception:
+                pass
+
+            for meth_name, bound in public_methods.items():
+                # use the same name we're about to give fn.__name__
+                func_name = f"{meth_name}_{_fn_name}_{_safe_call_id}"
+                helper_key = func_name
+
+                # Skip if we already generated one this turn (possible when
+                # the loop revisits the same pending task).
+                if helper_key in self.dynamic_tools:
+                    continue
+
+                # Write-only helpers: fire-and-forget operations
+                if meth_name in write_only_set:
+
+                    async def _invoke_handle_method(
+                        _method_name=meth_name,
+                        **_kw,
+                    ):
+                        # Robust forwarding incl. kwargs normalisation and fallbacks
+                        try:
+                            await _forward_handle_call(
+                                handle,
+                                _method_name,
+                                _kw,
+                            )
+                        except Exception:
+                            pass
+                        # Write-only: no result propagation
+                        return {"call_id": _call_id, "status": "ack"}
+
+                else:
+
+                    async def _invoke_handle_method(
+                        _method_name=meth_name,
+                        **_kw,
+                    ):  # default args → capture current method name
+                        """
+                        Auto-generated wrapper that calls the corresponding
+                        method on the live handle and **waits** for the return
+                        value (sync or async).
+                        """
+                        # Use shared forwarding to support flexible args and fallbacks
+                        res = await _forward_handle_call(
+                            handle,
+                            _method_name,
+                            _kw,
+                        )
+                        return {"call_id": _call_id, "result": res}
+
+                # override the wrapper's signature to match the real method
+                _invoke_handle_method.__signature__ = inspect.signature(bound)
+
+                _register_tool(
+                    key=helper_key,
+                    func_name=func_name,
+                    doc=(
+                        (
+                            f"Perform `{meth_name}` on the running handle (id={_call_id}). "
+                            "Fire-and-forget write-only operation; returns immediately."
+                        )
+                        if meth_name in write_only_set
+                        else (
+                            f"Invoke `{meth_name}` on the running handle (id={_call_id}). "
+                            "Returns when that method finishes."
+                        )
+                    ),
+                    fn=_invoke_handle_method,
+                    dynamic_tools=self.dynamic_tools,
+                )
+                # Mark write-only helpers so scheduling can acknowledge and avoid tracking
+                if meth_name in write_only_set:
+                    try:
+                        self.dynamic_tools[helper_key].__write_only__ = True  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+
+    def generate(self):
+        for task in list(self.tools_data.pending):
+            self._process_task(task)
+
+
 async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
     message: str,
@@ -2502,8 +2879,6 @@ async def _async_tool_use_loop_inner(
             # the token budget.
             # ------------------------------------------------------------------
 
-            dynamic_tools: Dict[str, Callable] = {}
-
             # ------------------------------------------------------------------
             # 1.  Build the *static* part of the toolkit **fresh on every turn**
             #     so that concurrency changes (tasks finishing, stopping, …)
@@ -2565,374 +2940,9 @@ async def _async_tool_use_loop_inner(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
 
-            for _task in list(tools_data.pending):
-                info = tools_data.info[_task]
-                handle = info.get("handle")
-                ev = info.get("pause_event")
-
-                # ── DYNAMIC capability refresh (handle may change) ─────
-                if handle is not None:
-                    # 1. interjection
-                    info["is_interjectable"] = hasattr(handle, "interject")
-
-                    # 2. clarification queues
-                    h_up_q = getattr(
-                        handle,
-                        "clarification_up_q",
-                        info.get("clar_up_queue"),
-                    )
-                    h_dn_q = getattr(
-                        handle,
-                        "clarification_down_q",
-                        info.get("clar_down_queue"),
-                    )
-
-                    if (h_up_q is not None) ^ (h_dn_q is not None):
-                        raise AttributeError(
-                            f"Handle of call {info['call_id']} now exposes only one "
-                            "of clarification queues; both or neither required.",
-                        )
-
-                    # update bookkeeping & channel map
-                    prev_up_q = info.get("clar_up_queue")
-                    if h_up_q is not prev_up_q:
-                        # remove old mapping if any
-                        clarification_channels.pop(info["call_id"], None)
-                        if h_up_q is not None:
-                            clarification_channels[info["call_id"]] = (
-                                h_up_q,
-                                h_dn_q,
-                            )
-                    info["clar_up_queue"] = h_up_q
-                    info["clar_down_queue"] = h_dn_q
-
-                _call_id: str = info["call_id"]
-                # Create a sanitized version of the call_id for use in function names.
-                _safe_call_id: str = _call_id.replace("-", "_").split("_")[-1]
-                _fn_name: str = info["name"]
-                _arg_json: str = info["call_dict"]["function"]["arguments"]
-                try:
-                    _arg_dict = json.loads(_arg_json)
-                    _arg_repr = ", ".join(f"{k}={v!r}" for k, v in _arg_dict.items())
-                except Exception:
-                    _arg_repr = _arg_json  # fallback: raw JSON string
-
-                # concise, informative, single‑line docs  ----------------------
-                _continue_doc = f"Continue waiting for {_fn_name}({_arg_repr})."
-                _stop_doc = (
-                    f"Stop pending call {_fn_name}({_arg_repr}). "
-                    "Accepts any arguments supported by the underlying handle's `stop` method (e.g. `reason`)."
-                )
-
-                # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
-                # Skip if the task is blocked waiting for clarification; there's
-                # nothing to "continue" until the user answers.
-                if not info.get("waiting_for_clarification"):
-
-                    async def _continue() -> Dict[str, str]:
-                        return {"status": "continue", "call_id": _call_id}
-
-                    _register_tool(
-                        key=f"continue_{_fn_name}_{_safe_call_id}",
-                        func_name=f"continue_{_fn_name}_{_safe_call_id}",
-                        doc=_continue_doc,
-                        fn=_continue,
-                        dynamic_tools=dynamic_tools,
-                    )
-
-                # ––– 2. stop helper –––––––––––––––––––––––––––––––––––––
-                async def _stop(
-                    **_kw,
-                ) -> Dict[str, str]:
-                    # Forward stop intent to the running handle with any extra kwargs
-                    if handle is not None and hasattr(handle, "stop"):
-                        await _forward_handle_call(
-                            handle,
-                            "stop",
-                            _kw,
-                            fallback_positional_keys=["reason"],
-                        )
-                    if not _task.done():
-                        _task.cancel()  # kill the waiter coroutine
-                    tools_data.pending.discard(_task)
-                    tools_data.info.pop(_task, None)
-                    return {"status": "stopped", "call_id": _call_id, **_kw}
-
-                _register_tool(
-                    key=f"stop_{_fn_name}_{_safe_call_id}",
-                    func_name=f"stop_{_fn_name}_{_safe_call_id}",
-                    doc=_stop_doc,
-                    fn=_stop,
-                    dynamic_tools=dynamic_tools,
-                )
-                # Expose full argspec of handle.stop in the helper schema
-                try:
-                    if handle is not None and hasattr(handle, "stop"):
-                        _adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
-                except Exception:
-                    pass
-
-                # ––– 3. interject helper (optional) ––––––––––––––––––––––
-                if info.get("is_interjectable"):
-                    _interject_doc = (
-                        f"Inject additional instructions for {_fn_name}({_arg_repr}). "
-                        "Accepts any arguments supported by the underlying handle's `interject` method (e.g. `content`)."
-                    )
-
-                    if handle is not None:
-
-                        async def _interject(**_kw) -> Dict[str, str]:
-                            # nested async-tool loop: delegate to its public API with full argspec
-                            try:
-                                await _forward_handle_call(
-                                    handle,
-                                    "interject",
-                                    _kw,
-                                    fallback_positional_keys=["content", "message"],
-                                )
-                            except Exception:
-                                pass
-                            return {
-                                "status": "interjected",
-                                "call_id": _call_id,
-                                **{k: v for k, v in _kw.items()},
-                            }
-
-                        # Expose the downstream handle's signature to the LLM
-                        try:
-                            _adopt_signature_and_annotations(
-                                getattr(handle, "interject"),
-                                _interject,
-                            )
-                        except Exception:
-                            pass
-
-                    else:
-
-                        async def _interject(content: str) -> Dict[str, str]:
-                            # regular tool: push onto its private queue
-                            await info["interject_queue"].put(content)
-                            return {
-                                "status": "interjected",
-                                "call_id": _call_id,
-                                "content": content,
-                            }
-
-                    _register_tool(
-                        key=f"interject_{_fn_name}_{_safe_call_id}",
-                        func_name=f"interject_{_fn_name}_{_safe_call_id}",
-                        doc=_interject_doc,
-                        fn=_interject,
-                        dynamic_tools=dynamic_tools,
-                    )
-
-                # ––– 4. clarification-answer helper (optional) ––––––––––
-                if info.get("clar_up_queue") is not None:
-                    _clarify_doc = (
-                        f"Provide an answer to the clarification which was requested by the (currently pending) tool "
-                        f"{_fn_name}({_arg_repr}). Takes a single argument `answer`."
-                    )
-
-                    async def _clarify(answer: str) -> Dict[str, str]:  # type: ignore[valid-type]
-                        return {
-                            "status": "clar_answer",
-                            "call_id": _call_id,
-                            "answer": answer,
-                        }
-
-                    _register_tool(
-                        key=f"clarify_{_fn_name}_{_safe_call_id}",
-                        func_name=f"clarify_{_fn_name}_{_safe_call_id}",
-                        doc=_clarify_doc,
-                        fn=_clarify,
-                        dynamic_tools=dynamic_tools,
-                    )
-
-                # ––– 5. pause helper –––––––––––––––––––––––––––––––––––––––––––
-                can_pause = (handle is not None and hasattr(handle, "pause")) or ev
-                can_resume = (handle is not None and hasattr(handle, "resume")) or ev
-
-                if can_pause:
-                    _pause_doc = f"Pause the pending call {_fn_name}({_arg_repr})."
-
-                    if handle is not None and hasattr(handle, "pause"):
-
-                        async def _pause(**_kw) -> Dict[str, str]:
-                            try:
-                                await _forward_handle_call(handle, "pause", _kw)
-                            except Exception:
-                                pass
-                            return {"status": "paused", "call_id": _call_id, **_kw}
-
-                        # Reflect downstream signature/annotations
-                        try:
-                            _adopt_signature_and_annotations(
-                                getattr(handle, "pause"),
-                                _pause,
-                            )
-                        except Exception:
-                            pass
-
-                    else:
-
-                        async def _pause() -> Dict[str, str]:
-                            if handle is not None and hasattr(handle, "pause"):
-                                await _maybe_await(handle.pause())
-                            elif ev is not None:
-                                ev.clear()
-                            return {"status": "paused", "call_id": _call_id}
-
-                    _register_tool(
-                        key=f"pause_{_fn_name}_{_safe_call_id}",
-                        func_name=f"pause_{_fn_name}_{_safe_call_id}",
-                        doc=_pause_doc,
-                        fn=_pause,
-                        dynamic_tools=dynamic_tools,
-                    )
-
-                # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
-                if can_resume:
-                    _resume_doc = (
-                        f"Resume the previously paused call {_fn_name}({_arg_repr})."
-                    )
-
-                    if handle is not None and hasattr(handle, "resume"):
-
-                        async def _resume(**_kw) -> Dict[str, str]:
-                            try:
-                                await _forward_handle_call(handle, "resume", _kw)
-                            except Exception:
-                                pass
-                            return {"status": "resumed", "call_id": _call_id, **_kw}
-
-                        try:
-                            _adopt_signature_and_annotations(
-                                getattr(handle, "resume"),
-                                _resume,
-                            )
-                        except Exception:
-                            pass
-
-                    else:
-
-                        async def _resume() -> Dict[str, str]:
-                            if handle is not None and hasattr(handle, "resume"):
-                                await _maybe_await(handle.resume())
-                            elif ev is not None:
-                                ev.set()
-                            return {"status": "resumed", "call_id": _call_id}
-
-                    _register_tool(
-                        key=f"resume_{_fn_name}_{_safe_call_id}",
-                        func_name=f"resume_{_fn_name}_{_safe_call_id}",
-                        doc=_resume_doc,
-                        fn=_resume,
-                        dynamic_tools=dynamic_tools,
-                    )
-
-                # 7.  expose *all* other public methods of the handle
-                if handle is not None:
-
-                    public_methods = _discover_custom_public_methods(handle)
-
-                    # ── honour handle.valid_tools, if present ──────────────
-                    if hasattr(handle, "valid_tools"):
-                        allowed: set[str] = set(getattr(handle, "valid_tools", []))
-                        public_methods = {
-                            name: bound
-                            for name, bound in public_methods.items()
-                            if name in allowed
-                        }
-
-                    # Identify write-only helpers declared by the handle
-                    write_only_set: set[str] = set()
-                    try:
-                        wo = getattr(handle, "write_only_methods", None)
-                        if wo is not None:
-                            write_only_set |= set(wo)
-                    except Exception:
-                        pass
-                    try:
-                        wo2 = getattr(handle, "write_only_tools", None)
-                        if wo2 is not None:
-                            write_only_set |= set(wo2)
-                    except Exception:
-                        pass
-
-                    for meth_name, bound in public_methods.items():
-                        # use the same name we're about to give fn.__name__
-                        func_name = f"{meth_name}_{_fn_name}_{_safe_call_id}"
-                        helper_key = func_name
-
-                        # Skip if we already generated one this turn (possible when
-                        # the loop revisits the same pending task).
-                        if helper_key in dynamic_tools:
-                            continue
-
-                        # Write-only helpers: fire-and-forget operations
-                        if meth_name in write_only_set:
-
-                            async def _invoke_handle_method(
-                                _method_name=meth_name,
-                                **_kw,
-                            ):
-                                # Robust forwarding incl. kwargs normalisation and fallbacks
-                                try:
-                                    await _forward_handle_call(
-                                        handle,
-                                        _method_name,
-                                        _kw,
-                                    )
-                                except Exception:
-                                    pass
-                                # Write-only: no result propagation
-                                return {"call_id": _call_id, "status": "ack"}
-
-                        else:
-
-                            async def _invoke_handle_method(
-                                _method_name=meth_name,
-                                **_kw,
-                            ):  # default args → capture current method name
-                                """
-                                Auto-generated wrapper that calls the corresponding
-                                method on the live handle and **waits** for the return
-                                value (sync or async).
-                                """
-                                # Use shared forwarding to support flexible args and fallbacks
-                                res = await _forward_handle_call(
-                                    handle,
-                                    _method_name,
-                                    _kw,
-                                )
-                                return {"call_id": _call_id, "result": res}
-
-                        # override the wrapper's signature to match the real method
-                        _invoke_handle_method.__signature__ = inspect.signature(bound)
-
-                        _register_tool(
-                            key=helper_key,
-                            func_name=func_name,
-                            doc=(
-                                (
-                                    f"Perform `{meth_name}` on the running handle (id={_call_id}). "
-                                    "Fire-and-forget write-only operation; returns immediately."
-                                )
-                                if meth_name in write_only_set
-                                else (
-                                    f"Invoke `{meth_name}` on the running handle (id={_call_id}). "
-                                    "Returns when that method finishes."
-                                )
-                            ),
-                            fn=_invoke_handle_method,
-                            dynamic_tools=dynamic_tools,
-                        )
-                        # Mark write-only helpers so scheduling can acknowledge and avoid tracking
-                        if meth_name in write_only_set:
-                            try:
-                                dynamic_tools[helper_key].__write_only__ = True  # type: ignore[attr-defined]
-                            except Exception:
-                                pass
+            dynamic_tool_factory = DynamicToolFactory(tools_data)
+            dynamic_tool_factory.generate()
+            dynamic_tools = dynamic_tool_factory.dynamic_tools
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
