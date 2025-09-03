@@ -326,17 +326,21 @@ class CommsAgent:
             try:
                 name = await self.meet_browser.observe(
                     (
-                        "From the current Google Meet screen, read the live captions. "
-                        "Return only the current speaker's display name (empty string if none)."
+                        "From the current Google Meet screen, read the live captions/subtitles. "
+                        "If someone is currently speaking, return exactly their display name as plain text. "
+                        "If no one is speaking or no caption is visible, return an empty string. "
+                        "Do not include any extra words, punctuation, or quotes. Output must be a single line."
                     ),
                     str,
                 )
                 # Parallel observation: detect active speaker via blue outline/label indicator
                 blue_name = await self.meet_browser.observe(
                     (
-                        "From the current Google Meet screen, identify the participant currently marked as speaking "
-                        "using the visual active speaker cue (e.g., blue outline or speaker badge). "
-                        "Return only the current speaker's display name (empty string if none)."
+                        "From the current Google Meet screen, identify the participant visually marked as speaking "
+                        "(e.g., blue outline, speaker badge, or active-speaker indicator). "
+                        "If a participant is visually indicated as speaking, return exactly their display name as plain text. "
+                        "If no one is visually indicated as speaking, return an empty string. "
+                        "Do not include any extra words, punctuation, or quotes. Output must be a single line."
                     ),
                     str,
                 )
@@ -1422,17 +1426,18 @@ class CommsAgent:
             }
 
         # Attach speaker metadata to user phone utterances using recent captions
-        # try:
-        #     if (
-        #         event["event"]["event_name"] == "PhoneUtteranceEvent"
-        #         and event["event"]["payload"].get("role") == "User"
-        #     ):
-        #         now = asyncio.get_event_loop().time()
-        #         speaker = self._nearest_speaker(now)
-        #         if speaker:
-        #             event["event"]["payload"]["speaker"] = speaker
-        # except Exception:
-        #     ...
+        try:
+            if (
+                event["event"]["event_name"] == "PhoneUtteranceEvent"
+                and event["event"]["payload"].get("role") == "User"
+            ):
+                now = asyncio.get_event_loop().time()
+                speaker = self._nearest_speaker(now)
+                print("\n\nuser speaker", speaker)
+                # if speaker:
+                #     event["event"]["payload"]["speaker"] = speaker
+        except Exception:
+            ...
 
         if to == "past":
             self.past_events.append(event["event"])
