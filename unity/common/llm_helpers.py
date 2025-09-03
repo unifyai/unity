@@ -1084,8 +1084,8 @@ async def _process_completed_task(
                 "handle": raw,
                 "is_interjectable": hasattr(raw, "interject"),
                 "tool_reply_msg": ph,
-                "clar_up_q": h_up_q,
-                "clar_down_q": h_down_q,
+                "clar_up_queue": h_up_q,
+                "clar_down_queue": h_down_q,
             }
             if h_up_q is not None:
                 clarification_channels[call_id] = (h_up_q, h_down_q)
@@ -1770,7 +1770,7 @@ class _AsyncToolLoopToolFailureTracker:
         self._consecutive_failures = 0
 
 
-class ToolCallMetadata(TypedDict):
+class ToolCallMetadata(TypedDict, total=False):
     name: str
     call_id: str
     call_dict: dict
@@ -1778,6 +1778,7 @@ class ToolCallMetadata(TypedDict):
     chat_context: str
     assistant_msg: dict
     is_interjectable: bool
+    handle: Optional[Any]
     interject_queue: Optional[asyncio.Queue[str]]
     clar_up_queue: Optional[asyncio.Queue[str]]
     clar_down_queue: Optional[asyncio.Queue[str]]
@@ -2348,7 +2349,7 @@ async def _async_tool_use_loop_inner(
                     if tools_data.info[_t].get("waiting_for_clarification"):
                         continue
 
-                    cuq = tools_data.info[_t].get("clar_up_q")
+                    cuq = tools_data.info[_t].get("clar_up_queue")
                     if cuq is not None:
                         w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
                         clar_waiters[w] = _t
@@ -2613,8 +2614,8 @@ async def _async_tool_use_loop_inner(
                                 h_up_q,
                                 h_dn_q,
                             )
-                    info["clar_up_q"] = h_up_q
-                    info["clar_down_q"] = h_dn_q
+                    info["clar_up_queue"] = h_up_q
+                    info["clar_down_queue"] = h_dn_q
 
                 _call_id: str = info["call_id"]
                 # Create a sanitized version of the call_id for use in function names.
