@@ -169,8 +169,8 @@ class CommsAgent:
         self.logging_lock = threading.Lock()
 
         # speaker tracking
-        self.speaker_buffer = deque(maxlen=50)
         self.current_speaker = None
+        self.speaker_buffer = deque(maxlen=50)
 
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
@@ -309,7 +309,6 @@ class CommsAgent:
 
     async def popup_check_for_meet(self):
         while True:
-            await asyncio.sleep(1)
             if self.meet_browser is None:
                 break
             ret = await self.meet_browser.observe(
@@ -322,6 +321,7 @@ class CommsAgent:
                 await self.meet_browser.act(
                     "Close any popup on the screen, usually related to clicking 'OK' or 'Got it'.",
                 )
+            await asyncio.sleep(5)
 
     async def track_active_speaker(self):
         """Track active speaker using Meet captions via screenshot-based observation.
@@ -336,36 +336,51 @@ class CommsAgent:
 
         while self.meet_browser:
             try:
-                name = await self.meet_browser.observe(
-                    (
-                        "From the current Google Meet screen, read the live captions/subtitles. "
-                        "If someone is currently speaking, return exactly their display name as plain text. "
-                        "If no one is speaking or no caption is visible, return an empty string. "
-                        "Do not include any extra words, punctuation, or quotes. Output must be a single line."
-                    ),
-                    str,
+                # Build recent buffers as context (avoid repeats / omissions)
+                recent_entries = list(self.speaker_buffer)[-3:]
+                recent_caps = [c for _, _, c in recent_entries if c]
+                recent_speakers = [s for _, s, _ in recent_entries if s]
+                prompt = (
+                    "From the current Google Meet screen, determine the CURRENT speaker and latest caption using BOTH sources: "
+                    "(1) live captions/subtitles (use the speaker label preceding the caption), and (2) visual active-speaker indicators "
+                    "(blue outline, speaker badge, audio indicator). Use the following previous context to avoid repeats: "
+                    f"recent_captions={json.dumps(recent_caps)} recent_speakers={json.dumps(recent_speakers)}. "
+                    "Return STRICT JSON with keys: speaker (string, empty if none), caption (string, empty if none). "
+                    "If the detected caption equals the most recent in recent_captions, set caption to an empty string. "
+                    "Likewise, if the detected speaker equals the most recent in recent_speakers, set speaker to an empty string. "
+                    "Do not include any other keys or any explanatory text."
                 )
-                # Parallel observation: detect active speaker via blue outline/label indicator
-                # name = await self.meet_browser.observe(
-                #     (
-                #         "From the current Google Meet screen, identify the participant visually marked as speaking "
-                #         "(e.g., blue outline, speaker badge, or active-speaker indicator). "
-                #         "If a participant is visually indicated as speaking, return exactly their display name as plain text. "
-                #         "If no one is visually indicated as speaking, return an empty string. "
-                #         "Do not include any extra words, punctuation, or quotes. Output must be a single line."
-                #     ),
-                #     str,
-                # )
-                if isinstance(name, str):
-                    name = name.strip().split("\n")[0]
-                if name and name.strip().lower() not in (
-                    "you",
-                    self.assistant_name.lower(),
-                ):
-                    self.current_speaker = name
-                    self.speaker_buffer.append((asyncio.get_event_loop().time(), name))
-                print("\n\ncurrent speaker (captions)", name)
+
+                result = await self.meet_browser.observe(prompt, str)
+                speaker_name, caption_text = "", ""
+                if isinstance(result, str):
+                    result = result.strip()
+                    try:
+                        parsed = json.loads(result)
+                        speaker_name = (parsed.get("speaker") or "").strip()
+                        caption_text = (parsed.get("caption") or "").strip()
+                    except Exception:
+                        # fallback: treat plain string as speaker name if non-empty
+                        speaker_name = result
+
+                now_ts = asyncio.get_event_loop().time()
+                # Normalize speaker (ignore self/"you")
+                norm_speaker = speaker_name.strip()
+                if norm_speaker.lower() in ("you", self.assistant_name.lower()):
+                    norm_speaker = ""
+
+                last_entry = self.speaker_buffer[-1] if self.speaker_buffer else None
+                last_speaker = last_entry[1] if last_entry else ""
+                last_caption = last_entry[2] if last_entry else ""
+                if norm_speaker != last_speaker or (caption_text or "") != last_caption:
+                    self.speaker_buffer.append((now_ts, norm_speaker, caption_text))
+                if norm_speaker:
+                    self.current_speaker = norm_speaker
+
+                print("\ncurrent speaker (observe)", speaker_name)
                 print("speaker buffer", self.speaker_buffer)
+                if caption_text:
+                    print("caption", caption_text)
             except Exception:
                 print("\nTRACKING ACTIVE SPEAKER ERROR!\n")
 
@@ -449,11 +464,11 @@ class CommsAgent:
                             ):
                                 await asyncio.sleep(0.5)
 
+                            # start checks in the background
                             self.meet_joined.set()
-                            # start captions-based speaker tracking
-                            asyncio.create_task(self.track_active_speaker())
-                            asyncio.create_task(self.inactivity_check_for_meet())
                             asyncio.create_task(self.popup_check_for_meet())
+                            asyncio.create_task(self.inactivity_check_for_meet())
+                            asyncio.create_task(self.track_active_speaker())
 
                         continue
                     else:
