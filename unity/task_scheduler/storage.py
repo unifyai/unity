@@ -135,22 +135,7 @@ class TasksStore:
         entries: Dict[str, Any],
         overwrite: bool = True,
     ) -> Dict[str, str]:
-        # Final safety net: if a non-active status is being written, clear `activated_by`.
-        try:
-            from .types.status import Status as _Status  # local import to avoid cycles
-
-            target_status = entries.get("status")
-            if target_status is not None:
-                # Accept both enum and raw string
-                st_enum = (
-                    target_status
-                    if isinstance(target_status, _Status)
-                    else _Status(str(target_status))
-                )
-                if st_enum != _Status.active:
-                    entries = {**entries, "activated_by": None}
-        except Exception:
-            pass
+        # Preserve 'activated_by' unless the caller explicitly sets/clears it.
 
         def _norm(v: Any) -> Any:
             # Preserve semantic values for enums: for StrEnum keep the string value;
