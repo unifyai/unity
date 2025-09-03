@@ -198,8 +198,8 @@ class CommsAgent:
                 # self.conductor.ask,
                 # self.conductor.request,
                 # self.transcript_manager.ask,
-                self._start_screen_share,
-                self._stop_screen_share,
+                # self._start_screen_share,
+                # self._stop_screen_share,
                 self._send_call,
                 self._send_sms,
                 self._send_email,
@@ -323,26 +323,26 @@ class CommsAgent:
 
         while self.meet_browser:
             try:
-                name = await self.meet_browser.observe(
-                    (
-                        "From the current Google Meet screen, read the live captions/subtitles. "
-                        "If someone is currently speaking, return exactly their display name as plain text. "
-                        "If no one is speaking or no caption is visible, return an empty string. "
-                        "Do not include any extra words, punctuation, or quotes. Output must be a single line."
-                    ),
-                    str,
-                )
-                # Parallel observation: detect active speaker via blue outline/label indicator
                 # name = await self.meet_browser.observe(
                 #     (
-                #         "From the current Google Meet screen, identify the participant visually marked as speaking "
-                #         "(e.g., blue outline, speaker badge, or active-speaker indicator). "
-                #         "If a participant is visually indicated as speaking, return exactly their display name as plain text. "
-                #         "If no one is visually indicated as speaking, return an empty string. "
+                #         "From the current Google Meet screen, read the live captions/subtitles. "
+                #         "If someone is currently speaking, return exactly their display name as plain text. "
+                #         "If no one is speaking or no caption is visible, return an empty string. "
                 #         "Do not include any extra words, punctuation, or quotes. Output must be a single line."
                 #     ),
                 #     str,
                 # )
+                # Parallel observation: detect active speaker via blue outline/label indicator
+                name = await self.meet_browser.observe(
+                    (
+                        "From the current Google Meet screen, identify the participant visually marked as speaking "
+                        "(e.g., blue outline, speaker badge, or active-speaker indicator). "
+                        "If a participant is visually indicated as speaking, return exactly their display name as plain text. "
+                        "If no one is visually indicated as speaking, return an empty string. "
+                        "Do not include any extra words, punctuation, or quotes. Output must be a single line."
+                    ),
+                    str,
+                )
                 if isinstance(name, str):
                     name = name.strip().split("\n")[0]
                 # if name:
@@ -1344,7 +1344,7 @@ class CommsAgent:
             ):
                 now = asyncio.get_event_loop().time()
                 speaker = self._nearest_speaker(now)
-                print("\n\nuser speaker", speaker)
+                print("\n\nuser speaker", speaker, "\n\n")
                 # if speaker:
                 #     event["event"]["payload"]["speaker"] = speaker
         except Exception:

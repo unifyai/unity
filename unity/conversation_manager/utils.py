@@ -302,7 +302,7 @@ async def get_meet_join_state(meet_browser) -> str:
             if s in ("joined", "asking", "filling"):
                 return s
     except Exception:
-        ...
+        print("Failed to get meet join state")
     return "filling"
 
 
@@ -315,7 +315,7 @@ async def enter_name_with_retry(
     if not meet_browser:
         return False
 
-    for _ in range(max_attempts):
+    for i in range(max_attempts):
         try:
             await meet_browser.act(
                 f"Input your name as {assistant_name} and press enter",
@@ -325,13 +325,12 @@ async def enter_name_with_retry(
             # Observe-only join state check
             try:
                 state = await get_meet_join_state(meet_browser)
-                print("STATE:", state)
                 if state in ("joined", "asking"):
                     return True
             except Exception:
-                ...
+                print(f"Failed to join meet. Attempt {i + 1}/{max_attempts}")
         except Exception:
-            ...
+            print(f"Failed to enter name. Attempt {i + 1}/{max_attempts}")
         await asyncio.sleep(0.8)
     return False
 
@@ -351,12 +350,13 @@ async def _is_captions_enabled(meet_browser) -> bool:
 
 
 async def ensure_captions_enabled(meet_browser, max_attempts: int = 5):
-    for _ in range(max_attempts):
+    for i in range(max_attempts):
         if await _is_captions_enabled(meet_browser):
             return True
         try:
-            await meet_browser.act("Turn on captions. DO NOT CLICK ON SCREEN SHARE.")
+            await meet_browser.act("Turn on captions.")
+            await asyncio.sleep(1)
         except Exception:
-            ...
+            print(f"Failed to turn on captions. Attempt {i + 1}/{max_attempts}")
         await asyncio.sleep(0.6)
     return await _is_captions_enabled(meet_browser)
