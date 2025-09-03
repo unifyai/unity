@@ -1737,6 +1737,7 @@ class _ToolsData:
         self.norm_tools = _normalise_tools(tools)
         self.pending: Set[asyncio.Task] = set()
         self.info: Dict[asyncio.Task, Dict[str, Any]] = {}
+        # Per-tool hidden total-call quotas (counted per loop instance)
         self.call_counts: Dict[str, int] = {}
 
 
@@ -1991,11 +1992,8 @@ async def _async_tool_use_loop_inner(
         lim = tools_data.norm_tools[t_name].max_concurrent
         return lim is None or _active_count(t_name) < lim
 
-    # Per-tool hidden total-call quotas (counted per loop instance)
-    call_counts: Dict[str, int] = {}
-
     def _quota_count(t_name: str) -> int:
-        return call_counts.get(t_name, 0)
+        return tools_data.call_counts.get(t_name, 0)
 
     def _quota_ok(t_name: str) -> bool:
         lim = tools_data.norm_tools[t_name].max_total_calls
@@ -2022,13 +2020,17 @@ async def _async_tool_use_loop_inner(
             for entry in unreplied:
                 amsg = entry["assistant_msg"]
                 # Before scheduling, drop any over-quota tool calls in this message
-                _prune_over_quota_tool_calls(amsg, tools_data.norm_tools, call_counts)
+                _prune_over_quota_tool_calls(
+                    amsg,
+                    tools_data.norm_tools,
+                    tools_data.call_counts,
+                )
                 missing_ids = set(entry["missing"])
                 await _schedule_missing_for_message(
                     amsg,
                     missing_ids,
                     clarification_channels=clarification_channels,
-                    call_counts=call_counts,
+                    call_counts=tools_data.call_counts,
                     norm_tools=tools_data.norm_tools,
                     pending=tools_data.pending,
                     completed_results=completed_results,
@@ -2241,7 +2243,7 @@ async def _async_tool_use_loop_inner(
                             amsg,
                             missing_ids,
                             clarification_channels=clarification_channels,
-                            call_counts=call_counts,
+                            call_counts=tools_data.call_counts,
                             norm_tools=tools_data.norm_tools,
                             pending=tools_data.pending,
                             completed_results=completed_results,
@@ -3149,7 +3151,11 @@ async def _async_tool_use_loop_inner(
 
                 # Always ensure over-quota tool calls are removed regardless of
                 # deduplication settings, before any scheduling occurs.
-                _prune_over_quota_tool_calls(msg, tools_data.norm_tools, call_counts)
+                _prune_over_quota_tool_calls(
+                    msg,
+                    tools_data.norm_tools,
+                    tools_data.call_counts,
+                )
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
@@ -3590,7 +3596,7 @@ async def _async_tool_use_loop_inner(
                     if (
                         name in tools_data.norm_tools
                         and tools_data.norm_tools[name].max_total_calls is not None
-                        and call_counts.get(name, 0)
+                        and tools_data.call_counts.get(name, 0)
                         >= tools_data.norm_tools[name].max_total_calls
                     ):
                         continue
@@ -3725,7 +3731,7 @@ async def _async_tool_use_loop_inner(
                             args_json=call["function"]["arguments"],
                             call_id=call["id"],
                             call_idx=idx,
-                            call_counts=call_counts,
+                            call_counts=tools_data.call_counts,
                             norm_tools=tools_data.norm_tools,
                             task_info=tools_data.info,
                             pending=tools_data.pending,
