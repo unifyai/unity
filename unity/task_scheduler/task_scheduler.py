@@ -509,6 +509,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: asyncio.Queue[str] | None = None,
         activated_by: Optional[ActivatedBy] = None,
         execution_scope: Literal["isolate", "chain"] = "isolate",
+        detach: bool = True,
     ) -> SteerableToolHandle:
         """
         Start the execution of a runnable task by its identifier.
@@ -563,11 +564,16 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] in ("completed", "cancelled", "failed", "active"):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
-        # Adjust queue linkages based on explicit activation scope
-        self._detach_from_queue_for_activation(
-            task_id=task_id,
-            execution_scope=execution_scope,
-        )
+        # Adjust queue linkages based on explicit activation scope.
+        # For chain execution, only the initial chain head should be detached
+        # from its predecessor. Followers started as part of the same chain
+        # must retain their prev/next pointers so the chain structure remains
+        # intact in storage (tests assert this behaviour).
+        if detach:
+            self._detach_from_queue_for_activation(
+                task_id=task_id,
+                execution_scope=execution_scope,
+            )
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
         handle = await ActiveTask.create(
@@ -695,6 +701,8 @@ class TaskScheduler(BaseTaskScheduler):
                         clarification_down_q=self._clar_down,
                         activated_by=ActivatedBy.explicit,
                         execution_scope="chain",
+                        # Do NOT detach followers from each other; keep chain links intact
+                        detach=False,
                     )
             finally:
                 self._done_evt.set()
