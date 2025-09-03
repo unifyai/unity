@@ -748,8 +748,173 @@ class TaskScheduler(BaseTaskScheduler):
             await self._done_evt.wait()
             return self._final_result or ""
 
-        async def ask(self, question: str) -> "SteerableToolHandle":  # type: ignore[override]
-            return await self._current_handle.ask(question)
+        async def ask(self, question: str, *, _return_reasoning_steps: bool = False) -> "SteerableToolHandle":  # type: ignore[override]
+            """Answer questions with chain-aware context and delegate to inner handle.
+
+            Builds a compact chain snapshot (head→tail) including all non-None
+            task fields for each task (completed and non-completed) and a
+            high-level progress summary, then prepends it to the forwarded
+            question. If snapshot construction fails, falls back to the raw
+            question.
+            """
+
+            def _safe_dump(value):
+                try:
+                    import json as _json  # local import
+
+                    return _json.dumps(value, default=str)
+                except Exception:
+                    return str(value)
+
+            def _get_row(tid: int):
+                try:
+                    rows = self._s._filter_tasks(
+                        filter=f"task_id == {int(tid)}",
+                        limit=1,
+                    )
+                    return rows[0] if rows else None
+                except Exception:
+                    return None
+
+            chain_preamble: str | None = None
+            try:
+                # 1) Locate current row and walk to head (using schedule.prev_task)
+                cur_row = _get_row(self._current_task_id)
+                head_row = cur_row
+                while head_row is not None:
+                    prev_id = self._s._sched_prev((head_row.get("schedule") or {}))
+                    if prev_id is None:
+                        break
+                    prev_row = _get_row(prev_id)
+                    if prev_row is None:
+                        break
+                    head_row = prev_row
+
+                # 2) Walk forward to collect the entire chain, including terminal statuses
+                chain_rows: list[dict] = []
+                seen: set[int] = set()
+                node = head_row
+                while node is not None:
+                    tid = node.get("task_id")
+                    try:
+                        tid_int = int(tid)
+                    except Exception:
+                        tid_int = None  # type: ignore[assignment]
+                    if tid_int is not None and tid_int in seen:
+                        break  # safety loop-breaker
+                    if tid_int is not None:
+                        seen.add(tid_int)
+                    chain_rows.append(node)
+                    nxt_id = self._s._sched_next((node.get("schedule") or {}))
+                    if nxt_id is None:
+                        break
+                    node = _get_row(nxt_id)
+
+                # Fallback: if chain_rows is empty, try non-terminal queue as a best-effort snapshot
+                if not chain_rows:
+                    queue = self._s._get_task_queue(task_id=self._current_task_id)
+                    chain_rows = [
+                        {
+                            # best-effort row-like dict shape
+                            "task_id": getattr(t, "task_id", None),
+                            "instance_id": getattr(t, "instance_id", None),
+                            "name": getattr(t, "name", None),
+                            "description": getattr(t, "description", None),
+                            "status": getattr(t, "status", None),
+                            "schedule": getattr(t, "schedule", None),
+                            "trigger": getattr(t, "trigger", None),
+                            "deadline": getattr(t, "deadline", None),
+                            "repeat": getattr(t, "repeat", None),
+                            "priority": getattr(t, "priority", None),
+                            "response_policy": getattr(t, "response_policy", None),
+                            "activated_by": getattr(t, "activated_by", None),
+                        }
+                        for t in queue
+                    ]
+
+                total_count = len(chain_rows)
+                # Identify current index
+                current_index = -1
+                for idx, r in enumerate(chain_rows):
+                    if r.get("task_id") == self._current_task_id:
+                        current_index = idx
+                        break
+
+                # Count statuses
+                def _to_status_str(row: dict) -> str:
+                    try:
+                        return str(self._s._to_status(row.get("status")))
+                    except Exception:
+                        return str(row.get("status"))
+
+                completed_count = sum(
+                    1 for r in chain_rows if _to_status_str(r) == "completed"
+                )
+                remaining_count = max(0, total_count - completed_count)
+
+                # Next tasks preview (up to 3)
+                next_names: list[str] = []
+                if current_index >= 0:
+                    for j in range(
+                        current_index + 1,
+                        min(current_index + 4, total_count),
+                    ):
+                        nm = chain_rows[j].get("name")
+                        if nm:
+                            next_names.append(str(nm))
+
+                # High-level summary line
+                if current_index >= 0 and current_index < total_count:
+                    current_name = (
+                        chain_rows[current_index].get("name") or "(unnamed task)"
+                    )
+                    headline = (
+                        f"Chain status: {completed_count}/{total_count} completed; "
+                        f"{remaining_count} remaining; executing {current_index + 1}/{total_count}: "
+                        f"{current_name}."
+                    )
+                else:
+                    headline = (
+                        f"Chain status: {completed_count}/{total_count} completed; "
+                        f"{remaining_count} remaining; executing: (unknown current index)."
+                    )
+                if next_names:
+                    headline += f" Next: {', '.join(next_names)}."
+
+                # Detailed rows with all non-None fields
+                details_lines: list[str] = ["Chain tasks (head→tail):"]
+                for r in chain_rows:
+                    tid = r.get("task_id")
+                    name = r.get("name") or ""
+                    details_lines.append(f"- Task {tid}: {name}")
+                    # Print all non-None, non-_internal keys
+                    for k, v in r.items():
+                        if v is None or k in {"name"}:
+                            continue
+                        if str(k).startswith("_"):
+                            continue
+                        details_lines.append(f"    {k}: {_safe_dump(v)}")
+
+                chain_preamble = (
+                    "CHAIN CONTEXT\n" + headline + "\n" + "\n".join(details_lines)
+                )
+            except Exception:
+                chain_preamble = None
+
+            composed_question = (
+                f"{chain_preamble}\n\nUSER QUESTION:\n{question}"
+                if chain_preamble
+                else question
+            )
+
+            try:
+                return await self._current_handle.ask(  # type: ignore[arg-type]
+                    composed_question,
+                    _return_reasoning_steps=_return_reasoning_steps,
+                )
+            except TypeError:
+                # Older handles may not accept the kwarg – retry without it.
+                return await self._current_handle.ask(composed_question)  # type: ignore[arg-type]
 
         @property
         def valid_tools(self) -> Dict[str, Callable]:  # type: ignore[override]
