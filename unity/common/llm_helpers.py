@@ -2540,7 +2540,7 @@ async def _async_tool_use_loop_inner(
                 policy_tools_norm = _normalise_tools(filtered)
             else:
                 tool_choice_mode = "auto"
-                policy_tools_norm = norm_tools
+                policy_tools_norm = tools_data.norm_tools
 
             def _concurrency_ok(tn: str) -> bool:
                 return tn not in tools_data.norm_tools or _can_offer_tool(tn)
