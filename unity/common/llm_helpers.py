@@ -1481,9 +1481,7 @@ async def _ensure_placeholders_for_pending(
     assistant_msg: Optional[dict] = None,
     *,
     content: Optional[str] = None,
-    #
-    task_info,
-    pending,
+    tools_data: _ToolsData,
     assistant_meta,
     client,
     msg_dispatcher,
@@ -1494,8 +1492,8 @@ async def _ensure_placeholders_for_pending(
         if content is not None
         else "Pending… tool call accepted. Working on it."
     )
-    for _t in list(pending):
-        _inf = task_info.get(_t)
+    for _t in list(tools_data.pending):
+        _inf = tools_data.info.get(_t)
         if not _inf:
             continue
         if assistant_msg is not None and _inf.get("assistant_msg") is not assistant_msg:
@@ -1601,8 +1599,7 @@ async def _schedule_missing_for_message(
     try:
         await _ensure_placeholders_for_pending(
             assistant_msg=asst_msg,
-            pending=tools_data.pending,
-            task_info=tools_data.info,
+            tools_data=tools_data,
             assistant_meta=assistant_meta,
             client=client,
             msg_dispatcher=msg_dispatcher,
@@ -2484,8 +2481,7 @@ async def _async_tool_use_loop_inner(
                         "Still running… you can use any of the available helper tools "
                         "to interact with this tool call while it is in progress."
                     ),
-                    task_info=tools_data.info,
-                    pending=tools_data.pending,
+                    tools_data=tools_data,
                     assistant_meta=assistant_meta,
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
@@ -2942,8 +2938,7 @@ async def _async_tool_use_loop_inner(
                     "Still running… you can use any of the available helper tools "
                     "to interact with this tool call while it is in progress."
                 ),
-                task_info=tools_data.info,
-                pending=tools_data.pending,
+                tools_data=tools_data,
                 assistant_meta=assistant_meta,
                 client=client,
                 msg_dispatcher=_msg_dispatcher,
@@ -3734,8 +3729,7 @@ async def _async_tool_use_loop_inner(
                     await _ensure_placeholders_for_pending(
                         assistant_msg=msg,
                         content="Pending… tool call accepted. Working on it.",
-                        task_info=tools_data.info,
-                        pending=tools_data.pending,
+                        tools_data=tools_data,
                         assistant_meta=assistant_meta,
                         client=client,
                         msg_dispatcher=_msg_dispatcher,
