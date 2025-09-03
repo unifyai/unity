@@ -31,6 +31,7 @@ from ..constants import LOGGER
 from dataclasses import dataclass
 from ..events.event_bus import Event, EVENT_BUS
 from contextvars import ContextVar
+from contextlib import suppress
 
 
 def short_id(length=4):
@@ -1302,12 +1303,10 @@ async def _schedule_base_tool_call(
 
     # Enforce hidden per-tool total call quota: should be pre-pruned from
     # the assistant message, but guard here as well and simply skip.
-    try:
+    with suppress(Exception):
         lim = tools_data.norm_tools[name].max_total_calls
         if lim is not None and tools_data.call_counts.get(name, 0) >= lim:
             return
-    except Exception:
-        pass
 
     # Build extra kwargs (chat context, interject/clarification/pause)
     extra_kwargs: dict = {}
@@ -1401,10 +1400,8 @@ async def _schedule_base_tool_call(
     )
 
     # Increment hidden quota counter only once scheduling succeeds
-    try:
+    with suppress(Exception):
         tools_data.call_counts[name] = tools_data.call_counts.get(name, 0) + 1
-    except Exception:
-        pass
 
     if clar_up_q is not None:
         tools_data.clarification_channels[call_id] = (
@@ -1537,7 +1534,7 @@ async def _schedule_missing_for_message(
     except Exception:
         pass
     # Ensure placeholders are present for backfilled items
-    try:
+    with suppress(Exception):
         await _ensure_placeholders_for_pending(
             assistant_msg=asst_msg,
             tools_data=tools_data,
@@ -1545,8 +1542,6 @@ async def _schedule_missing_for_message(
             client=client,
             msg_dispatcher=msg_dispatcher,
         )
-    except Exception:
-        pass
     return scheduled
 
 
@@ -1693,7 +1688,7 @@ class _ToolsData:
     # Remove any tool_calls in an assistant message that would exceed the
     # hidden per-tool total-call quota. Operates in-place on asst_msg.
     def prune_over_quota_tool_calls(self, asst_msg: dict) -> None:
-        try:
+        with suppress(Exception):
             tool_calls = asst_msg.get("tool_calls") or []
             if not isinstance(tool_calls, list) or not tool_calls:
                 return
@@ -1727,9 +1722,6 @@ class _ToolsData:
             # In-place update only if changed
             if len(kept) != len(tool_calls):
                 asst_msg["tool_calls"] = kept
-        except Exception:
-            # Defensive: never let pruning break the loop
-            pass
 
 
 # TODO this is not really required, but this just simplifies the extraction of the logic from the loop.
@@ -1894,11 +1886,9 @@ class DynamicToolFactory:
             fn=_stop,
         )
         # Expose full argspec of handle.stop in the helper schema
-        try:
+        with suppress(Exception):
             if handle is not None and hasattr(handle, "stop"):
                 _adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
-        except Exception:
-            pass
 
         # ––– 3. interject helper (optional) ––––––––––––––––––––––
         if info.get("is_interjectable"):
@@ -1911,15 +1901,13 @@ class DynamicToolFactory:
 
                 async def _interject(**_kw) -> Dict[str, str]:
                     # nested async-tool loop: delegate to its public API with full argspec
-                    try:
+                    with suppress(Exception):
                         await _forward_handle_call(
                             handle,
                             "interject",
                             _kw,
                             fallback_positional_keys=["content", "message"],
                         )
-                    except Exception:
-                        pass
                     return {
                         "status": "interjected",
                         "call_id": _call_id,
@@ -1927,13 +1915,11 @@ class DynamicToolFactory:
                     }
 
                 # Expose the downstream handle's signature to the LLM
-                try:
+                with suppress(Exception):
                     _adopt_signature_and_annotations(
                         getattr(handle, "interject"),
                         _interject,
                     )
-                except Exception:
-                    pass
 
             else:
 
@@ -1982,20 +1968,16 @@ class DynamicToolFactory:
             if handle is not None and hasattr(handle, "pause"):
 
                 async def _pause(**_kw) -> Dict[str, str]:
-                    try:
+                    with suppress(Exception):
                         await _forward_handle_call(handle, "pause", _kw)
-                    except Exception:
-                        pass
                     return {"status": "paused", "call_id": _call_id, **_kw}
 
                 # Reflect downstream signature/annotations
-                try:
+                with suppress(Exception):
                     _adopt_signature_and_annotations(
                         getattr(handle, "pause"),
                         _pause,
                     )
-                except Exception:
-                    pass
 
             else:
 
@@ -2019,19 +2001,15 @@ class DynamicToolFactory:
             if handle is not None and hasattr(handle, "resume"):
 
                 async def _resume(**_kw) -> Dict[str, str]:
-                    try:
+                    with suppress(Exception):
                         await _forward_handle_call(handle, "resume", _kw)
-                    except Exception:
-                        pass
                     return {"status": "resumed", "call_id": _call_id, **_kw}
 
-                try:
+                with suppress(Exception):
                     _adopt_signature_and_annotations(
                         getattr(handle, "resume"),
                         _resume,
                     )
-                except Exception:
-                    pass
 
             else:
 
@@ -2064,18 +2042,15 @@ class DynamicToolFactory:
 
             # Identify write-only helpers declared by the handle
             write_only_set: set[str] = set()
-            try:
+            with suppress(Exception):
                 wo = getattr(handle, "write_only_methods", None)
                 if wo is not None:
                     write_only_set |= set(wo)
-            except Exception:
-                pass
-            try:
+
+            with suppress(Exception):
                 wo2 = getattr(handle, "write_only_tools", None)
                 if wo2 is not None:
                     write_only_set |= set(wo2)
-            except Exception:
-                pass
 
             for meth_name, bound in public_methods.items():
                 # use the same name we're about to give fn.__name__
@@ -2095,14 +2070,12 @@ class DynamicToolFactory:
                         **_kw,
                     ):
                         # Robust forwarding incl. kwargs normalisation and fallbacks
-                        try:
+                        with suppress(Exception):
                             await _forward_handle_call(
                                 handle,
                                 _method_name,
                                 _kw,
                             )
-                        except Exception:
-                            pass
                         # Write-only: no result propagation
                         return {"call_id": _call_id, "status": "ack"}
 
@@ -2145,10 +2118,8 @@ class DynamicToolFactory:
                 )
                 # Mark write-only helpers so scheduling can acknowledge and avoid tracking
                 if meth_name in write_only_set:
-                    try:
+                    with suppress(Exception):
                         self.dynamic_tools[helper_key].__write_only__ = True  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
 
     def generate(self):
         for task in list(self.tools_data.pending):
@@ -2372,19 +2343,17 @@ async def _async_tool_use_loop_inner(
     step_index: int = 0  # per assistant turn
     # Expose live task_info mapping on the current Task so outer handles/tests
     # can introspect currently running nested handles (used by ask/stop helpers).
-    try:
+    with suppress(Exception):
         _self_task = asyncio.current_task()
         if _self_task is not None:
             setattr(_self_task, "task_info", tools_data.info)  # type: ignore[attr-defined]
-    except Exception:
-        pass
 
     # Ensure we forward stop to nested handles at most once, even if multiple
     # branches detect cancellation/stop around the same time.
     _stop_forwarded_once: bool = False
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
-    try:
+    with suppress(Exception):
         unreplied = _find_unreplied_assistant_entries(client)
         if unreplied:
             # backfill for all such assistant messages (oldest → newest)
@@ -2404,8 +2373,6 @@ async def _async_tool_use_loop_inner(
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
                 )
-    except Exception:
-        pass
 
     # ── initial **user** message
     if isinstance(message, dict):
@@ -2426,11 +2393,9 @@ async def _async_tool_use_loop_inner(
         """
         for t in list(tools_data.pending):
             h = tools_data.info.get(t, {}).get("handle")
-            try:
+            with suppress(Exception):
                 if h is not None and hasattr(h, "stop"):
                     await _maybe_await(h.stop())
-            except Exception:
-                pass
             if not t.done():
                 t.cancel()
         await asyncio.gather(*tools_data.pending, return_exceptions=True)
@@ -2509,24 +2474,20 @@ async def _async_tool_use_loop_inner(
                         )
                     if cancel_event.is_set():
                         # Forward stop to any nested handles before aborting
-                        try:
+                        with suppress(Exception):
                             _stop_forwarded_once = await _propagate_stop_once(
                                 tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop cancelled",
                             )
-                        except Exception:
-                            pass
                         raise asyncio.CancelledError
                     if stop_event.is_set() and persist:
-                        try:
+                        with suppress(Exception):
                             _stop_forwarded_once = await _propagate_stop_once(
                                 tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop stopped",
                             )
-                        except Exception:
-                            pass
                         # Graceful stop requested during pause
                         return last_final_answer or ""
                     continue  # remain paused: do not allow the LLM to speak while paused
@@ -2556,24 +2517,20 @@ async def _async_tool_use_loop_inner(
 
                     # cancelled?
                     if cancel_event.is_set():
-                        try:
+                        with suppress(Exception):
                             _stop_forwarded_once = await _propagate_stop_once(
                                 tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop cancelled",
                             )
-                        except Exception:
-                            pass
                         raise asyncio.CancelledError
                     if stop_event.is_set() and persist:
-                        try:
+                        with suppress(Exception):
                             _stop_forwarded_once = await _propagate_stop_once(
                                 tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop stopped",
                             )
-                        except Exception:
-                            pass
                         return last_final_answer or ""
                         continue  # top-of-loop, still paused
 
@@ -2591,7 +2548,7 @@ async def _async_tool_use_loop_inner(
 
             # 0-γ. Repair any outstanding assistant tool_calls missing replies
             #      before we allow new user interjections to be appended.
-            try:
+            with suppress(Exception):
                 unreplied = _find_unreplied_assistant_entries(client)
                 # Only consider the very latest assistant with missing replies first
                 if unreplied:
@@ -2611,8 +2568,6 @@ async def _async_tool_use_loop_inner(
                             client=client,
                             msg_dispatcher=_msg_dispatcher,
                         )
-            except Exception:
-                pass
 
             # ── 0. Drain *all* queued interjections, allowed at any time ──
             # NOTE: We must do this *before* waiting on tool completion so a
@@ -2671,13 +2626,11 @@ async def _async_tool_use_loop_inner(
                 await _msg_dispatcher.append_msgs([interjection_msg])
 
                 # Append this interjection to the user-visible history for future context
-                try:
+                with suppress(Exception):
                     if outer_handle:
                         outer_handle._user_visible_history.append(
                             {"role": "user", "content": extra},
                         )
-                except Exception:
-                    pass
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
             # If a child just asked for clarification we also want to give
@@ -2761,24 +2714,20 @@ async def _async_tool_use_loop_inner(
                     continue  # → loop, will be processed in 0.
 
                 if cancel_waiter in done:
-                    try:
+                    with suppress(Exception):
                         _stop_forwarded_once = await _propagate_stop_once(
                             tools_data.info,
                             _stop_forwarded_once,
                             "outer-loop cancelled",
                         )
-                    except Exception:
-                        pass
                     raise asyncio.CancelledError  # cancellation wins
                 if graceful_stop_waiter in done and persist:
-                    try:
+                    with suppress(Exception):
                         _stop_forwarded_once = await _propagate_stop_once(
                             tools_data.info,
                             _stop_forwarded_once,
                             "outer-loop stopped",
                         )
-                    except Exception:
-                        pass
                     return last_final_answer or ""
 
                 # ── clarification request bubbled up from a child tool ──────────────
@@ -3651,7 +3600,7 @@ async def _async_tool_use_loop_inner(
                         # If this dynamic helper is marked as write-only, acknowledge immediately
                         # and run fire-and-forget without tracking in pending/task_info.
                         if getattr(fn, "__write_only__", False):
-                            try:
+                            with suppress(Exception):
                                 tool_msg = {
                                     "role": "tool",
                                     "tool_call_id": call["id"],
@@ -3668,12 +3617,8 @@ async def _async_tool_use_loop_inner(
                                     client,
                                     _msg_dispatcher,
                                 )
-                            except Exception:
-                                pass
-                            try:
+                            with suppress(Exception):
                                 asyncio.create_task(coro, name=f"ToolCall_{name}")
-                            except Exception:
-                                pass
                             continue
 
                         # Scheduling dynamic helper call
@@ -3753,14 +3698,12 @@ async def _async_tool_use_loop_inner(
                     for t in list(tools_data.pending):
                         info_t = tools_data.info.get(t, {})
                         nested_handle = info_t.get("handle")
-                        try:
+                        with suppress(Exception):
                             if nested_handle is not None and hasattr(
                                 nested_handle,
                                 "stop",
                             ):
                                 await _maybe_await(nested_handle.stop())
-                        except Exception:
-                            pass
                         if not t.done():
                             t.cancel()
                     await asyncio.gather(*tools_data.pending, return_exceptions=True)
@@ -3833,23 +3776,19 @@ async def _async_tool_use_loop_inner(
         # resources cleanly.  Only after every task has finished/aborted do
         # we re-raise the same `CancelledError`, preserving expected asyncio
         # semantics for upstream callers.
-        try:
+        with suppress(Exception):
             _stop_forwarded_once = await _propagate_stop_once(
                 tools_data.info,
                 _stop_forwarded_once,
                 "outer-loop cancelled",
             )
-        except Exception:
-            pass
         for t in tools_data.pending:
             t.cancel()
         await asyncio.gather(*tools_data.pending, return_exceptions=True)
         raise
     finally:
-        try:
+        with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
-        except Exception:
-            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
