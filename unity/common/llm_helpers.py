@@ -1966,7 +1966,6 @@ class DynamicToolFactory:
 
         # ––– 5. pause helper –––––––––––––––––––––––––––––––––––––––––––
         can_pause = (handle is not None and hasattr(handle, "pause")) or ev
-        can_resume = (handle is not None and hasattr(handle, "resume")) or ev
 
         if can_pause:
             _pause_doc = f"Pause the pending call {_fn_name}({_arg_repr})."
@@ -2000,6 +1999,7 @@ class DynamicToolFactory:
                 fn=_pause,
             )
 
+        can_resume = (handle is not None and hasattr(handle, "resume")) or ev
         # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
         if can_resume:
             _resume_doc = f"Resume the previously paused call {_fn_name}({_arg_repr})."
@@ -2555,9 +2555,8 @@ async def _async_tool_use_loop_inner(
             # 0-γ. Repair any outstanding assistant tool_calls missing replies
             #      before we allow new user interjections to be appended.
             with suppress(Exception):
-                unreplied = _find_unreplied_assistant_entries(client)
                 # Only consider the very latest assistant with missing replies first
-                if unreplied:
+                if unreplied := _find_unreplied_assistant_entries(client):
                     last_problem = unreplied[-1]
                     amsg = last_problem["assistant_msg"]
                     missing_ids = set(last_problem["missing"])
