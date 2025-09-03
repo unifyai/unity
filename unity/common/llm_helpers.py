@@ -969,13 +969,11 @@ async def _insert_after_assistant(
 async def _process_completed_task(
     # ACTUALLY Task related
     task: asyncio.Task,
-    task_info,
     consecutive_failures: _AsyncToolLoopToolFailureTracker,
     # Loop & State related
-    pending_tasks,
+    tools_data,
     outer_handle_container,
     assistant_meta,
-    clarification_channels,
     completed_results,
     #
     client,
@@ -999,8 +997,8 @@ async def _process_completed_task(
         """True when *msg* is the very last entry in client.messages."""
         return bool(client.messages) and client.messages[-1] is msg
 
-    pending_tasks.discard(task)
-    info = task_info.pop(task)
+    tools_data.pending_tasks.discard(task)
+    info = tools_data.task_info.pop(task)
     name = info["name"]
     call_id = info["call_id"]
     fn = info["call_dict"]["function"]["name"]
@@ -1056,7 +1054,7 @@ async def _process_completed_task(
                 nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
 
             nested_task = asyncio.create_task(nested_coro)
-            pending_tasks.add(nested_task)
+            tools_data.pending.add(nested_task)
 
             # 2️⃣ insert / update a single placeholder
             ph = info.get("tool_reply_msg")
@@ -1079,7 +1077,7 @@ async def _process_completed_task(
                 ph["content"] = "Nested async tool loop started… waiting for result."
 
             # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
-            task_info[nested_task] = {
+            tools_data.info[nested_task] = {
                 **info,
                 "handle": raw,
                 "is_interjectable": hasattr(raw, "interject"),
@@ -1088,7 +1086,7 @@ async def _process_completed_task(
                 "clar_down_queue": h_down_q,
             }
             if h_up_q is not None:
-                clarification_channels[call_id] = (h_up_q, h_down_q)
+                tools_data.clarification_channels[call_id] = (h_up_q, h_down_q)
             return False  # ⬅️  no LLM turn required
 
         # ───────────────────────────────────────────────────────────────
@@ -1309,7 +1307,6 @@ async def _schedule_base_tool_call(
     tools_data,
     parent_chat_context,
     propagate_chat_context,
-    clarification_channels,
     assistant_meta,
     client,
 ) -> None:
@@ -1423,7 +1420,7 @@ async def _schedule_base_tool_call(
         pass
 
     if clar_up_q is not None:
-        clarification_channels[call_id] = (
+        tools_data.clarification_channels[call_id] = (
             clar_up_q,
             clar_down_q,
         )
@@ -1489,7 +1486,6 @@ async def _schedule_missing_for_message(
     asst_msg: dict,
     only_ids: set[str],
     *,
-    clarification_channels,
     tools_data: _ToolsData,
     completed_results,
     parent_chat_context,
@@ -1548,7 +1544,6 @@ async def _schedule_missing_for_message(
                 parent_chat_context=parent_chat_context,
                 propagate_chat_context=propagate_chat_context,
                 assistant_meta=assistant_meta,
-                clarification_channels=clarification_channels,
                 client=client,
             )
             scheduled.append(cid)
@@ -1686,6 +1681,10 @@ class _ToolsData:
         self.info: Dict[asyncio.Task, ToolCallMetadata] = {}
         # Per-tool hidden total-call quotas (counted per loop instance)
         self.call_counts: Dict[str, int] = {}
+        self.clarification_channels: Dict[
+            str,
+            Tuple[asyncio.Queue[str], asyncio.Queue[str]],
+        ] = {}
 
     def _quota_count(self, task_name: str) -> int:
         return self.call_counts.get(task_name, 0)
@@ -2000,10 +1999,6 @@ async def _async_tool_use_loop_inner(
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: _ToolsData = _ToolsData(tools)
     consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
-    clarification_channels: Dict[
-        str,
-        Tuple[asyncio.Queue[str], asyncio.Queue[str]],
-    ] = {}
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
@@ -2033,7 +2028,6 @@ async def _async_tool_use_loop_inner(
                 await _schedule_missing_for_message(
                     amsg,
                     missing_ids,
-                    clarification_channels=clarification_channels,
                     tools_data=tools_data,
                     completed_results=completed_results,
                     parent_chat_context=parent_chat_context,
@@ -2136,12 +2130,10 @@ async def _async_tool_use_loop_inner(
                     for t in done & tools_data.pending:
                         await _process_completed_task(
                             task=t,
-                            task_info=tools_data.info,
                             consecutive_failures=consecutive_failures,
-                            pending_tasks=tools_data.pending,
+                            tools_data=tools_data,
                             outer_handle_container=outer_handle_container,
                             assistant_meta=assistant_meta,
-                            clarification_channels=clarification_channels,
                             completed_results=completed_results,
                             client=client,
                             msg_dispatcher=_msg_dispatcher,
@@ -2243,7 +2235,6 @@ async def _async_tool_use_loop_inner(
                         backfilled = await _schedule_missing_for_message(
                             amsg,
                             missing_ids,
-                            clarification_channels=clarification_channels,
                             tools_data=tools_data,
                             completed_results=completed_results,
                             parent_chat_context=parent_chat_context,
@@ -2467,12 +2458,10 @@ async def _async_tool_use_loop_inner(
                 for task in done:  # finished tool(s)
                     if await _process_completed_task(
                         task=task,
-                        task_info=tools_data.info,
                         consecutive_failures=consecutive_failures,
-                        pending_tasks=tools_data.pending,
+                        tools_data=tools_data,
                         outer_handle_container=outer_handle_container,
                         assistant_meta=assistant_meta,
-                        clarification_channels=clarification_channels,
                         completed_results=completed_results,
                         client=client,
                         msg_dispatcher=_msg_dispatcher,
@@ -3031,10 +3020,9 @@ async def _async_tool_use_loop_inner(
                             task=task,
                             task_info=tools_data.info,
                             consecutive_failures=consecutive_failures,
-                            pending_tasks=tools_data.pending,
+                            tools_data=tools_data,
                             outer_handle_container=outer_handle_container,
                             assistant_meta=assistant_meta,
-                            clarification_channels=clarification_channels,
                             completed_results=completed_results,
                             client=client,
                             msg_dispatcher=_msg_dispatcher,
@@ -3481,13 +3469,13 @@ async def _async_tool_use_loop_inner(
                         _clar_key = next(
                             (
                                 k
-                                for k in clarification_channels.keys()
+                                for k in tools_data.clarification_channels.keys()
                                 if k.endswith(call_id_suffix)
                             ),
                             None,
                         )
                         if _clar_key is not None:
-                            await clarification_channels[_clar_key][1].put(
+                            await tools_data.clarification_channels[_clar_key][1].put(
                                 ans,
                             )  # down-queue
                             # ✔️ the tool is un-blocked – start watching it again
@@ -3725,7 +3713,6 @@ async def _async_tool_use_loop_inner(
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
-                            clarification_channels=clarification_channels,
                             client=client,
                         )
 
