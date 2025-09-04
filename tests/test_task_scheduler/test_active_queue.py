@@ -24,6 +24,71 @@ async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
+    """Start with a singleton queue (passthrough), then append a follower and
+    verify the handle switches to multi-task behaviour (CHAIN preamble in ask).
+
+    Steps
+    -----
+    1) Create a single queued task and execute it with explicit 'queue' scope so
+       the ActiveQueue wrapper is used even for singletons.
+    2) Ask a question – inner handle should receive the raw question (no chain context).
+    3) Append a new follower behind the active task using `_update_task_queue`.
+    4) Ask again – the inner handle should now receive a CHAIN-context preamble.
+    """
+
+    # Spy: capture the exact question strings delivered to the inner handle
+    captured: list[str] = []
+
+    original_ask = SimulatedActorHandle.ask
+
+    @functools.wraps(original_ask)
+    async def spy_ask(self, question: str, *a, **kw):  # type: ignore[override]
+        # Record the full question passed to the inner handle
+        captured.append(question)
+        return await original_ask(self, question, *a, **kw)
+
+    monkeypatch.setattr(SimulatedActorHandle, "ask", spy_ask, raising=True)
+
+    # Use a long-running simulated actor so the task does not auto-complete too soon
+    actor = SimulatedActor(steps=50)
+    ts = TaskScheduler(actor=actor)
+
+    # Create a single task and start it (explicitly force CHAIN scope wrapper)
+    name1 = "Singleton A"
+    tid1 = ts._create_task(name=name1, description=name1)["details"]["task_id"]
+    handle = await ts.execute(text=str(tid1), execution_scope="queue")
+
+    # 1) Passthrough path: queue length == 1 → inner sees raw question
+    await handle.ask("Q1: status?")
+    # Give the background actor a moment to process
+    await asyncio.sleep(0.05)
+    assert captured, "Inner ask should have been invoked"
+    assert "CHAIN CONTEXT" not in captured[-1]
+
+    # 2) Append a follower behind the active task – this grows the queue to >1
+    name2 = "Follower B"
+    tid2 = ts._create_task(name=name2, description=name2)["details"]["task_id"]
+
+    # Establish explicit order: [tid1, tid2]
+    original = [t.task_id for t in ts._get_task_queue(task_id=tid1)]
+    ts._update_task_queue(original=original, new=[tid1, tid2])
+
+    # 3) Multi-task path: queue length > 1 → passthrough disabled, CHAIN preamble expected
+    await handle.ask("Q2: what remains?")
+    await asyncio.sleep(0.05)
+    assert len(captured) >= 2
+    assert (
+        "CHAIN CONTEXT" in captured[-1]
+    ), "Multi-task ask should include chain context preamble"
+
+    # Cleanup: stop the active task to complete quickly
+    handle.stop(cancel=False)
+    await handle.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_execute_queue_by_numeric_id_forwards_and_runs_followers(monkeypatch):
     # Steps-based actor: immediate completion to avoid timing races
     class _Short(SimulatedActor):  # type: ignore[misc]
