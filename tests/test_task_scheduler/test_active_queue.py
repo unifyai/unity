@@ -24,7 +24,7 @@ async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_chain_by_numeric_id_forwards_and_runs_followers(monkeypatch):
+async def test_execute_queue_by_numeric_id_forwards_and_runs_followers(monkeypatch):
     # Steps-based actor: immediate completion to avoid timing races
     class _Short(SimulatedActor):  # type: ignore[misc]
         def __init__(self, *a, **kw):
@@ -41,20 +41,20 @@ async def test_execute_chain_by_numeric_id_forwards_and_runs_followers(monkeypat
     ts = TaskScheduler()
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
 
-    # Force chain routing
-    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "chain"
+    # Force queue routing
+    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "queue"
 
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
-    # numeric fast path + chain → chain handle adopted
+    # numeric fast path + queue → queue handle adopted
     h = await ts.execute(text=str(a))
     await h.result()
 
     rows_a = ts._filter_tasks(filter=f"task_id == {a}")
     rows_b = ts._filter_tasks(filter=f"task_id == {b}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
-    # After full chain, we expect all instances to be completed or terminal
+    # After full queue, we expect all instances to be completed or terminal
     assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_a)
     assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_b)
     assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_c)
@@ -62,7 +62,7 @@ async def test_execute_chain_by_numeric_id_forwards_and_runs_followers(monkeypat
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_chain_then_defer_on_second_stops_chain_and_reinstate(
+async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
     monkeypatch,
 ):
     # Steps-based actor: each task completes after a single interject
@@ -82,10 +82,10 @@ async def test_execute_chain_then_defer_on_second_stops_chain_and_reinstate(
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
 
     # Chain routing
-    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "chain"
+    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "queue"
 
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     # Deterministic steering: only defer when the message requests "next week"
     async def force_defer(message: str, parent_chat_context=None):  # type: ignore[override]
@@ -122,7 +122,7 @@ async def test_execute_chain_then_defer_on_second_stops_chain_and_reinstate(
         raising=True,
     )
 
-    # Start chain from A
+    # Start queue from A
     h = await ts.execute(text=str(a))
 
     # Deterministically complete A with one step (non-defer semantic)
@@ -146,7 +146,7 @@ async def test_execute_chain_then_defer_on_second_stops_chain_and_reinstate(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_freeform_chain_routed_by_llm(monkeypatch):
+async def test_freeform_queue_routed_by_llm(monkeypatch):
     # Steps-based actor: immediate completion per task
     class _Short(SimulatedActor):  # type: ignore[misc]
         def __init__(self, *a, **kw):
@@ -163,11 +163,11 @@ async def test_freeform_chain_routed_by_llm(monkeypatch):
     ts = TaskScheduler()
     x, y = await _make_ordered_queue(ts, ["X", "Y"])  # type: ignore[misc]
 
-    # LLM decides chain for freeform request
-    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "chain"
+    # LLM decides queue for freeform request
+    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "queue"
 
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     # Provide a free-form request that should get routed to the one existing queue
     h = await ts.execute(text="run the whole sequence now")
@@ -181,7 +181,7 @@ async def test_freeform_chain_routed_by_llm(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_chain_pause_resume_and_completion(monkeypatch):
+async def test_queue_pause_resume_and_completion(monkeypatch):
     """
     Make SimulatedActor step-based (no duration) to avoid races. Pause/resume
     while current task is certainly active.
@@ -221,10 +221,10 @@ async def test_chain_pause_resume_and_completion(monkeypatch):
     ts = TaskScheduler()
     a, b = await _make_ordered_queue(ts, ["A4", "B4"])  # type: ignore[misc]
 
-    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "chain"
+    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "queue"
 
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     # Spy to detect when B becomes active (before starting)
     b_active_evt: asyncio.Event = asyncio.Event()
@@ -284,7 +284,7 @@ async def test_chain_pause_resume_and_completion(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_chain_interject_routing_multi_task(monkeypatch):
+async def test_queue_interject_routing_multi_task(monkeypatch):
     """
     Interjections can be routed by an LLM to multiple tasks:
       - current task receives its instructions immediately
@@ -311,11 +311,11 @@ async def test_chain_interject_routing_multi_task(monkeypatch):
     ts = TaskScheduler()
     a_id, b_id, c_id = await _make_ordered_queue(ts, ["A_r", "B_r", "C_r"])  # type: ignore[misc]
 
-    # Force chain routing so numeric execute launches a chain
-    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "chain"
+    # Force queue routing so numeric execute launches a queue
+    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "queue"
 
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     # Spy: record interjections delivered to each task; avoid networked LLM
     calls: list[tuple[str, str]] = []
@@ -334,15 +334,15 @@ async def test_chain_interject_routing_multi_task(monkeypatch):
 
     monkeypatch.setattr(SimulatedActorHandle, "interject", spy_interject, raising=True)
 
-    # Start chain at A and issue one multi-task interjection
+    # Start queue at A and issue one multi-task interjection
     h = await ts.execute(text=str(a_id))
     await h.interject(
         "Please route the following interjections strictly as described. "
         "These are NOT lifecycle controls and must NOT be treated as stop/cancel/defer: "
         "- For ALL tasks, apply instruction: GLOBAL_OK. "
         f"- For the task whose description is '{'B_r'}', apply instruction: SAFE_FOR_B. "
-        "- For the LAST task in the chain, apply instruction: SAFE_FOR_LAST. "
-        "- For the FIRST task in the chain, apply instruction: SAFE_FOR_FIRST.",
+        "- For the LAST task in the queue, apply instruction: SAFE_FOR_LAST. "
+        "- For the FIRST task in the queue, apply instruction: SAFE_FOR_FIRST.",
     )
     await h.result()
 
@@ -367,10 +367,10 @@ async def test_chain_interject_routing_multi_task(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_chain_handle_ask_includes_chain_context(monkeypatch):
+async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     """
-    Verify that _ChainHandle.ask prepends a chain-wide context preamble so
-    questions can be answered about the whole chain, not just the active task.
+    Verify that _ChainHandle.ask prepends a queue-wide context preamble so
+    questions can be answered about the whole queue, not just the active task.
     """
 
     # Step-based actor to avoid wall-clock races
@@ -390,10 +390,10 @@ async def test_chain_handle_ask_includes_chain_context(monkeypatch):
     ts = TaskScheduler()
     a, b, c = await _make_ordered_queue(ts, ["A_ctx", "B_ctx", "C_ctx"])  # type: ignore[misc]
 
-    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "chain"
+    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "queue"
 
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     captured_questions: list[str] = []
     orig_actor_ask = SimulatedActorHandle.ask
@@ -420,7 +420,7 @@ async def test_chain_handle_ask_includes_chain_context(monkeypatch):
 
     await _wait_until_active()
 
-    ask_handle = await h.ask("How is the chain going?")
+    ask_handle = await h.ask("How is the queue going?")
     res = await ask_handle.result()
     assert res == "OK"
 
@@ -437,14 +437,14 @@ async def test_chain_handle_ask_includes_chain_context(monkeypatch):
     assert f"Task {c}" in q
     # User question should be preserved at the end
     assert "USER QUESTION:" in q
-    assert "How is the chain going?" in q
+    assert "How is the queue going?" in q
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_chain_result_summarises_all_completed_tasks(monkeypatch):
+async def test_queue_result_summarises_all_completed_tasks(monkeypatch):
     """
-    Verify that the chain handle's final result summarises all completed tasks.
+    Verify that the queue handle's final result summarises all completed tasks.
     """
 
     # Immediate completion per task to avoid timing races
@@ -467,11 +467,11 @@ async def test_chain_result_summarises_all_completed_tasks(monkeypatch):
     ts = TaskScheduler()
     a, b, c = await _make_ordered_queue(ts, ["A_sum", "B_sum", "C_sum"])  # type: ignore[misc]
 
-    # Force chain routing for deterministic behaviour
-    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "chain"
+    # Force queue routing for deterministic behaviour
+    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "queue"
 
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     h = await ts.execute(text=str(a))
     res = await h.result()
@@ -485,10 +485,10 @@ async def test_chain_result_summarises_all_completed_tasks(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_chain_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
+async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     """
-    While a chain is running, dynamically remove an existing follower and add a new
-    follower behind the current task. The chain should reflect the live queue at the
+    While a queue is running, dynamically remove an existing follower and add a new
+    follower behind the current task. The queue should reflect the live queue at the
     next hop: skip the removed task and execute the newly added one.
     """
 
@@ -510,11 +510,11 @@ async def test_chain_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     ts = TaskScheduler()
     a_id, b_id, c_id = await _make_ordered_queue(ts, ["A_dyn", "B_dyn", "C_dyn"])  # type: ignore[misc]
 
-    # Force chain routing so numeric execute launches a chain
-    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "chain"
+    # Force queue routing so numeric execute launches a queue
+    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "queue"
 
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     # Deterministic activation triggers per task-id
     activation_events: Dict[int, asyncio.Event] = {}
@@ -559,7 +559,7 @@ async def test_chain_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
         raising=True,
     )
 
-    # Start chain at A
+    # Start queue at A
     h = await ts.execute(text=str(a_id))
 
     # Complete A deterministically with pause/resume (each consumes a step)
@@ -570,7 +570,7 @@ async def test_chain_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     # Wait until B is active
     await asyncio.wait_for(_evt_for(b_id).wait(), timeout=10)
 
-    # Dynamically add a new follower D after B and remove C from the chain
+    # Dynamically add a new follower D after B and remove C from the queue
     d_id = ts._create_task(
         name="D_dyn",
         description="D_dyn",

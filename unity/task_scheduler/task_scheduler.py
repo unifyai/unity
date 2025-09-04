@@ -49,6 +49,7 @@ from .base import BaseTaskScheduler
 from ..actor.base import BaseActor
 from ..actor.simulated import SimulatedActor
 from .active_task import ActiveTask
+from .active_queue import ActiveQueue
 import json
 from dataclasses import dataclass
 
@@ -435,7 +436,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-        execution_scope: Optional[Literal["isolate", "chain"]] = None,
+        execution_scope: Optional[Literal["isolate", "queue"]] = None,
     ) -> SteerableToolHandle:
         freeform_text: str = text
 
@@ -468,8 +469,8 @@ class TaskScheduler(BaseTaskScheduler):
                         parent_chat_context=parent_chat_context,
                     )
                 )
-                if scope == "chain":
-                    return await self._execute_chain_internal(
+                if scope == "queue":
+                    return await self._execute_queue_internal(
                         task_id=int(stripped),
                         parent_chat_context=parent_chat_context,
                         clarification_up_q=clarification_up_q,
@@ -508,7 +509,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         activated_by: Optional[ActivatedBy] = None,
-        execution_scope: Literal["isolate", "chain"] = "isolate",
+        execution_scope: Literal["isolate", "queue"] = "isolate",
         detach: bool = True,
     ) -> SteerableToolHandle:
         """
@@ -565,9 +566,9 @@ class TaskScheduler(BaseTaskScheduler):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
         # Adjust queue linkages based on explicit activation scope.
-        # For chain execution, only the initial chain head should be detached
-        # from its predecessor. Followers started as part of the same chain
-        # must retain their prev/next pointers so the chain structure remains
+        # For queue execution, only the initial queue head should be detached
+        # from its predecessor. Followers started as part of the same queue
+        # must retain their prev/next pointers so the queue structure remains
         # intact in storage (tests assert this behaviour).
         if detach:
             self._detach_from_queue_for_activation(
@@ -630,596 +631,10 @@ class TaskScheduler(BaseTaskScheduler):
         return handle
 
     # ------------------------------------------------------------------ #
-    #  Chain orchestrator: sequentially executes the follower chain       #
+    #  Chain orchestrator: sequentially executes the follower queue       #
     # ------------------------------------------------------------------ #
 
-    class _ChainHandle(SteerableToolHandle):  # type: ignore[abstract-method]
-        def __init__(
-            self,
-            scheduler: "TaskScheduler",
-            *,
-            first_task_id: int,
-            first_handle: SteerableToolHandle,
-            parent_chat_context: Optional[List[Dict[str, Any]]],
-            clarification_up_q: Optional[asyncio.Queue[str]],
-            clarification_down_q: Optional[asyncio.Queue[str]],
-        ) -> None:
-            self._s = scheduler
-            self._current_task_id = first_task_id
-            self._current_handle: SteerableToolHandle = first_handle
-            self._parent_ctx = parent_chat_context
-            self._clar_up = clarification_up_q
-            self._clar_down = clarification_down_q
-            self._done_evt: asyncio.Event = asyncio.Event()
-            self._final_result: Optional[str] = None
-            # Keep track of tasks that completed successfully within this chain
-            # so that the final result can summarise the entire sequence.
-            self._completed_tasks: list[tuple[int, str]] = []
-            # Background driver
-            self._driver = asyncio.create_task(self._drive())
-
-        async def _drive(self) -> None:
-            try:
-                while True:
-                    try:
-                        result = await self._current_handle.result()
-                    except asyncio.CancelledError:
-                        self._final_result = "Stopped."
-                        break
-
-                    text = str(result or "")
-                    # If ActiveTask flagged an explicit stop/defer, end the chain immediately
-                    try:
-                        was_stopped = bool(
-                            getattr(self._current_handle, "_was_stopped", False),
-                        )
-                    except Exception:
-                        was_stopped = False
-                    # Record successful completion of the just-finished task when not stopped/deferred
-                    if not was_stopped and "stopped" not in text.lower():
-                        try:
-                            rows = self._s._filter_tasks(
-                                filter=f"task_id == {int(self._current_task_id)}",
-                                limit=1,
-                            )
-                            if rows:
-                                name = (
-                                    rows[0].get("name")
-                                    or rows[0].get("description")
-                                    or "(unnamed task)"
-                                )
-                                self._completed_tasks.append(
-                                    (int(self._current_task_id), str(name)),
-                                )
-                        except Exception:
-                            pass
-                    if was_stopped:
-                        self._final_result = text or "Stopped."
-                        break
-                    # If the stop/defer path was taken, end the chain here
-                    if "stopped" in text.lower():
-                        self._final_result = text
-                        break
-
-                    # Find next runnable in the same chain (head->tail from current)
-                    queue = self._s._get_task_queue(task_id=self._current_task_id)
-                    next_tid = None
-                    for t in queue:
-                        if t.task_id != self._current_task_id:
-                            next_tid = t.task_id
-                            break
-                    if next_tid is None:
-                        # Chain exhausted – compose a completion summary across all tasks
-                        if self._completed_tasks:
-                            summary_items = [
-                                f"Task {tid}: {name}"
-                                for tid, name in self._completed_tasks
-                            ]
-                            summary = (
-                                "Completed the following tasks: "
-                                + ", ".join(summary_items)
-                                + "."
-                            )
-                        else:
-                            summary = "Chain completed."
-                        self._final_result = summary
-                        break
-
-                    # Start next task using CHAIN linkage semantics
-                    self._current_task_id = next_tid
-                    self._current_handle = await self._s._execute_internal(
-                        task_id=next_tid,
-                        parent_chat_context=self._parent_ctx,
-                        clarification_up_q=self._clar_up,
-                        clarification_down_q=self._clar_down,
-                        activated_by=ActivatedBy.explicit,
-                        execution_scope="chain",
-                        # Do NOT detach followers from each other; keep chain links intact
-                        detach=False,
-                    )
-                    # Deliver any queued interjections for the newly active task
-                    try:
-                        pending_msgs = getattr(self, "_queued_interjections", {}).pop(
-                            self._current_task_id,
-                            [],
-                        )
-                        for _msg in pending_msgs:
-                            try:
-                                await self._current_handle.interject(_msg)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-            finally:
-                self._done_evt.set()
-
-        # ----- Steerable surface proxies -----
-        async def interject(self, message: str) -> None:  # type: ignore[override]
-            """Route interjections to specific tasks in the chain using an LLM router.
-
-            The router receives the full chain snapshot and the user's instruction and
-            returns structured routes of the form:
-
-                {"routes": [{"task_ids": [<int>, ...], "instruction": "..."}, ...]}
-
-            Interjections for the currently active task are delivered immediately.
-            Interjections for future tasks are queued and delivered when those
-            tasks become active.
-            """
-
-            # Fast path: empty/whitespace → no-op
-            if not (message or "").strip():
-                return
-
-            # Build a compact chain snapshot (head→tail) including ids and labels
-            def _safe_dump(value):
-                try:
-                    import json as _json  # local import
-
-                    return _json.dumps(value, default=str)
-                except Exception:
-                    return str(value)
-
-            def _get_row(tid: int):
-                try:
-                    rows = self._s._filter_tasks(
-                        filter=f"task_id == {int(tid)}",
-                        limit=1,
-                    )
-                    return rows[0] if rows else None
-                except Exception:
-                    return None
-
-            try:
-                cur_row = _get_row(self._current_task_id)
-                head_row = cur_row
-                while head_row is not None:
-                    prev_id = self._s._sched_prev((head_row.get("schedule") or {}))
-                    if prev_id is None:
-                        break
-                    prev_row = _get_row(prev_id)
-                    if prev_row is None:
-                        break
-                    head_row = prev_row
-
-                chain_rows: list[dict] = []
-                seen: set[int] = set()
-                node = head_row
-                while node is not None:
-                    tid = node.get("task_id")
-                    try:
-                        tid_int = int(tid)
-                    except Exception:
-                        tid_int = None  # type: ignore[assignment]
-                    if tid_int is not None and tid_int in seen:
-                        break
-                    if tid_int is not None:
-                        seen.add(tid_int)
-                    chain_rows.append(
-                        {
-                            k: v
-                            for k, v in node.items()
-                            if v is not None and not str(k).startswith("_")
-                        },
-                    )
-                    nxt_id = self._s._sched_next((node.get("schedule") or {}))
-                    if nxt_id is None:
-                        break
-                    node = _get_row(nxt_id)
-
-                if not chain_rows:
-                    # Fallback to best-effort non-terminal queue snapshot
-                    queue = self._s._get_task_queue(task_id=self._current_task_id)
-                    chain_rows = [
-                        {
-                            "task_id": getattr(t, "task_id", None),
-                            "name": getattr(t, "name", None),
-                            "description": getattr(t, "description", None),
-                            "status": getattr(t, "status", None),
-                            "schedule": getattr(t, "schedule", None),
-                        }
-                        for t in queue
-                    ]
-            except Exception:
-                chain_rows = []
-
-            # (debug logging removed)
-
-            # Create a dedicated router client with high reasoning and priority tier
-            try:
-                import unify as _unify  # local import to avoid top-level dependency
-
-                client = _unify.AsyncUnify(
-                    "gpt-5@openai",
-                    cache=True,
-                    traced=True,
-                    reasoning_effort="high",
-                    service_tier="priority",
-                )
-                schema_hint = '{\n  "type": "object",\n  "properties": {\n    "routes": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "task_ids": {"type": "array", "items": {"type": "integer"}},\n          "instruction": {"type": "string"}\n        },\n        "required": ["task_ids", "instruction"]\n      }\n    },\n    "directives": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "kind": {"type": "string", "enum": ["all", "first", "last", "by_description"]},\n          "description_match": {"type": "string"}\n        },\n        "required": ["kind"]\n      }\n    },\n    "uncovered_directives": {"type": "array", "items": {"type": "string"}}\n  },\n  "required": ["routes"]\n}'
-                sys = (
-                    "You route user interjections to one or more tasks in a chain.\n"
-                    "Return ONLY JSON matching the schema below. Never include commentary.\n"
-                    f"Schema:\n{schema_hint}\n"
-                    "Guidelines: Select task_ids explicitly from the provided chain.\n"
-                    "- If the instruction applies to all tasks, include all task_ids.\n"
-                    "- If it targets the last task, include ONLY the last task_id.\n"
-                    "- If it mentions a task by name/description, choose the best matching ids.\n"
-                    "- If nothing special is implied, target ONLY the current task.\n"
-                    "- You MUST include a separate route for each distinct directive present in the user's message; list these under 'directives' and set 'uncovered_directives' to [] when all are mapped.\n"
-                )
-                client.set_system_message(sys)
-                # Compute first/last ids for explicit metadata to aid deterministic mapping
-                try:
-                    first_task_id: int | None = None
-                    last_task_id: int | None = None
-                    if chain_rows:
-                        first_task_id = (
-                            int(chain_rows[0].get("task_id"))
-                            if chain_rows[0].get("task_id") is not None
-                            else None
-                        )
-                        last_task_id = (
-                            int(chain_rows[-1].get("task_id"))
-                            if chain_rows[-1].get("task_id") is not None
-                            else None
-                        )
-                except Exception:
-                    first_task_id = None
-                    last_task_id = None
-                user = (
-                    "Chain (head→tail):\n"
-                    + _safe_dump(chain_rows)
-                    + "\nMetadata:\n"
-                    + f"first_task_id: {first_task_id}\n"
-                    + f"last_task_id: {last_task_id}\n"
-                    + "current_task_id: "
-                    + str(self._current_task_id)
-                    + "\nInterjection:"
-                    + f"\n{(message or '').strip()}"
-                )
-                raw = await client.generate(user)
-            except Exception:
-                raw = ""
-
-            # Parse structured routes; fall back to current-only on failure
-            try:
-                import json as _json
-
-                data = _json.loads(raw)
-                # (debug logging removed)
-                routes = data.get("routes") if isinstance(data, dict) else None
-                if not isinstance(routes, list):
-                    raise ValueError("no routes")
-
-                # If the model indicates missing coverage, request a corrected set in a second pass.
-                try:
-                    uncovered = data.get("uncovered_directives") or []
-                except Exception:
-                    uncovered = []
-                if isinstance(uncovered, list) and uncovered:
-                    try:
-                        client2 = _unify.AsyncUnify(
-                            "gpt-5@openai",
-                            cache=True,
-                            traced=True,
-                            reasoning_effort="high",
-                            service_tier="priority",
-                        )
-                        client2.set_system_message(
-                            "You are correcting a routing result to ensure ALL directives are covered.\n"
-                            "Return ONLY JSON with the 'routes' field per the same schema as before; do not include commentary.\n",
-                        )
-                        user2 = (
-                            "Original chain (head→tail):\n"
-                            + _safe_dump(chain_rows)
-                            + "\nMetadata:\n"
-                            + f"first_task_id: {first_task_id}\n"
-                            + f"last_task_id: {last_task_id}\n"
-                            + f"current_task_id: {self._current_task_id}\n"
-                            + "Original interjection:\n"
-                            + (message or "").strip()
-                            + "\nPreviously returned routes:\n"
-                            + _safe_dump(routes)
-                            + "\nUncovered directives to cover now:\n"
-                            + _safe_dump(uncovered)
-                        )
-                        raw2 = await client2.generate(user2)
-                        data2 = _json.loads(raw2)
-                        routes2 = (
-                            data2.get("routes") if isinstance(data2, dict) else None
-                        )
-                        if isinstance(routes2, list) and routes2:
-                            routes = routes2
-                    except Exception:
-                        pass
-
-                # Ensure pending registry exists
-                if not hasattr(self, "_queued_interjections"):
-                    self._queued_interjections = {}
-
-                # Build a set of known ids for safety
-                known_ids = {
-                    int(r.get("task_id"))
-                    for r in chain_rows
-                    if r.get("task_id") is not None
-                }
-                # (debug logging removed)
-
-                for route in routes:
-                    try:
-                        task_ids = [int(t) for t in route.get("task_ids", [])]
-                        instr = str(route.get("instruction", "")).strip()
-                    except Exception:
-                        continue
-                    if not instr:
-                        continue
-                    for tid in task_ids:
-                        if tid not in known_ids:
-                            continue
-                        if tid == self._current_task_id:
-                            try:
-                                await self._current_handle.interject(instr)
-                            except Exception:
-                                pass
-                        else:
-                            self._queued_interjections.setdefault(tid, []).append(instr)
-                # (debug logging removed)
-                return
-            except Exception:
-                # Fallback: deliver to current task only
-                await self._current_handle.interject(message)
-
-        def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
-            try:
-                return self._current_handle.stop(cancel=cancel, reason=reason)
-            except Exception:
-                return "Stopped."
-
-        def pause(self) -> Optional[str]:  # type: ignore[override]
-            try:
-                if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
-                    return "Already completed."
-            except Exception:
-                pass
-            try:
-                ret = self._current_handle.pause()
-                return ret
-            except Exception:
-                return "Already completed."
-
-        def resume(self) -> Optional[str]:  # type: ignore[override]
-            try:
-                if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
-                    return "Already completed."
-            except Exception:
-                pass
-            try:
-                ret = self._current_handle.resume()
-                return ret
-            except Exception:
-                return "Already completed."
-
-        def done(self) -> bool:  # type: ignore[override]
-            return self._done_evt.is_set()
-
-        async def result(self):  # type: ignore[override]
-            await self._done_evt.wait()
-            # If the driver did not assemble a summary (e.g. early stop without any
-            # completions recorded), build a best-effort one now.
-            if self._final_result:
-                return self._final_result
-            if self._completed_tasks:
-                summary_items = [
-                    f"Task {tid}: {name}" for tid, name in self._completed_tasks
-                ]
-                return (
-                    "Completed the following tasks: " + ", ".join(summary_items) + "."
-                )
-            return ""
-
-        async def ask(self, question: str, *, _return_reasoning_steps: bool = False) -> "SteerableToolHandle":  # type: ignore[override]
-            """Answer questions with chain-aware context and delegate to inner handle.
-
-            Builds a compact chain snapshot (head→tail) including all non-None
-            task fields for each task (completed and non-completed) and a
-            high-level progress summary, then prepends it to the forwarded
-            question. If snapshot construction fails, falls back to the raw
-            question.
-            """
-
-            def _safe_dump(value):
-                try:
-                    import json as _json  # local import
-
-                    return _json.dumps(value, default=str)
-                except Exception:
-                    return str(value)
-
-            def _get_row(tid: int):
-                try:
-                    rows = self._s._filter_tasks(
-                        filter=f"task_id == {int(tid)}",
-                        limit=1,
-                    )
-                    return rows[0] if rows else None
-                except Exception:
-                    return None
-
-            chain_preamble: str | None = None
-            try:
-                # 1) Locate current row and walk to head (using schedule.prev_task)
-                cur_row = _get_row(self._current_task_id)
-                head_row = cur_row
-                while head_row is not None:
-                    prev_id = self._s._sched_prev((head_row.get("schedule") or {}))
-                    if prev_id is None:
-                        break
-                    prev_row = _get_row(prev_id)
-                    if prev_row is None:
-                        break
-                    head_row = prev_row
-
-                # 2) Walk forward to collect the entire chain, including terminal statuses
-                chain_rows: list[dict] = []
-                seen: set[int] = set()
-                node = head_row
-                while node is not None:
-                    tid = node.get("task_id")
-                    try:
-                        tid_int = int(tid)
-                    except Exception:
-                        tid_int = None  # type: ignore[assignment]
-                    if tid_int is not None and tid_int in seen:
-                        break  # safety loop-breaker
-                    if tid_int is not None:
-                        seen.add(tid_int)
-                    chain_rows.append(node)
-                    nxt_id = self._s._sched_next((node.get("schedule") or {}))
-                    if nxt_id is None:
-                        break
-                    node = _get_row(nxt_id)
-
-                # Fallback: if chain_rows is empty, try non-terminal queue as a best-effort snapshot
-                if not chain_rows:
-                    queue = self._s._get_task_queue(task_id=self._current_task_id)
-                    chain_rows = [
-                        {
-                            # best-effort row-like dict shape
-                            "task_id": getattr(t, "task_id", None),
-                            "instance_id": getattr(t, "instance_id", None),
-                            "name": getattr(t, "name", None),
-                            "description": getattr(t, "description", None),
-                            "status": getattr(t, "status", None),
-                            "schedule": getattr(t, "schedule", None),
-                            "trigger": getattr(t, "trigger", None),
-                            "deadline": getattr(t, "deadline", None),
-                            "repeat": getattr(t, "repeat", None),
-                            "priority": getattr(t, "priority", None),
-                            "response_policy": getattr(t, "response_policy", None),
-                            "activated_by": getattr(t, "activated_by", None),
-                        }
-                        for t in queue
-                    ]
-
-                total_count = len(chain_rows)
-                # Identify current index
-                current_index = -1
-                for idx, r in enumerate(chain_rows):
-                    if r.get("task_id") == self._current_task_id:
-                        current_index = idx
-                        break
-
-                # Count statuses
-                def _to_status_str(row: dict) -> str:
-                    try:
-                        return str(self._s._to_status(row.get("status")))
-                    except Exception:
-                        return str(row.get("status"))
-
-                completed_count = sum(
-                    1 for r in chain_rows if _to_status_str(r) == "completed"
-                )
-                remaining_count = max(0, total_count - completed_count)
-
-                # Next tasks preview (up to 3)
-                next_names: list[str] = []
-                if current_index >= 0:
-                    for j in range(
-                        current_index + 1,
-                        min(current_index + 4, total_count),
-                    ):
-                        nm = chain_rows[j].get("name")
-                        if nm:
-                            next_names.append(str(nm))
-
-                # High-level summary line
-                if current_index >= 0 and current_index < total_count:
-                    current_name = (
-                        chain_rows[current_index].get("name") or "(unnamed task)"
-                    )
-                    headline = (
-                        f"Chain status: {completed_count}/{total_count} completed; "
-                        f"{remaining_count} remaining; executing {current_index + 1}/{total_count}: "
-                        f"{current_name}."
-                    )
-                else:
-                    headline = (
-                        f"Chain status: {completed_count}/{total_count} completed; "
-                        f"{remaining_count} remaining; executing: (unknown current index)."
-                    )
-                if next_names:
-                    headline += f" Next: {', '.join(next_names)}."
-
-                # Detailed rows with all non-None fields
-                details_lines: list[str] = ["Chain tasks (head→tail):"]
-                for r in chain_rows:
-                    tid = r.get("task_id")
-                    name = r.get("name") or ""
-                    details_lines.append(f"- Task {tid}: {name}")
-                    # Print all non-None, non-_internal keys
-                    for k, v in r.items():
-                        if v is None or k in {"name"}:
-                            continue
-                        if str(k).startswith("_"):
-                            continue
-                        details_lines.append(f"    {k}: {_safe_dump(v)}")
-
-                chain_preamble = (
-                    "CHAIN CONTEXT\n" + headline + "\n" + "\n".join(details_lines)
-                )
-            except Exception:
-                chain_preamble = None
-
-            composed_question = (
-                f"{chain_preamble}\n\nUSER QUESTION:\n{question}"
-                if chain_preamble
-                else question
-            )
-
-            try:
-                return await self._current_handle.ask(  # type: ignore[arg-type]
-                    composed_question,
-                    _return_reasoning_steps=_return_reasoning_steps,
-                )
-            except TypeError:
-                # Older handles may not accept the kwarg – retry without it.
-                return await self._current_handle.ask(composed_question)  # type: ignore[arg-type]
-
-        @property
-        def valid_tools(self) -> Dict[str, Callable]:  # type: ignore[override]
-            tools = {
-                self.interject.__name__: self.interject,
-                self.stop.__name__: self.stop,
-            }
-            paused_flag = getattr(self._current_handle, "_paused", False)
-            if paused_flag:
-                tools[self.resume.__name__] = self.resume
-            else:
-                tools[self.pause.__name__] = self.pause
-            return tools
-
-    async def _execute_chain_internal(
+    async def _execute_queue_internal(
         self,
         *,
         task_id: int,
@@ -1227,16 +642,16 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        """Start chain execution at `task_id` and return a composite chain handle."""
+        """Start queue execution at `task_id` and return a composite queue handle."""
         first = await self._execute_internal(
             task_id=task_id,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             activated_by=ActivatedBy.explicit,
-            execution_scope="chain",
+            execution_scope="queue",
         )
-        return TaskScheduler._ChainHandle(
+        return ActiveQueue(
             self,
             first_task_id=task_id,
             first_handle=first,
@@ -1255,7 +670,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        execution_scope: Optional[Literal["isolate", "chain"]] = None,
+        execution_scope: Optional[Literal["isolate", "queue"]] = None,
     ) -> SteerableToolHandle:
         """Compose tools and prompt, then start the execute reasoning loop."""
         client = self._new_llm_client("gpt-5@openai")
@@ -1275,17 +690,17 @@ class TaskScheduler(BaseTaskScheduler):
         async def _execute_by_id(
             *,
             task_id: int,
-            execution_scope: "Literal['auto','isolate','chain']" = "auto",
+            execution_scope: "Literal['auto','isolate','queue']" = "auto",
         ) -> SteerableToolHandle:  # type: ignore[valid-type]
-            """Start the task with *task_id*, adopting inner handle (isolate or chain).
+            """Start the task with *task_id*, adopting inner handle (isolate or queue).
 
             Parameters
             ----------
             task_id : int
                 Identifier of the task to start.
-            execution_scope : Literal['auto','isolate','chain'], default "auto"
+            execution_scope : Literal['auto','isolate','queue'], default "auto"
                 Routing hint selected by the LLM after inspecting queue context with `ask`:
-                - 'chain': start and keep followers attached (sequence runs in order)
+                - 'queue': start and keep followers attached (sequence runs in order)
                 - 'isolate': start only this task; detach followers
                 - 'auto': delegate to the scheduler's router based on the request text and context
 
@@ -1293,24 +708,24 @@ class TaskScheduler(BaseTaskScheduler):
             -----------------
             - Never modify scheduling/ordering or `start_at` to begin execution. Scope selection
               dictates activation behaviour; schema remains unchanged.
-            - If the user wants the whole sequence now, prefer calling this on the chain head
-              (where `prev_task` is None) with execution_scope='chain'.
+            - If the user wants the whole sequence now, prefer calling this on the queue head
+              (where `prev_task` is None) with execution_scope='queue'.
             """
 
             # Decide execution scope strictly via LLM when not provided
-            if execution_scope in ("isolate", "chain"):
+            if execution_scope in ("isolate", "queue"):
                 scope = execution_scope
             else:
                 scope = (
                     execution_scope
-                    if execution_scope in ("isolate", "chain")
+                    if execution_scope in ("isolate", "queue")
                     else await self._decide_execution_scope(
                         request_text=freeform_text,
                         parent_chat_context=parent_chat_context,
                     )
                 )
-            if scope == "chain":
-                handle = await self._execute_chain_internal(
+            if scope == "queue":
+                handle = await self._execute_queue_internal(
                     task_id=task_id,
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
@@ -1374,20 +789,20 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         request_text: str,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-    ) -> Literal["isolate", "chain"]:
-        """Use an LLM router to decide execution scope: "isolate" vs "chain"."""
+    ) -> Literal["isolate", "queue"]:
+        """Use an LLM router to decide execution scope: "isolate" vs "queue"."""
         try:
             client = self._new_llm_client("gpt-5@openai")
             system = (
                 "You are a router that selects an execution scope for starting a queued task.\n"
                 "Choices:\n"
                 "- isolate: Start only the selected task now, detach its followers. The next task becomes the new head and inherits any queue-level start_at timestamp (becomes scheduled).\n"
-                "- chain: Start the selected task now and KEEP the follower chain attached behind it. The started task keeps the queue-level start_at; the immediate successor MUST NOT carry start_at.\n"
+                "- queue: Start the selected task now and KEEP the follower queue attached behind it. The started task keeps the queue-level start_at; the immediate successor MUST NOT carry start_at.\n"
                 "Guidelines:\n"
-                "- Phrases like 'do them all now', 'do the whole set/sequence now', lists of multiple tasks to run now => chain.\n"
+                "- Phrases like 'do them all now', 'do the whole set/sequence now', lists of multiple tasks to run now => queue.\n"
                 "- Phrases like 'just this one now', 'leave the rest for later/Monday' => isolate.\n"
-                "- If ambiguous, prefer chain when the user implies batch execution; otherwise isolate.\n"
-                'Return ONLY JSON with rationale first: {"rationale": <short string>, "execution_scope": "isolate|chain"}\n'
+                "- If ambiguous, prefer queue when the user implies batch execution; otherwise isolate.\n"
+                'Return ONLY JSON with rationale first: {"rationale": <short string>, "execution_scope": "isolate|queue"}\n'
                 "Be concise and deterministic."
             )
             client.set_system_message(system)
@@ -1428,14 +843,14 @@ class TaskScheduler(BaseTaskScheduler):
             try:
                 data = _json.loads(raw)
                 token = str(data.get("execution_scope", "")).strip().lower()
-                if token in {"isolate", "chain"}:
+                if token in {"isolate", "queue"}:
                     scope = token  # type: ignore[assignment]
             except Exception:
                 # attempt to extract simple token
                 low = (raw or "").lower()
-                if '"chain"' in low or 'execution_scope": "chain"' in low:
-                    scope = "chain"
-            return cast(Literal["isolate", "chain"], scope)
+                if '"queue"' in low or 'execution_scope": "queue"' in low:
+                    scope = "queue"
+            return cast(Literal["isolate", "queue"], scope)
         except Exception:
             # Conservative fallback
             return "isolate"
@@ -1556,7 +971,7 @@ class TaskScheduler(BaseTaskScheduler):
           the queue-level timestamp lives on the head node only.
         - A 'primed' task must be the queue head (prev_task is None).
         - When setting status to 'scheduled', the task must have either a
-          prev_task (it sits in the chain) or a start_at timestamp.
+          prev_task (it sits in the queue) or a start_at timestamp.
 
         Parameters
         ----------
@@ -1605,7 +1020,7 @@ class TaskScheduler(BaseTaskScheduler):
         if status != Status.scheduled:
             return
 
-        # 'scheduled' requires either a chain position or a start_at
+        # 'scheduled' requires either a queue position or a start_at
         if prev_task_id is None and start_at_ts is None:
             raise ValueError(
                 f"{err_prefix} a task with status 'scheduled' must have either "
@@ -1735,7 +1150,7 @@ class TaskScheduler(BaseTaskScheduler):
         • ``primed`` tasks must be at the head (``prev_task is None``). Do not
           set ``primed`` on tasks that sit behind another task.
 
-        • A task in ``scheduled`` state must have either a chain position
+        • A task in ``scheduled`` state must have either a queue position
           (``prev_task`` is set) or a ``start_at`` timestamp.
 
         To avoid mistakes, prefer omitting ``status`` and let the scheduler infer
@@ -2071,7 +1486,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
-        execution_scope: Literal["isolate", "chain"],
+        execution_scope: Literal["isolate", "queue"],
     ) -> None:
         _ops_detach_for_activation(
             self,
@@ -2266,7 +1681,7 @@ class TaskScheduler(BaseTaskScheduler):
         AssertionError
             On duplicates, attempted removals or other invariants breaches.
         """
-        # Active tasks are allowed to appear in the queue while a chain is running.
+        # Active tasks are allowed to appear in the queue while a queue is running.
         # We preserve their lifecycle status (remain 'active') while updating links.
         # -------  sanity checks  -------
         assert len(set(original)) == len(
