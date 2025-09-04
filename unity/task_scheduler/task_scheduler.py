@@ -49,6 +49,7 @@ from .base import BaseTaskScheduler
 from ..actor.base import BaseActor
 from ..actor.simulated import SimulatedActor
 from .active_task import ActiveTask
+from .active_queue import ActiveQueue
 import json
 from dataclasses import dataclass
 
@@ -435,7 +436,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-        execution_scope: Optional[Literal["isolate", "chain"]] = None,
+        execution_scope: Optional[Literal["isolate", "queue"]] = None,
     ) -> SteerableToolHandle:
         freeform_text: str = text
 
@@ -468,8 +469,8 @@ class TaskScheduler(BaseTaskScheduler):
                         parent_chat_context=parent_chat_context,
                     )
                 )
-                if scope == "chain":
-                    return await self._execute_chain_internal(
+                if scope == "queue":
+                    return await self._execute_queue_internal(
                         task_id=int(stripped),
                         parent_chat_context=parent_chat_context,
                         clarification_up_q=clarification_up_q,
@@ -508,7 +509,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         activated_by: Optional[ActivatedBy] = None,
-        execution_scope: Literal["isolate", "chain"] = "isolate",
+        execution_scope: Literal["isolate", "queue"] = "isolate",
         detach: bool = True,
     ) -> SteerableToolHandle:
         """
@@ -565,9 +566,9 @@ class TaskScheduler(BaseTaskScheduler):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
         # Adjust queue linkages based on explicit activation scope.
-        # For chain execution, only the initial chain head should be detached
-        # from its predecessor. Followers started as part of the same chain
-        # must retain their prev/next pointers so the chain structure remains
+        # For queue execution, only the initial queue head should be detached
+        # from its predecessor. Followers started as part of the same queue
+        # must retain their prev/next pointers so the queue structure remains
         # intact in storage (tests assert this behaviour).
         if detach:
             self._detach_from_queue_for_activation(
@@ -630,141 +631,10 @@ class TaskScheduler(BaseTaskScheduler):
         return handle
 
     # ------------------------------------------------------------------ #
-    #  Chain orchestrator: sequentially executes the follower chain       #
+    #  Chain orchestrator: sequentially executes the follower queue       #
     # ------------------------------------------------------------------ #
 
-    class _ChainHandle(SteerableToolHandle):  # type: ignore[abstract-method]
-        def __init__(
-            self,
-            scheduler: "TaskScheduler",
-            *,
-            first_task_id: int,
-            first_handle: SteerableToolHandle,
-            parent_chat_context: Optional[List[Dict[str, Any]]],
-            clarification_up_q: Optional[asyncio.Queue[str]],
-            clarification_down_q: Optional[asyncio.Queue[str]],
-        ) -> None:
-            self._s = scheduler
-            self._current_task_id = first_task_id
-            self._current_handle: SteerableToolHandle = first_handle
-            self._parent_ctx = parent_chat_context
-            self._clar_up = clarification_up_q
-            self._clar_down = clarification_down_q
-            self._done_evt: asyncio.Event = asyncio.Event()
-            self._final_result: Optional[str] = None
-            # Background driver
-            self._driver = asyncio.create_task(self._drive())
-
-        async def _drive(self) -> None:
-            try:
-                while True:
-                    try:
-                        result = await self._current_handle.result()
-                    except asyncio.CancelledError:
-                        self._final_result = "Stopped."
-                        break
-
-                    text = str(result or "")
-                    # If ActiveTask flagged an explicit stop/defer, end the chain immediately
-                    try:
-                        was_stopped = bool(
-                            getattr(self._current_handle, "_was_stopped", False),
-                        )
-                    except Exception:
-                        was_stopped = False
-                    if was_stopped:
-                        self._final_result = text or "Stopped."
-                        break
-                    # If the stop/defer path was taken, end the chain here
-                    if "stopped" in text.lower():
-                        self._final_result = text
-                        break
-
-                    # Find next runnable in the same chain (head->tail from current)
-                    queue = self._s._get_task_queue(task_id=self._current_task_id)
-                    next_tid = None
-                    for t in queue:
-                        if t.task_id != self._current_task_id:
-                            next_tid = t.task_id
-                            break
-                    if next_tid is None:
-                        # Chain exhausted
-                        self._final_result = text or "Chain completed."
-                        break
-
-                    # Start next task using CHAIN linkage semantics
-                    self._current_task_id = next_tid
-                    self._current_handle = await self._s._execute_internal(
-                        task_id=next_tid,
-                        parent_chat_context=self._parent_ctx,
-                        clarification_up_q=self._clar_up,
-                        clarification_down_q=self._clar_down,
-                        activated_by=ActivatedBy.explicit,
-                        execution_scope="chain",
-                        # Do NOT detach followers from each other; keep chain links intact
-                        detach=False,
-                    )
-            finally:
-                self._done_evt.set()
-
-        # ----- Steerable surface proxies -----
-        async def interject(self, message: str) -> None:  # type: ignore[override]
-            await self._current_handle.interject(message)
-
-        def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
-            try:
-                return self._current_handle.stop(cancel=cancel, reason=reason)
-            except Exception:
-                return "Stopped."
-
-        def pause(self) -> Optional[str]:  # type: ignore[override]
-            try:
-                if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
-                    return "Already completed."
-            except Exception:
-                pass
-            try:
-                ret = self._current_handle.pause()
-                return ret
-            except Exception:
-                return "Already completed."
-
-        def resume(self) -> Optional[str]:  # type: ignore[override]
-            try:
-                if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
-                    return "Already completed."
-            except Exception:
-                pass
-            try:
-                ret = self._current_handle.resume()
-                return ret
-            except Exception:
-                return "Already completed."
-
-        def done(self) -> bool:  # type: ignore[override]
-            return self._done_evt.is_set()
-
-        async def result(self):  # type: ignore[override]
-            await self._done_evt.wait()
-            return self._final_result or ""
-
-        async def ask(self, question: str) -> "SteerableToolHandle":  # type: ignore[override]
-            return await self._current_handle.ask(question)
-
-        @property
-        def valid_tools(self) -> Dict[str, Callable]:  # type: ignore[override]
-            tools = {
-                self.interject.__name__: self.interject,
-                self.stop.__name__: self.stop,
-            }
-            paused_flag = getattr(self._current_handle, "_paused", False)
-            if paused_flag:
-                tools[self.resume.__name__] = self.resume
-            else:
-                tools[self.pause.__name__] = self.pause
-            return tools
-
-    async def _execute_chain_internal(
+    async def _execute_queue_internal(
         self,
         *,
         task_id: int,
@@ -772,16 +642,16 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        """Start chain execution at `task_id` and return a composite chain handle."""
+        """Start queue execution at `task_id` and return a composite queue handle."""
         first = await self._execute_internal(
             task_id=task_id,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             activated_by=ActivatedBy.explicit,
-            execution_scope="chain",
+            execution_scope="queue",
         )
-        return TaskScheduler._ChainHandle(
+        return ActiveQueue(
             self,
             first_task_id=task_id,
             first_handle=first,
@@ -800,7 +670,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        execution_scope: Optional[Literal["isolate", "chain"]] = None,
+        execution_scope: Optional[Literal["isolate", "queue"]] = None,
     ) -> SteerableToolHandle:
         """Compose tools and prompt, then start the execute reasoning loop."""
         client = self._new_llm_client("gpt-5@openai")
@@ -820,17 +690,17 @@ class TaskScheduler(BaseTaskScheduler):
         async def _execute_by_id(
             *,
             task_id: int,
-            execution_scope: "Literal['auto','isolate','chain']" = "auto",
+            execution_scope: "Literal['auto','isolate','queue']" = "auto",
         ) -> SteerableToolHandle:  # type: ignore[valid-type]
-            """Start the task with *task_id*, adopting inner handle (isolate or chain).
+            """Start the task with *task_id*, adopting inner handle (isolate or queue).
 
             Parameters
             ----------
             task_id : int
                 Identifier of the task to start.
-            execution_scope : Literal['auto','isolate','chain'], default "auto"
+            execution_scope : Literal['auto','isolate','queue'], default "auto"
                 Routing hint selected by the LLM after inspecting queue context with `ask`:
-                - 'chain': start and keep followers attached (sequence runs in order)
+                - 'queue': start and keep followers attached (sequence runs in order)
                 - 'isolate': start only this task; detach followers
                 - 'auto': delegate to the scheduler's router based on the request text and context
 
@@ -838,24 +708,24 @@ class TaskScheduler(BaseTaskScheduler):
             -----------------
             - Never modify scheduling/ordering or `start_at` to begin execution. Scope selection
               dictates activation behaviour; schema remains unchanged.
-            - If the user wants the whole sequence now, prefer calling this on the chain head
-              (where `prev_task` is None) with execution_scope='chain'.
+            - If the user wants the whole sequence now, prefer calling this on the queue head
+              (where `prev_task` is None) with execution_scope='queue'.
             """
 
             # Decide execution scope strictly via LLM when not provided
-            if execution_scope in ("isolate", "chain"):
+            if execution_scope in ("isolate", "queue"):
                 scope = execution_scope
             else:
                 scope = (
                     execution_scope
-                    if execution_scope in ("isolate", "chain")
+                    if execution_scope in ("isolate", "queue")
                     else await self._decide_execution_scope(
                         request_text=freeform_text,
                         parent_chat_context=parent_chat_context,
                     )
                 )
-            if scope == "chain":
-                handle = await self._execute_chain_internal(
+            if scope == "queue":
+                handle = await self._execute_queue_internal(
                     task_id=task_id,
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
@@ -919,20 +789,20 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         request_text: str,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-    ) -> Literal["isolate", "chain"]:
-        """Use an LLM router to decide execution scope: "isolate" vs "chain"."""
+    ) -> Literal["isolate", "queue"]:
+        """Use an LLM router to decide execution scope: "isolate" vs "queue"."""
         try:
             client = self._new_llm_client("gpt-5@openai")
             system = (
                 "You are a router that selects an execution scope for starting a queued task.\n"
                 "Choices:\n"
                 "- isolate: Start only the selected task now, detach its followers. The next task becomes the new head and inherits any queue-level start_at timestamp (becomes scheduled).\n"
-                "- chain: Start the selected task now and KEEP the follower chain attached behind it. The started task keeps the queue-level start_at; the immediate successor MUST NOT carry start_at.\n"
+                "- queue: Start the selected task now and KEEP the follower queue attached behind it. The started task keeps the queue-level start_at; the immediate successor MUST NOT carry start_at.\n"
                 "Guidelines:\n"
-                "- Phrases like 'do them all now', 'do the whole set/sequence now', lists of multiple tasks to run now => chain.\n"
+                "- Phrases like 'do them all now', 'do the whole set/sequence now', lists of multiple tasks to run now => queue.\n"
                 "- Phrases like 'just this one now', 'leave the rest for later/Monday' => isolate.\n"
-                "- If ambiguous, prefer chain when the user implies batch execution; otherwise isolate.\n"
-                'Return ONLY JSON with rationale first: {"rationale": <short string>, "execution_scope": "isolate|chain"}\n'
+                "- If ambiguous, prefer queue when the user implies batch execution; otherwise isolate.\n"
+                'Return ONLY JSON with rationale first: {"rationale": <short string>, "execution_scope": "isolate|queue"}\n'
                 "Be concise and deterministic."
             )
             client.set_system_message(system)
@@ -973,14 +843,14 @@ class TaskScheduler(BaseTaskScheduler):
             try:
                 data = _json.loads(raw)
                 token = str(data.get("execution_scope", "")).strip().lower()
-                if token in {"isolate", "chain"}:
+                if token in {"isolate", "queue"}:
                     scope = token  # type: ignore[assignment]
             except Exception:
                 # attempt to extract simple token
                 low = (raw or "").lower()
-                if '"chain"' in low or 'execution_scope": "chain"' in low:
-                    scope = "chain"
-            return cast(Literal["isolate", "chain"], scope)
+                if '"queue"' in low or 'execution_scope": "queue"' in low:
+                    scope = "queue"
+            return cast(Literal["isolate", "queue"], scope)
         except Exception:
             # Conservative fallback
             return "isolate"
@@ -1101,7 +971,7 @@ class TaskScheduler(BaseTaskScheduler):
           the queue-level timestamp lives on the head node only.
         - A 'primed' task must be the queue head (prev_task is None).
         - When setting status to 'scheduled', the task must have either a
-          prev_task (it sits in the chain) or a start_at timestamp.
+          prev_task (it sits in the queue) or a start_at timestamp.
 
         Parameters
         ----------
@@ -1150,7 +1020,7 @@ class TaskScheduler(BaseTaskScheduler):
         if status != Status.scheduled:
             return
 
-        # 'scheduled' requires either a chain position or a start_at
+        # 'scheduled' requires either a queue position or a start_at
         if prev_task_id is None and start_at_ts is None:
             raise ValueError(
                 f"{err_prefix} a task with status 'scheduled' must have either "
@@ -1280,7 +1150,7 @@ class TaskScheduler(BaseTaskScheduler):
         • ``primed`` tasks must be at the head (``prev_task is None``). Do not
           set ``primed`` on tasks that sit behind another task.
 
-        • A task in ``scheduled`` state must have either a chain position
+        • A task in ``scheduled`` state must have either a queue position
           (``prev_task`` is set) or a ``start_at`` timestamp.
 
         To avoid mistakes, prefer omitting ``status`` and let the scheduler infer
@@ -1616,7 +1486,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
-        execution_scope: Literal["isolate", "chain"],
+        execution_scope: Literal["isolate", "queue"],
     ) -> None:
         _ops_detach_for_activation(
             self,
@@ -1810,12 +1680,9 @@ class TaskScheduler(BaseTaskScheduler):
         ------
         AssertionError
             On duplicates, attempted removals or other invariants breaches.
-        RuntimeError
-            If the active task appears in either *original* or *new*.
         """
-        # The active task may **never** be reordered or touched here.
-        self._ensure_not_active_task(original)
-        self._ensure_not_active_task(new)
+        # Active tasks are allowed to appear in the queue while a queue is running.
+        # We preserve their lifecycle status (remain 'active') while updating links.
         # -------  sanity checks  -------
         assert len(set(original)) == len(
             original,
@@ -1882,7 +1749,10 @@ class TaskScheduler(BaseTaskScheduler):
             )
 
             # ── Determine the desired status after re-ordering ─────────────
-            if start_ts is not None:  # head carries explicit timestamp
+            if existing_status == Status.active:
+                # Never change lifecycle of the currently active task during queue relink
+                desired_status = Status.active
+            elif start_ts is not None:  # head carries explicit timestamp
                 desired_status = Status.scheduled
             else:
                 desired_status = (

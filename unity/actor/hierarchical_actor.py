@@ -63,6 +63,7 @@ class PlanRuntime:
         self.path_context: List[str] = []
         self.call_stacks = defaultdict(list)
         self.frame_id_counter = 0
+        self.execution_mode: str = "fresh_start"
 
     async def checkpoint(self, label: str = ""):
         """
@@ -327,6 +328,19 @@ class SandboxMergeDecision(BaseModel):
     modification_request: Optional[str] = Field(
         None,
         description="If true, the user's request, rephrased as a direct instruction to modify the main plan.",
+    )
+
+
+class RefactorDecision(BaseModel):
+    """The structured output from the refactoring LLM call."""
+
+    refactored_code: str = Field(
+        ...,
+        description="The complete, refactored Python code block.",
+    )
+    deduced_precondition: PreconditionDecision = Field(
+        ...,
+        description="The necessary starting state for the refactored plan.",
     )
 
 
@@ -771,19 +785,12 @@ class _SteerableToolHandleProxy:
                 args,
                 kwargs,
             )
-            self._plan.execution_key_log.append(
-                cache_key,
-            )
-            if self._plan.replay_keys:
-                lookup_key = self._plan.replay_keys.pop(0)
-            else:
-                lookup_key = cache_key
 
-            if lookup_key in self._plan.idempotency_cache:
+            if cache_key in self._plan.idempotency_cache:
                 return handle_method_logic(
                     call_repr,
                     True,
-                    self._plan.idempotency_cache[lookup_key],
+                    self._plan.idempotency_cache[cache_key],
                 )
 
             self._plan.runtime.cache_miss_counter += 1
@@ -810,20 +817,12 @@ class _SteerableToolHandleProxy:
                 args,
                 kwargs,
             )
-            self._plan.execution_key_log.append(
-                cache_key,
-            )
 
-            if self._plan.replay_keys:
-                lookup_key = self._plan.replay_keys.pop(0)
-            else:
-                lookup_key = cache_key
-
-            if lookup_key in self._plan.idempotency_cache:
+            if cache_key in self._plan.idempotency_cache:
                 return handle_method_logic(
                     call_repr,
                     True,
-                    self._plan.idempotency_cache[lookup_key],
+                    self._plan.idempotency_cache[cache_key],
                 )
 
             self._plan.runtime.cache_miss_counter += 1
@@ -893,18 +892,9 @@ class _ActionProviderProxy:
                 args,
                 kwargs,
             )
-            self._plan.execution_key_log.append(
-                cache_key,
-            )
 
-            if self._plan.replay_keys:
-                lookup_key = self._plan.replay_keys.pop(0)
-                logger.debug(f"found key during replay: {lookup_key}")
-            else:
-                lookup_key = cache_key
-
-            if lookup_key in self._plan.idempotency_cache:
-                cached_data = self._plan.idempotency_cache[lookup_key]
+            if cache_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[cache_key]
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
 
@@ -914,7 +904,7 @@ class _ActionProviderProxy:
                 self._plan.action_log.append(
                     f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"{diag_prefix} CACHE HIT for key: {lookup_key}")
+                logger.debug(f"{diag_prefix} CACHE HIT for key: {cache_key}")
                 interactions_log.append(cached_interaction)
 
                 if (
@@ -1019,23 +1009,15 @@ class _ActionProviderProxy:
                 args,
                 kwargs,
             )
-            self._plan.execution_key_log.append(
-                cache_key,
-            )
 
-            if self._plan.replay_keys:
-                lookup_key = self._plan.replay_keys.pop(0)
-            else:
-                lookup_key = cache_key
-
-            if lookup_key in self._plan.idempotency_cache:
-                cached_data = self._plan.idempotency_cache[lookup_key]
+            if cache_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[cache_key]
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
                 self._plan.action_log.append(
                     f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"{diag_prefix} CACHE HIT for key: {lookup_key}")
+                logger.debug(f"{diag_prefix} CACHE HIT for key: {cache_key}")
                 interactions_log.append(cached_interaction)
 
                 if (
@@ -1125,12 +1107,9 @@ class HierarchicalPlan(BaseActiveTask):
         """
         self.actor = actor
         self.goal = goal
-        self.is_teaching_session = goal is None
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
 
-        self.execution_key_log: List[tuple] = []
-        self.replay_keys: List[tuple] = []
         self.idempotency_cache: Dict[tuple, Any] = {}
         self.live_handles: Dict[str, SteerableToolHandle] = {}
         self.runtime = PlanRuntime()
@@ -1215,11 +1194,15 @@ class HierarchicalPlan(BaseActiveTask):
         )
         self.action_log.append(f"STATE CHANGE: {old_state.name} -> {new_state.name}")
 
-    async def _initialize_and_run(self):
+    async def _initialize_and_run(
+        self,
+        mode: str = "fresh_start",
+    ):
         """
         Manages the entire lifecycle of the plan from initialization to completion.
         """
         token = current_run_id_var.set(self.run_id)
+        self.runtime.execution_mode = mode
         try:
             if self.goal:
                 if not self._is_complete:
@@ -1315,16 +1298,12 @@ class HierarchicalPlan(BaseActiveTask):
 
         try:
             result = main_task.result()
-            if self.is_teaching_session:
-                self.action_log.append(
-                    "Teaching step complete. Awaiting next instruction.",
-                )
-                self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
-                return
-
-            self._set_state(_HierarchicalPlanState.COMPLETED)
-            self.action_log.append(f"Plan completed. Result: {result}")
-            self._set_final_result(f"Plan completed. Result: {result}")
+            self._final_result_str = str(result)
+            self.action_log.append(
+                f"Main plan execution concluded with result: {result}. Awaiting next instruction.",
+            )
+            self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
+            return
 
         except Exception as e:
             if not isinstance(e, asyncio.CancelledError):
@@ -1660,8 +1639,8 @@ class HierarchicalPlan(BaseActiveTask):
                     plan_source_code=clean_plan_source_for_prompt,
                     call_stack=self.call_stack,
                     action_log=self.action_log[-10:],
-                    is_teaching_session=self.is_teaching_session,
                     goal=self.goal,
+                    tools=self.actor.tools,
                 )
 
                 self.modification_client.set_response_format(InterjectionDecision)
@@ -1714,12 +1693,7 @@ class HierarchicalPlan(BaseActiveTask):
                 self._update_plan_with_new_code(patch.function_name, patch.new_code)
 
             modification_reason = decision.reason
-            if self.is_teaching_session:
-                if self.goal:
-                    self.goal += f"\n- {modification_reason}"
-                else:
-                    self.goal = f"Incrementally taught plan:\n- {modification_reason}"
-            elif self.goal:
+            if self.goal:
                 new_goal = (
                     f"{self.goal}\n\nIMPORTANT UPDATE: The user has provided a new instruction to modify the "
                     f"plan: '{modification_reason}'"
@@ -1728,6 +1702,8 @@ class HierarchicalPlan(BaseActiveTask):
                     f"Updating plan goal to reflect interjection. New goal: '{new_goal}'",
                 )
                 self.goal = new_goal
+            else:
+                self.goal = f"Incrementally taught plan:\n- {modification_reason}"
 
             if self._child_tasks:
                 self.action_log.append(
@@ -1770,22 +1746,47 @@ class HierarchicalPlan(BaseActiveTask):
             self.call_stack.clear()
             self.runtime.path_context.clear()
 
-            self.replay_keys.clear()
-            self.execution_key_log.clear()
             self.interaction_stack.append([])
 
-            self._execution_task = asyncio.create_task(self._initialize_and_run())
+            self._execution_task = asyncio.create_task(
+                self._initialize_and_run(mode="replay_after_modification"),
+            )
             if self._state == _HierarchicalPlanState.PAUSED:
                 self.runtime.resume()
 
             return f"Plan modification for '{modification_summary}' applied. Resuming execution from a clean state."
 
         elif decision.action == "replace_task":
+            self.action_log.append(
+                f"Executing decision: replace_task with new goal: '{decision.new_goal}'",
+            )
+            logger.debug(
+                f"Replace task triggered. New goal: '{decision.new_goal}'. Proceeding to re-initialize plan.",
+            )
             if self._execution_task and not self._execution_task.done():
                 self._execution_task.cancel()
-            self.action_log.append("Executing decision: replace_task.")
-            await self.stop(final_result=f"REPLACE_TASK: {decision.new_goal}")
-            return f"Current plan stopped. Requesting new plan for goal: '{decision.new_goal}'"
+                try:
+                    await self._execution_task
+                except asyncio.CancelledError:
+                    pass
+
+            self.goal = decision.new_goal
+            self.plan_source_code = None
+            self.idempotency_cache.clear()
+            self.live_handles.clear()
+            self.runtime = PlanRuntime()
+            self.call_stack.clear()
+            self.skipped_functions.clear()
+            self._is_complete = False
+            self._completion_event.clear()
+            self._final_result_str = None
+
+            self._execution_task = asyncio.create_task(
+                self._initialize_and_run(mode="fresh_after_replace_task"),
+            )
+            return (
+                f"Plan has been re-initialized with a new goal: '{decision.new_goal}'"
+            )
 
         elif decision.action == "refactor_and_generalize":
             self.action_log.append(
@@ -1795,33 +1796,51 @@ class HierarchicalPlan(BaseActiveTask):
                 "Refactor and generalize triggered. Proceeding to Phase 2 implementation.",
             )
 
-            main_plan_name = self._get_main_function_name() or "main_plan"
-            monolithic_code = self.function_source_map.get(
-                main_plan_name,
-                self.plan_source_code,
+            monolithic_code = (
+                "\n\n".join(
+                    self.clean_function_source_map.values(),
+                )
+                if self.clean_function_source_map
+                else ""
             )
-
             refactor_prompt = prompt_builders.build_refactor_prompt(
                 monolithic_code=monolithic_code,
                 generalization_request=decision.generalization_context,
+                action_log="\n".join(self.action_log),
                 tools=self.actor.tools,
             )
 
-            refactored_script = await llm_call(
-                self.plan_generation_client,
-                refactor_prompt,
-            )
-            clean_refactored_script = (
-                refactored_script.strip()
-                .replace("```python", "")
-                .replace("```", "")
-                .strip()
-            )
+            self.plan_generation_client.set_response_format(RefactorDecision)
+            try:
+                response_str = await llm_call(
+                    self.plan_generation_client,
+                    refactor_prompt,
+                )
+                refactor_decision = RefactorDecision.model_validate_json(response_str)
+            finally:
+                self.plan_generation_client.reset_response_format()
+
+            modification_reason = decision.reason
+            if self.goal:
+                new_goal = f"{self.goal}\n\nIMPORTANT UPDATE: The user has generalized the task with a new subject: '{modification_reason}'"
+                self.action_log.append(
+                    f"Updating plan goal to reflect generalization. New goal: '{new_goal}'",
+                )
+                self.goal = new_goal
+            else:
+                self.goal = f"Incrementally taught and generalized plan:\n- {modification_reason}"
+
+            deduced_precondition = refactor_decision.deduced_precondition
+            if deduced_precondition.status == "ok":
+                await self.actor._verify_and_correct_state(
+                    plan=self,
+                    target_precondition=deduced_precondition.model_dump(),
+                    context_label="refactor_and_generalize_reset",
+                )
 
             self.action_log.append("Replacing old plan with newly refactored version.")
-
             self.plan_source_code = self.actor._sanitize_code(
-                clean_refactored_script,
+                refactor_decision.refactored_code,
                 self,
             )
             self.actor._load_plan_module(self)
@@ -1857,11 +1876,11 @@ class HierarchicalPlan(BaseActiveTask):
             self.call_stack.clear()
             self.runtime.path_context.clear()
 
-            self.replay_keys = list(self.execution_key_log)
-            self.execution_key_log.clear()
             self.interaction_stack.append([])
 
-            self._execution_task = asyncio.create_task(self._initialize_and_run())
+            self._execution_task = asyncio.create_task(
+                self._initialize_and_run(mode="fresh_after_refactor"),
+            )
             return "Plan successfully refactored. Resuming execution with the new modular plan."
 
         elif decision.action == "explore_detached":
@@ -2005,16 +2024,9 @@ class HierarchicalPlan(BaseActiveTask):
 
         elif decision.action == "complete_task":
             self.action_log.append("Executing decision: complete_task.")
-            if self._state == _HierarchicalPlanState.PAUSED:
-                self._set_state(_HierarchicalPlanState.COMPLETED)
-
-            if self.is_teaching_session:
-                self.is_teaching_session = False
-                self._set_state(_HierarchicalPlanState.COMPLETED)
-                self._set_final_result(self._final_result_str or "Plan completed.")
-                return "Teaching session completed."
-            else:
-                return "Not in a teaching session. Plan will continue normally."
+            self._set_state(_HierarchicalPlanState.COMPLETED)
+            self._set_final_result(self._final_result_str or "Plan completed by user.")
+            return "Plan marked as complete by user."
 
         return "Error: Unknown or unsupported interjection action."
 
@@ -2510,57 +2522,23 @@ class HierarchicalActor(BaseActor):
 
         self._load_plan_module(plan)
 
-    async def _ensure_precondition(
+    async def _verify_and_correct_state(
         self,
         plan: HierarchicalPlan,
-        function_name: str,
-    ) -> None:
+        target_precondition: dict,
+        context_label: str,
+    ):
         """
-        Checks and enforces the precondition for a function before execution.
-        This is the core of the proactive state drift correction mechanism.
-
-        Args:
-            plan: The active HierarchicalPlan instance.
-            function_name: The name of the function whose precondition needs to be checked.
+        A reusable helper to verify the current browser state against a target
+        precondition and execute a correction script if they do not match.
         """
-        precondition = self.function_manager.get_precondition(
-            function_name=function_name,
-        )
-
-        if not precondition or precondition.get("status") == "not_applicable":
-            return
-
-        logger.info(f"PRECONDITION CHECK for '{function_name}': {precondition}")
-        plan.action_log.append(
-            f"Verifying precondition for '{function_name}': {precondition}",
-        )
-
-        if url_precondition := precondition.get("url"):
+        try:
+            screenshot = await self.action_provider.browser.get_screenshot()
+            verification_prompt = prompt_builders.build_state_verification_prompt(
+                precondition=target_precondition,
+            )
+            plan.verification_client.set_response_format(StateVerificationDecision)
             try:
-                current_url = await self.action_provider.browser.get_current_url()
-                if current_url != url_precondition:
-                    logger.warning(
-                        f"URL DRIFT: Expected '{url_precondition}', was '{current_url}'. Navigating.",
-                    )
-                    plan.action_log.append(
-                        f"STATE DRIFT: Correcting URL from '{current_url}' to '{url_precondition}'.",
-                    )
-                    await self.action_provider.browser.navigate(url_precondition)
-            except Exception as e:
-                logger.error(
-                    f"Failed to enforce URL precondition for {function_name}: {e}",
-                )
-
-        if description_precondition := precondition.get("description"):
-            try:
-                screenshot = await self.action_provider.browser.get_screenshot()
-
-                verification_prompt = prompt_builders.build_state_verification_prompt(
-                    precondition=precondition,
-                )
-                plan.verification_client.set_response_format(
-                    StateVerificationDecision,
-                )
                 decision_str = await llm_call(
                     plan.verification_client,
                     verification_prompt,
@@ -2569,27 +2547,30 @@ class HierarchicalActor(BaseActor):
                 verification_decision = StateVerificationDecision.model_validate_json(
                     decision_str,
                 )
+            finally:
+                plan.verification_client.reset_response_format()
 
-                if verification_decision.matches:
-                    logger.info(
-                        f"PRECONDITION MET for '{function_name}': {verification_decision.reason}",
-                    )
-                    return
+            if verification_decision.matches:
+                logger.info(
+                    f"PRECONDITION MET for '{context_label}': {verification_decision.reason}",
+                )
+                return
 
-                logger.warning(
-                    f"STATE DRIFT for '{function_name}': {verification_decision.reason}. Generating correction script.",
-                )
-                plan.action_log.append(
-                    f"STATE DRIFT for '{function_name}': {verification_decision.reason}",
-                )
+            logger.warning(
+                f"STATE DRIFT for '{context_label}': {verification_decision.reason}. Generating correction script.",
+            )
+            plan.action_log.append(
+                f"STATE DRIFT for '{context_label}': {verification_decision.reason}",
+            )
 
-                correction_prompt = prompt_builders.build_proactive_correction_prompt(
-                    precondition=precondition,
-                    tools=self.tools,
-                )
-                plan.course_correction_client.set_response_format(
-                    CourseCorrectionDecision,
-                )
+            current_url = await self.action_provider.browser.get_current_url()
+            correction_prompt = prompt_builders.build_proactive_correction_prompt(
+                precondition=target_precondition,
+                current_url=current_url,
+                tools=self.tools,
+            )
+            plan.course_correction_client.set_response_format(CourseCorrectionDecision)
+            try:
                 correction_str = await llm_call(
                     plan.course_correction_client,
                     correction_prompt,
@@ -2598,34 +2579,54 @@ class HierarchicalActor(BaseActor):
                 correction_decision = CourseCorrectionDecision.model_validate_json(
                     correction_str,
                 )
-
-                if (
-                    correction_decision.correction_needed
-                    and correction_decision.correction_code
-                ):
-                    plan.action_log.append(
-                        f"PROACTIVE CORRECTION: Running script to meet precondition.",
-                    )
-                    await self._execute_course_correction(
-                        plan,
-                        correction_decision.correction_code,
-                    )
-                    logger.info(
-                        f"Proactive course correction for '{function_name}' completed.",
-                    )
-                else:
-                    logger.warning(
-                        "State drift detected, but LLM decided no correction was needed or failed to provide code.",
-                    )
-
-            except Exception as e:
-                logger.error(
-                    f"Error during proactive state correction for '{function_name}': {e}",
-                    exc_info=True,
-                )
             finally:
-                plan.verification_client.reset_response_format()
                 plan.course_correction_client.reset_response_format()
+
+            if (
+                correction_decision.correction_needed
+                and correction_decision.correction_code
+            ):
+                plan.action_log.append(
+                    f"PROACTIVE CORRECTION for '{context_label}': Running script.",
+                )
+                await self._execute_course_correction(
+                    plan,
+                    correction_decision.correction_code,
+                )
+                logger.info(
+                    f"Proactive course correction for '{context_label}' completed.",
+                )
+            else:
+                logger.warning(
+                    f"State drift for '{context_label}' detected, but no correction was generated.",
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error during state verification/correction for '{context_label}': {e}",
+                exc_info=True,
+            )
+
+    async def _ensure_precondition(
+        self,
+        plan: HierarchicalPlan,
+        function_name: str,
+    ) -> None:
+        """
+        Checks and enforces the precondition for a function before execution.
+        """
+        precondition = self.function_manager.get_precondition(
+            function_name=function_name,
+        )
+
+        if not precondition or precondition.get("status") == "not_applicable":
+            return
+
+        await self._verify_and_correct_state(
+            plan=plan,
+            target_precondition=precondition,
+            context_label=f"function '{function_name}'",
+        )
 
     def _create_verify_decorator(self, plan: HierarchicalPlan):
         """
@@ -2701,7 +2702,8 @@ class HierarchicalActor(BaseActor):
                     plan.runtime.action_counter = 0
                     plan.runtime.cache_miss_counter = 0
 
-                    await self._ensure_precondition(plan, func_name)
+                    if plan.runtime.execution_mode != "replay_after_modification":
+                        await self._ensure_precondition(plan, func_name)
 
                     last_error_reason = ""
                     try:
@@ -2709,7 +2711,6 @@ class HierarchicalActor(BaseActor):
                             plan.runtime.action_counter = 0
                             if i > 0:
                                 local_interactions.clear()
-
                             try:
                                 captured_run_id = current_run_id_var.get()
 
@@ -3376,9 +3377,7 @@ class HierarchicalActor(BaseActor):
             if "failed_interactions" in kwargs and kwargs["failed_interactions"]:
                 failed_interactions_trace = []
                 for interaction in kwargs["failed_interactions"]:
-                    if (
-                        len(interaction) > 3 and interaction[3]
-                    ):
+                    if len(interaction) > 3 and interaction[3]:
                         action_summary = interaction[1]
                         magnitude_logs = interaction[3]
                         for log_line in magnitude_logs:
@@ -3429,6 +3428,9 @@ class HierarchicalActor(BaseActor):
                             .replace("```python", "")
                             .replace("```", "")
                             .strip()
+                        )
+                        ast.parse(
+                            textwrap.dedent(clean_code),
                         )
                         decision.code = clean_code
                         return decision

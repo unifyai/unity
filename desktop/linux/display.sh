@@ -13,6 +13,6 @@ DISPLAY=:99 xsetroot -cursor_name left_ptr
 /usr/libexec/xdg-desktop-portal &
 /usr/libexec/xdg-desktop-portal-gtk &
 
-mkdir -p /home/install
+mkdir -p /tmp/unify/assistant/install
 apt-get update
 DISPLAY=:99 xterm -fa 'Monospace' -fs 10

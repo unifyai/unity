@@ -129,7 +129,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         _return_reasoning_steps : bool, default ``False``
             When *True*, :pymeth:`SteerableToolHandle.result` returns
             ``(answer, messages)`` – the first element is the assistant's
-            reply, the second the hidden chain‑of‑thought.
+            reply, the second the hidden queue‑of‑thought.
         _log_tool_steps : bool, default ``True``
             If *True* the task‑scheduler logs every tool invocation to the
             server‑side logger.
@@ -173,7 +173,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         ----------------------------
         This method is not intended to be used by `execute` to rewrite
         schedules/ordering/start_at purely to begin execution. The `execute`
-        flow determines the correct execution scope (isolate vs chain) and
+        flow determines the correct execution scope (isolate vs queue) and
         starts the task via an execution tool without mutating scheduling.
         Only use `update` within `execute` when the user explicitly asked to
         create a missing task or to change task fields before running.
@@ -228,21 +228,21 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
 
         Chain vs isolate (rules)
         ------------------------
-        - The `execute` flow decides between "isolate" and "chain" execution.
+        - The `execute` flow decides between "isolate" and "queue" execution.
           Phrases like "start them all now" or an explicit ordered sequence
-          imply chain (start the head and keep followers attached). Requests
+          imply queue (start the head and keep followers attached). Requests
           like "just this one now" imply isolate.
         - Never rewrite a task's `start_at` or queue links (prev/next) purely
           to begin execution. Starting is an activation event, not a schema
           edit. The scheduler handles immediate start without mutating fields.
-        - When the user wants to run a chain, select the chain head (where
+        - When the user wants to run a queue, select the queue head (where
           `prev_task` is None) and execute that id; do not reorder via `update`.
 
         Tool behaviour
         --------------
         The execute toolset exposes two tools:
         - `ask` – to discover the relevant task and queue context
-        - `execute_by_id(task_id, execution_scope='auto'|'isolate'|'chain')` – to start
+        - `execute_by_id(task_id, execution_scope='auto'|'isolate'|'queue')` – to start
           the task, with an optional routing hint. Prefer setting `execution_scope`
           after inspecting queue context with `ask`. If omitted, the scheduler
           will select automatically.

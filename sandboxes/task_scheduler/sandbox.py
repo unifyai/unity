@@ -56,6 +56,7 @@ from sandboxes.utils import (
     SimulationParams,
     SimulationSelector,
     parse_simulation_params_kv,
+    parse_simulation_overrides,
     apply_per_task_simulation_patch,
 )
 
@@ -80,11 +81,14 @@ _SIM_PARSER_SYS = (
     "Controls to detect (may appear anywhere, any order, any phrasing):\n"
     "- steps: an integer number of steps (e.g., 'in 5 steps', 'limit to 7 steps', 'steps=3').\n"
     "- timeout: a duration with units seconds or minutes (e.g., 'in 30 seconds', 'timeout 2 min', '90s', 'timeout=1.5 minutes').\n"
-    "- simulation_guidance: optional free-form guidance that should influence the simulated behaviour only (e.g., 'if asked about timing, say there is an issue and it's taking longer').\n"
+    "- simulation_guidance: optional free-form behavioural guidance (e.g., how to respond to progress updates).\n"
+    "  IMPORTANT: Do NOT include numeric timing/duration directives or per-task timing instructions in simulation_guidance;\n"
+    "  only keep behavioural, non-numeric phrasing such as 'if asked for progress, say it's taking longer than expected'.\n"
     "Return JSON with fields: core_text (the user's original request with ANY full sentence or standalone clause that expresses simulation controls REMOVED),\n"
     "steps (int or null), timeout_seconds (float seconds or null), simulation_guidance (string or null).\n"
     "Rules for redaction when producing core_text:\n"
     "- Remove entire sentences that mention simulation parameters (timeout/steps) or are meta-instructions about the simulation.\n"
+    "- Also remove sentences/clauses that specify per-task timing or ordered timing (e.g., 'make the first task take 20 seconds, the second 40 seconds…').\n"
     "- If controls are embedded as a trailing or leading clause (e.g., '... and make it 60 seconds timeout'), remove the whole clause so the remaining sentence reads naturally.\n"
     "- Do not leave dangling words or punctuation (avoid artefacts like 'a.' or double spaces).\n"
     "- Preserve the user's task wording otherwise; do not paraphrase or summarize.\n"
@@ -99,6 +103,8 @@ _SIM_PARSER_SYS = (
     "   core_text: 'Start task 8' steps: null timeout_seconds: null simulation_guidance: 'if you're asked how long it will take, say there was an issue and it's taking longer'\n"
     "5) Input: 'Start the task immediately, and whenever we ask for a progress update in the simulation, say it's taking longer than expected and should be done soon.'\n"
     "   core_text: 'Start the task immediately' steps: null timeout_seconds: null simulation_guidance: 'whenever we ask for a progress update in the simulation, say it's taking longer than expected and should be done soon'\n"
+    "6) Input: 'Start the chain and make the first task take 20 seconds, the second 40 seconds, the third 60 seconds, and the final 80 seconds.'\n"
+    "   core_text: 'Start the chain' steps: null timeout_seconds: null simulation_guidance: null\n"
 )
 
 
@@ -107,6 +113,8 @@ def _parse_simulation_config(text: str) -> _SimConfig:
         judge = unify.Unify(
             "gpt-5@openai",
             response_format=pydantic_response_format(_SimConfig),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         parsed = _SimConfig.model_validate_json(
             judge.set_system_message(_SIM_PARSER_SYS).generate(text),
@@ -329,21 +337,30 @@ async def _dispatch_with_context(
             )
         )
     elif intent.action == "start":
-        parsed = _parse_simulation_config(raw)
-        # Mask only steps/timeout control phrases; pass the remaining text as-is
-        core_text = parsed.core_text if parsed.core_text != "" else raw
-        # Build a one-off actor using extracted controls falling back to defaults,
-        # and merge with any stored plan for a numeric task id if provided.
-        eff_steps = parsed.steps if parsed.steps is not None else _DEFAULT_SIM_STEPS
+        # Unified overrides (defaults + rules)
+        overrides = parse_simulation_overrides(raw)
+        core_text = overrides.core_text if overrides.core_text else raw
+
+        eff_steps = (
+            overrides.defaults.steps
+            if overrides.defaults and overrides.defaults.steps is not None
+            else _DEFAULT_SIM_STEPS
+        )
         eff_timeout = (
-            parsed.timeout_seconds
-            if parsed.timeout_seconds is not None
+            overrides.defaults.duration_seconds
+            if overrides.defaults and overrides.defaults.duration_seconds is not None
             else _DEFAULT_SIM_TIMEOUT
         )
-        eff_guidance = parsed.simulation_guidance
+        eff_guidance = (
+            overrides.defaults.guidance
+            if overrides.defaults and overrides.defaults.guidance
+            else None
+        )
 
         # Default to a 20s duration when no explicit steps or timeout were provided
-        if eff_steps is None and eff_timeout is None:
+        # and no per-task durations were detected.
+        has_rules = bool(overrides.rules)
+        if eff_steps is None and eff_timeout is None and not has_rules:
             eff_timeout = 20.0
 
         stripped_id = core_text.strip()
@@ -363,12 +380,11 @@ async def _dispatch_with_context(
 
         try:
             LG.info(
-                "[sim-config/start] parsed steps=%s, timeout_seconds=%s; effective steps=%s, timeout_seconds=%s; core_text=%r",
-                parsed.steps,
-                parsed.timeout_seconds,
+                "[sim-config/start] effective steps=%s, timeout_seconds=%s; core_text=%r; num_rules=%s",
                 eff_steps,
                 eff_timeout,
                 core_text,
+                len(overrides.rules) if overrides.rules else 0,
             )
         except Exception:
             pass
@@ -379,23 +395,149 @@ async def _dispatch_with_context(
             print(f"   📝 Parsed text: {core_text}")
             # Only show values that will be used; annotate source
             if eff_steps is not None:
-                origin = "parsed" if parsed.steps is not None else "default"
+                origin = (
+                    "parsed"
+                    if (overrides.defaults and overrides.defaults.steps is not None)
+                    else "default"
+                )
                 print(f"   🔢 Steps ({origin}): {eff_steps}")
             if eff_timeout is not None:
-                origin = "parsed" if parsed.timeout_seconds is not None else "default"
+                origin = (
+                    "parsed"
+                    if (
+                        overrides.defaults
+                        and overrides.defaults.duration_seconds is not None
+                    )
+                    else "default"
+                )
                 print(f"   ⏱️ Timeout ({origin}): {eff_timeout}s")
+            if overrides.rules:
+                by_idx: dict[int, dict] = {}
+                finals_params: list[object] = []
+                for r in overrides.rules:
+                    sel = r.selector
+                    prm = r.params
+                    idx = getattr(sel, "by_queue_index", None)
+                    if idx is not None:
+                        by_idx.setdefault(int(idx), {})
+                        if prm.duration_seconds is not None:
+                            by_idx[int(idx)]["duration"] = float(prm.duration_seconds)
+                        if prm.guidance:
+                            by_idx[int(idx)]["guidance"] = str(prm.guidance)
+                    elif getattr(sel, "final", False):
+                        finals_params.append(prm)
+                # Resolve any finals to the next index after the highest explicit
+                if finals_params:
+                    target_idx = (max(by_idx.keys()) + 1) if by_idx else 1
+                    by_idx.setdefault(target_idx, {})
+                    for prm in finals_params:
+                        if getattr(prm, "duration_seconds", None) is not None:
+                            by_idx[target_idx]["duration"] = float(prm.duration_seconds)  # type: ignore[attr-defined]
+                        if getattr(prm, "guidance", None):
+                            by_idx[target_idx]["guidance"] = str(prm.guidance)  # type: ignore[attr-defined]
+                if by_idx:
+                    print("   📏 Per-task overrides:")
+                    for idx in sorted(by_idx):
+                        parts = []
+                        if "duration" in by_idx[idx]:
+                            parts.append(f"{by_idx[idx]['duration']}s")
+                        if "guidance" in by_idx[idx]:
+                            parts.append(f"guidance=\"{by_idx[idx]['guidance']}\"")
+                        print(
+                            f"      #{idx} → "
+                            + (", ".join(parts) if parts else "(none)"),
+                        )
             if eff_guidance:
                 print(f"   🧠 Guidance: {eff_guidance}")
-            if eff_steps is None and eff_timeout is None and not eff_guidance:
+            has_per_task_rules = bool(overrides.rules)
+            if (
+                eff_steps is None
+                and eff_timeout is None
+                and not eff_guidance
+                and not has_per_task_rules
+            ):
                 print("   ℹ️ No step limit, no timeout, no guidance")
         except Exception:
             pass
 
+        # Apply rules for position and resolved finals (no legacy selectors)
+        idx_to_params: dict[int, SimulationParams] = {}
+        pending_finals: list[object] = []
+        for r in overrides.rules or []:
+            sel = r.selector
+            prm = r.params
+            # Resolve 0-based/negative position → 1-based index
+            target_idx_1_based = None
+            if getattr(sel, "position", None) is not None:
+                try:
+                    # Build a snapshot of the current runnable queue
+                    queue = ts._get_task_queue()
+                    qlen = len(queue)
+                    pos = int(sel.position)
+                    if pos >= 0:
+                        target_idx_1_based = pos + 1
+                    else:
+                        target_idx_1_based = qlen + pos + 1
+                    if target_idx_1_based < 1 or target_idx_1_based > qlen:
+                        target_idx_1_based = None
+                except Exception:
+                    target_idx_1_based = None
+
+            if target_idx_1_based is not None:
+                p = idx_to_params.setdefault(target_idx_1_based, SimulationParams())
+                if prm.steps is not None:
+                    p.steps = int(prm.steps)
+                if prm.duration_seconds is not None:
+                    p.duration_seconds = float(prm.duration_seconds)
+                if prm.guidance:
+                    p.guidance = str(prm.guidance)
+            elif getattr(sel, "final", False):
+                pending_finals.append(prm)
+        if pending_finals:
+            target_idx = (max(idx_to_params.keys()) + 1) if idx_to_params else 1
+            p = idx_to_params.setdefault(target_idx, SimulationParams())
+            for prm in pending_finals:
+                if getattr(prm, "steps", None) is not None:
+                    p.steps = int(prm.steps)  # type: ignore[attr-defined]
+                if getattr(prm, "duration_seconds", None) is not None:
+                    p.duration_seconds = float(prm.duration_seconds)  # type: ignore[attr-defined]
+                if getattr(prm, "guidance", None):
+                    p.guidance = str(prm.guidance)  # type: ignore[attr-defined]
+        if idx_to_params:
+            try:
+                # Resolve to concrete task_ids and bind rules
+                try:
+                    current_queue = ts._get_task_queue()  # head→tail runnable
+                except Exception:
+                    current_queue = []
+                for idx, params in idx_to_params.items():
+                    params.one_shot = True
+                    tid = -1
+                    try:
+                        if 1 <= int(idx) <= len(current_queue):
+                            tid = int(
+                                getattr(current_queue[int(idx) - 1], "task_id", -1),
+                            )
+                    except Exception:
+                        tid = -1
+                    if tid >= 0:
+                        SIMULATION_PLANS.add_rule(
+                            SimulationSelector(by_task_id=tid),
+                            params,
+                            label="per-task overrides from start request",
+                        )
+            except Exception:
+                pass
+
         # Apply sandbox-only per-task simulation monkey-patch for the lifetime of this execute call
         per_call = SimulationParams(
             steps=eff_steps,
-            duration_seconds=eff_timeout,
-            guidance=eff_guidance,
+            duration_seconds=(None if idx_to_params else eff_timeout),
+            guidance=(
+                None
+                if any(getattr(p, "guidance", None) for p in idx_to_params.values())
+                else eff_guidance
+            ),
             one_shot=False,
         )
         _restore_patch = apply_per_task_simulation_patch(
