@@ -443,11 +443,12 @@ async def test_tasks_table_has_activated_by_column():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_isolate_detaches_entirely(monkeypatch):
-    """Branch A: Detach the activated task entirely from the queue.
+async def test_execute_request_isolation_detaches_entirely(monkeypatch):
+    """Explicit isolation prompt: Detach the activated task entirely from the queue.
 
-    Scenario: three tasks A->B->C, activate B explicitly with an 'isolate'-leaning
-    prompt (ambiguous by default). Expect B detached, A->C linked, head's start_at
+    Scenario: three tasks A->B->C, activate B with a prompt that is *explicitly*
+    and *unambiguously* requesting isolation (detach B from the queue and do not
+    keep followers attached). Expect B detached, A->C linked, head's start_at
     preserved/propagated, and B's schedule cleared.
     """
 
@@ -457,16 +458,23 @@ async def test_execute_isolate_detaches_entirely(monkeypatch):
     # Build queue A->B->C with start_at on A
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
 
-    # Execute B with an ambiguous request → defaults to isolate (A)
-    handle = await ts.execute(text=str(b))
+    # Execute B with an explicit isolation request (avoid pure-numeric fast path)
+    handle = await ts.execute(
+        text=(
+            f"Please run task {b} in isolation. Detach it entirely from the queue, "
+            "do not keep any followers attached, and execute only this task now."
+        ),
+    )
     await handle.result()
 
     rows_a = ts._filter_tasks(filter=f"task_id == {a}")
     rows_b = ts._filter_tasks(filter=f"task_id == {b}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
 
-    # B must be detached entirely (no schedule)
-    assert rows_b[0].get("schedule") in (None, {})
+    # B should be isolated as a single-task head (no prev/next followers)
+    sched_b = rows_b[0].get("schedule") or {}
+    assert sched_b.get("prev_task") is None
+    assert sched_b.get("next_task") is None
 
     # A should now link directly to C; C.prev_task should be A
     sched_a = rows_a[0].get("schedule") or {}
