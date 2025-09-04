@@ -78,6 +78,9 @@ class EventManager:
                     print("ping received - keeping event manager alive")
                     continue
                 elif event["topic"] == "call_process":
+                    print("waiting for call process to be ready...")
+                    while "call" not in self.writers:
+                        await asyncio.sleep(0.1)
                     print("recieved call event")
                     # handle messages going to the call process
                     # like gen
