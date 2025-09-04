@@ -1498,22 +1498,40 @@ class TaskScheduler(BaseTaskScheduler):
             • non-heads → at most ``queued``.
         - The active task (if any) in this queue retains its ``active`` status.
         """
-        current = [t.task_id for t in self._get_queue(queue_id=queue_id)]
-        assert set(current) == set(
+        # Build current queue membership directly from storage to avoid
+        # assumptions about a single visible head during transitions.
+        all_rows = self._filter_tasks()
+        in_queue_rows: list[TaskRow] = [
+            r
+            for r in all_rows
+            if r.get("schedule") is not None
+            and (r.get("schedule") or {}).get("queue_id") == queue_id
+            and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+        ]
+        current_set: set[int] = {int(r.get("task_id")) for r in in_queue_rows}
+        assert current_set == set(
             new_order,
         ), "new_order must be a permutation of the current queue"
 
-        # Gather current rows and queue-level timestamp from the former head
         rows_by_id: Dict[int, TaskRow] = {
             r["task_id"]: r
             for r in self._filter_tasks(filter=f"task_id in {new_order}")
         }
-        old_head_id = current[0] if current else None
+        # Determine queue-level timestamp from any existing head (prev_task is None)
         queue_start_ts: Optional[str] = None
-        if old_head_id is not None:
-            _old_head = rows_by_id.get(old_head_id)
-            if _old_head is not None:
-                queue_start_ts = (_old_head.get("schedule") or {}).get("start_at")
+        try:
+            head_candidates = [
+                r
+                for r in in_queue_rows
+                if (r.get("schedule") or {}).get("prev_task") is None
+            ]
+            for hc in head_candidates:
+                _ts = (hc.get("schedule") or {}).get("start_at")
+                if _ts is not None:
+                    queue_start_ts = _ts
+                    break
+        except Exception:
+            queue_start_ts = None
 
         # Write updated linkage + status
         for idx, tid in enumerate(new_order):
@@ -1676,13 +1694,56 @@ class TaskScheduler(BaseTaskScheduler):
 
         # 2) Splice into the target queue when position is specified
         if position in {"front", "back"}:
-            target_list = [t.task_id for t in self._get_queue(queue_id=target_qid)]
+            # Build the existing target queue order WITHOUT using _get_queue so
+            # we avoid transient multi-head states caused by our block moves.
+            all_rows = self._filter_tasks()
+            # keep only rows already in target queue and not part of the moved block
             block = list(task_ids)
-            new_order: list[int]
+            existing_rows: list[TaskRow] = [
+                r
+                for r in all_rows
+                if (r.get("schedule") or {}).get("queue_id") == target_qid
+                and r.get("task_id") not in block
+                and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+            ]
+
+            id_to_row: Dict[int, TaskRow] = {
+                int(r.get("task_id")): r for r in existing_rows
+            }
+            allowed_ids: set[int] = set(id_to_row.keys())
+
+            # find head among existing_rows (prev_task is None or not in allowed_ids)
+            head_row: Optional[TaskRow] = None
+            for r in existing_rows:
+                sched = r.get("schedule") or {}
+                prev_tid = sched.get("prev_task")
+                if prev_tid is None or prev_tid not in allowed_ids:
+                    head_row = r
+                    break
+
+            # walk existing list from the detected head
+            existing_list: list[int] = []
+            if head_row is not None:
+                cur = head_row
+                visited: set[int] = set()
+                while cur is not None:
+                    tid = int(cur.get("task_id"))
+                    if tid in visited:
+                        break
+                    visited.add(tid)
+                    existing_list.append(tid)
+                    nxt = (cur.get("schedule") or {}).get("next_task")
+                    if nxt in allowed_ids:
+                        cur = id_to_row.get(int(nxt))
+                    else:
+                        break
+
+            # Compose new order
             if position == "front":
-                new_order = block + target_list
+                new_order = block + existing_list
             else:
-                new_order = target_list + block
+                new_order = existing_list + block
+
             if new_order:
                 self._reorder_queue(queue_id=target_qid, new_order=new_order)
 
