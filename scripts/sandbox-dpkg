@@ -13,7 +13,7 @@ if [ ! -f "$SRC" ]; then
   exit 2
 fi
 
-DEST_DIR=/home/deb
+DEST_DIR=/tmp/unify/assistant/deb
 mkdir -p "$DEST_DIR"
 
 BASENAME=$(basename "$SRC")
