@@ -2265,12 +2265,9 @@ class TaskScheduler(BaseTaskScheduler):
         ------
         AssertionError
             On duplicates, attempted removals or other invariants breaches.
-        RuntimeError
-            If the active task appears in either *original* or *new*.
         """
-        # The active task may **never** be reordered or touched here.
-        self._ensure_not_active_task(original)
-        self._ensure_not_active_task(new)
+        # Active tasks are allowed to appear in the queue while a chain is running.
+        # We preserve their lifecycle status (remain 'active') while updating links.
         # -------  sanity checks  -------
         assert len(set(original)) == len(
             original,
@@ -2337,7 +2334,10 @@ class TaskScheduler(BaseTaskScheduler):
             )
 
             # ── Determine the desired status after re-ordering ─────────────
-            if start_ts is not None:  # head carries explicit timestamp
+            if existing_status == Status.active:
+                # Never change lifecycle of the currently active task during queue relink
+                desired_status = Status.active
+            elif start_ts is not None:  # head carries explicit timestamp
                 desired_status = Status.scheduled
             else:
                 desired_status = (
