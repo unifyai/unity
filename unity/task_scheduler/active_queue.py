@@ -198,7 +198,6 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     clarification_up_q=self._clar_up,
                     clarification_down_q=self._clar_down,
                     activated_by=ActivatedBy.explicit,
-                    execution_scope="queue",
                     # Do NOT detach followers from each other; keep queue links intact
                     detach=False,
                 )

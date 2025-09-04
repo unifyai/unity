@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
-from typing import Literal
 
 import unify
 
@@ -123,7 +122,6 @@ def detach_from_queue_for_activation(
     scheduler: "TaskScheduler",
     *,
     task_id: int,
-    execution_scope: Literal["isolate", "queue"],
 ) -> None:
     """Detach a task from the runnable queue ahead of activation.
 
@@ -240,10 +238,9 @@ def detach_from_queue_for_activation(
     )
     scheduler._reintegration_plans[key] = plan  # type: ignore[attr-defined]
 
-    # Disconnect previous neighbour's next pointer only for CHAIN execution.
-    # For ISOLATE, preserve prev.next so CAS-protected rewiring below can atomically
-    # switch prev.next from `task_id` → `next_tid`.
-    if prev_tid is not None and execution_scope == "queue":
+    # Disconnect previous neighbour's next pointer when promoting current task to head
+    # for queue-based execution. We always keep followers attached.
+    if prev_tid is not None:
         prev_log = _get_log_obj(prev_tid)
         if prev_log is not None:
             prev_sched = _load_sched(prev_log)
@@ -251,66 +248,23 @@ def detach_from_queue_for_activation(
                 prev_sched["next_task"] = None
                 _update_schedule(prev_log, prev_sched)
 
-    # Apply branch-specific rewiring
+    # Apply rewiring for queue-based execution (always)
     if sched is not None:
-        if execution_scope == "isolate":
-            # Reconnect next backwards and transfer start_at to new head if needed
-            if next_tid is not None:
-                next_log = _get_log_obj(next_tid)
-                if next_log is not None:
-                    next_sched = _load_sched(next_log)
-                    if prev_tid is None:
-                        # CAS-like guard: only clear prev when it currently points to our task
-                        if next_sched.get("prev_task") == task_id:
-                            next_sched["prev_task"] = None
-                            if start_at is not None:
-                                next_sched["start_at"] = start_at
-                            # New head with an explicit start_at must become 'scheduled'
-                            _update_schedule(
-                                next_log,
-                                next_sched,
-                                {"status": Status.scheduled},
-                            )
-                        # Also keep primed cache in sync if we just changed the head
-                        scheduler._best_effort(
-                            lambda: scheduler._refresh_primed_cache(next_tid),
-                        )
-                    else:
-                        # CAS-like guard: only re-point when next.prev still points at our task
-                        if next_sched.get("prev_task") == task_id:
-                            next_sched["prev_task"] = prev_tid
-                            next_sched.pop("start_at", None)
-                            # also set prev.next_task → next when prev still points at our task
-                            if prev_tid is not None:
-                                prev_log2 = _get_log_obj(prev_tid)
-                                if prev_log2 is not None:
-                                    prev_sched2 = _load_sched(prev_log2)
-                                    if prev_sched2.get("next_task") == task_id:
-                                        prev_sched2["next_task"] = next_tid
-                                        _update_schedule(prev_log2, prev_sched2)
-                    if prev_tid is not None:
-                        _update_schedule(next_log, next_sched)
+        # Promote current task to head and keep followers attached
+        cur_log = _get_log_obj(task_id)
+        new_sched: Dict[str, Any] = {"prev_task": None, "next_task": next_tid}
+        if start_at is not None:
+            new_sched["start_at"] = start_at
+        _update_schedule(cur_log, new_sched)
 
-            # Finally, detach current task completely
-            cur_log = _get_log_obj(task_id)
-            if (getattr(cur_log, "entries", {}) or {}).get("schedule") is not None:
-                _update_schedule(cur_log, None)  # type: ignore[arg-type]
-        else:
-            # Keep queue behind current task
-            cur_log = _get_log_obj(task_id)
-            new_sched: Dict[str, Any] = {"prev_task": None, "next_task": next_tid}
-            if start_at is not None:
-                new_sched["start_at"] = start_at
-            _update_schedule(cur_log, new_sched)
-
-            if next_tid is not None:
-                next_log = _get_log_obj(next_tid)
-                if next_log is not None:
-                    next_sched = _load_sched(next_log)
-                    # CAS-like guard: only set when still pointing to our task
-                    if next_sched.get("prev_task") == task_id:
-                        next_sched.pop("start_at", None)
-                        _update_schedule(next_log, next_sched)
+        if next_tid is not None:
+            next_log = _get_log_obj(next_tid)
+            if next_log is not None:
+                next_sched = _load_sched(next_log)
+                # CAS-like guard: only set when still pointing to our task
+                if next_sched.get("prev_task") == task_id:
+                    next_sched.pop("start_at", None)
+                    _update_schedule(next_log, next_sched)
 
 
 def attach_with_links(

@@ -54,10 +54,10 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
     actor = SimulatedActor(steps=50)
     ts = TaskScheduler(actor=actor)
 
-    # Create a single task and start it (explicitly force CHAIN scope wrapper)
+    # Create a single task and start it (queue semantics by default)
     name1 = "Singleton A"
     tid1 = ts._create_task(name=name1, description=name1)["details"]["task_id"]
-    handle = await ts.execute(text=str(tid1), execution_scope="queue")
+    handle = await ts.execute(text=str(tid1))
 
     # 1) Passthrough path: queue length == 1 → inner sees raw question
     await handle.ask("Q1: status?")
@@ -106,13 +106,7 @@ async def test_execute_queue_by_numeric_id_forwards_and_runs_followers(monkeypat
     ts = TaskScheduler()
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
 
-    # Force queue routing
-    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "queue"
-
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
-
-    # numeric fast path + queue → queue handle adopted
+    # numeric fast path → queue handle adopted by default
     h = await ts.execute(text=str(a))
     await h.result()
 
@@ -145,12 +139,6 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
 
     ts = TaskScheduler()
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
-
-    # Chain routing
-    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "queue"
-
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     # Deterministic steering: only defer when the message requests "next week"
     async def force_defer(message: str, parent_chat_context=None):  # type: ignore[override]
@@ -228,14 +216,9 @@ async def test_freeform_queue_routed_by_llm(monkeypatch):
     ts = TaskScheduler()
     x, y = await _make_ordered_queue(ts, ["X", "Y"])  # type: ignore[misc]
 
-    # LLM decides queue for freeform request
-    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "queue"
-
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
-
-    # Provide a free-form request that should get routed to the one existing queue
-    h = await ts.execute(text="run the whole sequence now")
+    # Reorder explicitly to ensure the queue shape, then start by id
+    ts._update_task_queue(original=[x, y], new=[x, y])
+    h = await ts.execute(text=str(x))
     await h.result()
 
     rows_x = ts._filter_tasks(filter=f"task_id == {x}")
@@ -285,11 +268,6 @@ async def test_queue_pause_resume_and_completion(monkeypatch):
 
     ts = TaskScheduler()
     a, b = await _make_ordered_queue(ts, ["A4", "B4"])  # type: ignore[misc]
-
-    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "queue"
-
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     # Spy to detect when B becomes active (before starting)
     b_active_evt: asyncio.Event = asyncio.Event()
@@ -376,12 +354,6 @@ async def test_queue_interject_routing_multi_task(monkeypatch):
     ts = TaskScheduler()
     a_id, b_id, c_id = await _make_ordered_queue(ts, ["A_r", "B_r", "C_r"])  # type: ignore[misc]
 
-    # Force queue routing so numeric execute launches a queue
-    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "queue"
-
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
-
     # Spy: record interjections delivered to each task; avoid networked LLM
     calls: list[tuple[str, str]] = []
 
@@ -455,11 +427,6 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     ts = TaskScheduler()
     a, b, c = await _make_ordered_queue(ts, ["A_ctx", "B_ctx", "C_ctx"])  # type: ignore[misc]
 
-    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "queue"
-
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
-
     captured_questions: list[str] = []
     orig_actor_ask = SimulatedActorHandle.ask
 
@@ -532,12 +499,6 @@ async def test_queue_result_summarises_all_completed_tasks(monkeypatch):
     ts = TaskScheduler()
     a, b, c = await _make_ordered_queue(ts, ["A_sum", "B_sum", "C_sum"])  # type: ignore[misc]
 
-    # Force queue routing for deterministic behaviour
-    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "queue"
-
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
-
     h = await ts.execute(text=str(a))
     res = await h.result()
 
@@ -574,12 +535,6 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
 
     ts = TaskScheduler()
     a_id, b_id, c_id = await _make_ordered_queue(ts, ["A_dyn", "B_dyn", "C_dyn"])  # type: ignore[misc]
-
-    # Force queue routing so numeric execute launches a queue
-    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "queue"
-
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     # Deterministic activation triggers per task-id
     activation_events: Dict[int, asyncio.Event] = {}
@@ -684,9 +639,7 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
 @_handle_project
 async def test_execute_isolate_returns_active_queue_handle(monkeypatch):
     """
-    Prior to the change, executing with isolate scope returned an ActiveTask handle.
-    Now it must always return an ActiveQueue handle. This test would fail before and
-    now passes by asserting the returned handle type.
+    Executing by id must always return an ActiveQueue handle (not ActiveTask).
     """
 
     # Immediate completion per task to avoid timing races
@@ -706,12 +659,7 @@ async def test_execute_isolate_returns_active_queue_handle(monkeypatch):
         raising=True,
     )
 
-    # Force isolate routing for deterministic behavior
-    async def force_isolate(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "isolate"
-
     ts = TaskScheduler()
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_isolate, raising=True)
 
     # Create a single runnable task
     task_id = ts._create_task(name="ISO", description="ISO")["details"]["task_id"]  # type: ignore[index]
@@ -759,12 +707,6 @@ async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
     ts = TaskScheduler()
     # Build a queue with exactly one task
     (solo_id,) = tuple(await _make_ordered_queue(ts, ["Solo"]))  # type: ignore[misc]
-
-    # Route to queue so we receive an ActiveQueue handle
-    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "queue"
-
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
 
     # Spy: capture question text and interjection count; ensure ask still consumes a step
     captured_questions: list[str] = []
@@ -917,7 +859,6 @@ async def test_active_queue_requests_clarification_at_queue_level(monkeypatch):
         text=str(a_id),
         clarification_up_q=up_q,
         clarification_down_q=down_q,
-        execution_scope="queue",
     )
 
     # Wait until a task is active to avoid races
