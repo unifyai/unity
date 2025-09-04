@@ -675,14 +675,20 @@ class TaskScheduler(BaseTaskScheduler):
             later_groups: List[_LaterGroup] = Field(default_factory=list)
             notes: Optional[str] = None
 
-        def validate_queue_plan(*, plan: dict) -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Validate a proposed queue plan and return the normalised structure.
+        def validate_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Validate a proposed queue plan (dict or JSON string) and return the normalised structure.
 
             The plan must include a non-empty `now` list and zero or more
             `later_groups`, each with a non-empty `task_ids` list. The function
             returns the validated plan and previews of the resulting queues.
             """
-            model = _QueuePlan.model_validate(plan)
+            import json as _json
+
+            try:
+                parsed = _json.loads(plan) if isinstance(plan, str) else plan
+            except Exception as _e:  # noqa: N806 (keep local name)
+                raise ValueError(f"Invalid plan: {_e}")
+            model = _QueuePlan.model_validate(parsed)
             # Preview shapes – we do not mutate here
             preview: Dict[str, Any] = {"now": model.now, "later": []}
             for g in model.later_groups:
@@ -694,8 +700,8 @@ class TaskScheduler(BaseTaskScheduler):
                 "details": {"plan": model.model_dump(), "preview": preview},
             }
 
-        def apply_queue_plan(*, plan: dict) -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Atomically apply a validated plan using invariant-preserving tools.
+        def apply_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Atomically apply a validated plan (dict or JSON string) using invariant-preserving tools.
 
             Strategy:
             - Use `_partition_queue` when there are any later groups to split the
@@ -704,7 +710,13 @@ class TaskScheduler(BaseTaskScheduler):
               (dropping other runnable tasks from default queue).
             After success, automatically create a checkpoint to allow revert.
             """
-            model = _QueuePlan.model_validate(plan)
+            import json as _json
+
+            try:
+                parsed = _json.loads(plan) if isinstance(plan, str) else plan
+            except Exception as _e:
+                raise ValueError(f"Invalid plan: {_e}")
+            model = _QueuePlan.model_validate(parsed)
             # If later groups exist, build parts payload
             if model.later_groups:
                 parts = [{"task_ids": list(model.now)}] + [
@@ -2650,17 +2662,17 @@ class TaskScheduler(BaseTaskScheduler):
             "start_at": new_start_at,
         }
 
-        # ensure the new schedule does not violate the invariant
-        self._validate_scheduled_invariants(
-            status=current_rows[0]["status"],
-            schedule=sched_payload,
-            err_prefix=f"While updating start_at for task {task_id}:",
-        )
-
-        # If we are assigning a head-level start_at, ensure the task's status is 'scheduled'
+        # Determine desired status first, then validate invariants against that status
         desired_status = self._to_status(current_rows[0]["status"])  # type: ignore[arg-type]
         if self._sched_prev(current_sched) is None and new_start_at is not None:
             desired_status = Status.scheduled
+
+        # Validate using desired status so head+start_at is allowed
+        self._validate_scheduled_invariants(
+            status=desired_status,
+            schedule=sched_payload,
+            err_prefix=f"While updating start_at for task {task_id}:",
+        )
 
         entries: Dict[str, Any] = {"schedule": sched_payload}
         if desired_status != self._to_status(current_rows[0]["status"]):  # type: ignore[arg-type]
