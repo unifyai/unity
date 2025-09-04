@@ -66,12 +66,6 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             if self._clar_up is None or self._clar_down is None:
                 return None
 
-            # Prefer the scheduler's wrapper so behaviour matches other managers
-            tool = self._s._make_request_clarification_tool(
-                self._clar_up,
-                self._clar_down,
-            )
-
             # Best-effort notify hooks (non-blocking if they are sync)
             try:
                 if on_request is not None:
@@ -81,7 +75,14 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             except Exception:
                 pass
 
-            answer = await tool(question)
+            # Immediately enqueue the question without blocking. The outer process
+            # will provide an answer asynchronously on the down-queue.
+            try:
+                self._clar_up.put_nowait(question)
+            except Exception:
+                # Fallback to an async put when the queue may be full/bounded
+                asyncio.create_task(self._clar_up.put(question))
+            answer = None
 
             try:
                 if on_answer is not None:
@@ -91,6 +92,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             except Exception:
                 pass
 
+            if answer is not None:
+                pass
             return answer
         except Exception:
             # Defensive: clarification should never break the queue
@@ -334,6 +337,13 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 "- If it mentions a task by name/description, choose the best matching ids.\n"
                 "- If nothing special is implied, target ONLY the current task.\n"
                 "- You MUST include a separate route for each distinct directive present in the user's message; list these under 'directives' and set 'uncovered_directives' to [] when all are mapped.\n"
+                "Ambiguity & clarification policy:\n"
+                "- Do NOT guess. When the instruction is ambiguous or underspecified (e.g., phrases like 'the rest', 'later', 'soon',\n"
+                "  conflicting directives, or missing explicit task_ids/clear directives), mark those items under 'uncovered_directives'.\n"
+                "- Only include unambiguous routes in 'routes'. If nothing can be routed unambiguously, return routes: [].\n"
+                "- Examples of ambiguity that MUST produce non-empty 'uncovered_directives':\n"
+                "  'do the rest later', 'maybe the last one unless it's urgent', 'whichever is best',\n"
+                "  or any directive that cannot be mapped deterministically to concrete task_ids.\n"
             )
             client.set_system_message(sys)
             # Compute first/last ids for explicit metadata to aid deterministic mapping
@@ -378,52 +388,18 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             if not isinstance(routes, list):
                 raise ValueError("no routes")
 
-            # If the model indicates missing coverage, request a corrected set in a second pass.
+            # If the model indicates missing coverage, escalate to clarification immediately.
             try:
                 uncovered = data.get("uncovered_directives") or []
             except Exception:
                 uncovered = []
             if isinstance(uncovered, list) and uncovered:
-                try:
-                    client2 = unify.AsyncUnify(
-                        "gpt-5@openai",
-                        cache=True,
-                        traced=True,
-                        reasoning_effort="high",
-                        service_tier="priority",
-                    )
-                    client2.set_system_message(
-                        "You are correcting a routing result to ensure ALL directives are covered.\n"
-                        "Return ONLY JSON with the 'routes' field per the same schema as before; do not include commentary.\n",
-                    )
-                    user2 = (
-                        "Original queue (head→tail):\n"
-                        + _safe_dump(queue_rows)
-                        + "\nMetadata:\n"
-                        + f"first_task_id: {first_task_id}\n"
-                        + f"last_task_id: {last_task_id}\n"
-                        + f"current_task_id: {self._current_task_id}\n"
-                        + "Original interjection:\n"
-                        + (message or "").strip()
-                        + "\nPreviously returned routes:\n"
-                        + _safe_dump(routes)
-                        + "\nUncovered directives to cover now:\n"
-                        + _safe_dump(uncovered)
-                    )
-                    raw2 = await client2.generate(user2)
-                    data2 = _json.loads(raw2)
-                    routes2 = data2.get("routes") if isinstance(data2, dict) else None
-                    if isinstance(routes2, list) and routes2:
-                        routes = routes2
-                    else:
-                        # Still ambiguous – proactively request clarification if channels exist
-                        await self._request_clarification(
-                            "Your instruction could not be routed to all intended tasks. "
-                            "Please specify exact task_ids, or use clear directives such as 'all', 'first', 'last', "
-                            "or name the tasks explicitly, and provide the instruction for each group.",
-                        )
-                except Exception:
-                    pass
+                await self._request_clarification(
+                    "Your instruction could not be routed to all intended tasks without guessing. "
+                    "Please specify exact task_ids, or use clear directives such as 'all', 'first', 'last', "
+                    "or name the tasks explicitly, and provide the instruction for each group.",
+                )
+                return
 
             # Ensure pending registry exists
             if not hasattr(self, "_queued_interjections"):
@@ -457,8 +433,6 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             return
         except Exception:
             # Fallback: deliver to current task only
-            # If clarification channels are available and the message looks ambiguous,
-            # try to disambiguate before defaulting to current-only delivery.
             try:
                 ambiguous_tokens = ("all", "rest", "remaining", "first", "last")
                 looks_ambiguous = any(
