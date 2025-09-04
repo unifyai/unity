@@ -2109,7 +2109,6 @@ def build_verification_prompt(
 
         if logs:
             log_details = "\n".join([f"    {line}" for line in logs])
-            # Don't add the low-level trace to the main interaction log
             log_entry += f"\n  - Agent Logs:\n{log_details}"
             trace_log = "\n".join(f"  {line}" for line in logs)
             formatted_agent_traces.append(f"- For Action: `{act}`\n{trace_log}")
@@ -2398,7 +2397,6 @@ def build_interjection_prompt(
     plan_source_code: str,
     call_stack: list[str],
     action_log: list[str],
-    is_teaching_session: bool,
     goal: str,
 ) -> str:
     """Builds the system prompt for the Interjection Handler LLM."""
@@ -2412,27 +2410,12 @@ def build_interjection_prompt(
         else "No prior conversation."
     )
 
-    teaching_session_rule = ""
-    if is_teaching_session:
-        teaching_session_rule = textwrap.dedent(
-            f"""
-        ---
-        ### 📌 SPECIAL INSTRUCTIONS FOR THIS INTERJECTION
-
-        **You are in a "Teaching Session".** The user is building a plan step-by-step.
-        - The user is providing the next logical step. You **MUST** choose the `modify_task` action and generate a patch to add this new logic. The patch will typically modify the `main_plan` function.
-        - If the user signals they are finished (e.g., "we're done", "that's all"), you **MUST** choose the `complete_task` action.
-        ---
-        """,
-        )
 
     return textwrap.dedent(
         f"""
     You are an expert Python programmer and a master strategist responsible for steering a live-running automated plan. A user has interjected with a new instruction while the plan was executing.
 
     Your task is to perform a **global analysis** of the entire plan, the user's request, and the current execution state. You must then generate a set of **code patches** to update the plan's source code to reflect the user's intent, ensuring the entire plan remains logically consistent.
-
-    {teaching_session_rule}
 
     ### Full Situational Context
 

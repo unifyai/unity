@@ -1655,7 +1655,6 @@ class HierarchicalPlan(BaseActiveTask):
                     plan_source_code=clean_plan_source_for_prompt,
                     call_stack=self.call_stack,
                     action_log=self.action_log[-10:],
-                    is_teaching_session=self.is_teaching_session,
                     goal=self.goal,
                 )
 
