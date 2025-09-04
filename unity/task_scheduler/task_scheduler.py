@@ -476,13 +476,21 @@ class TaskScheduler(BaseTaskScheduler):
                         clarification_up_q=clarification_up_q,
                         clarification_down_q=clarification_down_q,
                     )
-                return await self._execute_internal(
+                first = await self._execute_internal(
                     task_id=int(stripped),
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
                     clarification_down_q=clarification_down_q,
                     activated_by=ActivatedBy.explicit,
                     execution_scope="isolate",
+                )
+                return ActiveQueue(
+                    self,
+                    first_task_id=int(stripped),
+                    first_handle=first,
+                    parent_chat_context=parent_chat_context,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
                 )
             except (ValueError, RuntimeError):
                 # Fall back to the outer loop (will ask/clarify/create)
@@ -732,13 +740,21 @@ class TaskScheduler(BaseTaskScheduler):
                     clarification_down_q=clarification_down_q,
                 )
             else:
-                handle = await self._execute_internal(
+                first = await self._execute_internal(
                     task_id=task_id,
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
                     clarification_down_q=clarification_down_q,
                     activated_by=ActivatedBy.explicit,
                     execution_scope="isolate",
+                )
+                handle = ActiveQueue(
+                    self,
+                    first_task_id=task_id,
+                    first_handle=first,
+                    parent_chat_context=parent_chat_context,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
                 )
             # 💡 signal pass-through so the outer loop adopts this handle
             setattr(handle, "__passthrough__", True)
