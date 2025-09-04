@@ -382,7 +382,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """
         Load all files and folders in the assistant's data directory from a remote endpoint.
         """
-        # list all files in /home/install through the endpoint, then for each file, save in local /home/install
+        # list all files in /tmp/unify/assistant/install through the endpoint, then for each file, save in local /tmp/unify/assistant/install
         print("🐍 PYTHON: Loading persistent installs...")
         try:
             orchestra_url = os.getenv("UNIFY_BASE_URL")
@@ -396,8 +396,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
             }
 
-            os.makedirs("/home/install", exist_ok=True)
-            os.makedirs("/home/deb", exist_ok=True)
+            os.makedirs("/tmp/unify/assistant/install", exist_ok=True)
+            os.makedirs("/tmp/unify/assistant/deb", exist_ok=True)
 
             # Download folders via prefix (assistant-scoped)
             for prefix_folder in ["home/install", "home/deb"]:
@@ -428,7 +428,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                             full_path = it.get(
                                 "path",
                                 "",
-                            )  # e.g., user/project/assistant/home/install/file
+                            )  # e.g., user/project/assistant/tmp/unify/assistant/install/file
                             url = it.get("download_url")
                             if not full_path or not url:
                                 continue
@@ -461,11 +461,15 @@ class MagnitudeBrowserBackend(BrowserBackend):
             print(f"Warning: Could not query remote files for persistence: {e}")
 
         # Install downloaded/custom deb files
-        if os.path.exists("/home/deb"):
-            for deb_file in os.listdir("/home/deb"):
+        if os.path.exists("/tmp/unify/assistant/deb"):
+            for deb_file in os.listdir("/tmp/unify/assistant/deb"):
                 try:
                     subprocess.run(
-                        ["dpkg", "-i", os.path.join("/home/deb", deb_file)],
+                        [
+                            "dpkg",
+                            "-i",
+                            os.path.join("/tmp/unify/assistant/deb", deb_file),
+                        ],
                         check=True,
                     )
                 except Exception as e:
@@ -473,12 +477,12 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         # Optionally install packages recorded in apt-manual.txt if present
         try:
-            if os.path.exists("/home/install/apt-manual.txt"):
+            if os.path.exists("/tmp/unify/assistant/install/apt-manual.txt"):
                 subprocess.run(
                     [
                         "xargs",
                         "-a",
-                        "/home/install/apt-manual.txt",
+                        "/tmp/unify/assistant/install/apt-manual.txt",
                         "apt-get",
                         "install",
                         "-y",
@@ -500,18 +504,18 @@ class MagnitudeBrowserBackend(BrowserBackend):
             subprocess.run(
                 ["apt-mark", "showmanual"],
                 check=True,
-                stdout=open("/home/install/apt-manual.txt", "w"),
+                stdout=open("/tmp/unify/assistant/install/apt-manual.txt", "w"),
             )
             # Now sort the file in place
-            with open("/home/install/apt-manual.txt", "r") as f:
+            with open("/tmp/unify/assistant/install/apt-manual.txt", "r") as f:
                 lines = f.readlines()
             lines.sort()
-            with open("/home/install/apt-manual.txt", "w") as f:
+            with open("/tmp/unify/assistant/install/apt-manual.txt", "w") as f:
                 f.writelines(lines)
         except Exception as e:
             print(f"Warning: Could not save apt manual package list: {e}")
 
-        # save files in /home/install folder with the endpoint
+        # save files in /tmp/unify/assistant/install folder with the endpoint
         try:
             # Iterate local files and upload each via signed upload URL
             orchestra_url = os.getenv("UNIFY_BASE_URL")
@@ -533,7 +537,10 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         key = os.path.join(assistant_name, base, rel)
                         yield key, ap
 
-            for base_dir in ["/home/install", "/home/deb"]:
+            for base_dir in [
+                "/tmp/unify/assistant/install",
+                "/tmp/unify/assistant/deb",
+            ]:
                 if not os.path.exists(base_dir):
                     continue
                 for key, abs_path in _iter_local_files(base_dir):
@@ -582,7 +589,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     except Exception as e:
                         print(f"Warning: Could not upload {key}: {e}")
         except Exception as e:
-            print(f"Warning: Could not enumerate /home/install for persistence: {e}")
+            print(
+                f"Warning: Could not enumerate /tmp/unify/assistant/install for persistence: {e}",
+            )
 
     async def act(self, instruction: str) -> str:
         """
