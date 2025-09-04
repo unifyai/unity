@@ -253,7 +253,7 @@ async def entrypoint(ctx: agents.JobContext):
     tts_provider = os.environ.get("TTS_PROVIDER", "cartesia")
     voice_id = os.environ.get("VOICE_ID", "")
     # to_number = os.environ.get("CALL_TO_NUMBER", "")
-    outbound = bool(os.environ.get("OUTBOUND", "False"))
+    outbound = os.environ.get("OUTBOUND", "False") == "True"
 
     # meet conference
     meet_id = os.environ.get("MEET_ID", "")
