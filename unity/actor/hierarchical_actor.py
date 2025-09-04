@@ -1782,9 +1782,30 @@ class HierarchicalPlan(BaseActiveTask):
         elif decision.action == "replace_task":
             if self._execution_task and not self._execution_task.done():
                 self._execution_task.cancel()
-            self.action_log.append("Executing decision: replace_task.")
-            await self.stop(final_result=f"REPLACE_TASK: {decision.new_goal}")
-            return f"Current plan stopped. Requesting new plan for goal: '{decision.new_goal}'"
+                try:
+                    await self._execution_task
+                except asyncio.CancelledError:
+                    pass
+
+            self.goal = decision.new_goal
+            self.plan_source_code = None 
+            self.execution_key_log.clear()
+            self.replay_keys.clear()
+            self.idempotency_cache.clear()
+            self.live_handles.clear()
+            self.runtime = PlanRuntime()
+            self.call_stack.clear()
+            self.skipped_functions.clear()
+            self._is_complete = False
+            self._completion_event.clear()
+            self._final_result_str = None
+
+            self._execution_task = asyncio.create_task(
+                self._initialize_and_run(mode="fresh_after_replace_task"),
+            )
+            return (
+                f"Plan has been re-initialized with a new goal: '{decision.new_goal}'"
+            )
 
         elif decision.action == "refactor_and_generalize":
             self.action_log.append(
