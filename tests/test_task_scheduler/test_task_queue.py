@@ -224,3 +224,163 @@ def test_start_time_after_multiple_reorders():
     q2 = ts._get_task_queue()
     assert [t.task_id for t in q2] == [2, 0, 1]
     _assert_head_owns_timestamp(q2)
+
+
+@_handle_project
+@pytest.mark.unit
+def test_list_and_get_queues_basic():
+    ts = TaskScheduler()
+
+    # default queue: 0(start),1,2
+    ts._create_task(
+        name="Q0",
+        description="head",
+        schedule=Schedule(start_at="2031-01-01T09:00:00+00:00"),
+    )
+    ts._create_task(name="Q1", description="mid", schedule=Schedule(prev_task=0))
+    ts._create_task(name="Q2", description="tail", schedule=Schedule(prev_task=1))
+
+    lst = ts._list_queues()
+    assert isinstance(lst, list) and len(lst) == 1
+    qinfo = lst[0]
+    assert qinfo["head_id"] == 0
+    assert qinfo["size"] == 3
+    # Normalise Z vs +00:00 representation
+    _start_norm = (qinfo.get("start_at") or "").replace("Z", "+00:00")
+    assert _start_norm == "2031-01-01T09:00:00+00:00"
+
+    # get_queue(None) mirrors legacy _get_task_queue
+    q_default = ts._get_queue(queue_id=None)
+    q_legacy = ts._get_task_queue()
+    assert [t.task_id for t in q_default] == [t.task_id for t in q_legacy]
+
+
+@_handle_project
+@pytest.mark.unit
+def test_reorder_queue_preserves_head_start_at():
+    ts = TaskScheduler()
+
+    ts._create_task(
+        name="A",
+        description="first",
+        schedule=Schedule(start_at="2032-06-23T09:00:00+00:00"),
+    )
+    ts._create_task(name="B", description="second", schedule=Schedule(prev_task=0))
+    ts._create_task(name="C", description="third", schedule=Schedule(prev_task=1))
+
+    ts._reorder_queue(queue_id=None, new_order=[2, 0, 1])
+
+    q = ts._get_queue(queue_id=None)
+    assert [t.task_id for t in q] == [2, 0, 1]
+    _assert_head_owns_timestamp(q)
+    assert q[0].schedule.start_at.isoformat() == "2032-06-23T09:00:00+00:00"
+
+
+@_handle_project
+@pytest.mark.unit
+def test_move_tasks_to_new_queue():
+    ts = TaskScheduler()
+
+    # default queue: 0(start),1,2,3
+    ts._create_task(
+        name="T0",
+        description="head",
+        schedule=Schedule(start_at="2033-02-01T08:00:00+00:00"),
+    )
+    ts._create_task(name="T1", description="desc1", schedule=Schedule(prev_task=0))
+    ts._create_task(name="T2", description="desc2", schedule=Schedule(prev_task=1))
+    ts._create_task(name="T3", description="desc3", schedule=Schedule(prev_task=2))
+
+    # move [1,3] to a new queue at the front
+    res = ts._move_tasks_to_queue(task_ids=[1, 3], queue_id=None, position="front")
+    qid = res["details"]["queue_id"]
+    assert isinstance(qid, int) and qid >= 1
+
+    # default queue should now be [0,2]
+    q_def = ts._get_queue(queue_id=None)
+    assert [t.task_id for t in q_def] == [0, 2]
+    _assert_head_owns_timestamp(q_def)
+    assert q_def[0].schedule.start_at.isoformat() == "2033-02-01T08:00:00+00:00"
+
+    # new queue should be [1,3] with no start_at by default
+    q_new = ts._get_queue(queue_id=qid)
+    assert [t.task_id for t in q_new] == [1, 3]
+    assert not (q_new[0].schedule and q_new[0].schedule.start_at)
+
+    # list_queues should show two queues
+    lst = ts._list_queues()
+    assert len(lst) == 2
+
+
+@_handle_project
+@pytest.mark.unit
+def test_partition_queue_split_with_dates():
+    ts = TaskScheduler()
+
+    # default queue: 0(start),1,2,3
+    ts._create_task(
+        name="P0",
+        description="head",
+        schedule=Schedule(start_at="2034-01-01T09:00:00+00:00"),
+    )
+    ts._create_task(name="P1", description="d1", schedule=Schedule(prev_task=0))
+    ts._create_task(name="P2", description="d2", schedule=Schedule(prev_task=1))
+    ts._create_task(name="P3", description="d3", schedule=Schedule(prev_task=2))
+
+    res = ts._partition_queue(
+        parts=[
+            {"task_ids": [0, 2], "queue_start_at": "2034-02-01T09:00:00+00:00"},
+            {"task_ids": [1, 3], "queue_start_at": "2034-02-02T09:00:00+00:00"},
+        ],
+        strategy="preserve_order",
+    )
+
+    # default queue now [0,2] with updated start_at
+    q_def = ts._get_queue(queue_id=None)
+    assert [t.task_id for t in q_def] == [0, 2]
+    _assert_head_owns_timestamp(q_def)
+    assert q_def[0].schedule.start_at.isoformat() == "2034-02-01T09:00:00+00:00"
+
+    # new queue(s) returned in details
+    newqs = res["details"]["new_queues"]
+    assert len(newqs) == 1 and set(newqs[0]["task_ids"]) == {1, 3}
+    qid = newqs[0]["queue_id"]
+    q_new = ts._get_queue(queue_id=qid)
+    assert [t.task_id for t in q_new] == [1, 3]
+    _assert_head_owns_timestamp(q_new)
+    assert q_new[0].schedule.start_at.isoformat() == "2034-02-02T09:00:00+00:00"
+
+
+@_handle_project
+@pytest.mark.unit
+def test_move_tasks_to_existing_queue_front_and_back():
+    ts = TaskScheduler()
+
+    # default queue: 0(start),1,2
+    ts._create_task(
+        name="M0",
+        description="head",
+        schedule=Schedule(start_at="2035-03-03T09:00:00+00:00"),
+    )
+    ts._create_task(name="M1", description="dx1", schedule=Schedule(prev_task=0))
+    ts._create_task(name="M2", description="dx2", schedule=Schedule(prev_task=1))
+
+    # create second queue by moving [2]
+    res1 = ts._move_tasks_to_queue(task_ids=[2], queue_id=None, position="back")
+    qid = res1["details"]["queue_id"]
+    assert isinstance(qid, int)
+
+    # now move [1] to the front of that existing queue
+    ts._move_tasks_to_queue(task_ids=[1], queue_id=qid, position="front")
+
+    # default queue left with [0]
+    q_def = ts._get_queue(queue_id=None)
+    assert [t.task_id for t in q_def] == [0]
+    _assert_head_owns_timestamp(q_def)
+    assert q_def[0].schedule.start_at.isoformat() == "2035-03-03T09:00:00+00:00"
+
+    # target queue should be [1,2]
+    q_tgt = ts._get_queue(queue_id=qid)
+    assert [t.task_id for t in q_tgt] == [1, 2]
+    # no start_at on non-default queue unless explicitly set
+    assert not (q_tgt[0].schedule and q_tgt[0].schedule.start_at)
