@@ -33,8 +33,41 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         self._final_result: Optional[str] = None
         # Track tasks that completed successfully within this queue run
         self._completed_tasks: list[tuple[int, str]] = []
+        # Sticky pass-through flag: enabled only when the queue truly contains a
+        # single task at creation time; once disabled it never re-enables for the
+        # lifetime of this ActiveQueue instance.
+        try:
+            initial_q = self._s._get_task_queue(task_id=self._current_task_id)
+            self._passthrough_enabled: bool = len(initial_q) == 1
+        except Exception:
+            self._passthrough_enabled = False
         # Background driver
         self._driver = asyncio.create_task(self._drive())
+
+    # ----------------------------
+    # Pass-through helper methods
+    # ----------------------------
+    def _current_queue_size(self) -> int:
+        try:
+            q = self._s._get_task_queue(task_id=self._current_task_id)
+            return len(q)
+        except Exception:
+            return 0
+
+    def _should_passthrough(self) -> bool:
+        """Return True when we should directly delegate to the inner handle.
+
+        This is allowed only while the queue remains a true singleton. The
+        moment an additional task appears in the queue (size > 1), we
+        permanently disable pass-through for the lifetime of this instance.
+        """
+        if not getattr(self, "_passthrough_enabled", False):
+            return False
+        # If at any point the queue grows beyond a single task, flip sticky off.
+        if self._current_queue_size() > 1:
+            self._passthrough_enabled = False
+            return False
+        return True
 
     async def _drive(self) -> None:
         try:
@@ -143,6 +176,13 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         Interjections for future tasks are queued and delivered when those
         tasks become active.
         """
+
+        # Passthrough when this is a true singleton queue (sticky while true)
+        if self._should_passthrough():
+            if not (message or "").strip():
+                return
+            await self._current_handle.interject(message)
+            return
 
         # Fast path: empty/whitespace → no-op
         if not (message or "").strip():
@@ -394,6 +434,10 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         return self._done_evt.is_set()
 
     async def result(self):  # type: ignore[override]
+        # Passthrough when the queue remains a true singleton at call time
+        if self._should_passthrough():
+            return await self._current_handle.result()
+
         await self._done_evt.wait()
         # If the driver did not assemble a summary (e.g. early stop without any
         # completions recorded), build a best-effort one now.
@@ -558,6 +602,16 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             )
         except Exception:
             queue_preamble = None
+
+        # Passthrough when the queue remains a true singleton at call time
+        if self._should_passthrough():
+            try:
+                return await self._current_handle.ask(
+                    question,
+                    _return_reasoning_steps=_return_reasoning_steps,
+                )
+            except TypeError:
+                return await self._current_handle.ask(question)
 
         composed_question = (
             f"{queue_preamble}\n\nUSER QUESTION:\n{question}"
