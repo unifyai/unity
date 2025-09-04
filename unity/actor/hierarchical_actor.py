@@ -331,16 +331,6 @@ class SandboxMergeDecision(BaseModel):
     )
 
 
-class DeducedPrecondition(BaseModel):
-    """The necessary starting state for a plan, deduced by an LLM."""
-
-    url: str = Field(..., description="The required URL for the starting state.")
-    description: str = Field(
-        ...,
-        description="A brief visual description of what should be on the page to satisfy the precondition.",
-    )
-
-
 class RefactorDecision(BaseModel):
     """The structured output from the refactoring LLM call."""
 
@@ -348,7 +338,7 @@ class RefactorDecision(BaseModel):
         ...,
         description="The complete, refactored Python code block.",
     )
-    deduced_precondition: DeducedPrecondition = Field(
+    deduced_precondition: PreconditionDecision = Field(
         ...,
         description="The necessary starting state for the refactored plan.",
     )
@@ -1803,6 +1793,12 @@ class HierarchicalPlan(BaseActiveTask):
             return f"Plan modification for '{modification_summary}' applied. Resuming execution from a clean state."
 
         elif decision.action == "replace_task":
+            self.action_log.append(
+                f"Executing decision: replace_task with new goal: '{decision.new_goal}'",
+            )
+            logger.debug(
+                f"Replace task triggered. New goal: '{decision.new_goal}'. Proceeding to re-initialize plan.",
+            )
             if self._execution_task and not self._execution_task.done():
                 self._execution_task.cancel()
                 try:
@@ -1811,7 +1807,7 @@ class HierarchicalPlan(BaseActiveTask):
                     pass
 
             self.goal = decision.new_goal
-            self.plan_source_code = None 
+            self.plan_source_code = None
             self.execution_key_log.clear()
             self.replay_keys.clear()
             self.idempotency_cache.clear()
@@ -1872,33 +1868,12 @@ class HierarchicalPlan(BaseActiveTask):
             else:
                 self.goal = f"Incrementally taught and generalized plan:\n- {modification_reason}"
 
-            try:
-                self.action_log.append(
-                    f"Proactively resetting state to match deduced precondition: {refactor_decision.deduced_precondition.description}",
-                )
-                current_url = await self.actor.action_provider.browser.get_current_url()
-                target_precondition = refactor_decision.deduced_precondition
-
-                if current_url != target_precondition.url:
-                    self.action_log.append(
-                        f"State deviation detected after refactoring. Current URL: '{current_url}', Required URL: '{target_precondition.url}'. Correcting.",
-                    )
-                    logger.debug(
-                        f"State deviation detected after refactoring. Current URL: '{current_url}', Required URL: '{target_precondition.url}'. Correcting.",
-                    )
-                    await self.actor.action_provider.browser_navigate(
-                        target_precondition.url,
-                    )
-
-                #TODO: add more advanced course correction that involves more than just URL navigation
-
-            except Exception as e:
-                self.action_log.append(
-                    f"WARNING: Proactive course correction for refactor failed: {e}",
-                )
-                logger.warning(
-                    f"Proactive course correction for refactor failed: {e}",
-                    exc_info=True,
+            deduced_precondition = refactor_decision.deduced_precondition
+            if deduced_precondition.status == "ok":
+                await self.actor._verify_and_correct_state(
+                    plan=self,
+                    target_precondition=deduced_precondition.model_dump(),
+                    context_label="refactor_and_generalize_reset",
                 )
 
             self.action_log.append("Replacing old plan with newly refactored version.")
@@ -2587,57 +2562,23 @@ class HierarchicalActor(BaseActor):
 
         self._load_plan_module(plan)
 
-    async def _ensure_precondition(
+    async def _verify_and_correct_state(
         self,
         plan: HierarchicalPlan,
-        function_name: str,
-    ) -> None:
+        target_precondition: dict,
+        context_label: str,
+    ):
         """
-        Checks and enforces the precondition for a function before execution.
-        This is the core of the proactive state drift correction mechanism.
-
-        Args:
-            plan: The active HierarchicalPlan instance.
-            function_name: The name of the function whose precondition needs to be checked.
+        A reusable helper to verify the current browser state against a target
+        precondition and execute a correction script if they do not match.
         """
-        precondition = self.function_manager.get_precondition(
-            function_name=function_name,
-        )
-
-        if not precondition or precondition.get("status") == "not_applicable":
-            return
-
-        logger.info(f"PRECONDITION CHECK for '{function_name}': {precondition}")
-        plan.action_log.append(
-            f"Verifying precondition for '{function_name}': {precondition}",
-        )
-
-        if url_precondition := precondition.get("url"):
+        try:
+            screenshot = await self.action_provider.browser.get_screenshot()
+            verification_prompt = prompt_builders.build_state_verification_prompt(
+                precondition=target_precondition,
+            )
+            plan.verification_client.set_response_format(StateVerificationDecision)
             try:
-                current_url = await self.action_provider.browser.get_current_url()
-                if current_url != url_precondition:
-                    logger.warning(
-                        f"URL DRIFT: Expected '{url_precondition}', was '{current_url}'. Navigating.",
-                    )
-                    plan.action_log.append(
-                        f"STATE DRIFT: Correcting URL from '{current_url}' to '{url_precondition}'.",
-                    )
-                    await self.action_provider.browser.navigate(url_precondition)
-            except Exception as e:
-                logger.error(
-                    f"Failed to enforce URL precondition for {function_name}: {e}",
-                )
-
-        if description_precondition := precondition.get("description"):
-            try:
-                screenshot = await self.action_provider.browser.get_screenshot()
-
-                verification_prompt = prompt_builders.build_state_verification_prompt(
-                    precondition=precondition,
-                )
-                plan.verification_client.set_response_format(
-                    StateVerificationDecision,
-                )
                 decision_str = await llm_call(
                     plan.verification_client,
                     verification_prompt,
@@ -2646,27 +2587,30 @@ class HierarchicalActor(BaseActor):
                 verification_decision = StateVerificationDecision.model_validate_json(
                     decision_str,
                 )
+            finally:
+                plan.verification_client.reset_response_format()
 
-                if verification_decision.matches:
-                    logger.info(
-                        f"PRECONDITION MET for '{function_name}': {verification_decision.reason}",
-                    )
-                    return
+            if verification_decision.matches:
+                logger.info(
+                    f"PRECONDITION MET for '{context_label}': {verification_decision.reason}",
+                )
+                return
 
-                logger.warning(
-                    f"STATE DRIFT for '{function_name}': {verification_decision.reason}. Generating correction script.",
-                )
-                plan.action_log.append(
-                    f"STATE DRIFT for '{function_name}': {verification_decision.reason}",
-                )
+            logger.warning(
+                f"STATE DRIFT for '{context_label}': {verification_decision.reason}. Generating correction script.",
+            )
+            plan.action_log.append(
+                f"STATE DRIFT for '{context_label}': {verification_decision.reason}",
+            )
 
-                correction_prompt = prompt_builders.build_proactive_correction_prompt(
-                    precondition=precondition,
-                    tools=self.tools,
-                )
-                plan.course_correction_client.set_response_format(
-                    CourseCorrectionDecision,
-                )
+            current_url = await self.action_provider.browser.get_current_url()
+            correction_prompt = prompt_builders.build_proactive_correction_prompt(
+                precondition=target_precondition,
+                current_url=current_url,
+                tools=self.tools,
+            )
+            plan.course_correction_client.set_response_format(CourseCorrectionDecision)
+            try:
                 correction_str = await llm_call(
                     plan.course_correction_client,
                     correction_prompt,
@@ -2675,34 +2619,54 @@ class HierarchicalActor(BaseActor):
                 correction_decision = CourseCorrectionDecision.model_validate_json(
                     correction_str,
                 )
-
-                if (
-                    correction_decision.correction_needed
-                    and correction_decision.correction_code
-                ):
-                    plan.action_log.append(
-                        f"PROACTIVE CORRECTION: Running script to meet precondition.",
-                    )
-                    await self._execute_course_correction(
-                        plan,
-                        correction_decision.correction_code,
-                    )
-                    logger.info(
-                        f"Proactive course correction for '{function_name}' completed.",
-                    )
-                else:
-                    logger.warning(
-                        "State drift detected, but LLM decided no correction was needed or failed to provide code.",
-                    )
-
-            except Exception as e:
-                logger.error(
-                    f"Error during proactive state correction for '{function_name}': {e}",
-                    exc_info=True,
-                )
             finally:
-                plan.verification_client.reset_response_format()
                 plan.course_correction_client.reset_response_format()
+
+            if (
+                correction_decision.correction_needed
+                and correction_decision.correction_code
+            ):
+                plan.action_log.append(
+                    f"PROACTIVE CORRECTION for '{context_label}': Running script.",
+                )
+                await self._execute_course_correction(
+                    plan,
+                    correction_decision.correction_code,
+                )
+                logger.info(
+                    f"Proactive course correction for '{context_label}' completed.",
+                )
+            else:
+                logger.warning(
+                    f"State drift for '{context_label}' detected, but no correction was generated.",
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error during state verification/correction for '{context_label}': {e}",
+                exc_info=True,
+            )
+
+    async def _ensure_precondition(
+        self,
+        plan: HierarchicalPlan,
+        function_name: str,
+    ) -> None:
+        """
+        Checks and enforces the precondition for a function before execution.
+        """
+        precondition = self.function_manager.get_precondition(
+            function_name=function_name,
+        )
+
+        if not precondition or precondition.get("status") == "not_applicable":
+            return
+
+        await self._verify_and_correct_state(
+            plan=plan,
+            target_precondition=precondition,
+            context_label=f"function '{function_name}'",
+        )
 
     def _create_verify_decorator(self, plan: HierarchicalPlan):
         """
@@ -2787,7 +2751,7 @@ class HierarchicalActor(BaseActor):
                             plan.runtime.action_counter = 0
                             if i > 0:
                                 local_interactions.clear()
-
+                            log_snapshot_len = len(plan.execution_key_log)
                             try:
                                 captured_run_id = current_run_id_var.get()
 
@@ -2880,6 +2844,11 @@ class HierarchicalActor(BaseActor):
                                     f"Function '{func_name}' failed with a runtime error on attempt {i+1}: {e}",
                                     exc_info=True,
                                 )
+                                # --- ADD: Truncate the log to remove keys from the failed attempt ---
+                                plan.execution_key_log = plan.execution_key_log[
+                                    :log_snapshot_len
+                                ]
+                                # --- END ADD ---
                                 last_error_reason = traceback.format_exc()
                                 existing_code = plan.clean_function_source_map.get(
                                     func_name,
