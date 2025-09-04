@@ -190,6 +190,12 @@ class TaskScheduler(BaseTaskScheduler):
                 self._cancel_tasks,
                 # Queue manipulation
                 self._update_task_queue,
+                # Multi-queue helpers
+                self._list_queues,
+                self._get_queue,
+                self._reorder_queue,
+                self._move_tasks_to_queue,
+                self._partition_queue,
                 # Reintegration
                 self._reinstate_task_to_previous_queue,
                 # Attribute mutations
@@ -1306,6 +1312,517 @@ class TaskScheduler(BaseTaskScheduler):
     ) -> None:
         """Delegate to queue-utils to maintain symmetric neighbour links."""
         _q_sync_adjacent_links(self, task_id=task_id, schedule=schedule)
+
+    # ────────────────────────────────────────────────────────────────────
+    # Multi-queue helpers (public tools for the update loop)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _allocate_new_queue_id(self) -> int:
+        """Return a fresh integer queue identifier.
+
+        Strategy – scan all tasks for existing ``schedule.queue_id`` numeric
+        values and return ``max + 1`` (starting at 1).  Queues are implicit in
+        this scheduler: a queue exists as soon as at least one task carries its
+        ``queue_id``.
+        """
+        rows = self._filter_tasks()
+        max_id = 0
+        for r in rows:
+            sched = r.get("schedule") or {}
+            qid = sched.get("queue_id") if isinstance(sched, dict) else None
+            try:
+                if isinstance(qid, int):
+                    max_id = max(max_id, qid)
+            except Exception:
+                pass
+        return max_id + 1 if max_id >= 0 else 1
+
+    def _head_row_for_queue(self, queue_id: Optional[int]) -> Optional[TaskRow]:
+        """Best-effort fetch of the head row for a given queue.
+
+        The "default" queue is represented by ``queue_id is None``.
+        Only non-terminal tasks are considered part of a runnable queue.
+        Returns ``None`` when no head exists (e.g., empty queue).
+        """
+        rows = [
+            r
+            for r in self._filter_tasks()
+            if r.get("schedule") is not None
+            and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+        ]
+        heads: list[TaskRow] = []
+        for r in rows:
+            sched = r.get("schedule") or {}
+            qid = sched.get("queue_id")
+            prev_id = sched.get("prev_task")
+            if qid == queue_id and prev_id is None:
+                heads.append(r)
+            if queue_id is None and qid is None and prev_id is None:
+                # explicit path for default queue
+                pass
+        if not heads:
+            return None
+        assert (
+            len(heads) == 1
+        ), f"Multiple heads detected for queue_id={queue_id}: {heads}"
+        return heads[0]
+
+    def _walk_queue(self, head_row: TaskRow) -> list[TaskRow]:
+        """Walk from ``head_row`` forward using ``next_task`` and return rows.
+
+        Defensive against missing rows or broken links; stops at first gap.
+        """
+        ordered: list[TaskRow] = []
+        cur = head_row
+        seen: set[int] = set()
+        while cur is not None:
+            tid = cur.get("task_id")
+            try:
+                if isinstance(tid, int) and tid in seen:
+                    break
+                if isinstance(tid, int):
+                    seen.add(tid)
+            except Exception:
+                pass
+            ordered.append(cur)
+            sched = cur.get("schedule") or {}
+            nxt = sched.get("next_task")
+            if nxt is None:
+                break
+            nxt_rows = self._filter_tasks(filter=f"task_id == {int(nxt)}", limit=1)
+            cur = nxt_rows[0] if nxt_rows else None
+        return ordered
+
+    def _list_queues(self) -> List[Dict[str, Any]]:
+        """
+        List all runnable queues.
+
+        Returns
+        -------
+        list[dict]
+            One entry per queue head with keys:
+            - ``queue_id`` (int | None): identifier; ``None`` denotes the default queue.
+            - ``head_id`` (int): task id of the head.
+            - ``size`` (int): number of runnable tasks in the queue.
+            - ``start_at`` (str | None): ISO timestamp from the head's schedule.
+
+        Notes
+        -----
+        Queues are implicit in the data model: a queue exists when at least one
+        runnable task has ``schedule.prev_task is None``. The "default" queue is
+        the one where tasks have ``schedule.queue_id is None``.
+        """
+        rows = [
+            r
+            for r in self._filter_tasks()
+            if r.get("schedule") is not None
+            and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+        ]
+        # heads are rows with prev_task == None
+        heads: list[TaskRow] = [
+            r for r in rows if (r.get("schedule") or {}).get("prev_task") is None
+        ]
+        out: list[Dict[str, Any]] = []
+        for h in heads:
+            sched = h.get("schedule") or {}
+            start_at = sched.get("start_at")
+            qid = sched.get("queue_id")
+            chain = self._walk_queue(h)
+            out.append(
+                {
+                    "queue_id": qid,
+                    "head_id": h.get("task_id"),
+                    "size": len(chain),
+                    "start_at": start_at,
+                },
+            )
+        return out
+
+    def _get_queue(self, *, queue_id: Optional[int] = None) -> List[Task]:
+        """
+        Return the runnable queue for a given ``queue_id`` (head→tail).
+
+        Parameters
+        ----------
+        queue_id : int | None, default ``None``
+            Identifier of the queue. ``None`` denotes the default queue (legacy
+            single-queue behaviour).
+
+        Returns
+        -------
+        list[Task]
+            Ordered tasks from head to tail. Returns an empty list when the
+            queue does not exist or contains no runnable tasks.
+        """
+        head = self._head_row_for_queue(queue_id)
+        if head is None:
+            return []
+        rows = self._walk_queue(head)
+        ordered: List[Task] = []
+        for row in rows:
+            # Strip stale activation metadata on non-active rows
+            _row = dict(row)
+            try:
+                if self._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
+                    _row.pop("activated_by", None)
+            except Exception:
+                if str(_row.get("status")) != str(Status.active):
+                    _row.pop("activated_by", None)
+            ordered.append(Task(**_row))
+        return ordered
+
+    def _reorder_queue(
+        self,
+        *,
+        queue_id: Optional[int],
+        new_order: List[int],
+    ) -> ToolOutcome:
+        """
+        Reorder a single queue to exactly match ``new_order`` (head→tail).
+
+        Parameters
+        ----------
+        queue_id : int | None
+            Target queue identifier (``None`` for the default queue).
+        new_order : list[int]
+            Complete desired order of all runnable tasks within this queue.
+            This tool does not add or remove tasks across queues; every task in
+            the current queue must appear exactly once in ``new_order``.
+
+        Behaviour
+        ---------
+        - Maintains neighbour pointers symmetrically.
+        - Ensures exactly one head owns ``start_at`` (carried from the former
+          head if present) and sets statuses consistently:
+            • head with ``start_at`` → ``scheduled``;
+            • non-heads → at most ``queued``.
+        - The active task (if any) in this queue retains its ``active`` status.
+        """
+        current = [t.task_id for t in self._get_queue(queue_id=queue_id)]
+        assert set(current) == set(
+            new_order,
+        ), "new_order must be a permutation of the current queue"
+
+        # Gather current rows and queue-level timestamp from the former head
+        rows_by_id: Dict[int, TaskRow] = {
+            r["task_id"]: r
+            for r in self._filter_tasks(filter=f"task_id in {new_order}")
+        }
+        old_head_id = current[0] if current else None
+        queue_start_ts: Optional[str] = None
+        if old_head_id is not None:
+            _old_head = rows_by_id.get(old_head_id)
+            if _old_head is not None:
+                queue_start_ts = (_old_head.get("schedule") or {}).get("start_at")
+
+        # Write updated linkage + status
+        for idx, tid in enumerate(new_order):
+            prev_tid = None if idx == 0 else new_order[idx - 1]
+            next_tid = None if idx == len(new_order) - 1 else new_order[idx + 1]
+
+            start_ts = queue_start_ts if idx == 0 else None
+            sched_payload: Dict[str, Any] = {
+                "prev_task": prev_tid,
+                "next_task": next_tid,
+                "queue_id": queue_id,
+            }
+            if start_ts is not None:
+                sched_payload["start_at"] = start_ts
+
+            existing_status = self._to_status(
+                rows_by_id.get(tid, {}).get("status", Status.queued),
+            )
+            if existing_status == Status.active:
+                desired_status = Status.active
+            elif start_ts is not None:
+                desired_status = Status.scheduled
+            else:
+                desired_status = (
+                    existing_status
+                    if existing_status != Status.scheduled
+                    else Status.queued
+                )
+
+            payload: Dict[str, Any] = {"schedule": sched_payload}
+            if desired_status != existing_status:
+                payload["status"] = desired_status
+
+            self._validated_write(
+                task_id=tid,
+                entries=payload,
+                err_prefix=f"While reordering queue {queue_id} (task {tid}):",
+            )
+
+        return {
+            "outcome": "queue reordered",
+            "details": {"queue_id": queue_id, "new_order": new_order},
+        }
+
+    def _move_tasks_to_queue(
+        self,
+        *,
+        task_ids: List[int],
+        queue_id: Optional[int] = None,
+        position: Optional[str] = "back",
+    ) -> ToolOutcome:
+        """
+        Move one or more runnable tasks to a specific queue and position.
+
+        Parameters
+        ----------
+        task_ids : list[int]
+            Identifiers of tasks to move. All tasks must be non-terminal. The
+            currently active task cannot be moved.
+        queue_id : int | None, default ``None``
+            Target queue identifier. ``None`` denotes the default queue.  When
+            you intend to create a brand-new queue, pass ``queue_id=None`` and
+            this tool will allocate a fresh identifier automatically and return
+            it in the details payload.
+        position : {"front", "back"} | None, default "back"
+            Where to insert the moved tasks relative to the target queue.
+            - "front": insert as a block at the front (preserving the order of
+              ``task_ids`` as provided);
+            - "back": append at the end (preserving order);
+            - None: keep target queue unchanged (only change queue membership; the
+              tasks will not be linked unless you call `_reorder_queue` next).
+
+        Behaviour
+        ---------
+        - Detaches the tasks from their original queues by fixing neighbour links.
+        - Assigns the provided/allocated ``queue_id`` to the moved tasks.
+        - If inserting at the front or back, updates neighbour links to splice the
+          block into the target queue.
+        - Preserves the target queue's head-level ``start_at`` by keeping it on the
+          new head after insertion (if any).
+        - Sets statuses consistently (head with ``start_at`` → ``scheduled``; others
+          at most ``queued``). Active tasks are rejected.
+
+        Returns
+        -------
+        ToolOutcome
+            ``{"outcome": "tasks moved", "details": {"queue_id": <int>, "task_ids": [...]}}``
+        """
+        # Validate and normalise inputs
+        if isinstance(task_ids, int):
+            task_ids = [task_ids]
+        if not task_ids:
+            return {
+                "outcome": "tasks moved",
+                "details": {"queue_id": queue_id, "task_ids": []},
+            }
+
+        # Reject active and terminal tasks
+        rows = self._filter_tasks(filter=f"task_id in {task_ids}")
+        ids_found = {r.get("task_id") for r in rows}
+        missing = [tid for tid in task_ids if tid not in ids_found]
+        assert not missing, f"Unknown task ids: {missing}"
+        for r in rows:
+            st = self._to_status(r.get("status"))
+            assert st not in self._TERMINAL_STATUSES, f"Task {r['task_id']} is terminal"
+        # Guard against touching the active task via the central helper
+        self._ensure_not_active_task(task_ids)
+
+        # Allocate queue id when requested
+        target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
+
+        # 1) Detach each task from its current queue (fix predecessor/successor)
+        def _get_row(tid: int) -> TaskRow:
+            return self._get_single_row_or_raise(tid)
+
+        for tid in task_ids:
+            r = _get_row(tid)
+            sched = r.get("schedule") or {}
+            prev_tid = sched.get("prev_task")
+            next_tid = sched.get("next_task")
+            # Fix predecessor's next pointer
+            if prev_tid is not None:
+                prev_row = self._get_single_row_or_raise(int(prev_tid))
+                prev_sched = {**(prev_row.get("schedule") or {})}
+                if prev_sched.get("next_task") == tid:
+                    prev_sched["next_task"] = next_tid
+                    self._write_log_entries(
+                        logs=self._get_logs_by_task_ids(
+                            task_ids=int(prev_row["task_id"]),
+                        ),
+                        entries={"schedule": prev_sched},
+                        overwrite=True,
+                    )
+            # Fix successor's prev pointer and remove start_at (no longer head)
+            if next_tid is not None:
+                next_row = self._get_single_row_or_raise(int(next_tid))
+                next_sched = {**(next_row.get("schedule") or {})}
+                if next_sched.get("prev_task") == tid:
+                    next_sched.pop("start_at", None)
+                    next_sched["prev_task"] = prev_tid
+                    self._write_log_entries(
+                        logs=self._get_logs_by_task_ids(
+                            task_ids=int(next_row["task_id"]),
+                        ),
+                        entries={"schedule": next_sched},
+                        overwrite=True,
+                    )
+
+            # Clear this task's own linkage and queue id (will set below)
+            new_sched: Dict[str, Any] = {
+                "prev_task": None,
+                "next_task": None,
+                "queue_id": target_qid,
+            }
+            self._validated_write(
+                task_id=tid,
+                entries={"schedule": new_sched, "status": Status.queued},
+                err_prefix=f"While moving task {tid} to queue {target_qid}:",
+            )
+
+        # 2) Splice into the target queue when position is specified
+        if position in {"front", "back"}:
+            target_list = [t.task_id for t in self._get_queue(queue_id=target_qid)]
+            block = list(task_ids)
+            new_order: list[int]
+            if position == "front":
+                new_order = block + target_list
+            else:
+                new_order = target_list + block
+            if new_order:
+                self._reorder_queue(queue_id=target_qid, new_order=new_order)
+
+        return {
+            "outcome": "tasks moved",
+            "details": {"queue_id": target_qid, "task_ids": list(task_ids)},
+        }
+
+    def _partition_queue(
+        self,
+        *,
+        parts: List[Dict[str, Any]],
+        strategy: str = "preserve_order",
+    ) -> ToolOutcome:
+        """
+        Split the current default runnable queue into multiple smaller queues.
+
+        Parameters
+        ----------
+        parts : list[dict]
+            Each item describes one output queue with keys:
+            - ``task_ids`` (list[int], required): tasks that should form this queue.
+            - ``queue_start_at`` (str | datetime | None, optional): when set, the
+              head of this queue will carry this ``start_at`` and the queue head
+              status becomes ``scheduled``; otherwise it remains ``queued``.
+            - ``queue_name`` (str | None, optional): unused metadata; accepted for
+              future compatibility.
+
+            The first part is applied to the default (legacy) queue. Subsequent
+            parts are materialised as new queues (fresh ``queue_id``s).
+
+        strategy : {"preserve_order", "as_list"}
+            - ``preserve_order`` (default): within each part, preserve the relative
+              order as found in the original default queue;
+            - ``as_list``: use the exact ``task_ids`` order provided for each part.
+
+        Behaviour
+        ---------
+        - Tasks mentioned in later parts are detached from the default queue and
+          moved to newly created queues.
+        - The original default queue is reduced to the tasks in the first part.
+        - Queue-level ``start_at`` is set from each part's ``queue_start_at`` (if
+          provided); otherwise, the original default queue's timestamp is retained
+          on the new head of the first part only.
+
+        Notes
+        -----
+        This tool is designed for readability in the update loop when the user
+        asks for sequences like “do [0,2] tomorrow and [1,3] the day after”.
+        """
+        # Current default queue before split
+        original = [t.task_id for t in self._get_queue(queue_id=None)]
+        if not original:
+            return {"outcome": "queue partitioned", "details": {"queues": []}}
+
+        # Normalise per-part order
+        def _ordered(ids: List[int]) -> List[int]:
+            if strategy == "as_list":
+                return list(ids)
+            # preserve original relative order
+            rank = {tid: i for i, tid in enumerate(original)}
+            return sorted(ids, key=lambda x: rank.get(x, 10**9))
+
+        queue_start_ts = None
+        # Remember original queue-level timestamp
+        head_row = self._head_row_for_queue(None)
+        if head_row is not None:
+            queue_start_ts = (head_row.get("schedule") or {}).get("start_at")
+
+        # 1) Move all tasks not in the first part out first (to avoid complex rewiring)
+        first_ids = set(parts[0].get("task_ids", [])) if parts else set()
+        rest_ids = [tid for tid in original if tid not in first_ids]
+
+        # For later parts, compute their target membership
+        later_parts = parts[1:] if len(parts) > 1 else []
+        # Map each tid in rest_ids to the index of its part (relative to later_parts)
+        part_map: Dict[int, int] = {}
+        for idx, p in enumerate(later_parts):
+            for tid in p.get("task_ids", []):
+                part_map[int(tid)] = idx
+
+        # Group by part
+        groups: Dict[int, List[int]] = {}
+        for tid in rest_ids:
+            j = part_map.get(tid)
+            if j is None:
+                continue
+            groups.setdefault(j, []).append(tid)
+
+        created: list[Dict[str, Any]] = []
+
+        for j, tids in groups.items():
+            ordered = _ordered(tids)
+            qid = self._allocate_new_queue_id()
+            # Move block to new queue (append), then reorder to exact order
+            self._move_tasks_to_queue(task_ids=ordered, queue_id=qid, position=None)
+            self._reorder_queue(queue_id=qid, new_order=ordered)
+            # Apply queue_start_at if provided
+            qstart = later_parts[j].get("queue_start_at")
+            if qstart is not None and ordered:
+                # Ensure ISO string
+                if isinstance(qstart, datetime):
+                    qstart = qstart.isoformat()
+                # Set on head and adjust status via validated write
+                head_tid = ordered[0]
+                head_row = self._get_single_row_or_raise(head_tid)
+                sched = {**(head_row.get("schedule") or {})}
+                sched["start_at"] = qstart
+                self._validated_write(
+                    task_id=head_tid,
+                    entries={"schedule": sched, "status": Status.scheduled},
+                    err_prefix=f"While setting queue_start_at for queue {qid}:",
+                )
+            created.append({"queue_id": qid, "task_ids": ordered})
+
+        # 2) Reduce the default queue to the first part (in chosen order)
+        first_list = _ordered(list(first_ids))
+        # Reorder default queue to include only these tasks: move out everything else already done
+        if first_list:
+            self._reorder_queue(queue_id=None, new_order=first_list)
+            # apply provided start_at or carry the original one
+            fstart = parts[0].get("queue_start_at") if parts else None
+            if fstart is not None:
+                if isinstance(fstart, datetime):
+                    fstart = fstart.isoformat()
+            else:
+                fstart = queue_start_ts
+            if fstart is not None:
+                head_tid = first_list[0]
+                head_row2 = self._get_single_row_or_raise(head_tid)
+                sched2 = {**(head_row2.get("schedule") or {})}
+                sched2["start_at"] = fstart
+                self._validated_write(
+                    task_id=head_tid,
+                    entries={"schedule": sched2, "status": Status.scheduled},
+                    err_prefix="While finalising default queue start_at:",
+                )
+
+        details = {"default_queue": first_list, "new_queues": created}
+        return {"outcome": "queue partitioned", "details": details}
 
     # ------------------------------------------------------------------ #
     #  Centralised schedule/status write with invariant validation        #
