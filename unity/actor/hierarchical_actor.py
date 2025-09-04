@@ -1125,7 +1125,6 @@ class HierarchicalPlan(BaseActiveTask):
         """
         self.actor = actor
         self.goal = goal
-        self.is_teaching_session = goal is None
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
 
@@ -1315,16 +1314,12 @@ class HierarchicalPlan(BaseActiveTask):
 
         try:
             result = main_task.result()
-            if self.is_teaching_session:
-                self.action_log.append(
-                    "Teaching step complete. Awaiting next instruction.",
-                )
-                self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
-                return
-
-            self._set_state(_HierarchicalPlanState.COMPLETED)
-            self.action_log.append(f"Plan completed. Result: {result}")
-            self._set_final_result(f"Plan completed. Result: {result}")
+            self._final_result_str = str(result)
+            self.action_log.append(
+                f"Main plan execution concluded with result: {result}. Awaiting next instruction.",
+            )
+            self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
+            return
 
         except Exception as e:
             if not isinstance(e, asyncio.CancelledError):
@@ -1714,12 +1709,7 @@ class HierarchicalPlan(BaseActiveTask):
                 self._update_plan_with_new_code(patch.function_name, patch.new_code)
 
             modification_reason = decision.reason
-            if self.is_teaching_session:
-                if self.goal:
-                    self.goal += f"\n- {modification_reason}"
-                else:
-                    self.goal = f"Incrementally taught plan:\n- {modification_reason}"
-            elif self.goal:
+            if self.goal:
                 new_goal = (
                     f"{self.goal}\n\nIMPORTANT UPDATE: The user has provided a new instruction to modify the "
                     f"plan: '{modification_reason}'"
@@ -1728,6 +1718,8 @@ class HierarchicalPlan(BaseActiveTask):
                     f"Updating plan goal to reflect interjection. New goal: '{new_goal}'",
                 )
                 self.goal = new_goal
+            else:
+                self.goal = f"Incrementally taught plan:\n- {modification_reason}"
 
             if self._child_tasks:
                 self.action_log.append(
@@ -2005,16 +1997,9 @@ class HierarchicalPlan(BaseActiveTask):
 
         elif decision.action == "complete_task":
             self.action_log.append("Executing decision: complete_task.")
-            if self._state == _HierarchicalPlanState.PAUSED:
-                self._set_state(_HierarchicalPlanState.COMPLETED)
-
-            if self.is_teaching_session:
-                self.is_teaching_session = False
-                self._set_state(_HierarchicalPlanState.COMPLETED)
-                self._set_final_result(self._final_result_str or "Plan completed.")
-                return "Teaching session completed."
-            else:
-                return "Not in a teaching session. Plan will continue normally."
+            self._set_state(_HierarchicalPlanState.COMPLETED)
+            self._set_final_result(self._final_result_str or "Plan completed by user.")
+            return "Plan marked as complete by user."
 
         return "Error: Unknown or unsupported interjection action."
 
