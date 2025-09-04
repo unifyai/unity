@@ -114,8 +114,8 @@ def build_ask_prompt(
             "• Avoid concatenating entire rows into one long string and embedding a single catch‑all reference.",
             f"• Avoid substring filtering for text‑heavy columns; prefer `{search_tasks_fname}` for meaning.",
             "• Avoid re‑querying the same tables or managers just to reconfirm what a prior tool call has already established with clear, specific evidence; reuse the earlier result and proceed.",
-            "• Do not immediately chain a filter call after a successful semantic search unless you genuinely need an exact, structured constraint that the search did not capture.",
-            f"• Avoid calling `{contact_ask_fname}` repeatedly in the same reasoning chain when earlier calls have already identified the relevant contacts and no new ambiguity or information has been introduced.",
+            "• Do not immediately queue a filter call after a successful semantic search unless you genuinely need an exact, structured constraint that the search did not capture.",
+            f"• Avoid calling `{contact_ask_fname}` repeatedly in the same reasoning queue when earlier calls have already identified the relevant contacts and no new ambiguity or information has been introduced.",
         ],
     )
 
@@ -380,14 +380,14 @@ def build_execute_prompt(
         "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
         "Do not ask the user questions in your final response. If no clarification tool is available in this outer loop, make a best‑guess attempt using sensible defaults and state your assumptions; if an inner tool asks questions, inform it that no clarification channel exists and provide defaults/best guesses.",
         "\nCRITICAL EXECUTION RULES (must follow):",
-        f"• Never attempt to modify `start_at`, `prev_task`/`next_task`, or any scheduling/ordering purely to begin execution. Execution scope (isolate vs chain) is handled by the scheduler when you call `{execute_by_id_fname}`.",
-        f"• When the user implies 'start all/these now' or a sequence (e.g., 'do them in order'), select the chain head (the task with `prev_task == None`) and call `{execute_by_id_fname}`; do not rewrite schedules.",
+        f"• Never attempt to modify `start_at`, `prev_task`/`next_task`, or any scheduling/ordering purely to begin execution. Execution scope (isolate vs queue) is handled by the scheduler when you call `{execute_by_id_fname}`.",
+        f"• When the user implies 'start all/these now' or a sequence (e.g., 'do them in order'), select the queue head (the task with `prev_task == None`) and call `{execute_by_id_fname}`; do not rewrite schedules.",
         f"• A future `start_at` MUST NOT be rewritten to 'now' during execution. Simply call `{execute_by_id_fname}` — the scheduler starts immediately and records activation without changing the task definition.",
         "Use the tools below, step-by-step, following these rules:",
         "",
         "A. If the request contains a *numeric task_id*:",
         f"   • **First** call `{ask_fname}` (or another suitable read-only tool) to confirm the task exists.",
-        f"   • If exactly one matching task is found → call `{execute_by_id_fname}`. When appropriate, set its `execution_scope` parameter to 'isolate' or 'chain' based on the user's intent and the observed queue structure (default: 'auto').",
+        f"   • If exactly one matching task is found → call `{execute_by_id_fname}`. When appropriate, set its `execution_scope` parameter to 'isolate' or 'queue' based on the user's intent and the observed queue structure (default: 'auto').",
     ]
 
     if request_clar_fname:
@@ -409,8 +409,8 @@ def build_execute_prompt(
             "B. If **no numeric id** is given:",
             f"   1. Call `{ask_fname}` with the free-form description to search for matching task(s).",
             "   2. Based on the result:",
-            f"      • **Exactly one** clear match → call `{execute_by_id_fname}` with that id (and set `execution_scope` = 'isolate' | 'chain' when clear; else omit to use 'auto').",
-            f"      • **Multiple tasks that form a chain** and the user wants to start them in order → pick the chain head (task where `prev_task` is None) and call `{execute_by_id_fname}(task_id=<head>, execution_scope='chain')`. Do not reorder or set `start_at`.",
+            f"      • **Exactly one** clear match → call `{execute_by_id_fname}` with that id (and set `execution_scope` = 'isolate' | 'queue' when clear; else omit to use 'auto').",
+            f"      • **Multiple tasks that form a queue** and the user wants to start them in order → pick the queue head (task where `prev_task` is None) and call `{execute_by_id_fname}(task_id=<head>, execution_scope='queue')`. Do not reorder or set `start_at`.",
             f"      • **No match** and it is obvious we should create the task → call `{create_task_fname}(name=<short title>, description=<free‑form user request>)`, then call `{ask_fname}` again to retrieve the new id, then `{execute_by_id_fname}`.",
             "",
             "   Naming guidance for creation:",
