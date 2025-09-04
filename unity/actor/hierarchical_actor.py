@@ -3423,6 +3423,9 @@ class HierarchicalActor(BaseActor):
                             .replace("```", "")
                             .strip()
                         )
+                        ast.parse(
+                            textwrap.dedent(clean_code),
+                        )
                         decision.code = clean_code
                         return decision
                     except SyntaxError as e:
