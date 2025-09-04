@@ -400,6 +400,17 @@ def build_execute_prompt(
     execute_by_id_fname = _tool_name(tools, "execute_by_id")
     create_task_fname = _tool_name(tools, "create_task")
     request_clar_fname = _tool_name(tools, "request_clarification")
+    # Multi-queue helpers
+    list_queues_fname = _tool_name(tools, "list_queues")
+    get_queue_fname = _tool_name(tools, "get_queue")
+    reorder_queue_fname = _tool_name(tools, "reorder_queue")
+    move_tasks_to_queue_fname = _tool_name(tools, "move_tasks_to_queue")
+    partition_queue_fname = _tool_name(tools, "partition_queue")
+    # Reintegration & safety
+    reinstate_task_fname = _tool_name(tools, "reinstate_task_to_previous_queue")
+    checkpoint_fname = _tool_name(tools, "checkpoint_queue_state")
+    revert_checkpoint_fname = _tool_name(tools, "revert_to_checkpoint")
+    latest_checkpoint_fname = _tool_name(tools, "get_latest_checkpoint")
 
     _require_tools(
         {
@@ -418,14 +429,16 @@ def build_execute_prompt(
         "",
         "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
         "Do not ask the user questions in your final response. If no clarification tool is available in this outer loop, make a best‑guess attempt using sensible defaults and state your assumptions; if an inner tool asks questions, inform it that no clarification channel exists and provide defaults/best guesses.",
-        "\nCRITICAL EXECUTION WORKFLOW (must follow):",
-        f"1) Inspect the current queue order first: `{get_task_queue_fname}()`.",
-        f"2) If you need a specific execution subset or order, produce a full new order and call `{update_task_queue_fname}(original=[...], new=[...])`. This is how you express 'isolate' (subset) vs 'queue' (whole sequence) behaviour.",
-        f"   – Examples:",
-        f"     • Run just task X → move only X to the head and keep others after it in their original order.",
-        f"     • Run the first two now → reorder so the desired two tasks are at the head in the right order; leave the rest behind.",
-        f"     • Run all in order → ensure the queue head is the intended first task (reorder if necessary).",
-        f"3) Start execution by calling `{execute_by_id_fname}(task_id=<head>)`. Do NOT modify `start_at` timestamps to force execution.",
+        "\nCRITICAL EXECUTION WORKFLOW (plan → apply → execute):",
+        f"0) Immediately create a reversible checkpoint: `{checkpoint_fname}(label='pre-execute')`. You MUST do this at the start of the session.",
+        f"1) Inspect queues: `{list_queues_fname}()` → then `{get_queue_fname}(queue_id=None)` to view the default queue (head→tail).",
+        f"2) PLAN the desired execution scope and timing in your thoughts (subset now vs later).",
+        f"   – To move subsets into separate queues with dates, call `{partition_queue_fname}(parts=[{{'task_ids':[...],'queue_start_at':<ISO>|None}}, ...], strategy='preserve_order')`.",
+        f"   – To target an existing queue, call `{move_tasks_to_queue_fname}(task_ids=[...], queue_id=<id>, position='front'|'back')` then `{reorder_queue_fname}(queue_id=<id>, new_order=[...])`.",
+        f"   – To reorder within a queue, call `{reorder_queue_fname}(queue_id=None, new_order=[...])`. Do NOT set `start_at` directly; it is applied to the head automatically when appropriate.",
+        f"   – After each successful edit, immediately call `{checkpoint_fname}(label='post-edit')` to allow reverting if the user changes their mind. If the user requests a revert, call `{revert_checkpoint_fname}(checkpoint_id=<latest id>)` or `{reinstate_task_fname}(task_id=<id>, allow_active=false)` depending on context.",
+        f"   – If you did not capture the last checkpoint id, call `{latest_checkpoint_fname}()` to retrieve it.",
+        f"3) EXECUTE by calling `{execute_by_id_fname}(task_id=<head of the 'now' queue>)`. Do NOT modify `start_at` timestamps to force execution.",
         f"4) Do not write status fields directly; lifecycle is managed by the scheduler.",
         "",
         "Use the tools below, step-by-step, following these rules:",

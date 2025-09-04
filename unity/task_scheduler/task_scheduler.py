@@ -8,6 +8,8 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
 from typing import cast
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 
 from ..common.embed_utils import list_private_fields
@@ -259,6 +261,11 @@ class TaskScheduler(BaseTaskScheduler):
             ),
             fields=model_to_fields(Task),
         )
+
+        # In-memory checkpoints for reversible multi-queue edits within a session
+        # Keyed by opaque checkpoint ids; values contain a minimal snapshot of all queues
+        # (queue_id, head_id, order list, and queue-level start_at).
+        self._queue_checkpoints: Dict[str, Dict[str, Any]] = {}
 
         # ID of the *single* task that is allowed to be in the **active**
         # state at any moment.  This will be maintained by a forthcoming
@@ -658,6 +665,171 @@ class TaskScheduler(BaseTaskScheduler):
         client = self._new_llm_client("gpt-5@openai")
 
         # ── tool definitions ────────────────────────────────────────────────
+        class _LaterGroup(BaseModel):
+            task_ids: List[int] = Field(min_length=1)
+            queue_start_at: Optional[str] = None
+
+        class _QueuePlan(BaseModel):
+            now: List[int] = Field(min_length=1)
+            later_groups: List[_LaterGroup] = Field(default_factory=list)
+            notes: Optional[str] = None
+
+        def validate_queue_plan(*, plan: dict) -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Validate a proposed queue plan and return the normalised structure.
+
+            The plan must include a non-empty `now` list and zero or more
+            `later_groups`, each with a non-empty `task_ids` list. The function
+            returns the validated plan and previews of the resulting queues.
+            """
+            model = _QueuePlan.model_validate(plan)
+            # Preview shapes – we do not mutate here
+            preview: Dict[str, Any] = {"now": model.now, "later": []}
+            for g in model.later_groups:
+                preview["later"].append(
+                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at},
+                )
+            return {
+                "outcome": "validated",
+                "details": {"plan": model.model_dump(), "preview": preview},
+            }
+
+        def apply_queue_plan(*, plan: dict) -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Atomically apply a validated plan using invariant-preserving tools.
+
+            Strategy:
+            - Use `_partition_queue` when there are any later groups to split the
+              default queue into [now] and later queues with optional dates.
+            - Otherwise, reorder the default queue so that `now` is the head
+              (dropping other runnable tasks from default queue).
+            After success, automatically create a checkpoint to allow revert.
+            """
+            model = _QueuePlan.model_validate(plan)
+            # If later groups exist, build parts payload
+            if model.later_groups:
+                parts = [{"task_ids": list(model.now)}] + [
+                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at}
+                    for g in model.later_groups
+                ]
+                self._partition_queue(parts=parts, strategy="preserve_order")
+            else:
+                # Only reorder default queue to contain exactly `now`
+                if model.now:
+                    self._reorder_queue(queue_id=None, new_order=list(model.now))
+            # Auto-checkpoint
+            cp = checkpoint_queue_state(label="post-apply-plan")
+            return {
+                "outcome": "applied",
+                "details": {"checkpoint_id": cp["details"]["checkpoint_id"]},
+            }
+
+        def checkpoint_queue_state(*, label: Optional[str] = None) -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Create a session-scoped checkpoint of ALL runnable queues.
+
+            The checkpoint captures, for every queue, the head id, the full order
+            (head→tail), and the queue-level start_at timestamp. This enables the
+            execute loop to revert multi-queue edits if the user changes their mind
+            before completion.
+
+            Parameters
+            ----------
+            label : str | None, optional
+                Optional human-readable label for diagnostics.
+
+            Returns
+            -------
+            dict
+                {"outcome": "checkpointed", "details": {"checkpoint_id": str}}
+            """
+            # Build snapshot
+            snapshot: Dict[str, Any] = {"label": label, "queues": []}
+            try:
+                all_q = self._list_queues()
+            except Exception:
+                all_q = []
+            for q in all_q:
+                qid = q.get("queue_id")
+                start_at = q.get("start_at")
+                try:
+                    order = [t.task_id for t in self._get_queue(queue_id=qid)]
+                except Exception:
+                    order = []
+                snapshot["queues"].append(
+                    {
+                        "queue_id": qid,
+                        "head_id": q.get("head_id"),
+                        "start_at": start_at,
+                        "order": order,
+                    },
+                )
+
+            from ..common.llm_helpers import short_id as _short_id  # local import
+
+            cid = _short_id(8)
+            self._queue_checkpoints[cid] = snapshot
+            return {"outcome": "checkpointed", "details": {"checkpoint_id": cid}}
+
+        # Create an initial checkpoint at the start of execute to guarantee a known revert point
+        try:
+            checkpoint_queue_state(label="pre-execute")
+        except Exception:
+            pass
+
+        def revert_to_checkpoint(*, checkpoint_id: str) -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Revert all queues to a previously created checkpoint.
+
+            This operation is deterministic and invariant-preserving. It rewrites
+            each queue to the exact order stored in the checkpoint and reapplies
+            the queue-level start_at to each restored head.
+            """
+            snap = self._queue_checkpoints.get(str(checkpoint_id))
+            assert snap is not None, f"Unknown checkpoint_id={checkpoint_id}"
+            for q in snap.get("queues", []):
+                qid = q.get("queue_id")
+                order = list(q.get("order", []) or [])
+                if order:
+                    self._reorder_queue(queue_id=qid, new_order=order)
+                    # Restore queue-level start_at on head if present
+                    start_at = q.get("start_at")
+                    if start_at is not None:
+                        head_tid = int(order[0])
+                        try:
+                            head_row = self._get_single_row_or_raise(head_tid)
+                            sched = {**(head_row.get("schedule") or {})}
+                            sched["start_at"] = start_at
+                            self._validated_write(
+                                task_id=head_tid,
+                                entries={"schedule": sched, "status": Status.scheduled},
+                                err_prefix="While restoring queue start_at from checkpoint:",
+                            )
+                        except Exception:
+                            # Defensive: if head row cannot be found now, skip silently
+                            pass
+            return {"outcome": "reverted", "details": {"checkpoint_id": checkpoint_id}}
+
+        def get_latest_checkpoint() -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Return the most recently created checkpoint id and label.
+
+            When no checkpoints exist yet, returns {"checkpoint_id": None}.
+            """
+            try:
+                keys = list(self._queue_checkpoints.keys())
+                if not keys:
+                    return {
+                        "outcome": "none",
+                        "details": {"checkpoint_id": None, "label": None},
+                    }
+                cid = keys[-1]
+                snap = self._queue_checkpoints.get(cid, {})
+                return {
+                    "outcome": "ok",
+                    "details": {"checkpoint_id": cid, "label": snap.get("label")},
+                }
+            except Exception:
+                return {
+                    "outcome": "none",
+                    "details": {"checkpoint_id": None, "label": None},
+                }
+
         def create_task(*, name: str, description: str) -> ToolOutcome:  # type: ignore[valid-type]
             """Create a brand-new task with minimal inputs (name, description).
 
@@ -706,6 +878,20 @@ class TaskScheduler(BaseTaskScheduler):
             self._get_task_queue,
             # Queue mutation primitive (explicit reorder)
             self._update_task_queue,
+            # Multi-queue helpers (coarse, invariant-preserving)
+            self._list_queues,
+            self._get_queue,
+            self._reorder_queue,
+            self._move_tasks_to_queue,
+            self._partition_queue,
+            # Plan helpers
+            validate_queue_plan,
+            apply_queue_plan,
+            # Reintegration and safety
+            self._reinstate_task_to_previous_queue,
+            checkpoint_queue_state,
+            revert_to_checkpoint,
+            get_latest_checkpoint,
             # Start execution
             _execute_by_id,
             # Creation (name + description only)
@@ -1571,9 +1757,48 @@ class TaskScheduler(BaseTaskScheduler):
                 err_prefix=f"While reordering queue {queue_id} (task {tid}):",
             )
 
+        # Auto-checkpoint after successful edit (best-effort)
+        try:
+            # Silent; the execute loop also checkpoints explicitly
+            _ = self._queue_checkpoints  # guard attribute existence
+            # Build lightweight snapshot of just this queue
+            from ..common.llm_helpers import short_id as _short_id  # local import
+
+            cid = _short_id(8)
+            snap = {"label": "auto:_reorder_queue", "queues": []}
+            try:
+                order_now = [t.task_id for t in self._get_queue(queue_id=queue_id)]
+            except Exception:
+                order_now = list(new_order)
+            head_start = None
+            try:
+                head = self._head_row_for_queue(queue_id)
+                head_start = (
+                    (head.get("schedule") or {}).get("start_at") if head else None
+                )
+            except Exception:
+                head_start = None
+            snap["queues"].append(
+                {
+                    "queue_id": queue_id,
+                    "head_id": order_now[0] if order_now else None,
+                    "start_at": head_start,
+                    "order": order_now,
+                },
+            )
+            self._queue_checkpoints[cid] = snap
+            # Expose the checkpoint id in the return payload via outer scope variable
+            _last_checkpoint_id = cid  # noqa: F841 (read by return below if available)
+        except Exception:
+            pass
+
         return {
             "outcome": "queue reordered",
-            "details": {"queue_id": queue_id, "new_order": new_order},
+            "details": {
+                "queue_id": queue_id,
+                "new_order": new_order,
+                "checkpoint_id": locals().get("_last_checkpoint_id"),
+            },
         }
 
     def _move_tasks_to_queue(
@@ -1747,9 +1972,42 @@ class TaskScheduler(BaseTaskScheduler):
             if new_order:
                 self._reorder_queue(queue_id=target_qid, new_order=new_order)
 
+        # Auto-checkpoint after successful edit (best-effort)
+        try:
+            from ..common.llm_helpers import short_id as _short_id  # local import
+
+            cid = _short_id(8)
+            snap = {"label": "auto:_move_tasks_to_queue", "queues": []}
+            # Capture target queue only for brevity
+            order_now = [t.task_id for t in self._get_queue(queue_id=target_qid)]
+            head_start = None
+            try:
+                head = self._head_row_for_queue(target_qid)
+                head_start = (
+                    (head.get("schedule") or {}).get("start_at") if head else None
+                )
+            except Exception:
+                head_start = None
+            snap["queues"].append(
+                {
+                    "queue_id": target_qid,
+                    "head_id": order_now[0] if order_now else None,
+                    "start_at": head_start,
+                    "order": order_now,
+                },
+            )
+            self._queue_checkpoints[cid] = snap
+            _last_checkpoint_id = cid  # noqa: F841
+        except Exception:
+            pass
+
         return {
             "outcome": "tasks moved",
-            "details": {"queue_id": target_qid, "task_ids": list(task_ids)},
+            "details": {
+                "queue_id": target_qid,
+                "task_ids": list(task_ids),
+                "checkpoint_id": locals().get("_last_checkpoint_id"),
+            },
         }
 
     def _partition_queue(
@@ -1883,7 +2141,35 @@ class TaskScheduler(BaseTaskScheduler):
                 )
 
         details = {"default_queue": first_list, "new_queues": created}
-        return {"outcome": "queue partitioned", "details": details}
+        # Auto-checkpoint after successful edit (best-effort)
+        try:
+            from ..common.llm_helpers import short_id as _short_id  # local import
+
+            cid = _short_id(8)
+            snap = {"label": "auto:_partition_queue", "queues": []}
+            for qinfo in self._list_queues():
+                qid = qinfo.get("queue_id")
+                order_now = [t.task_id for t in self._get_queue(queue_id=qid)]
+                snap["queues"].append(
+                    {
+                        "queue_id": qid,
+                        "head_id": qinfo.get("head_id"),
+                        "start_at": qinfo.get("start_at"),
+                        "order": order_now,
+                    },
+                )
+            self._queue_checkpoints[cid] = snap
+            _last_checkpoint_id = cid  # noqa: F841
+        except Exception:
+            pass
+
+        return {
+            "outcome": "queue partitioned",
+            "details": {
+                **details,
+                "checkpoint_id": locals().get("_last_checkpoint_id"),
+            },
+        }
 
     # ------------------------------------------------------------------ #
     #  Centralised schedule/status write with invariant validation        #
