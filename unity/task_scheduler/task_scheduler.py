@@ -907,6 +907,37 @@ class TaskScheduler(BaseTaskScheduler):
             setattr(handle, "__passthrough__", True)
             return handle
 
+        async def _execute_isolated_by_id(
+            *,
+            task_id: int,
+        ) -> SteerableToolHandle:  # type: ignore[valid-type]
+            """Start ONLY the specified task by first detaching it from the queue.
+
+            Behavioural rules
+            -----------------
+            - Use this when the user explicitly requests to run a task "in isolation"
+              or to "detach it entirely from the queue".
+            - Detachment semantics:
+              • If the task is the current head, its successor (if any) becomes the new head
+                and inherits the queue-level start_at timestamp.
+              • The detached task loses its schedule entirely (no prev/next/start_at).
+              • Followers of the detached task remain linked to each other.
+            - This does NOT move the task into a new queue, and does NOT partition queues.
+            """
+
+            # Run internal execute with detach=True to enforce isolation semantics
+            handle = await self._execute_internal(
+                task_id=task_id,
+                parent_chat_context=parent_chat_context,
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
+                activated_by=ActivatedBy.explicit,
+                detach=True,
+            )
+            # Signal pass-through so the outer loop adopts this handle
+            setattr(handle, "__passthrough__", True)
+            return handle
+
         async def request_clarification(question: str) -> str:  # type: ignore[valid-type]
             """Bubble *question* up to the caller and await the answer."""
             rc = self._make_request_clarification_tool(
@@ -937,6 +968,7 @@ class TaskScheduler(BaseTaskScheduler):
             get_latest_checkpoint,
             # Start execution
             _execute_by_id,
+            _execute_isolated_by_id,
             # Creation (name + description only)
             create_task,
             include_class_name=False,
