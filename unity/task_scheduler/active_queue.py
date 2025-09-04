@@ -45,6 +45,58 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         self._driver = asyncio.create_task(self._drive())
 
     # ----------------------------
+    # Internal clarification tool
+    # ----------------------------
+    async def _request_clarification(
+        self,
+        question: str,
+        *,
+        on_request: Callable[[str], Any] | None = None,
+        on_answer: Callable[[str], Any] | None = None,
+    ) -> Optional[str]:
+        """
+        Queue-level clarification for internal use by ActiveQueue.
+
+        Uses the same clarification queues that inner tasks receive. When queues
+        are not provided, this becomes a no-op and returns None, allowing the
+        queue orchestrator to proceed with conservative defaults.
+        """
+        try:
+            # Only operate when both channels are available
+            if self._clar_up is None or self._clar_down is None:
+                return None
+
+            # Prefer the scheduler's wrapper so behaviour matches other managers
+            tool = self._s._make_request_clarification_tool(
+                self._clar_up,
+                self._clar_down,
+            )
+
+            # Best-effort notify hooks (non-blocking if they are sync)
+            try:
+                if on_request is not None:
+                    maybe = on_request(question)
+                    if asyncio.iscoroutine(maybe):
+                        await maybe
+            except Exception:
+                pass
+
+            answer = await tool(question)
+
+            try:
+                if on_answer is not None:
+                    maybe2 = on_answer(answer)
+                    if asyncio.iscoroutine(maybe2):
+                        await maybe2
+            except Exception:
+                pass
+
+            return answer
+        except Exception:
+            # Defensive: clarification should never break the queue
+            return None
+
+    # ----------------------------
     # Pass-through helper methods
     # ----------------------------
     def _current_queue_size(self) -> int:
@@ -363,6 +415,13 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     routes2 = data2.get("routes") if isinstance(data2, dict) else None
                     if isinstance(routes2, list) and routes2:
                         routes = routes2
+                    else:
+                        # Still ambiguous – proactively request clarification if channels exist
+                        await self._request_clarification(
+                            "Your instruction could not be routed to all intended tasks. "
+                            "Please specify exact task_ids, or use clear directives such as 'all', 'first', 'last', "
+                            "or name the tasks explicitly, and provide the instruction for each group.",
+                        )
                 except Exception:
                     pass
 
@@ -398,6 +457,21 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             return
         except Exception:
             # Fallback: deliver to current task only
+            # If clarification channels are available and the message looks ambiguous,
+            # try to disambiguate before defaulting to current-only delivery.
+            try:
+                ambiguous_tokens = ("all", "rest", "remaining", "first", "last")
+                looks_ambiguous = any(
+                    tok in (message or "").lower() for tok in ambiguous_tokens
+                )
+                if looks_ambiguous:
+                    await self._request_clarification(
+                        "Your interjection could refer to multiple tasks. "
+                        "Please specify which tasks it applies to (by id or directive such as 'all', 'first', 'last'), "
+                        "and provide the instruction text for each group.",
+                    )
+            except Exception:
+                pass
             await self._current_handle.interject(message)
 
     def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
