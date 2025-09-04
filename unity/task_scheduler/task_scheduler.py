@@ -652,6 +652,9 @@ class TaskScheduler(BaseTaskScheduler):
             self._clar_down = clarification_down_q
             self._done_evt: asyncio.Event = asyncio.Event()
             self._final_result: Optional[str] = None
+            # Keep track of tasks that completed successfully within this chain
+            # so that the final result can summarise the entire sequence.
+            self._completed_tasks: list[tuple[int, str]] = []
             # Background driver
             self._driver = asyncio.create_task(self._drive())
 
@@ -672,6 +675,24 @@ class TaskScheduler(BaseTaskScheduler):
                         )
                     except Exception:
                         was_stopped = False
+                    # Record successful completion of the just-finished task when not stopped/deferred
+                    if not was_stopped and "stopped" not in text.lower():
+                        try:
+                            rows = self._s._filter_tasks(
+                                filter=f"task_id == {int(self._current_task_id)}",
+                                limit=1,
+                            )
+                            if rows:
+                                name = (
+                                    rows[0].get("name")
+                                    or rows[0].get("description")
+                                    or "(unnamed task)"
+                                )
+                                self._completed_tasks.append(
+                                    (int(self._current_task_id), str(name)),
+                                )
+                        except Exception:
+                            pass
                     if was_stopped:
                         self._final_result = text or "Stopped."
                         break
@@ -688,8 +709,20 @@ class TaskScheduler(BaseTaskScheduler):
                             next_tid = t.task_id
                             break
                     if next_tid is None:
-                        # Chain exhausted
-                        self._final_result = text or "Chain completed."
+                        # Chain exhausted – compose a completion summary across all tasks
+                        if self._completed_tasks:
+                            summary_items = [
+                                f"Task {tid}: {name}"
+                                for tid, name in self._completed_tasks
+                            ]
+                            summary = (
+                                "Completed the following tasks: "
+                                + ", ".join(summary_items)
+                                + "."
+                            )
+                        else:
+                            summary = "Chain completed."
+                        self._final_result = summary
                         break
 
                     # Start next task using CHAIN linkage semantics
@@ -992,7 +1025,18 @@ class TaskScheduler(BaseTaskScheduler):
 
         async def result(self):  # type: ignore[override]
             await self._done_evt.wait()
-            return self._final_result or ""
+            # If the driver did not assemble a summary (e.g. early stop without any
+            # completions recorded), build a best-effort one now.
+            if self._final_result:
+                return self._final_result
+            if self._completed_tasks:
+                summary_items = [
+                    f"Task {tid}: {name}" for tid, name in self._completed_tasks
+                ]
+                return (
+                    "Completed the following tasks: " + ", ".join(summary_items) + "."
+                )
+            return ""
 
         async def ask(self, question: str, *, _return_reasoning_steps: bool = False) -> "SteerableToolHandle":  # type: ignore[override]
             """Answer questions with chain-aware context and delegate to inner handle.
