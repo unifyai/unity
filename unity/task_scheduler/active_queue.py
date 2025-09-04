@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Dict, Callable, Optional, List, Any, TYPE_CHECKING
+import os
 
 import unify
 
@@ -241,6 +242,18 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         # Fast path: empty/whitespace → no-op
         if not (message or "").strip():
             return
+
+        # Optional bypass: disable LLM router via env flag and route to current task
+        try:
+            if str(os.getenv("UNITY_TS_DISABLE_LLM_ROUTER", "")).lower() in {
+                "1",
+                "true",
+                "yes",
+            }:
+                await self._current_handle.interject(message)
+                return
+        except Exception:
+            pass
 
         # Build a compact queue snapshot (head→tail) including ids and labels
         def _safe_dump(value):
