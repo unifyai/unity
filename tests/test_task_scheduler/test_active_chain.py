@@ -481,3 +481,135 @@ async def test_chain_result_summarises_all_completed_tasks(monkeypatch):
     assert f"Task {a}: A_sum" in res
     assert f"Task {b}: B_sum" in res
     assert f"Task {c}: C_sum" in res
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_chain_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
+    """
+    While a chain is running, dynamically remove an existing follower and add a new
+    follower behind the current task. The chain should reflect the live queue at the
+    next hop: skip the removed task and execute the newly added one.
+    """
+
+    # Make each task require exactly two interjections to complete
+    class _Step2(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 2
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    # Use step-based simulated actor everywhere
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _Step2, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Step2,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    a_id, b_id, c_id = await _make_ordered_queue(ts, ["A_dyn", "B_dyn", "C_dyn"])  # type: ignore[misc]
+
+    # Force chain routing so numeric execute launches a chain
+    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "chain"
+
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+
+    # Deterministic activation triggers per task-id
+    activation_events: Dict[int, asyncio.Event] = {}
+    completion_events: Dict[int, asyncio.Event] = {}
+
+    def _evt_for(tid: int) -> asyncio.Event:
+        ev = activation_events.get(tid)
+        if ev is None:
+            ev = asyncio.Event()
+            activation_events[tid] = ev
+        return ev
+
+    def _completed_evt_for(tid: int) -> asyncio.Event:
+        ev = completion_events.get(tid)
+        if ev is None:
+            ev = asyncio.Event()
+            completion_events[tid] = ev
+        return ev
+
+    orig_update_status = ts._update_task_status_instance
+
+    def spy_update_status(*, task_id: int, instance_id: int, new_status: str, activated_by=None):  # type: ignore[override]
+        res = orig_update_status(
+            task_id=task_id,
+            instance_id=instance_id,
+            new_status=new_status,
+            activated_by=activated_by,
+        )
+        try:
+            if str(new_status) == "active":
+                _evt_for(task_id).set()
+            if str(new_status) == "completed":
+                _completed_evt_for(task_id).set()
+        except Exception:
+            pass
+        return res
+
+    monkeypatch.setattr(
+        ts,
+        "_update_task_status_instance",
+        spy_update_status,
+        raising=True,
+    )
+
+    # Start chain at A
+    h = await ts.execute(text=str(a_id))
+
+    # Complete A deterministically with pause/resume (each consumes a step)
+    h.pause()
+    h.resume()
+    await asyncio.wait_for(_completed_evt_for(a_id).wait(), timeout=10)
+
+    # Wait until B is active
+    await asyncio.wait_for(_evt_for(b_id).wait(), timeout=10)
+
+    # Dynamically add a new follower D after B and remove C from the chain
+    d_id = ts._create_task(
+        name="D_dyn",
+        description="D_dyn",
+        schedule={"prev_task": b_id},
+    )["details"][
+        "task_id"
+    ]  # type: ignore[index]
+    ts._delete_task(task_id=c_id)
+
+    # Complete B deterministically
+    h.pause()
+    h.resume()
+    await asyncio.wait_for(_completed_evt_for(b_id).wait(), timeout=10)
+
+    # Wait until D is active before applying steps to the new current handle
+    await asyncio.wait_for(_evt_for(d_id).wait(), timeout=10)
+
+    # D should be picked up next and complete after two steps
+    h.pause()
+    h.resume()
+    await asyncio.wait_for(_completed_evt_for(d_id).wait(), timeout=10)
+
+    res = await h.result()
+    assert isinstance(res, str)
+
+    # A, B, D should be terminal; C should remain non-terminal
+    rows_a = ts._filter_tasks(filter=f"task_id == {a_id}")
+    rows_b = ts._filter_tasks(filter=f"task_id == {b_id}")
+    rows_c = ts._filter_tasks(filter=f"task_id == {c_id}")
+    rows_d = ts._filter_tasks(filter=f"task_id == {d_id}")
+
+    def _is_terminal(row):
+        return row.get("status") in ("completed", "cancelled", "failed")
+
+    assert any(_is_terminal(r) for r in rows_a)
+    assert any(_is_terminal(r) for r in rows_b)
+    assert any(_is_terminal(r) for r in rows_d)
+    # C was removed from the queue before activation; ensure it is not terminal/active
+    assert all(
+        r.get("status") not in ("completed", "cancelled", "failed", "active")
+        for r in rows_c
+    )
