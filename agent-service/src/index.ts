@@ -327,7 +327,7 @@ const getLaunchOptions = (headless: boolean, downloadsPath: string | null = null
       "--disable-features=IsolateOrigins,site-per-process",
       // "--enable-features=WebRtcV4L2VideoCapture",
       // "--auto-select-window-capture-source-by-title=Google",
-      "--auto-select-desktop-capture-source='Entire screen'",
+      '--auto-select-desktop-capture-source="Entire screen"',
     ],
     downloadsPath: downloadsPath || undefined,
     tracesDir: tracesDir || undefined,

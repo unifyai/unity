@@ -288,10 +288,8 @@ class CommsAgent:
         return chat_history
 
     async def inactivity_check_for_meet(self):
-        while True:
+        while self.meet_browser:
             await asyncio.sleep(10)  # Check every 10 seconds
-            if self.meet_browser is None:
-                break  # meet call ended, exit the loop
             ret = await self.meet_browser.observe(
                 f"Is {self.assistant_name} the only participant in the meeting? Ignoring screen share display and captions.",
                 bool,
@@ -308,9 +306,7 @@ class CommsAgent:
                 break  # Exit the loop after shutdown
 
     async def popup_check_for_meet(self):
-        while True:
-            if self.meet_browser is None:
-                break
+        while self.meet_browser:
             ret = await self.meet_browser.observe(
                 f"Are there any popups on the screen?",
                 bool,
@@ -321,7 +317,7 @@ class CommsAgent:
                 await self.meet_browser.act(
                     "Close any popup on the screen, usually related to clicking 'OK' or 'Got it'.",
                 )
-            await asyncio.sleep(5)
+            await asyncio.sleep(2)
 
     async def track_active_speaker(self):
         """Track active speaker using Meet captions via screenshot-based observation.
@@ -337,17 +333,15 @@ class CommsAgent:
         while self.meet_browser:
             try:
                 # Build recent buffers as context (avoid repeats / omissions)
-                recent_entries = list(self.speaker_buffer)[-3:]
-                recent_caps = [c for _, _, c in recent_entries if c]
-                recent_speakers = [s for _, s, _ in recent_entries if s]
+                recent_entries = list(self.speaker_buffer)[-5:]
+                recent_caps = [(s, c) for _, s, c in recent_entries if c]
                 prompt = (
                     "From the current Google Meet screen, determine the CURRENT speaker and latest caption using BOTH sources: "
                     "(1) live captions/subtitles (use the speaker label preceding the caption), and (2) visual active-speaker indicators "
                     "(bold outline, speaker badge, audio indicator). Use the following previous context to avoid repeats: "
-                    f"recent_captions={json.dumps(recent_caps)} recent_speakers={json.dumps(recent_speakers)}. "
+                    f"recent_speakers_and_captions={json.dumps(recent_caps)}. "
                     "Return STRICT JSON with keys: speaker (string, empty if none), caption (string, empty if none). "
                     "If the detected caption equals the most recent in recent_captions, set caption to an empty string. "
-                    "Likewise, if the detected speaker equals the most recent in recent_speakers, set speaker to an empty string. "
                     "Do not include any other keys or any explanatory text."
                 )
 
@@ -365,19 +359,19 @@ class CommsAgent:
 
                 now_ts = asyncio.get_event_loop().time()
                 # Normalize speaker (ignore self/"you")
-                norm_speaker = speaker_name.strip()
-                if norm_speaker.lower() in ("you", self.assistant_name.lower()):
-                    norm_speaker = ""
+                speaker_name = speaker_name.strip()
+                if speaker_name.lower() == "you":
+                    speaker_name = self.assistant_name
 
                 last_entry = self.speaker_buffer[-1] if self.speaker_buffer else None
                 last_speaker = last_entry[1] if last_entry else ""
                 last_caption = last_entry[2] if last_entry else ""
-                if norm_speaker != last_speaker or (caption_text or "") != last_caption:
-                    self.speaker_buffer.append((now_ts, norm_speaker, caption_text))
-                if norm_speaker:
-                    self.current_speaker = norm_speaker
+                if speaker_name != last_speaker or (caption_text or "") != last_caption:
+                    self.speaker_buffer.append((now_ts, speaker_name, caption_text))
+                if speaker_name != self.assistant_name:
+                    self.current_speaker = speaker_name
 
-                print("\ncurrent speaker (observe)", speaker_name)
+                print("\ncurrent user speaker (observe)", self.current_speaker)
                 print("speaker buffer", self.speaker_buffer)
                 if caption_text:
                     print("caption", caption_text)
@@ -1365,13 +1359,12 @@ class CommsAgent:
         # Attach speaker metadata to user phone utterances using recent captions
         try:
             if (
-                event["event"]["event_name"] == "PhoneUtteranceEvent"
+                self.meet_browser is not None
+                and event["event"]["event_name"] == "PhoneUtteranceEvent"
                 and event["event"]["payload"].get("role") == "User"
             ):
-                speaker = self.speaker_buffer[-1][1] if self.speaker_buffer else None
-                print("\n\nuser speaker", speaker, "\n\n")
-                # if speaker:
-                #     event["event"]["payload"]["speaker"] = speaker
+                event["event"]["payload"]["role"] = f"User: {self.current_speaker}"
+                print("\n\nuser speaker", self.current_speaker, "\n\n")
         except Exception:
             ...
 
