@@ -438,3 +438,46 @@ async def test_chain_handle_ask_includes_chain_context(monkeypatch):
     # User question should be preserved at the end
     assert "USER QUESTION:" in q
     assert "How is the chain going?" in q
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_chain_result_summarises_all_completed_tasks(monkeypatch):
+    """
+    Verify that the chain handle's final result summarises all completed tasks.
+    """
+
+    # Immediate completion per task to avoid timing races
+    class _Immediate(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw.pop("duration", None)
+            super().__init__(steps=0, duration=None, *a, **kw)
+
+    monkeypatch.setattr(
+        "unity.actor.simulated.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    a, b, c = await _make_ordered_queue(ts, ["A_sum", "B_sum", "C_sum"])  # type: ignore[misc]
+
+    # Force chain routing for deterministic behaviour
+    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "chain"
+
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+
+    h = await ts.execute(text=str(a))
+    res = await h.result()
+
+    assert isinstance(res, str)
+    assert "Completed the following tasks:" in res
+    assert f"Task {a}: A_sum" in res
+    assert f"Task {b}: B_sum" in res
+    assert f"Task {c}: C_sum" in res
