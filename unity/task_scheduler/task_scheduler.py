@@ -289,6 +289,13 @@ class TaskScheduler(BaseTaskScheduler):
         self._reintegration_plans: dict[int, "ReintegrationPlan"] = {}
         self._reintegration_manager = ReintegrationManager(self)
 
+        # Linkage barriers: per-task events set after queue linkage updates
+        # complete for a given activation. ActiveQueue can await these to avoid
+        # racing reads before symmetric neighbour writes are visible.
+        import asyncio as _aio  # local import to avoid top-level cost
+
+        self._linkage_barriers: Dict[int, _aio.Event] = {}
+
     # Public #
     # -------#
 
@@ -561,10 +568,30 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Adjust queue linkages for activation (and record reintegration plan).
         # detach=True → isolation semantics; detach=False → chain semantics.
+        desired_next: Optional[int] = _q_next(task_row.get("schedule"))
         self._detach_from_queue_for_activation(
             task_id=task_id,
             detach=detach,
         )
+        # Yield the event loop until the current row reflects the expected
+        # sub-head linkage when chaining (prev=None, next=desired_next).
+        # Avoids relying on arbitrary sleeps while remaining low-latency.
+        if not detach and desired_next is not None:
+            for _ in range(5):  # a handful of yields should suffice
+                try:
+                    rows_after = self._filter_tasks(
+                        filter=f"task_id == {task_id}",
+                        limit=1,
+                    )
+                    if rows_after:
+                        sched_after = rows_after[0].get("schedule") or {}
+                        if (sched_after.get("prev_task") is None) and (
+                            sched_after.get("next_task") == desired_next
+                        ):
+                            break
+                except Exception:
+                    pass
+                await asyncio.sleep(0)
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
         handle = await ActiveTask.create(
@@ -2305,6 +2332,13 @@ class TaskScheduler(BaseTaskScheduler):
         Only rows actually traversed are loaded; the full table is not materialised.
         """
         return _ops_get_task_queue(self, task_id=task_id)
+
+    # Small helper for ActiveQueue to await linkage stabilisation
+    def _get_linkage_barrier(self, *, task_id: int):
+        try:
+            return self._linkage_barriers.get(int(task_id))
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------ #
     #  Pure neighbour selection helper                                    #

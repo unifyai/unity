@@ -168,6 +168,21 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     self._final_result = text
                     break
 
+                # Await linkage barrier from the scheduler to ensure neighbour
+                # writes are visible before advancing.
+                try:
+                    barrier = self._s._get_linkage_barrier(
+                        task_id=self._current_task_id,
+                    )
+                except Exception:
+                    barrier = None
+                if barrier is not None:
+                    try:
+                        # Wait briefly; if already set this returns immediately
+                        await asyncio.wait_for(barrier.wait(), timeout=1.0)
+                    except Exception:
+                        pass
+
                 # Find next runnable in the same queue (head->tail from current)
                 queue = self._s._get_task_queue(task_id=self._current_task_id)
                 next_tid = None
