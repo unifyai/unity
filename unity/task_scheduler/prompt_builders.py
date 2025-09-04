@@ -398,6 +398,7 @@ def build_execute_prompt(
     get_task_queue_fname = _tool_name(tools, "get_task_queue")
     update_task_queue_fname = _tool_name(tools, "update_task_queue")
     execute_by_id_fname = _tool_name(tools, "execute_by_id")
+    execute_isolated_by_id_fname = _tool_name(tools, "execute_isolated_by_id")
     create_task_fname = _tool_name(tools, "create_task")
     request_clar_fname = _tool_name(tools, "request_clarification")
     # Multi-queue helpers
@@ -438,14 +439,28 @@ def build_execute_prompt(
         f"   – To reorder within a queue, call `{reorder_queue_fname}(queue_id=None, new_order=[...])`. Do NOT set `start_at` directly; it is applied to the head automatically when appropriate.",
         f"   – After each successful edit, immediately call `{checkpoint_fname}(label='post-edit')` to allow reverting if the user changes their mind. If the user requests a revert, call `{revert_checkpoint_fname}(checkpoint_id=<latest id>)` or `{reinstate_task_fname}(task_id=<id>, allow_active=false)` depending on context.",
         f"   – If you did not capture the last checkpoint id, call `{latest_checkpoint_fname}()` to retrieve it.",
-        f"3) EXECUTE by calling `{execute_by_id_fname}(task_id=<head of the 'now' queue>)`. Do NOT modify `start_at` timestamps to force execution.",
+        (
+            f"3) EXECUTE by calling `{execute_by_id_fname}(task_id=<head of the 'now' queue>)`. "
+            "Do NOT modify `start_at` timestamps to force execution."
+        ),
+        (
+            f"   – If the user explicitly requests to run a task in isolation (detach it entirely from the queue), "
+            f"call `{execute_isolated_by_id_fname}(task_id=<id>)` instead."
+            if execute_isolated_by_id_fname
+            else ""
+        ),
         f"4) Do not write status fields directly; lifecycle is managed by the scheduler.",
         "",
         "Use the tools below, step-by-step, following these rules:",
         "",
         "A. If the request contains a *numeric task_id*:",
         f"   • **First** call `{ask_fname}` (or `{get_task_queue_fname}`) to confirm the task exists and learn the current order.",
-        f"   • Reorder explicitly with `{update_task_queue_fname}` if needed, then call `{execute_by_id_fname}` on the intended head.",
+        (
+            f"   • If the request says to run the task in isolation (detach it entirely), call `{execute_isolated_by_id_fname}(task_id=<id>)`."
+            if execute_isolated_by_id_fname
+            else ""
+        ),
+        f"   • Otherwise reorder explicitly with `{update_task_queue_fname}` if needed, then call `{execute_by_id_fname}` on the intended head.",
     ]
 
     if request_clar_fname:
