@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 from .types.reintegration_plan import ReintegrationPlan
+from .queue_engine import derive_status_after_queue_edit
 
 
 class ReintegrationManager:
@@ -91,7 +92,13 @@ class ReintegrationManager:
                 "Task currently has a trigger; remove the trigger before restoring its schedule/queue position.",
             )
 
-        queue_list = self._s._get_task_queue()
+        # Use queue_id from plan when present to choose the correct queue
+        qid = getattr(plan, "queue_id", None)
+        queue_list = (
+            self._s._get_queue(queue_id=qid)
+            if hasattr(self._s, "_get_queue")
+            else self._s._get_task_queue()
+        )
         queue_ids = [t.task_id for t in queue_list]
 
         final_prev, final_next = self._s._select_final_neighbours(
@@ -115,20 +122,24 @@ class ReintegrationManager:
             if _head_ts is not None:
                 cur_sched["start_at"] = _head_ts
 
-        desired_status = (
+        # Determine the desired lifecycle using the central helper
+        existing_status = (
             self._s._to_status(str(original_status))
             if original_status is not None
             else Status.queued
         )
+        desired_status = derive_status_after_queue_edit(
+            existing_status=existing_status,
+            is_head=(final_prev is None),
+            head_has_start_at=(cur_sched.get("start_at") is not None),
+        )
+        # Avoid conflicting primed states when another task is already primed
         if (
             desired_status == Status.primed
             and self._s._primed_task is not None
             and self._s._primed_task.get("task_id") != tid
         ):
             desired_status = Status.queued
-
-        if final_prev is None and cur_sched.get("start_at") is not None:
-            desired_status = Status.scheduled
 
         self._s._validate_scheduled_invariants(
             status=desired_status,

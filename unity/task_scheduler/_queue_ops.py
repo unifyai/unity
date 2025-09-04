@@ -217,6 +217,14 @@ def detach_from_queue_for_activation(
     # Always record a reintegration plan for precise restore on defer stop,
     # regardless of execution scope. This enables queue execution with later
     # reinstatement to the original position when requested.
+    # Capture current queue_id (if any) to target the correct queue on reinstatement
+    try:
+        queue_id = None
+        if isinstance(sched, dict):
+            queue_id = sched.get("queue_id")
+    except Exception:
+        queue_id = None
+
     plan = ReintegrationPlan(
         task_id=task_id,
         instance_id=task_row.get("instance_id"),
@@ -226,6 +234,7 @@ def detach_from_queue_for_activation(
         was_head=prev_tid is None,
         original_status=task_row.get("status"),
         head_start_at=head_start_at,
+        queue_id=queue_id,
     )
     # Store per-instance plan (single source of truth)
     key = (
