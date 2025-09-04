@@ -565,6 +565,7 @@ class TaskScheduler(BaseTaskScheduler):
         if detach:
             self._detach_from_queue_for_activation(
                 task_id=task_id,
+                detach=True,
             )
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
@@ -641,6 +642,7 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_down_q=clarification_down_q,
             activated_by=ActivatedBy.explicit,
             # Always use queue semantics – followers remain attached
+            isolate=False,
         )
         return ActiveQueue(
             self,
@@ -2178,10 +2180,12 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
+        detach: bool = True,
     ) -> None:
         _ops_detach_for_activation(
             self,
             task_id=task_id,
+            detach=detach,
         )
 
     def _attach_with_links(
