@@ -63,6 +63,7 @@ class PlanRuntime:
         self.path_context: List[str] = []
         self.call_stacks = defaultdict(list)
         self.frame_id_counter = 0
+        self.execution_mode: str = "fresh_start"
 
     async def checkpoint(self, label: str = ""):
         """
@@ -1214,11 +1215,15 @@ class HierarchicalPlan(BaseActiveTask):
         )
         self.action_log.append(f"STATE CHANGE: {old_state.name} -> {new_state.name}")
 
-    async def _initialize_and_run(self):
+    async def _initialize_and_run(
+        self,
+        mode: str = "fresh_start",
+    ):
         """
         Manages the entire lifecycle of the plan from initialization to completion.
         """
         token = current_run_id_var.set(self.run_id)
+        self.runtime.execution_mode = mode
         try:
             if self.goal:
                 if not self._is_complete:
@@ -1766,7 +1771,9 @@ class HierarchicalPlan(BaseActiveTask):
             self.execution_key_log.clear()
             self.interaction_stack.append([])
 
-            self._execution_task = asyncio.create_task(self._initialize_and_run())
+            self._execution_task = asyncio.create_task(
+                self._initialize_and_run(mode="replay_after_modification"),
+            )
             if self._state == _HierarchicalPlanState.PAUSED:
                 self.runtime.resume()
 
@@ -1853,7 +1860,9 @@ class HierarchicalPlan(BaseActiveTask):
             self.execution_key_log.clear()
             self.interaction_stack.append([])
 
-            self._execution_task = asyncio.create_task(self._initialize_and_run())
+            self._execution_task = asyncio.create_task(
+                self._initialize_and_run(mode="fresh_after_refactor"),
+            )
             return "Plan successfully refactored. Resuming execution with the new modular plan."
 
         elif decision.action == "explore_detached":
@@ -2686,7 +2695,8 @@ class HierarchicalActor(BaseActor):
                     plan.runtime.action_counter = 0
                     plan.runtime.cache_miss_counter = 0
 
-                    await self._ensure_precondition(plan, func_name)
+                    if plan.runtime.execution_mode != "replay_after_modification":
+                        await self._ensure_precondition(plan, func_name)
 
                     last_error_reason = ""
                     try:
