@@ -496,7 +496,19 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
     async def result(self):  # type: ignore[override]
         # Passthrough when the queue remains a true singleton at call time
         if self._should_passthrough():
-            return await self._current_handle.result()
+            ret = await self._current_handle.result()
+            # Ensure the queue-level handle reflects completion immediately after
+            # the inner handle resolves in passthrough mode.
+            try:
+                if not self._done_evt.is_set():
+                    # Prefer any final result the driver may have assembled; otherwise use ret
+                    if not self._final_result:
+                        self._final_result = ret
+                    self._done_evt.set()
+            except Exception:
+                # Defensive: never fail caller's result() due to bookkeeping
+                pass
+            return ret
 
         await self._done_evt.wait()
         # If the driver did not assemble a summary (e.g. early stop without any
