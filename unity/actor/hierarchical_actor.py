@@ -331,6 +331,29 @@ class SandboxMergeDecision(BaseModel):
     )
 
 
+class DeducedPrecondition(BaseModel):
+    """The necessary starting state for a plan, deduced by an LLM."""
+
+    url: str = Field(..., description="The required URL for the starting state.")
+    description: str = Field(
+        ...,
+        description="A brief visual description of what should be on the page to satisfy the precondition.",
+    )
+
+
+class RefactorDecision(BaseModel):
+    """The structured output from the refactoring LLM call."""
+
+    refactored_code: str = Field(
+        ...,
+        description="The complete, refactored Python code block.",
+    )
+    deduced_precondition: DeducedPrecondition = Field(
+        ...,
+        description="The necessary starting state for the refactored plan.",
+    )
+
+
 class PreconditionDecision(BaseModel):
     """A structured decision on a function's precondition."""
 
@@ -1815,33 +1838,72 @@ class HierarchicalPlan(BaseActiveTask):
                 "Refactor and generalize triggered. Proceeding to Phase 2 implementation.",
             )
 
-            main_plan_name = self._get_main_function_name() or "main_plan"
-            monolithic_code = self.function_source_map.get(
-                main_plan_name,
-                self.plan_source_code,
+            monolithic_code = (
+                "\n\n".join(
+                    self.clean_function_source_map.values(),
+                )
+                if self.clean_function_source_map
+                else ""
             )
-
             refactor_prompt = prompt_builders.build_refactor_prompt(
                 monolithic_code=monolithic_code,
                 generalization_request=decision.generalization_context,
+                action_log="\n".join(self.action_log),
                 tools=self.actor.tools,
             )
 
-            refactored_script = await llm_call(
-                self.plan_generation_client,
-                refactor_prompt,
-            )
-            clean_refactored_script = (
-                refactored_script.strip()
-                .replace("```python", "")
-                .replace("```", "")
-                .strip()
-            )
+            self.plan_generation_client.set_response_format(RefactorDecision)
+            try:
+                response_str = await llm_call(
+                    self.plan_generation_client,
+                    refactor_prompt,
+                )
+                refactor_decision = RefactorDecision.model_validate_json(response_str)
+            finally:
+                self.plan_generation_client.reset_response_format()
+
+            modification_reason = decision.reason
+            if self.goal:
+                new_goal = f"{self.goal}\n\nIMPORTANT UPDATE: The user has generalized the task with a new subject: '{modification_reason}'"
+                self.action_log.append(
+                    f"Updating plan goal to reflect generalization. New goal: '{new_goal}'",
+                )
+                self.goal = new_goal
+            else:
+                self.goal = f"Incrementally taught and generalized plan:\n- {modification_reason}"
+
+            try:
+                self.action_log.append(
+                    f"Proactively resetting state to match deduced precondition: {refactor_decision.deduced_precondition.description}",
+                )
+                current_url = await self.actor.action_provider.browser.get_current_url()
+                target_precondition = refactor_decision.deduced_precondition
+
+                if current_url != target_precondition.url:
+                    self.action_log.append(
+                        f"State deviation detected after refactoring. Current URL: '{current_url}', Required URL: '{target_precondition.url}'. Correcting.",
+                    )
+                    logger.debug(
+                        f"State deviation detected after refactoring. Current URL: '{current_url}', Required URL: '{target_precondition.url}'. Correcting.",
+                    )
+                    await self.actor.action_provider.browser_navigate(
+                        target_precondition.url,
+                    )
+
+                #TODO: add more advanced course correction that involves more than just URL navigation
+
+            except Exception as e:
+                self.action_log.append(
+                    f"WARNING: Proactive course correction for refactor failed: {e}",
+                )
+                logger.warning(
+                    f"Proactive course correction for refactor failed: {e}",
+                    exc_info=True,
+                )
 
             self.action_log.append("Replacing old plan with newly refactored version.")
-
             self.plan_source_code = self.actor._sanitize_code(
-                clean_refactored_script,
+                refactor_decision.refactored_code,
                 self,
             )
             self.actor._load_plan_module(self)
@@ -1877,7 +1939,7 @@ class HierarchicalPlan(BaseActiveTask):
             self.call_stack.clear()
             self.runtime.path_context.clear()
 
-            self.replay_keys = list(self.execution_key_log)
+            self.replay_keys.clear()
             self.execution_key_log.clear()
             self.interaction_stack.append([])
 
