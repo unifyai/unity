@@ -3376,9 +3376,7 @@ class HierarchicalActor(BaseActor):
             if "failed_interactions" in kwargs and kwargs["failed_interactions"]:
                 failed_interactions_trace = []
                 for interaction in kwargs["failed_interactions"]:
-                    if (
-                        len(interaction) > 3 and interaction[3]
-                    ):
+                    if len(interaction) > 3 and interaction[3]:
                         action_summary = interaction[1]
                         magnitude_logs = interaction[3]
                         for log_line in magnitude_logs:
