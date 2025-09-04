@@ -1656,6 +1656,7 @@ class HierarchicalPlan(BaseActiveTask):
                     call_stack=self.call_stack,
                     action_log=self.action_log[-10:],
                     goal=self.goal,
+                    tools=self.actor.tools,
                 )
 
                 self.modification_client.set_response_format(InterjectionDecision)
