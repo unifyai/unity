@@ -63,7 +63,7 @@ class LegacyBrowserBackend(BrowserBackend):
         if not self.controller.is_alive():
             self.controller.start()
 
-    async def act(self, instruction: str) -> str:
+    async def act(self, instruction: str) -> str | BrowserAgentError:
         """
         Performs a **single, high-level action** in the browser.
 
@@ -72,6 +72,10 @@ class LegacyBrowserBackend(BrowserBackend):
         Args:
             instruction (str): A single, natural-language command. Describe the element to interact with
                             based on its visible properties.
+
+        Return value:
+            str: A single string 'done' if the action was successful.
+            BrowserAgentError: If the action failed, the error message explaining the reason for the failure.
 
         Examples:
             # ✅ Good Example (Using Visible Text)
