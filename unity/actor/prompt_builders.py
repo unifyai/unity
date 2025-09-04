@@ -2415,7 +2415,6 @@ def build_interjection_prompt(
         else "No prior conversation."
     )
 
-
     return textwrap.dedent(
         f"""
     You are an expert Python programmer and a master strategist responsible for steering a live-running automated plan. A user has interjected with a new instruction while the plan was executing.
@@ -2697,6 +2696,7 @@ def build_sandbox_merge_prompt(
 def build_refactor_prompt(
     monolithic_code: str,
     generalization_request: str,
+    action_log: str,
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -2706,6 +2706,7 @@ def build_refactor_prompt(
     Args:
         monolithic_code: The source code of the current single-function plan.
         generalization_request: The user's request to generalize the logic.
+        action_log: The full execution trace for deducing the precondition.
         tools: The available tools for the actor.
 
     Returns:
@@ -2721,11 +2722,18 @@ def build_refactor_prompt(
 
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer specializing in code refactoring and generalization.
-        Your task is to refactor the provided monolithic Python function into a set of smaller, logical, and reusable `async def` helper functions.
+        You are an expert Python programmer and a strategic analyst.
+        Your task is to perform two critical actions:
+        1. Refactor the provided monolithic Python script into a set of reusable helper functions.
+        2. Analyze the complete execution `action_log` to determine the correct starting state (precondition) for the entire process.
 
         **User's Generalization Request:**
         "{generalization_request}"
+
+        **Full Execution Action Log (Source of Truth for Precondition):**
+        ```
+        {action_log}
+        ```
 
         **Current Monolithic Code to Refactor:**
         ```python
@@ -2733,14 +2741,14 @@ def build_refactor_prompt(
         ```
 
         **Your Task & Instructions:**
-        1.  **Identify the Core Logic:** Analyze the user's request and the existing code to identify the central, repeated sequence of actions (e.g., the steps to process one item).
-        2.  **Create a Parameterized Function:** Encapsulate this core logic within a new, parameterized helper function. For example, `async def process_item(item_name: str)`.
-        3.  **Rewrite `main_plan`:** Rewrite the `main_plan` to be a clean coordinator. It should preserve the logic for the original subject that was taught but should now call your new helper functions, incorporating the user's generalization request.
-        4.  **Follow All Rules:** Your final output must adhere to all the established rules for plan creation, including docstrings, async usage, and placing imports inside functions.
+        1.  **Analyze the Action Log:** Read the entire log to understand the sequence of events. Identify the very first navigation or action that set up the initial state for the process.
+        2.  **Determine Precondition:** Based on your analysis, define the `deduced_precondition`. This should be the state the browser must be in before the refactored plan can run (e.g., on the homepage at a specific URL, with a clear visual description).
+        3.  **Refactor the Code:** Rewrite the monolithic code into a modular script with a `main_plan` and helper functions. The new `main_plan` should ONLY execute the logic for the new generalization request.
+        4.  **Format Output:** Your response MUST be a JSON object that strictly adheres to the `RefactorDecision` schema, containing both the `refactored_code` and the `deduced_precondition`.
 
         {rules_and_examples}
 
-        Begin your response now. Your response must be a single, complete Python code block containing the fully refactored script.
+        Begin your response now. Your response must start immediately with the JSON object.
         """,
     )
 
