@@ -785,19 +785,12 @@ class _SteerableToolHandleProxy:
                 args,
                 kwargs,
             )
-            self._plan.execution_key_log.append(
-                cache_key,
-            )
-            if self._plan.replay_keys:
-                lookup_key = self._plan.replay_keys.pop(0)
-            else:
-                lookup_key = cache_key
 
-            if lookup_key in self._plan.idempotency_cache:
+            if cache_key in self._plan.idempotency_cache:
                 return handle_method_logic(
                     call_repr,
                     True,
-                    self._plan.idempotency_cache[lookup_key],
+                    self._plan.idempotency_cache[cache_key],
                 )
 
             self._plan.runtime.cache_miss_counter += 1
@@ -824,20 +817,12 @@ class _SteerableToolHandleProxy:
                 args,
                 kwargs,
             )
-            self._plan.execution_key_log.append(
-                cache_key,
-            )
 
-            if self._plan.replay_keys:
-                lookup_key = self._plan.replay_keys.pop(0)
-            else:
-                lookup_key = cache_key
-
-            if lookup_key in self._plan.idempotency_cache:
+            if cache_key in self._plan.idempotency_cache:
                 return handle_method_logic(
                     call_repr,
                     True,
-                    self._plan.idempotency_cache[lookup_key],
+                    self._plan.idempotency_cache[cache_key],
                 )
 
             self._plan.runtime.cache_miss_counter += 1
@@ -907,18 +892,9 @@ class _ActionProviderProxy:
                 args,
                 kwargs,
             )
-            self._plan.execution_key_log.append(
-                cache_key,
-            )
 
-            if self._plan.replay_keys:
-                lookup_key = self._plan.replay_keys.pop(0)
-                logger.debug(f"found key during replay: {lookup_key}")
-            else:
-                lookup_key = cache_key
-
-            if lookup_key in self._plan.idempotency_cache:
-                cached_data = self._plan.idempotency_cache[lookup_key]
+            if cache_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[cache_key]
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
 
@@ -928,7 +904,7 @@ class _ActionProviderProxy:
                 self._plan.action_log.append(
                     f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"{diag_prefix} CACHE HIT for key: {lookup_key}")
+                logger.debug(f"{diag_prefix} CACHE HIT for key: {cache_key}")
                 interactions_log.append(cached_interaction)
 
                 if (
@@ -1033,23 +1009,15 @@ class _ActionProviderProxy:
                 args,
                 kwargs,
             )
-            self._plan.execution_key_log.append(
-                cache_key,
-            )
 
-            if self._plan.replay_keys:
-                lookup_key = self._plan.replay_keys.pop(0)
-            else:
-                lookup_key = cache_key
-
-            if lookup_key in self._plan.idempotency_cache:
-                cached_data = self._plan.idempotency_cache[lookup_key]
+            if cache_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[cache_key]
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
                 self._plan.action_log.append(
                     f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"{diag_prefix} CACHE HIT for key: {lookup_key}")
+                logger.debug(f"{diag_prefix} CACHE HIT for key: {cache_key}")
                 interactions_log.append(cached_interaction)
 
                 if (
@@ -1142,8 +1110,6 @@ class HierarchicalPlan(BaseActiveTask):
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
 
-        self.execution_key_log: List[tuple] = []
-        self.replay_keys: List[tuple] = []
         self.idempotency_cache: Dict[tuple, Any] = {}
         self.live_handles: Dict[str, SteerableToolHandle] = {}
         self.runtime = PlanRuntime()
@@ -1780,8 +1746,6 @@ class HierarchicalPlan(BaseActiveTask):
             self.call_stack.clear()
             self.runtime.path_context.clear()
 
-            self.replay_keys.clear()
-            self.execution_key_log.clear()
             self.interaction_stack.append([])
 
             self._execution_task = asyncio.create_task(
@@ -1808,8 +1772,6 @@ class HierarchicalPlan(BaseActiveTask):
 
             self.goal = decision.new_goal
             self.plan_source_code = None
-            self.execution_key_log.clear()
-            self.replay_keys.clear()
             self.idempotency_cache.clear()
             self.live_handles.clear()
             self.runtime = PlanRuntime()
@@ -1914,8 +1876,6 @@ class HierarchicalPlan(BaseActiveTask):
             self.call_stack.clear()
             self.runtime.path_context.clear()
 
-            self.replay_keys.clear()
-            self.execution_key_log.clear()
             self.interaction_stack.append([])
 
             self._execution_task = asyncio.create_task(
@@ -2751,7 +2711,6 @@ class HierarchicalActor(BaseActor):
                             plan.runtime.action_counter = 0
                             if i > 0:
                                 local_interactions.clear()
-                            log_snapshot_len = len(plan.execution_key_log)
                             try:
                                 captured_run_id = current_run_id_var.get()
 
@@ -2844,11 +2803,6 @@ class HierarchicalActor(BaseActor):
                                     f"Function '{func_name}' failed with a runtime error on attempt {i+1}: {e}",
                                     exc_info=True,
                                 )
-                                # --- ADD: Truncate the log to remove keys from the failed attempt ---
-                                plan.execution_key_log = plan.execution_key_log[
-                                    :log_snapshot_len
-                                ]
-                                # --- END ADD ---
                                 last_error_reason = traceback.format_exc()
                                 existing_code = plan.clean_function_source_map.get(
                                     func_name,
