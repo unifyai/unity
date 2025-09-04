@@ -358,7 +358,8 @@ def build_execute_prompt(
 
     # Resolve names dynamically
     ask_fname = _tool_name(tools, "ask")
-    update_fname = None  # update is intentionally NOT exposed to execute
+    get_task_queue_fname = _tool_name(tools, "get_task_queue")
+    update_task_queue_fname = _tool_name(tools, "update_task_queue")
     execute_by_id_fname = _tool_name(tools, "execute_by_id")
     create_task_fname = _tool_name(tools, "create_task")
     request_clar_fname = _tool_name(tools, "request_clarification")
@@ -366,6 +367,8 @@ def build_execute_prompt(
     _require_tools(
         {
             "ask": ask_fname,
+            "get_task_queue": get_task_queue_fname,
+            "update_task_queue": update_task_queue_fname,
             "execute_by_id": execute_by_id_fname,
             "create_task": create_task_fname,
         },
@@ -373,21 +376,26 @@ def build_execute_prompt(
     )
 
     lines: list[str] = [
-        "You are an assistant that **starts tasks on demand**."
-        "  The task referred to in the user's request may or may not already",
-        "  exist in the task list.",
+        "You are an assistant that **starts tasks on demand**.",
+        "The task referred to in the user's request may or may not already exist in the task list.",
         "",
         "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
         "Do not ask the user questions in your final response. If no clarification tool is available in this outer loop, make a best‑guess attempt using sensible defaults and state your assumptions; if an inner tool asks questions, inform it that no clarification channel exists and provide defaults/best guesses.",
-        "\nCRITICAL EXECUTION RULES (must follow):",
-        f"• Never attempt to modify `start_at`, `prev_task`/`next_task`, or any scheduling/ordering purely to begin execution. Execution scope (isolate vs queue) is handled by the scheduler when you call `{execute_by_id_fname}`.",
-        f"• When the user implies 'start all/these now' or a sequence (e.g., 'do them in order'), select the queue head (the task with `prev_task == None`) and call `{execute_by_id_fname}`; do not rewrite schedules.",
-        f"• A future `start_at` MUST NOT be rewritten to 'now' during execution. Simply call `{execute_by_id_fname}` — the scheduler starts immediately and records activation without changing the task definition.",
+        "\nCRITICAL EXECUTION WORKFLOW (must follow):",
+        f"1) Inspect the current queue order first: `{get_task_queue_fname}()`.",
+        f"2) If you need a specific execution subset or order, produce a full new order and call `{update_task_queue_fname}(original=[...], new=[...])`. This is how you express 'isolate' (subset) vs 'queue' (whole sequence) behaviour.",
+        f"   – Examples:",
+        f"     • Run just task X → move only X to the head and keep others after it in their original order.",
+        f"     • Run the first two now → reorder so the desired two tasks are at the head in the right order; leave the rest behind.",
+        f"     • Run all in order → ensure the queue head is the intended first task (reorder if necessary).",
+        f"3) Start execution by calling `{execute_by_id_fname}(task_id=<head>)`. Do NOT modify `start_at` timestamps to force execution.",
+        f"4) Do not write status fields directly; lifecycle is managed by the scheduler.",
+        "",
         "Use the tools below, step-by-step, following these rules:",
         "",
         "A. If the request contains a *numeric task_id*:",
-        f"   • **First** call `{ask_fname}` (or another suitable read-only tool) to confirm the task exists.",
-        f"   • If exactly one matching task is found → call `{execute_by_id_fname}`. When appropriate, set its `execution_scope` parameter to 'isolate' or 'queue' based on the user's intent and the observed queue structure (default: 'auto').",
+        f"   • **First** call `{ask_fname}` (or `{get_task_queue_fname}`) to confirm the task exists and learn the current order.",
+        f"   • Reorder explicitly with `{update_task_queue_fname}` if needed, then call `{execute_by_id_fname}` on the intended head.",
     ]
 
     if request_clar_fname:
@@ -409,9 +417,9 @@ def build_execute_prompt(
             "B. If **no numeric id** is given:",
             f"   1. Call `{ask_fname}` with the free-form description to search for matching task(s).",
             "   2. Based on the result:",
-            f"      • **Exactly one** clear match → call `{execute_by_id_fname}` with that id (and set `execution_scope` = 'isolate' | 'queue' when clear; else omit to use 'auto').",
-            f"      • **Multiple tasks that form a queue** and the user wants to start them in order → pick the queue head (task where `prev_task` is None) and call `{execute_by_id_fname}(task_id=<head>, execution_scope='queue')`. Do not reorder or set `start_at`.",
-            f"      • **No match** and it is obvious we should create the task → call `{create_task_fname}(name=<short title>, description=<free‑form user request>)`, then call `{ask_fname}` again to retrieve the new id, then `{execute_by_id_fname}`.",
+            f"      • **Exactly one** clear match → if a specific subset/order is intended, reorder with `{update_task_queue_fname}`; then `{execute_by_id_fname}` with that id (as head).",
+            f"      • **Multiple tasks forming a sequence** and the user wants them in order → reorder explicitly (if needed) so the intended head is first; then `{execute_by_id_fname}(task_id=<head>)`.",
+            f"      • **No match** and it is obvious we should create the task → call `{create_task_fname}(name=<short title>, description=<free‑form user request>)`, then call `{ask_fname}` again to retrieve the new id, optionally reorder, then `{execute_by_id_fname}`.",
             "",
             "   Naming guidance for creation:",
             "   • Derive a concise `name` by trimming punctuation and capitalising key words from the user's request.",
@@ -442,7 +450,7 @@ def build_execute_prompt(
     lines.extend(
         [
             "",
-            f"C. The Tasks list is updated implicitly by the system. Do NOT attempt to tweak schedules/ordering/start_at to start – call `{execute_by_id_fname}`. If a new task is clearly required, use `{create_task_fname}` (name + description only), then call `{ask_fname}` to find its id and `{execute_by_id_fname}` to start.",
+            f"C. The Tasks list is updated implicitly by the system. To control execution scope, use `{get_task_queue_fname}` and `{update_task_queue_fname}` explicitly. Do NOT write status fields or override `start_at` to force execution. If a new task is clearly required, use `{create_task_fname}` (name + description only), then call `{ask_fname}` to find its id and `{execute_by_id_fname}` to start.",
             "",
             "Stopping semantics (required):",
             "--------------------------------",

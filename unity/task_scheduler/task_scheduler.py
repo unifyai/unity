@@ -436,7 +436,6 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-        execution_scope: Optional[Literal["isolate", "queue"]] = None,
     ) -> SteerableToolHandle:
         freeform_text: str = text
 
@@ -457,37 +456,12 @@ class TaskScheduler(BaseTaskScheduler):
                 "A task is marked as active, but no active handle is present – reconcile state before starting another task.",
             )
 
-        # Fast path: numeric task_id provided → execute directly after LLM scope routing
+        # Fast path: numeric task_id provided → start at that id using queue semantics
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
-                scope = (
-                    execution_scope
-                    if execution_scope is not None
-                    else await self._decide_execution_scope(
-                        request_text=freeform_text,
-                        parent_chat_context=parent_chat_context,
-                    )
-                )
-                if scope == "queue":
-                    return await self._execute_queue_internal(
-                        task_id=int(stripped),
-                        parent_chat_context=parent_chat_context,
-                        clarification_up_q=clarification_up_q,
-                        clarification_down_q=clarification_down_q,
-                    )
-                first = await self._execute_internal(
+                return await self._execute_queue_internal(
                     task_id=int(stripped),
-                    parent_chat_context=parent_chat_context,
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                    activated_by=ActivatedBy.explicit,
-                    execution_scope="isolate",
-                )
-                return ActiveQueue(
-                    self,
-                    first_task_id=int(stripped),
-                    first_handle=first,
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
                     clarification_down_q=clarification_down_q,
@@ -496,13 +470,12 @@ class TaskScheduler(BaseTaskScheduler):
                 # Fall back to the outer loop (will ask/clarify/create)
                 pass
 
-        # Start LLM-driven outer loop which will resolve id and scope, then adopt the inner handle.
+        # Start LLM-driven outer loop which will resolve the task id and adopt the queue handle.
         return self._start_execute_loop(
             freeform_text=freeform_text,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
-            execution_scope=execution_scope,
         )
 
     # ------------------------------------------------------------------ #
@@ -517,7 +490,6 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         activated_by: Optional[ActivatedBy] = None,
-        execution_scope: Literal["isolate", "queue"] = "isolate",
         detach: bool = True,
     ) -> SteerableToolHandle:
         """
@@ -573,15 +545,12 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] in ("completed", "cancelled", "failed", "active"):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
-        # Adjust queue linkages based on explicit activation scope.
-        # For queue execution, only the initial queue head should be detached
-        # from its predecessor. Followers started as part of the same queue
-        # must retain their prev/next pointers so the queue structure remains
-        # intact in storage (tests assert this behaviour).
+        # Adjust queue linkages for activation.
+        # We always use queue semantics: only the selected head (if applicable)
+        # is detached from any predecessor; followers remain linked.
         if detach:
             self._detach_from_queue_for_activation(
                 task_id=task_id,
-                execution_scope=execution_scope,
             )
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
@@ -657,7 +626,7 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             activated_by=ActivatedBy.explicit,
-            execution_scope="queue",
+            # Always use queue semantics – followers remain attached
         )
         return ActiveQueue(
             self,
@@ -678,7 +647,6 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        execution_scope: Optional[Literal["isolate", "queue"]] = None,
     ) -> SteerableToolHandle:
         """Compose tools and prompt, then start the execute reasoning loop."""
         client = self._new_llm_client("gpt-5@openai")
@@ -698,64 +666,22 @@ class TaskScheduler(BaseTaskScheduler):
         async def _execute_by_id(
             *,
             task_id: int,
-            execution_scope: "Literal['auto','isolate','queue']" = "auto",
         ) -> SteerableToolHandle:  # type: ignore[valid-type]
-            """Start the task with *task_id*, adopting inner handle (isolate or queue).
-
-            Parameters
-            ----------
-            task_id : int
-                Identifier of the task to start.
-            execution_scope : Literal['auto','isolate','queue'], default "auto"
-                Routing hint selected by the LLM after inspecting queue context with `ask`:
-                - 'queue': start and keep followers attached (sequence runs in order)
-                - 'isolate': start only this task; detach followers
-                - 'auto': delegate to the scheduler's router based on the request text and context
+            """Start the task with *task_id* and adopt the queue handle.
 
             Behavioural rules
             -----------------
-            - Never modify scheduling/ordering or `start_at` to begin execution. Scope selection
-              dictates activation behaviour; schema remains unchanged.
-            - If the user wants the whole sequence now, prefer calling this on the queue head
-              (where `prev_task` is None) with execution_scope='queue'.
+            - Never modify scheduling/ordering or `start_at` to begin execution.
+            - If the user wants the whole sequence now, reorder the queue explicitly first
+              (see `_update_task_queue`) so the desired subset is at the head, then call this.
             """
 
-            # Decide execution scope strictly via LLM when not provided
-            if execution_scope in ("isolate", "queue"):
-                scope = execution_scope
-            else:
-                scope = (
-                    execution_scope
-                    if execution_scope in ("isolate", "queue")
-                    else await self._decide_execution_scope(
-                        request_text=freeform_text,
-                        parent_chat_context=parent_chat_context,
-                    )
-                )
-            if scope == "queue":
-                handle = await self._execute_queue_internal(
-                    task_id=task_id,
-                    parent_chat_context=parent_chat_context,
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                )
-            else:
-                first = await self._execute_internal(
-                    task_id=task_id,
-                    parent_chat_context=parent_chat_context,
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                    activated_by=ActivatedBy.explicit,
-                    execution_scope="isolate",
-                )
-                handle = ActiveQueue(
-                    self,
-                    first_task_id=task_id,
-                    first_handle=first,
-                    parent_chat_context=parent_chat_context,
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                )
+            handle = await self._execute_queue_internal(
+                task_id=task_id,
+                parent_chat_context=parent_chat_context,
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
+            )
             # 💡 signal pass-through so the outer loop adopts this handle
             setattr(handle, "__passthrough__", True)
             return handle
@@ -769,8 +695,14 @@ class TaskScheduler(BaseTaskScheduler):
             return await rc(question)
 
         tools = methods_to_tool_dict(
+            # Read-only helpers
             self.ask,
+            self._get_task_queue,
+            # Queue mutation primitive (explicit reorder)
+            self._update_task_queue,
+            # Start execution
             _execute_by_id,
+            # Creation (name + description only)
             create_task,
             include_class_name=False,
         )
@@ -800,76 +732,6 @@ class TaskScheduler(BaseTaskScheduler):
     # ------------------------------------------------------------------ #
     #  Scope classification helper (LLM-routed)                           #
     # ------------------------------------------------------------------ #
-    async def _decide_execution_scope(
-        self,
-        *,
-        request_text: str,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-    ) -> Literal["isolate", "queue"]:
-        """Use an LLM router to decide execution scope: "isolate" vs "queue"."""
-        try:
-            client = self._new_llm_client("gpt-5@openai")
-            system = (
-                "You are a router that selects an execution scope for starting a queued task.\n"
-                "Choices:\n"
-                "- isolate: Start only the selected task now, detach its followers. The next task becomes the new head and inherits any queue-level start_at timestamp (becomes scheduled).\n"
-                "- queue: Start the selected task now and KEEP the follower queue attached behind it. The started task keeps the queue-level start_at; the immediate successor MUST NOT carry start_at.\n"
-                "Guidelines:\n"
-                "- Phrases like 'do them all now', 'do the whole set/sequence now', lists of multiple tasks to run now => queue.\n"
-                "- Phrases like 'just this one now', 'leave the rest for later/Monday' => isolate.\n"
-                "- If ambiguous, prefer queue when the user implies batch execution; otherwise isolate.\n"
-                'Return ONLY JSON with rationale first: {"rationale": <short string>, "execution_scope": "isolate|queue"}\n'
-                "Be concise and deterministic."
-            )
-            client.set_system_message(system)
-
-            # Build a compact, recent-first transcript for added context
-            def _format_ctx(
-                ctx: Optional[List[Dict[str, Any]]],
-                limit_chars: int = 2000,
-            ) -> str:
-                try:
-                    if not ctx:
-                        return "(no prior context)"
-                    lines: List[str] = []
-                    total = 0
-                    for msg in reversed(ctx[-20:]):
-                        role = str(msg.get("role", "")).strip() or "user"
-                        content = str(msg.get("content", "")).strip()
-                        line = f"{role}: {content}"
-                        if total + len(line) > limit_chars:
-                            break
-                        lines.append(line)
-                        total += len(line)
-                    return "\n".join(reversed(lines)) if lines else "(no prior context)"
-                except Exception:
-                    return "(no prior context)"
-
-            ctx_block = _format_ctx(parent_chat_context)
-            user = (
-                "Recent conversation (most recent last):\n"
-                f"{ctx_block}\n\n"
-                "User request (free-form):\n"
-                f"{(request_text or '').strip()}"
-            )
-            raw = await client.generate(user)
-            import json as _json
-
-            scope = "isolate"
-            try:
-                data = _json.loads(raw)
-                token = str(data.get("execution_scope", "")).strip().lower()
-                if token in {"isolate", "queue"}:
-                    scope = token  # type: ignore[assignment]
-            except Exception:
-                # attempt to extract simple token
-                low = (raw or "").lower()
-                if '"queue"' in low or 'execution_scope": "queue"' in low:
-                    scope = "queue"
-            return cast(Literal["isolate", "queue"], scope)
-        except Exception:
-            # Conservative fallback
-            return "isolate"
 
     #  Per-instance helpers
 
@@ -1502,12 +1364,10 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
-        execution_scope: Literal["isolate", "queue"],
     ) -> None:
         _ops_detach_for_activation(
             self,
             task_id=task_id,
-            execution_scope=execution_scope,
         )
 
     def _attach_with_links(

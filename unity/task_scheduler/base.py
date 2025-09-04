@@ -226,26 +226,21 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
            for pass-through** so that the outer handle is upgraded transparently
            once the real execution begins.
 
-        Chain vs isolate (rules)
-        ------------------------
-        - The `execute` flow decides between "isolate" and "queue" execution.
-          Phrases like "start them all now" or an explicit ordered sequence
-          imply queue (start the head and keep followers attached). Requests
-          like "just this one now" imply isolate.
-        - Never rewrite a task's `start_at` or queue links (prev/next) purely
-          to begin execution. Starting is an activation event, not a schema
-          edit. The scheduler handles immediate start without mutating fields.
-        - When the user wants to run a queue, select the queue head (where
-          `prev_task` is None) and execute that id; do not reorder via `update`.
+        Execution scope via explicit reordering
+        --------------------------------------
+        The execute flow no longer uses implicit routing modes. Instead, it
+        exposes queue inspection and an explicit reorder primitive so the agent
+        can express desired behaviour directly:
+        - Use `get_task_queue()` to read the current order.
+        - Use `update_task_queue(original=[...], new=[...])` to place the desired
+          subset/order at the head (e.g., "just X", "first two now", or "all").
+        - Then call `execute_by_id(task_id=<head>)` to start.
 
-        Tool behaviour
-        --------------
-        The execute toolset exposes two tools:
+        Never rewrite a task's `start_at` purely to begin execution, and do not
+        write lifecycle `status` fields directly.
         - `ask` – to discover the relevant task and queue context
-        - `execute_by_id(task_id, execution_scope='auto'|'isolate'|'queue')` – to start
-          the task, with an optional routing hint. Prefer setting `execution_scope`
-          after inspecting queue context with `ask`. If omitted, the scheduler
-          will select automatically.
+        - `get_task_queue` / `update_task_queue` – to explicitly shape the queue
+        - `execute_by_id(task_id)` – to start the head after any necessary reordering
 
         Implementations MUST return a *live* steerable handle whose public
         methods (pause, resume, interject, stop, result, …) continue to work
