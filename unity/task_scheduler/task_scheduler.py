@@ -559,14 +559,12 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] in ("completed", "cancelled", "failed", "active"):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
-        # Adjust queue linkages for activation.
-        # We always use queue semantics: only the selected head (if applicable)
-        # is detached from any predecessor; followers remain linked.
-        if detach:
-            self._detach_from_queue_for_activation(
-                task_id=task_id,
-                detach=True,
-            )
+        # Adjust queue linkages for activation (and record reintegration plan).
+        # detach=True → isolation semantics; detach=False → chain semantics.
+        self._detach_from_queue_for_activation(
+            task_id=task_id,
+            detach=detach,
+        )
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
         handle = await ActiveTask.create(
