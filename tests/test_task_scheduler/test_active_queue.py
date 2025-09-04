@@ -613,3 +613,102 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
         r.get("status") not in ("completed", "cancelled", "failed", "active")
         for r in rows_c
     )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
+    """
+    For a true singleton queue (exactly one task at creation), the queue handle
+    should pass through interject, ask, and result directly to the inner task
+    handle. Prior to this change, ActiveQueue always applied multi-task
+    behaviour, which would have added a CHAIN preamble to ask() and returned a
+    multi-task summary from result().
+    """
+
+    # Make the actor step-based so ask + interject complete the task
+    class _Step2(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 2
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _Step2, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Step2,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    # Build a queue with exactly one task
+    (solo_id,) = tuple(await _make_ordered_queue(ts, ["Solo"]))  # type: ignore[misc]
+
+    # Route to queue so we receive an ActiveQueue handle
+    async def force_queue(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "queue"
+
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_queue, raising=True)
+
+    # Spy: capture question text and interjection count; ensure ask still consumes a step
+    captured_questions: list[str] = []
+    interject_calls = {"count": 0}
+
+    async def spy_actor_ask(self, question: str):  # type: ignore[override]
+        captured_questions.append(question)
+        try:
+            self.simulate_step()
+        except Exception:
+            pass
+        return "OK"
+
+    async def spy_actor_interject(self, instruction: str):  # type: ignore[override]
+        interject_calls["count"] += 1
+        try:
+            self.simulate_step()
+        except Exception:
+            pass
+        return None
+
+    monkeypatch.setattr(SimulatedActorHandle, "ask", spy_actor_ask, raising=True)
+    monkeypatch.setattr(
+        SimulatedActorHandle,
+        "interject",
+        spy_actor_interject,
+        raising=True,
+    )
+
+    # Start execution of the singleton queue
+    h = await ts.execute(text=str(solo_id))
+
+    # Wait until a task is active to avoid races
+    async def _wait_until_active(max_iters: int = 500):
+        for _ in range(max_iters):
+            try:
+                rows = ts._filter_tasks(filter="status == 'active'", limit=1)
+            except Exception:
+                rows = []
+            if rows:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("No active task detected in time")
+
+    await _wait_until_active()
+
+    # Pass-through ask: should be the raw user question (no CHAIN preamble)
+    ask_handle = await h.ask("What are you doing?")
+    res = await ask_handle.result()
+    assert res == "OK"
+    assert captured_questions, "expected inner ask to be invoked"
+    assert captured_questions[-1] == "What are you doing?"
+    assert "CHAIN CONTEXT" not in captured_questions[-1]
+
+    # Pass-through interject increments inner count
+    await h.interject("Proceed")
+    assert interject_calls["count"] == 1
+
+    # ask + interject complete the two steps; result should NOT be a multi-task summary
+    final_res = await h.result()
+    assert isinstance(final_res, str)
+    assert "Completed the following tasks:" not in final_res
+    assert "Solo" in final_res
