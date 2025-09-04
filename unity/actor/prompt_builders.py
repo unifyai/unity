@@ -2398,8 +2398,13 @@ def build_interjection_prompt(
     call_stack: list[str],
     action_log: list[str],
     goal: str,
+    *,
+    tools: Dict[str, Callable],
 ) -> str:
     """Builds the system prompt for the Interjection Handler LLM."""
+    tool_reference = _build_tool_signatures(tools)
+    handle_apis = _build_handle_apis(tools)
+
     call_stack_str = (
         " -> ".join(call_stack) if call_stack else "Not inside any function."
     )
@@ -2442,13 +2447,27 @@ def build_interjection_prompt(
     {recent_actions}
     ---
 
+    ---
+    ### Tools Reference
+    You have access to a global `action_provider` object with these methods. You must call them with the correct arguments as specified here.
+    ```json
+    {tool_reference}
+    ```
+
+    ---
+    ### Handle APIs
+    Some tools return "handle" objects for ongoing interaction. Available methods:
+
+    {handle_apis}
+
+
     ### Your Task: Follow This Decision Tree and Generate Patches
 
     **1. Analyze Intent:** First, determine the user's primary intent based on the decision tree below.
 
     **2. Perform Global Code Analysis:** Once you've chosen `modify_task` or `refactor_and_generalize`, you must act like an expert developer.
     - **Read the ENTIRE `plan_source_code`**.
-    - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstring of `main_plan`.
+    - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstrings.
     - **Generate Patches:** For every function that needs to be changed, create a `FunctionPatch` object containing its full, updated source code.
 
     ---
@@ -2503,13 +2522,13 @@ def build_interjection_prompt(
     }}
     ```
 
-    **Example 3: A Simple "Teaching Session" Step**
-    - **Context:** Teaching session is paused, awaiting instructions. User says, "Navigate to LinkedIn.com".
+    **Example 3: Adding a New Navigation Step**
+    - **Context:** Plan is paused, awaiting instructions. User says, "Navigate to LinkedIn.com".
     - **Analysis:** This is a new step. It should be appended to the end of the `main_plan` body.
     ```json
     {{
         "action": "modify_task",
-        "reason": "User wants to navigate to LinkedIn.com as the next step in the teaching session.",
+        "reason": "User wants to navigate to LinkedIn.com as the next step.",
         "patches": [
             {{
                 "function_name": "main_plan",
@@ -2532,7 +2551,7 @@ def build_interjection_prompt(
     ```json
     {{
         "action": "complete_task",
-        "reason": "User has indicated that the teaching session is finished and the plan should now execute to completion."
+        "reason": "User has indicated that the plan is finished and should now execute to completion."
     }}
     ```
     """,
