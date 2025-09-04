@@ -243,7 +243,8 @@ async def test_execute_invokes_ask_when_id_missing(monkeypatch):
 
     description = "prepare the monthly analytics dashboard."
 
-    actor = SimulatedActor(steps=0)
+    # Keep the activated task in-flight so the queue does not advance before assertions.
+    actor = SimulatedActor(steps=1)
     ts = TaskScheduler(actor=actor)
 
     # Seed one queued task (the one we'll start)
@@ -284,7 +285,9 @@ async def test_execute_creates_new_task_and_executes(monkeypatch):
 
     description = "Organise annual security audit report."
 
-    actor = SimulatedActor(steps=0)
+    # Use a short duration so activation doesn't immediately advance the queue
+    # before we can assert on linkage semantics.
+    actor = SimulatedActor(duration=0.5)
     ts = TaskScheduler(actor=actor)
 
     # ---- spy on _create_task -----------------------------------------------
@@ -334,7 +337,7 @@ async def test_execute_requests_clarification_for_unknown_id(monkeypatch):
     internal `request_clarification` helper (i.e. push a question onto the
     clarification_up_q)."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=1)
     ts = TaskScheduler(actor=actor)
 
     # Provide queues so the tool can ask for clarification.
@@ -443,7 +446,7 @@ async def test_tasks_table_has_activated_by_column():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_request_isolation_detaches_entirely(monkeypatch):
+async def test_isolated_execute_detaches_entirely(monkeypatch):
     """Explicit isolation prompt: Detach the activated task entirely from the queue.
 
     Scenario: three tasks A->B->C, activate B with a prompt that is *explicitly*
@@ -489,16 +492,21 @@ async def test_execute_request_isolation_detaches_entirely(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_isolate_when_head_moves_start_at_to_second(monkeypatch):
-    """Branch A (head case): If activated task was head, next becomes head and inherits start_at."""
+async def test_isolated_execute_start_at_to_second_when_head_moves(monkeypatch):
+    """Branch A (head case): Explicit isolation – if activated task was head, next becomes head and inherits start_at."""
 
     actor = SimulatedActor(steps=0)
     ts = TaskScheduler(actor=actor)
 
     x, y = await _make_ordered_queue(ts, ["X", "Y"])  # type: ignore[misc]
 
-    # Execute X (head) explicitly; ambiguous → isolate → detach X entirely
-    handle = await ts.execute(text=str(x))
+    # Execute X (head) with an explicit isolation request (avoid pure-numeric fast path)
+    handle = await ts.execute(
+        text=(
+            f"Please run task {x} in isolation. Detach it entirely from the queue, "
+            "do not keep any followers attached, and execute only this task now."
+        ),
+    )
     await handle.result()
 
     rows_x = ts._filter_tasks(filter=f"task_id == {x}")
@@ -515,12 +523,12 @@ async def test_execute_isolate_when_head_moves_start_at_to_second(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_chain_keeps_followers(monkeypatch):
-    """Branch B: Keep tasks behind still queued to follow the activated task.
+async def test_execute_default_keeps_followers():
+    """Default behaviour: Keep followers attached when activating a middle task.
 
-    We simulate an unambiguous 'chain' request by monkeypatching the internal
-    classifier to return 'chain'. Expect B to become sub-head (prev=None), keep
-    next pointer to C, and C.prev_task=B, with only the head owning start_at.
+    Scenario: A2->B2->C2. Activate B2 without any explicit isolation request.
+    Expect B2 to become sub-head (prev=None), keep next pointer to C2, and
+    C2.prev_task == B2, with only the head owning start_at.
     """
 
     actor = SimulatedActor(steps=0)
@@ -528,14 +536,12 @@ async def test_execute_chain_keeps_followers(monkeypatch):
 
     a, b, c = await _make_ordered_queue(ts, ["A2", "B2", "C2"])  # type: ignore[misc]
 
-    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "chain"
-
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
-
     handle = await ts.execute(text=str(b))
-    await handle.result()
 
+    # Give the scheduler a brief moment to apply activation-side linkage updates
+    await asyncio.sleep(0.05)
+
+    # Inspect linkage immediately after activation
     rows_b = ts._filter_tasks(filter=f"task_id == {b}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
 
@@ -549,3 +555,10 @@ async def test_execute_chain_keeps_followers(monkeypatch):
     assert sched_c.get("prev_task") == b
     # C must not carry start_at (non-head)
     assert "start_at" not in sched_c or sched_c.get("start_at") in (None, "")
+
+    # Stop to avoid leaking the background task and wait for shutdown
+    try:
+        handle.stop(cancel=True)
+    except Exception:
+        pass
+    await handle.result()
