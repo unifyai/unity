@@ -642,7 +642,7 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_down_q=clarification_down_q,
             activated_by=ActivatedBy.explicit,
             # Always use queue semantics – followers remain attached
-            isolate=False,
+            detach=False,
         )
         return ActiveQueue(
             self,
