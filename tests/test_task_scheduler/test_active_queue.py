@@ -763,3 +763,160 @@ async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
     assert isinstance(final_res, str)
     assert "Completed the following tasks:" not in final_res
     assert "Solo" in final_res
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_inner_task_clarification_bubbles_up_to_outer(monkeypatch):
+    """
+    Verify that an inner task can request clarification and that the question
+    is emitted to the provided clarification_up_q, with the answer received on
+    clarification_down_q completing the task. Result should pass through for a
+    singleton queue.
+    """
+
+    class _Clar(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            # No step/duration completion; rely solely on clarification to finish
+            kw["steps"] = None
+            kw["duration"] = None
+            kw["_requests_clarification"] = True
+            super().__init__(*a, **kw)
+
+    # Use clarification-seeking actor everywhere
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _Clar, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Clar,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    # Create a single runnable task
+    task_id = ts._create_task(name="NeedClar", description="NeedClar")["details"][
+        "task_id"
+    ]  # type: ignore[index]
+
+    # Clarification channels for the test harness
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+
+    # Execute by id, ensuring queues are wired through
+    h = await ts.execute(
+        text=str(task_id),
+        clarification_up_q=up_q,
+        clarification_down_q=down_q,
+    )
+
+    # Expect the inner task to ask a clarification question immediately
+    question = await asyncio.wait_for(up_q.get(), timeout=5)
+    assert isinstance(question, str) and question, "expected a clarification question"
+
+    # Provide an answer and expect completion that reflects the answer (passthrough)
+    await down_q.put("YES_PROCEED")
+    res = await asyncio.wait_for(h.result(), timeout=5)
+    assert "Clarification received: YES_PROCEED" in (res or "")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_queue_requests_clarification_at_queue_level(monkeypatch):
+    """
+    Verify that ActiveQueue itself can request clarifications for ambiguous
+    multi-task interjections. The question should surface on clarification_up_q.
+    """
+
+    # Step-based actor: pause/resume pair completes one task deterministically
+    class _Step2(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 2
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _Step2, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Step2,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    a_id, b_id = await _make_ordered_queue(ts, ["QA1", "QA2"])  # type: ignore[misc]
+
+    # Clarification channels for ActiveQueue
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+
+    # Start execution at first task with queues supplied
+    h = await ts.execute(
+        text=str(a_id),
+        clarification_up_q=up_q,
+        clarification_down_q=down_q,
+        execution_scope="queue",
+    )
+
+    # Wait until a task is active to avoid races
+    async def _wait_until_active(max_iters: int = 500):
+        for _ in range(max_iters):
+            try:
+                rows = ts._filter_tasks(filter="status == 'active'", limit=1)
+            except Exception:
+                rows = []
+            if rows:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("No active task detected in time")
+
+    await _wait_until_active()
+
+    # Send an explicitly ambiguous interjection that should trigger a queue-level clarification
+    # The text intentionally avoids concrete task_ids or clear directives
+    await h.interject(
+        "We should probably adjust things: maybe do the rest later, or whichever seems best.",
+    )
+
+    clar_q = await asyncio.wait_for(up_q.get(), timeout=5)
+    # Do not assert specific phrasing; just verify a clarification question surfaced
+    assert (
+        isinstance(clar_q, str) and clar_q.strip()
+    ), f"no clarification question received: {clar_q!r}"
+
+    # Provide an answer to unblock routing
+    await down_q.put("Apply to last only")
+
+    # Complete A deterministically with pause/resume (each consumes a step)
+    h.pause()
+    h.resume()
+
+    # Ensure B becomes active using an explicit event; then complete B
+    b_active_evt: asyncio.Event = asyncio.Event()
+    orig_update_status = ts._update_task_status_instance
+
+    def spy_update_status(*, task_id: int, instance_id: int, new_status: str, activated_by=None):  # type: ignore[override]
+        res = orig_update_status(
+            task_id=task_id,
+            instance_id=instance_id,
+            new_status=new_status,
+            activated_by=activated_by,
+        )
+        try:
+            if task_id == b_id and str(new_status) == "active":
+                b_active_evt.set()
+        except Exception:
+            pass
+        return res
+
+    monkeypatch.setattr(
+        ts,
+        "_update_task_status_instance",
+        spy_update_status,
+        raising=True,
+    )
+
+    await asyncio.wait_for(b_active_evt.wait(), timeout=20)
+    h.pause()
+    h.resume()
+
+    # Expect final completion (summary or inner result depending on chain state)
+    res = await asyncio.wait_for(h.result(), timeout=30)
+    assert isinstance(res, str)
