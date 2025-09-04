@@ -617,6 +617,57 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_execute_isolate_returns_active_queue_handle(monkeypatch):
+    """
+    Prior to the change, executing with isolate scope returned an ActiveTask handle.
+    Now it must always return an ActiveQueue handle. This test would fail before and
+    now passes by asserting the returned handle type.
+    """
+
+    # Immediate completion per task to avoid timing races
+    class _Immediate(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw.pop("duration", None)
+            super().__init__(steps=0, duration=None, *a, **kw)
+
+    monkeypatch.setattr(
+        "unity.actor.simulated.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+
+    # Force isolate routing for deterministic behavior
+    async def force_isolate(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
+        return "isolate"
+
+    ts = TaskScheduler()
+    monkeypatch.setattr(ts, "_decide_execution_scope", force_isolate, raising=True)
+
+    # Create a single runnable task
+    task_id = ts._create_task(name="ISO", description="ISO")["details"]["task_id"]  # type: ignore[index]
+
+    # Execute by numeric id; even in isolate, we should receive an ActiveQueue handle
+    h = await ts.execute(text=str(task_id))
+
+    # Import locally and tolerate logging wrapper by unwrapping the inner handle
+    from unity.task_scheduler.active_queue import ActiveQueue
+
+    inner = getattr(h, "_inner", h)
+    assert isinstance(inner, ActiveQueue), "execute(isolate) must return ActiveQueue"
+
+    # Complete and verify non-summary final text (singleton queue passthrough)
+    res = await h.result()
+    assert isinstance(res, str)
+    assert "Completed the following tasks:" not in res
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
     """
     For a true singleton queue (exactly one task at creation), the queue handle
