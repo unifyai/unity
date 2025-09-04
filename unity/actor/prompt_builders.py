@@ -438,7 +438,7 @@ def _build_initial_plan_rules_and_examples(
         7.  **Default Search Engine:** Prefer DuckDuckGo (https://duckduckgo.com) for searches unless the user specifies otherwise.
         8.  **Prefer .deb for Linux App Installations**: When installing apps, prefer .deb packages over other formats. `.deb` files are the most common and trusted format for Linux app installations. Then, use `dpkg` to install the app with full permissions.
         9.  **Desktop Mode**: You have control over a virtual desktop through the browser tools, and have access to apps like terminal, shell, browser, etc. You are also able to search for apps to be used in the desktop. Use screenshot to observe the desktop.
-        10.  **Browser Downloads**: The browser downloads directory is `/home/browser/Downloads`.
+        10. **Browser Downloads**: The browser downloads directory is `/tmp/unify/assistant/browser/install`.
         11. **Write General, Parameterized Functions**: Your functions should be reusable tools, not single-use scripts. Pass specific values (like search terms, filenames, or counts) as parameters.
         12. **Name for the Action, Not the Data**: Function names must describe the *process*, not the specific values being processed. Avoid hardcoding data like numbers or names into function names. This makes your plan robust and easy to modify later.
 
@@ -2109,7 +2109,6 @@ def build_verification_prompt(
 
         if logs:
             log_details = "\n".join([f"    {line}" for line in logs])
-            # Don't add the low-level trace to the main interaction log
             log_entry += f"\n  - Agent Logs:\n{log_details}"
             trace_log = "\n".join(f"  {line}" for line in logs)
             formatted_agent_traces.append(f"- For Action: `{act}`\n{trace_log}")
@@ -2398,10 +2397,14 @@ def build_interjection_prompt(
     plan_source_code: str,
     call_stack: list[str],
     action_log: list[str],
-    is_teaching_session: bool,
     goal: str,
+    *,
+    tools: Dict[str, Callable],
 ) -> str:
     """Builds the system prompt for the Interjection Handler LLM."""
+    tool_reference = _build_tool_signatures(tools)
+    handle_apis = _build_handle_apis(tools)
+
     call_stack_str = (
         " -> ".join(call_stack) if call_stack else "Not inside any function."
     )
@@ -2412,27 +2415,11 @@ def build_interjection_prompt(
         else "No prior conversation."
     )
 
-    teaching_session_rule = ""
-    if is_teaching_session:
-        teaching_session_rule = textwrap.dedent(
-            f"""
-        ---
-        ### 📌 SPECIAL INSTRUCTIONS FOR THIS INTERJECTION
-
-        **You are in a "Teaching Session".** The user is building a plan step-by-step.
-        - The user is providing the next logical step. You **MUST** choose the `modify_task` action and generate a patch to add this new logic. The patch will typically modify the `main_plan` function.
-        - If the user signals they are finished (e.g., "we're done", "that's all"), you **MUST** choose the `complete_task` action.
-        ---
-        """,
-        )
-
     return textwrap.dedent(
         f"""
     You are an expert Python programmer and a master strategist responsible for steering a live-running automated plan. A user has interjected with a new instruction while the plan was executing.
 
     Your task is to perform a **global analysis** of the entire plan, the user's request, and the current execution state. You must then generate a set of **code patches** to update the plan's source code to reflect the user's intent, ensuring the entire plan remains logically consistent.
-
-    {teaching_session_rule}
 
     ### Full Situational Context
 
@@ -2459,13 +2446,27 @@ def build_interjection_prompt(
     {recent_actions}
     ---
 
+    ---
+    ### Tools Reference
+    You have access to a global `action_provider` object with these methods. You must call them with the correct arguments as specified here.
+    ```json
+    {tool_reference}
+    ```
+
+    ---
+    ### Handle APIs
+    Some tools return "handle" objects for ongoing interaction. Available methods:
+
+    {handle_apis}
+
+
     ### Your Task: Follow This Decision Tree and Generate Patches
 
     **1. Analyze Intent:** First, determine the user's primary intent based on the decision tree below.
 
     **2. Perform Global Code Analysis:** Once you've chosen `modify_task` or `refactor_and_generalize`, you must act like an expert developer.
     - **Read the ENTIRE `plan_source_code`**.
-    - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstring of `main_plan`.
+    - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstrings.
     - **Generate Patches:** For every function that needs to be changed, create a `FunctionPatch` object containing its full, updated source code.
 
     ---
@@ -2520,13 +2521,13 @@ def build_interjection_prompt(
     }}
     ```
 
-    **Example 3: A Simple "Teaching Session" Step**
-    - **Context:** Teaching session is paused, awaiting instructions. User says, "Navigate to LinkedIn.com".
+    **Example 3: Adding a New Navigation Step**
+    - **Context:** Plan is paused, awaiting instructions. User says, "Navigate to LinkedIn.com".
     - **Analysis:** This is a new step. It should be appended to the end of the `main_plan` body.
     ```json
     {{
         "action": "modify_task",
-        "reason": "User wants to navigate to LinkedIn.com as the next step in the teaching session.",
+        "reason": "User wants to navigate to LinkedIn.com as the next step.",
         "patches": [
             {{
                 "function_name": "main_plan",
@@ -2549,7 +2550,7 @@ def build_interjection_prompt(
     ```json
     {{
         "action": "complete_task",
-        "reason": "User has indicated that the teaching session is finished and the plan should now execute to completion."
+        "reason": "User has indicated that the plan is finished and should now execute to completion."
     }}
     ```
     """,
@@ -2695,6 +2696,7 @@ def build_sandbox_merge_prompt(
 def build_refactor_prompt(
     monolithic_code: str,
     generalization_request: str,
+    action_log: str,
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -2704,6 +2706,7 @@ def build_refactor_prompt(
     Args:
         monolithic_code: The source code of the current single-function plan.
         generalization_request: The user's request to generalize the logic.
+        action_log: The full execution trace for deducing the precondition.
         tools: The available tools for the actor.
 
     Returns:
@@ -2719,11 +2722,18 @@ def build_refactor_prompt(
 
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer specializing in code refactoring and generalization.
-        Your task is to refactor the provided monolithic Python function into a set of smaller, logical, and reusable `async def` helper functions.
+        You are an expert Python programmer and a strategic analyst.
+        Your task is to perform two critical actions:
+        1. Refactor the provided monolithic Python script into a set of reusable helper functions.
+        2. Analyze the complete execution `action_log` to determine the correct starting state (precondition) for the entire process.
 
         **User's Generalization Request:**
         "{generalization_request}"
+
+        **Full Execution Action Log (Source of Truth for Precondition):**
+        ```
+        {action_log}
+        ```
 
         **Current Monolithic Code to Refactor:**
         ```python
@@ -2731,14 +2741,14 @@ def build_refactor_prompt(
         ```
 
         **Your Task & Instructions:**
-        1.  **Identify the Core Logic:** Analyze the user's request and the existing code to identify the central, repeated sequence of actions (e.g., the steps to process one item).
-        2.  **Create a Parameterized Function:** Encapsulate this core logic within a new, parameterized helper function. For example, `async def process_item(item_name: str)`.
-        3.  **Rewrite `main_plan`:** Rewrite the `main_plan` to be a clean coordinator. It should preserve the logic for the original subject that was taught but should now call your new helper functions, incorporating the user's generalization request.
-        4.  **Follow All Rules:** Your final output must adhere to all the established rules for plan creation, including docstrings, async usage, and placing imports inside functions.
+        1.  **Analyze the Action Log:** Read the entire log to understand the sequence of events. Identify the very first navigation or action that set up the initial state for the process.
+        2.  **Determine Precondition:** Based on your analysis, define the `deduced_precondition`. This should be the state the browser must be in before the refactored plan can run (e.g., on the homepage at a specific URL, with a clear visual description).
+        3.  **Refactor the Code:** Rewrite the monolithic code into a modular script with a `main_plan` and helper functions. The new `main_plan` should ONLY execute the logic for the new generalization request.
+        4.  **Format Output:** Your response MUST be a JSON object that strictly adheres to the `RefactorDecision` schema, containing both the `refactored_code` and the `deduced_precondition`.
 
         {rules_and_examples}
 
-        Begin your response now. Your response must be a single, complete Python code block containing the fully refactored script.
+        Begin your response now. Your response must start immediately with the JSON object.
         """,
     )
 

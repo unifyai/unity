@@ -123,7 +123,7 @@ def detach_from_queue_for_activation(
     scheduler: "TaskScheduler",
     *,
     task_id: int,
-    execution_scope: Literal["isolate", "chain"],
+    execution_scope: Literal["isolate", "queue"],
 ) -> None:
     """Detach a task from the runnable queue ahead of activation.
 
@@ -141,7 +141,7 @@ def detach_from_queue_for_activation(
         and ``next.prev = prev``) and ensure the successor does not carry a
         ``start_at`` timestamp (only heads may carry it). The detached task loses
         its schedule.
-    - Chained activation (opt-in via env in tests): keep the chain behind the
+    - Chained activation (opt-in via env in tests): keep the queue behind the
       activated task attached to it. When promoting the activated task to head,
       place any head-level ``start_at`` on it and remove ``start_at`` from the
       immediate successor.
@@ -173,7 +173,7 @@ def detach_from_queue_for_activation(
 
     head_start_at: Optional[str] = None
     if prev_tid is not None:
-        # Walk up to the head for the current chain
+        # Walk up to the head for the current queue
         cur = _get_row(task_id)
         while cur is not None and _q_prev(cur.get("schedule")) is not None:
             cur = _get_row(_q_prev(cur.get("schedule")))
@@ -217,7 +217,7 @@ def detach_from_queue_for_activation(
         )
 
     # Always record a reintegration plan for precise restore on defer stop,
-    # regardless of execution scope. This enables chain execution with later
+    # regardless of execution scope. This enables queue execution with later
     # reinstatement to the original position when requested.
     plan = ReintegrationPlan(
         task_id=task_id,
@@ -243,7 +243,7 @@ def detach_from_queue_for_activation(
     # Disconnect previous neighbour's next pointer only for CHAIN execution.
     # For ISOLATE, preserve prev.next so CAS-protected rewiring below can atomically
     # switch prev.next from `task_id` → `next_tid`.
-    if prev_tid is not None and execution_scope == "chain":
+    if prev_tid is not None and execution_scope == "queue":
         prev_log = _get_log_obj(prev_tid)
         if prev_log is not None:
             prev_sched = _load_sched(prev_log)
@@ -296,7 +296,7 @@ def detach_from_queue_for_activation(
             if (getattr(cur_log, "entries", {}) or {}).get("schedule") is not None:
                 _update_schedule(cur_log, None)  # type: ignore[arg-type]
         else:
-            # Keep chain behind current task
+            # Keep queue behind current task
             cur_log = _get_log_obj(task_id)
             new_sched: Dict[str, Any] = {"prev_task": None, "next_task": next_tid}
             if start_at is not None:

@@ -11,7 +11,7 @@ This directory provides a Node-based runtime that launches:
   - Browser runtime libraries (Chromium/Playwright)
   - Virtual audio stack (pipewire, wireplumber, pulseaudio/alsa utils)
   - Native module toolchain/runtime (`build-essential`, `python3`, `pkg-config`, `libvips`)
-- desktop.sh: Starts Xvfb, window manager, x11vnc, noVNC, xdg-desktop-portal; creates `/home/install`
+- desktop.sh: Starts Xvfb, window manager, x11vnc, noVNC, xdg-desktop-portal; creates `/tmp/unify/assistant/install`
 - device.sh: Initializes PipeWire/WirePlumber and null-sink routing via PulseAudio
 - startup.sh: Orchestrates startup and clean shutdown (traps SIGTERM/SIGINT)
 

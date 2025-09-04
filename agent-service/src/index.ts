@@ -326,7 +326,8 @@ const getLaunchOptions = (headless: boolean, downloadsPath: string | null = null
       "--disable-blink-features=AutomationControlled",
       "--disable-features=IsolateOrigins,site-per-process",
       // "--enable-features=WebRtcV4L2VideoCapture",
-      "--auto-select-window-capture-source-by-title=Google",
+      // "--auto-select-window-capture-source-by-title=Google",
+      '--auto-select-desktop-capture-source="Entire screen"',
     ],
     downloadsPath: downloadsPath || undefined,
     tracesDir: tracesDir || undefined,
@@ -349,7 +350,7 @@ const startDesktop = () => {
 
   startBrowserAgent({
     url: "https://www.duckduckgo.com/",
-    browser: getLaunchOptions(false),
+    browser: getLaunchOptions(false, "/tmp/unify/assistant/browser/install", "/tmp/unify/assistant/browser/traces"),
   }).then(agent => {
     desktopBrowserAgent = agent;
     console.log("✅ Desktop BrowserAgent started successfully.");
@@ -362,7 +363,7 @@ const startDesktop = () => {
 const startBrowser = (headless: boolean) => {
   startBrowserAgent({
     url: "https://www.duckduckgo.com/",
-    browser: getLaunchOptions(headless),
+    browser: getLaunchOptions(headless, "/tmp/unify/assistant/browser/install", "/tmp/unify/assistant/browser/traces"),
     narrate: true,
   }).then(agent => {
     browserAgent = agent;
