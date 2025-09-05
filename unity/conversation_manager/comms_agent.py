@@ -1279,21 +1279,21 @@ class CommsAgent:
                 print(f"Error setting details: {e}")
                 traceback.print_exc()
                 return
-            asyncio.create_task(
-                asyncio.to_thread(
-                    log_job_startup,
-                    job_name=self.job_name,
-                    timestamp=event["event"]["payload"]["timestamp"],
-                    medium=event["event"]["payload"]["medium"],
-                    user_id=self.user_id,
-                    assistant_id=self.assistant_id,
-                    user_name=self.user_name,
-                    assistant_name=self.assistant_name,
-                    user_number=self.user_number,
-                    user_whatsapp_number=self.user_whatsapp_number,
-                    assistant_number=self.assistant_number,
-                ),
-            )
+            kwargs = {
+                "job_name": self.job_name,
+                "timestamp": event["event"]["payload"]["timestamp"],
+                "medium": event["event"]["payload"]["medium"],
+                "user_id": self.user_id,
+                "assistant_id": self.assistant_id,
+                "user_name": self.user_name,
+                "assistant_name": self.assistant_name,
+                "user_number": self.user_number,
+                "user_whatsapp_number": self.user_whatsapp_number,
+                "assistant_number": self.assistant_number,
+                "user_email": self.user_email,
+                "assistant_email": self.assistant_email,
+            }
+            asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.meet_browser:
