@@ -88,12 +88,6 @@ class EventManager:
                         (json.dumps(event) + "\n").encode("utf-8"),
                     )
                     await self.writers["call"].drain()
-                    if event["type"] == "stop":
-                        self.writers["call"].close()
-                        await self.writers["call"].wait_closed()
-                        self.writers.pop("call")
-                        self.readers.pop("call")
-                        print("call process stopped")
                 else:
                     if event["topic"] == "startup":
                         self.update_topics_to_subs(
@@ -114,6 +108,15 @@ class EventManager:
                         )
                     for client in self.topic_to_subs[event["topic"]]:
                         client.handle_event(event)
+                if "event" in event and event["event"]["event_name"] in [
+                    "PhoneCallEndedEvent",
+                    "PhoneCallStopEvent"
+                ]:
+                    self.writers["call"].close()
+                    await self.writers["call"].wait_closed()
+                    self.writers.pop("call")
+                    self.readers.pop("call")
+                    print("call stream closed")
             except Exception as e:
                 print("Event Manager Error:")
                 traceback.print_exc()
