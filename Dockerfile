@@ -35,10 +35,11 @@ RUN apt-get update && apt-get install -y \
     xvfb x11vnc fluxbox xdotool wmctrl xterm dbus dbus-x11 websockify \
     xdg-desktop-portal xdg-desktop-portal-gtk \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
-    libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
+    libasound2 libasound2-plugins libxshmfence1 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
     ffmpeg ca-certificates \
-    pipewire pipewire-pulse wireplumber pulseaudio-utils alsa-utils \
+    pipewire pipewire-pulse pipewire-alsa wireplumber pulseaudio-utils alsa-utils \
+    libportaudio2 libpulse0 \
     fuse3 libfuse2 squashfs-tools \
     build-essential python3 pkg-config libvips \
     && rm -rf /var/lib/apt/lists/*

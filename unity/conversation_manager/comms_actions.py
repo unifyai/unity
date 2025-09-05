@@ -384,10 +384,11 @@ async def _start_call(
     """
     if not from_number:
         from_number = os.getenv("ASSISTANT_NUMBER")
+    topic_name = os.getenv("USER_NUMBER")
 
     await _publish_event(
         {
-            "topic": to_number,
+            "topic": topic_name,
             "event": {
                 **PhoneCallInitiatedEvent(
                     purpose=purpose,
@@ -395,6 +396,7 @@ async def _start_call(
                     target_number=to_number,
                     voice_id=os.getenv("VOICE_ID", None),
                     tts_provider=os.getenv("TTS_PROVIDER", "cartesia"),
+                    outbound=True,
                 ).to_dict(),
             },
         },

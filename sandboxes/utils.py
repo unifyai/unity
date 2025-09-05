@@ -75,19 +75,38 @@ def pydantic_response_format(model_cls: type[BaseModel]) -> dict:
         except Exception:
             schema = {}
 
-    # Ensure OpenAI's stricter requirements on the root schema
+    # Ensure OpenAI's stricter requirements on the root schema and nested objects
+    def _enforce_object_strict(node: Any) -> None:
+        if isinstance(node, dict):
+            t = node.get("type")
+            if t == "object":
+                if not isinstance(node.get("properties"), dict):
+                    node["properties"] = {}
+                node["additionalProperties"] = False
+                # Ensure required includes ALL property keys
+                try:
+                    node["required"] = list(node["properties"].keys())
+                except Exception:
+                    node["required"] = []
+            # Recurse into common schema containers
+            for k, v in list(node.items()):
+                if isinstance(v, (dict, list)):
+                    _enforce_object_strict(v)
+        elif isinstance(node, list):
+            for item in node:
+                _enforce_object_strict(item)
+
     try:
         if not isinstance(schema, dict):
             schema = {}
-        # The schema must be an object and disallow additional properties at the root
+        # Root object constraints
         schema.setdefault("type", "object")
-        schema["additionalProperties"] = False
-        # Ensure properties exists and required lists all properties (OpenAI requirement)
-        props = schema.get("properties")
-        if not isinstance(props, dict):
-            props = {}
-            schema["properties"] = props
-        schema["required"] = list(props.keys())
+        if not isinstance(schema.get("properties"), dict):
+            schema["properties"] = {}
+        # Root: list all properties as required
+        schema["required"] = list(schema["properties"].keys())
+        # Recursively enforce additionalProperties=false on object nodes
+        _enforce_object_strict(schema)
     except Exception:
         pass
     name = getattr(model_cls, "__name__", "Response")
@@ -2610,11 +2629,8 @@ class SimulationSelector(BaseModel):
     """
 
     by_task_id: int | None = None
-    by_queue_index: int | None = None  # 1-based index in runnable queue
-    by_name_regex: str | None = None
-    by_search_query: str | None = None
-    # ISO-8601 (UTC) window for scheduled tasks: [start_iso, end_iso]
-    by_scheduled_window_iso: tuple[str, str] | None = None
+    # 0-based index with negative support (Python-style): 0 is first, -1 is last
+    position: int | None = None
 
 
 class _SimulationRule(BaseModel):
@@ -2784,3 +2800,450 @@ def parse_simulation_params_kv(arg_str: str) -> SimulationParams:
         guidance=guidance,
         one_shot=one_shot,
     )
+
+
+# --------------------------------------------------------------------------- #
+#  Parsing helper: extract per-task durations from free-form text             #
+# --------------------------------------------------------------------------- #
+
+
+def parse_per_task_durations(text: str) -> dict[int, float]:
+    """Return a mapping of 1-based queue indexes → durations (seconds).
+
+    Recognises common ordinal forms and time units, e.g.:
+    - "first ... 20 seconds", "second ... 1.5 minutes", "final ... 45s"
+    - "1st ... 30s", "3rd ... 2 min"
+
+    Ambiguous 'final' is mapped to the next index after the highest explicit
+    ordinal found (e.g., if 1..3 were given, 'final' → 4). If no prior index
+    exists, 'final' is ignored.
+    """
+    import re
+
+    if not text:
+        return {}
+
+    # Normalise whitespace for better regex matching
+    hay = " ".join(str(text).split())
+
+    # Ordinal tokens → index
+    word_ord = {
+        "first": 1,
+        "second": 2,
+        "third": 3,
+        "fourth": 4,
+        "fifth": 5,
+        "sixth": 6,
+        "seventh": 7,
+        "eighth": 8,
+        "ninth": 9,
+        "tenth": 10,
+    }
+
+    # Regex to capture sequences like: "second ... 40 seconds" or "2nd ... 40s"
+    # We keep this intentionally permissive between ordinal and value.
+    ord_word_pat = (
+        r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|final)\b"
+    )
+    ord_num_pat = r"\b(\d+)(?:st|nd|rd|th)\b"
+    val_pat = (
+        r"(\d+(?:\.\d+)?)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes)\b"
+    )
+
+    compiled_patterns = [
+        re.compile(ord_word_pat + r"[^\.;,:]*?" + val_pat, re.IGNORECASE),
+        re.compile(ord_num_pat + r"[^\.;,:]*?" + val_pat, re.IGNORECASE),
+    ]
+
+    mapping: dict[int, float] = {}
+    final_seconds: float | None = None
+
+    def _to_seconds(num_str: str, unit: str) -> float:
+        try:
+            val = float(num_str)
+        except Exception:
+            return 0.0
+        u = unit.lower()
+        if u.startswith("m"):
+            return val * 60.0
+        return val
+
+    for rx in compiled_patterns:
+        for m in rx.finditer(hay):
+            groups = m.groups()
+            if rx is compiled_patterns[0]:
+                # word ordinal
+                ord_token, num, unit = groups[0], groups[1], groups[2]
+                if ord_token.lower() == "final":
+                    final_seconds = _to_seconds(num, unit)
+                    continue
+                idx = word_ord.get(ord_token.lower())
+                if idx is None:
+                    continue
+                mapping[idx] = _to_seconds(num, unit)
+            else:
+                # numeric ordinal
+                idx_str, num, unit = groups[0], groups[1], groups[2]
+                try:
+                    idx = int(idx_str)
+                except Exception:
+                    continue
+                if idx <= 0:
+                    continue
+                mapping[idx] = _to_seconds(num, unit)
+
+    if final_seconds is not None:
+        if mapping:
+            target = max(mapping.keys()) + 1
+            # Only add if not already provided
+            if target not in mapping:
+                mapping[target] = final_seconds
+        # If no prior explicit index, we cannot safely infer 'final' → ignore
+
+    # Drop zero/invalid durations defensively
+    mapping = {k: v for k, v in mapping.items() if v and v > 0}
+    return mapping
+
+
+# --------------------------------------------------------------------------- #
+#  LLM-driven parsing: extract per-task guidance from free-form text          #
+# --------------------------------------------------------------------------- #
+
+
+class _PerTaskGuidanceItem(BaseModel):
+    index: Optional[int] = Field(
+        default=None,
+        description="1-based position in the chain if explicitly stated",
+        ge=1,
+    )
+    final: Optional[bool] = Field(
+        default=None,
+        description="True when guidance is intended for the final task only",
+    )
+    guidance: str = Field(..., description="Free-form guidance text for the task")
+
+
+class _PerTaskGuidancePayload(BaseModel):
+    items: List[_PerTaskGuidanceItem] = Field(
+        default_factory=list,
+        description="List of task-specific guidance directives",
+    )
+
+
+def parse_per_task_guidance(text: str) -> dict[int, str]:
+    """Return mapping of 1-based queue indexes → guidance strings via LLM.
+
+    The LLM receives clear instructions to:
+    - Use 1-based indices (1 = first task) when explicit ordinals/positions
+      are present, else set final=true for guidance intended for the last task.
+    - Extract concise guidance strings (no rephrasing of unrelated text).
+    - Ignore non-guidance content.
+    """
+    import unify as _unify
+
+    if not text:
+        return {}
+
+    sys_msg = (
+        "Extract task-specific guidance from the user's instruction.\n"
+        "Return ONLY JSON matching the response schema with fields: items -> [{index (1-based int or null), final (boolean or null), guidance (string)}].\n"
+        "Rules:\n"
+        "- Prefer numeric 1-based 'index' when the task position is explicit (e.g., first=1, second=2, 1st=1).\n"
+        "- When the instruction targets the last task only, set final=true and index=null.\n"
+        "- Do NOT invent positions; include only statements that clearly instruct how a specific task should respond or behave.\n"
+        "- Keep 'guidance' concise (one short sentence or phrase)."
+    )
+
+    try:
+        judge = _unify.Unify(
+            "gpt-5@openai",
+            response_format=pydantic_response_format(_PerTaskGuidancePayload),
+            reasoning_effort="high",
+            service_tier="priority",
+        )
+        payload = _PerTaskGuidancePayload.model_validate_json(
+            judge.set_system_message(sys_msg).generate(text),
+        )
+    except Exception:
+        return {}
+
+    explicit: dict[int, str] = {}
+    finals: list[str] = []
+    for it in payload.items:
+        try:
+            g = (it.guidance or "").strip()
+        except Exception:
+            g = ""
+        if not g:
+            continue
+        if it.index is not None and int(it.index) >= 1:
+            explicit[int(it.index)] = g
+        elif bool(getattr(it, "final", False)):
+            finals.append(g)
+
+    # Assign any 'final' guidance to the next index after the highest explicit one
+    if finals:
+        if explicit:
+            target = max(explicit.keys()) + 1
+            # if multiple finals, keep last occurrence
+            explicit[target] = finals[-1]
+        else:
+            # Without an explicit baseline, we cannot place 'final' deterministically
+            # Defer by returning empty (caller may choose to ignore or handle separately)
+            pass
+
+    return explicit
+
+
+# --------------------------------------------------------------------------- #
+#  Unified LLM extraction: defaults + per-task rules (selector + params)       #
+# --------------------------------------------------------------------------- #
+
+
+class _SimOverrideParams(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Extractor notes")
+    steps: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    guidance: Optional[str] = None
+    one_shot: Optional[bool] = None
+
+
+class _SimOverrideSelector(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Selector notes")
+    by_task_id: Optional[int] = None
+    position: Optional[int] = None
+
+
+class _SimOverrideRule(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Rule notes")
+    selector: _SimOverrideSelector
+    params: _SimOverrideParams
+
+
+class _SimOverrides(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Global notes")
+    # core_text: original request with any simulation instructions removed
+    core_text: str
+    defaults: Optional[_SimOverrideParams] = None
+    rules: List[_SimOverrideRule] = Field(default_factory=list)
+
+
+def parse_simulation_overrides(text: str) -> _SimOverrides:
+    """LLM-only unified parser for defaults and per-task overrides.
+
+    Returns a structured payload that captures both defaults and a set of
+    per-task rules (selector + params). The LLM must:
+    - Map 'first/second/third/…/final' to 1-based by_queue_index (final → next
+      index after the last explicit ordinal); numeric ordinals (1st/2nd/…)
+      are also 1-based.
+    - Place timing/limits in duration_seconds/steps; place behavioral text in
+      guidance; do not duplicate the same instruction across both fields.
+    - Exclude non-instructions; do not paraphrase unrelated content.
+    - Produce core_text by removing sentences/clauses that describe simulation
+      controls (timeouts, steps, ordered timing for tasks), keeping only the
+      task request itself.
+    """
+    import unify as _unify
+
+    sys_msg = (
+        "You extract simulation overrides for starting a task/chain.\n"
+        "Return ONLY JSON matching the schema with fields in this object order: reasoning, core_text, defaults, rules.\n"
+        "Field guidance:\n"
+        "- Use selector.position (0-based; negatives allowed: 0=first, -1=last) for ordinal/relative references; or by_task_id when explicitly provided.\n"
+        "- Use duration_seconds for timing; steps for step limits; guidance for behavioral text (e.g., what to say on progress).\n"
+        "- Exclude numeric timing directives from guidance.\n"
+        "- 'core_text' must be the original user request with simulation control sentences/clauses REMOVED (timeouts, steps, task timing).\n"
+        "- defaults params (when present) apply to all tasks unless overridden by a rule's params.\n"
+    )
+
+    judge = _unify.Unify(
+        "gpt-5@openai",
+        response_format=pydantic_response_format(_SimOverrides),
+        reasoning_effort="high",
+        service_tier="priority",
+    )
+    payload = _SimOverrides.model_validate_json(
+        judge.set_system_message(sys_msg).generate(text),
+    )
+    return payload
+
+
+# --------------------------------------------------------------------------- #
+#  Sandbox-only monkey patch for per-task simulation (TaskScheduler only)     #
+# --------------------------------------------------------------------------- #
+
+
+def _merge_sim_params_for_task(
+    scheduler: Any,
+    task_id: Optional[int],
+    per_call: Optional[SimulationParams],
+) -> tuple[Optional[int], Optional[float], Optional[str]]:
+    """Compute effective (steps, duration_seconds, guidance) for a task.
+
+    Merge priority:
+        1) Per-call overrides (from the current 'start' request)
+        2) Rule targeting this task_id
+        3) Rule targeting this queue index (resolved from the runnable queue)
+        4) Fallback default (duration=20.0 if neither steps nor duration set)
+    """
+
+    steps: Optional[int] = getattr(per_call, "steps", None) if per_call else None
+    duration: Optional[float] = (
+        getattr(per_call, "duration_seconds", None) if per_call else None
+    )
+    guidance: Optional[str] = getattr(per_call, "guidance", None) if per_call else None
+
+    # Merge params by concrete task id
+    try:
+        if task_id is not None:
+            rule = SIMULATION_PLANS.resolve_for_task_id(int(task_id))
+            if rule is not None:
+                if steps is None and rule.steps is not None:
+                    steps = rule.steps
+                if duration is None and rule.duration_seconds is not None:
+                    duration = rule.duration_seconds
+                if not guidance and rule.guidance:
+                    guidance = rule.guidance
+    except Exception:
+        pass
+
+    # Merge params by queue index (Nth runnable task)
+    try:
+        if scheduler is not None and task_id is not None:
+            # Use the chain containing this task for queue-index resolution
+            try:
+                q = scheduler._get_task_queue(task_id=task_id)  # type: ignore[attr-defined]
+            except TypeError:
+                # Backwards compatibility: older schedulers may not accept task_id
+                q = scheduler._get_task_queue()  # type: ignore[attr-defined]
+            idx = None
+            try:
+                for i, t in enumerate(q, 1):
+                    if getattr(t, "task_id", None) == task_id:
+                        idx = i
+                        break
+            except Exception:
+                idx = None
+            if idx is not None:
+                _tid, qparams = SIMULATION_PLANS.resolve_for_queue_index(scheduler, idx)
+                if qparams is not None:
+                    if steps is None and qparams.steps is not None:
+                        steps = qparams.steps
+                    if duration is None and qparams.duration_seconds is not None:
+                        duration = qparams.duration_seconds
+                    if not guidance and qparams.guidance:
+                        guidance = qparams.guidance
+    except Exception:
+        pass
+
+    if steps is None and duration is None:
+        duration = 20.0
+
+    return steps, duration, guidance
+
+
+def apply_per_task_simulation_patch(
+    *,
+    per_call_overrides: Optional[SimulationParams],
+    log_mode: "str | None" = "print",
+):
+    """Monkey-patch ActiveTask.create so each task starts with its own SimulatedActor.
+
+    Scope this patch to a single execute flow by calling the returned restore()
+    function once the outer handle completes.
+    """
+
+    # Imports kept local to avoid pulling these modules for other sandboxes
+    from unity.task_scheduler.active_task import ActiveTask  # noqa: WPS433
+    from unity.actor.simulated import SimulatedActor  # noqa: WPS433
+
+    _orig_create_cm = ActiveTask.create  # classmethod descriptor
+    _orig_create_fn = (
+        _orig_create_cm.__func__
+        if hasattr(_orig_create_cm, "__func__")
+        else _orig_create_cm
+    )
+
+    async def _wrapped_create(
+        cls,  # type: ignore[no-redef]
+        actor,  # ignored during simulation
+        *,
+        task_description: str,
+        parent_chat_context: Optional[list[dict]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        task_id: Optional[int] = None,
+        instance_id: Optional[int] = None,
+        scheduler: Optional["TaskScheduler"] = None,  # type: ignore[name-defined]
+    ):
+        s, d, g = _merge_sim_params_for_task(scheduler, task_id, per_call_overrides)
+        sim_actor = SimulatedActor(
+            steps=s,
+            duration=d,
+            simulation_guidance=g,
+            log_mode=log_mode,
+        )
+        # Best-effort: consume one-shot rules that apply to this task
+        try:
+            if task_id is not None:
+                tid_int = int(task_id)
+                _tid_params = SIMULATION_PLANS.resolve_for_task_id(tid_int)
+                if _tid_params is not None and bool(
+                    getattr(_tid_params, "one_shot", False),
+                ):
+                    SIMULATION_PLANS.consume_one_shot_for(
+                        SimulationSelector(by_task_id=tid_int),
+                        task_id=tid_int,
+                    )
+            if scheduler is not None and task_id is not None:
+                # Resolve queue index and consume if a queue-index rule applied
+                try:
+                    q = scheduler._get_task_queue()  # type: ignore[attr-defined]
+                    idx = None
+                    for i, t in enumerate(q, 1):
+                        if getattr(t, "task_id", None) == task_id:
+                            idx = i
+                            break
+                    if idx is not None:
+                        _resolved_tid, qparams = (
+                            SIMULATION_PLANS.resolve_for_queue_index(
+                                scheduler,
+                                idx,
+                            )
+                        )
+                        if qparams is not None and bool(
+                            getattr(qparams, "one_shot", False),
+                        ):
+                            SIMULATION_PLANS.consume_one_shot_for(
+                                SimulationSelector(by_queue_index=idx),
+                            )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return await _orig_create_fn(
+            cls,
+            sim_actor,
+            task_description=task_description,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+            task_id=task_id,
+            instance_id=instance_id,
+            scheduler=scheduler,
+        )
+
+    ActiveTask.create = classmethod(_wrapped_create)  # type: ignore[assignment]
+
+    def restore() -> None:
+        try:
+            from unity.task_scheduler.active_task import (
+                ActiveTask as _AT,
+            )  # noqa: WPS433
+
+            _AT.create = _orig_create_cm  # type: ignore[assignment]
+        except Exception:
+            pass
+
+    return restore

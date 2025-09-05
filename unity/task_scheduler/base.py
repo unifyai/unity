@@ -129,7 +129,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         _return_reasoning_steps : bool, default ``False``
             When *True*, :pymeth:`SteerableToolHandle.result` returns
             ``(answer, messages)`` – the first element is the assistant's
-            reply, the second the hidden chain‑of‑thought.
+            reply, the second the hidden queue‑of‑thought.
         _log_tool_steps : bool, default ``True``
             If *True* the task‑scheduler logs every tool invocation to the
             server‑side logger.
@@ -169,6 +169,15 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         describe the desired end-state in natural language and allow the
         `update` method to determine the best method to apply it.
 
+        Important execution boundary
+        ----------------------------
+        This method is not intended to be used by `execute` to rewrite
+        schedules/ordering/start_at purely to begin execution. The `execute`
+        flow determines the correct execution scope (isolate vs queue) and
+        starts the task via an execution tool without mutating scheduling.
+        Only use `update` within `execute` when the user explicitly asked to
+        create a missing task or to change task fields before running.
+
         Please always be explicit about the *ordering* of tasks.
         If the order *doesn't* matter please say so explicitly.
         If the order *does* matter, and the tasks are given in the correct number order,
@@ -191,7 +200,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         """
 
     @abstractmethod
-    async def execute_task(
+    async def execute(
         self,
         text: str,
         *,
@@ -203,7 +212,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         Start a **task** given a *free-form* textual instruction (*text*).
 
         Do *not* request *how* the task should be executed; state what you
-        want to run in natural language and allow the `execute_task` method to
+        want to run in natural language and allow the `execute` method to
         determine the best method and steps.
 
         The assistant should interpret *text* to figure out which task the user
@@ -212,10 +221,26 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         1. Call :py:meth:`TaskScheduler.ask` to identify the `task_id` (if the
            id is not explicitly mentioned in *text*).
         2. Internally execute the task – the implementation SHOULD expose a
-           private ``_execute_task_by_id`` helper that returns a
+           private ``_execute_by_id`` helper that returns a
            :class:`SteerableToolHandle` **and marks it
            for pass-through** so that the outer handle is upgraded transparently
            once the real execution begins.
+
+        Execution scope via explicit reordering
+        --------------------------------------
+        The execute flow no longer uses implicit routing modes. Instead, it
+        exposes queue inspection and an explicit reorder primitive so the agent
+        can express desired behaviour directly:
+        - Use `get_task_queue()` to read the current order.
+        - Use `update_task_queue(original=[...], new=[...])` to place the desired
+          subset/order at the head (e.g., "just X", "first two now", or "all").
+        - Then call `execute_by_id(task_id=<head>)` to start.
+
+        Never rewrite a task's `start_at` purely to begin execution, and do not
+        write lifecycle `status` fields directly.
+        - `ask` – to discover the relevant task and queue context
+        - `get_task_queue` / `update_task_queue` – to explicitly shape the queue
+        - `execute_by_id(task_id)` – to start the head after any necessary reordering
 
         Implementations MUST return a *live* steerable handle whose public
         methods (pause, resume, interject, stop, result, …) continue to work

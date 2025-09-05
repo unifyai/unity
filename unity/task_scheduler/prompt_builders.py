@@ -114,8 +114,8 @@ def build_ask_prompt(
             "• Avoid concatenating entire rows into one long string and embedding a single catch‑all reference.",
             f"• Avoid substring filtering for text‑heavy columns; prefer `{search_tasks_fname}` for meaning.",
             "• Avoid re‑querying the same tables or managers just to reconfirm what a prior tool call has already established with clear, specific evidence; reuse the earlier result and proceed.",
-            "• Do not immediately chain a filter call after a successful semantic search unless you genuinely need an exact, structured constraint that the search did not capture.",
-            f"• Avoid calling `{contact_ask_fname}` repeatedly in the same reasoning chain when earlier calls have already identified the relevant contacts and no new ambiguity or information has been introduced.",
+            "• Do not immediately queue a filter call after a successful semantic search unless you genuinely need an exact, structured constraint that the search did not capture.",
+            f"• Avoid calling `{contact_ask_fname}` repeatedly in the same reasoning queue when earlier calls have already identified the relevant contacts and no new ambiguity or information has been introduced.",
         ],
     )
 
@@ -190,6 +190,12 @@ def build_update_prompt(
     delete_task_fname = _tool_name(tools, "delete_task")
     cancel_tasks_fname = _tool_name(tools, "cancel_tasks")
     update_task_queue_fname = _tool_name(tools, "update_task_queue")
+    # Multi-queue helpers (optional if not present)
+    list_queues_fname = _tool_name(tools, "list_queues")
+    get_queue_fname = _tool_name(tools, "get_queue")
+    reorder_queue_fname = _tool_name(tools, "reorder_queue")
+    move_tasks_to_queue_fname = _tool_name(tools, "move_tasks_to_queue")
+    partition_queue_fname = _tool_name(tools, "partition_queue")
     update_task_name_fname = _tool_name(tools, "update_task_name")
     update_task_description_fname = _tool_name(tools, "update_task_description")
     update_task_start_at_fname = _tool_name(tools, "update_task_start_at")
@@ -241,31 +247,62 @@ def build_update_prompt(
         f"• Prefer `{update_task_name_fname}`/`{update_task_description_fname}`/… when you know the exact `task_id`.",
         f'• When the user describes an EXISTING task semantically (e.g., "the kickoff email task"), first call `{ask_fname}` to identify the correct `task_id`, then apply the specific update tool.',
         "",
-        "Ask vs Clarification",
-        "----------------------",
-        f"• `{ask_fname}` is ONLY for inspecting/locating tasks that ALREADY EXIST in the task list (e.g., to find task_id, queue position, deadlines, triggers).",
-        f"• Do NOT use `{ask_fname}` to ask the human for details about NEW tasks being created/changed in this update request.",
-        f"• For human clarifications about prospective/new tasks (e.g., start time, timezone, naming, scope), call `{request_clar_fname}` when available.",
-        f"• Use `{update_task_queue_fname}` to reorder runnable tasks explicitly – do not try to emulate queue effects via timestamps.",
-        f"• Use `{cancel_tasks_fname}` only on explicit cancellation requests (never cancel the active task implicitly).",
-        "",
-        "Schedule/Queue invariants (must-follow)",
-        "---------------------------------------",
-        "• If you provide a schedule with start_at on the head (prev_task is None), status must be 'scheduled' – never 'queued'.",
-        "• Non-head tasks (prev_task is not None) must not define start_at; the timestamp belongs to the head only.",
-        "• 'primed' must only be used for a head task (prev_task is None).",
-        "• A 'scheduled' task must have either a prev_task or a start_at timestamp.",
-        "• Status is updated implicitly based on operations (activation, scheduling, completion). Do not set status explicitly.",
-        "",
-        "Realistic find‑then‑update flows",
+        "Queues and batches (multi-queue)",
         "--------------------------------",
-        f'• Set deadline for the "onboarding plan" task:\n  1 `{ask_fname}(text="Which task covers the onboarding plan?")`\n  2 `{update_task_deadline_fname}(task_id=<id>, new_deadline=\'2025-01-31T17:00:00Z\')`',
-        f"• Promote a task to the front of the queue:\n  1 Read the current order: `{get_task_queue_fname}()`\n  2 Build the new order and call `{update_task_queue_fname}(original=[...], new=[...])`",
-        "",
-        "Triggers vs Schedules",
-        "----------------------",
-        f"• A task with a `trigger` must be in state 'triggerable'. Use `{update_task_trigger_fname}` to add/remove triggers. Do not set `start_at` on trigger‑based tasks.",
     ]
+
+    if list_queues_fname and get_queue_fname and reorder_queue_fname:
+        usage_examples_lines.extend(
+            [
+                f"• Inspect existing queues: `{list_queues_fname}()`; fetch a specific queue: `{get_queue_fname}(queue_id=None)`.",
+                f"• Reorder a queue explicitly: `{reorder_queue_fname}(queue_id=None, new_order=[...])`.",
+            ],
+        )
+
+    if move_tasks_to_queue_fname:
+        usage_examples_lines.extend(
+            [
+                f"• Move tasks to a new queue front/back: `{move_tasks_to_queue_fname}(task_ids=[1,3], queue_id=None, position='front')`.",
+            ],
+        )
+
+    if partition_queue_fname:
+        usage_examples_lines.extend(
+            [
+                f"• Split the default queue into dated batches: `{partition_queue_fname}(parts=[{{'task_ids':[0,2], 'queue_start_at':'2025-07-01T09:00:00Z'}}, {{'task_ids':[1,3], 'queue_start_at':'2025-07-02T09:00:00Z'}}])`.",
+                "  This is the most direct way to express: do subset A at time X and subset B at time Y.",
+            ],
+        )
+
+    usage_examples_lines.extend(
+        [
+            "",
+            "Ask vs Clarification",
+            "----------------------",
+            f"• `{ask_fname}` is ONLY for inspecting/locating tasks that ALREADY EXIST in the task list (e.g., to find task_id, queue position, deadlines, triggers).",
+            f"• Do NOT use `{ask_fname}` to ask the human for details about NEW tasks being created/changed in this update request.",
+            f"• For human clarifications about prospective/new tasks (e.g., start time, timezone, naming, scope), call `{request_clar_fname}` when available.",
+            f"• Use `{update_task_queue_fname}` (legacy single-queue) or `{reorder_queue_fname}` (per-queue) to reorder runnable tasks explicitly – do not try to emulate queue effects via timestamps.",
+            f"• Use `{cancel_tasks_fname}` only on explicit cancellation requests (never cancel the active task implicitly).",
+            "",
+            "Schedule/Queue invariants (must-follow)",
+            "---------------------------------------",
+            "• If you provide a schedule with start_at on the head (prev_task is None), status must be 'scheduled' – never 'queued'.",
+            "• Non-head tasks (prev_task is not None) must not define start_at; the timestamp belongs to the head only.",
+            "• 'primed' must only be used for a head task (prev_task is None).",
+            "• A 'scheduled' task must have either a prev_task or a start_at timestamp.",
+            "• Status is updated implicitly based on operations (activation, scheduling, completion). Do not set status explicitly.",
+            "",
+            "Realistic find‑then‑update flows",
+            "--------------------------------",
+            f'• Set deadline for the "onboarding plan" task:\n  1 `{ask_fname}(text="Which task covers the onboarding plan?")`\n  2 `{update_task_deadline_fname}(task_id=<id>, new_deadline=\'2025-01-31T17:00:00Z\')`',
+            f"• Promote a task to the front of the queue:\n  1 Read the current order: `{get_task_queue_fname}()`\n  2 Build the new order and call `{update_task_queue_fname}(original=[...], new=[...])`",
+            "",
+            "Triggers vs Schedules",
+            "----------------------",
+            f"• A task with a `trigger` must be in state 'triggerable'. Use `{update_task_trigger_fname}` to add/remove triggers. Do not set `start_at` on trigger‑based tasks.",
+        ],
+    )
 
     if reinstate_task_fname:
         usage_examples_lines.extend(
@@ -348,41 +385,82 @@ def build_update_prompt(
     return "\n".join(parts)
 
 
-def build_execute_task_prompt(
+def build_execute_prompt(
     tools: Dict[str, Callable],
 ) -> str:
     """
-    Build the **system** prompt for the `execute_task` method.
+    Build the **system** prompt for the `execute` method.
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     # Resolve names dynamically
     ask_fname = _tool_name(tools, "ask")
-    update_fname = _tool_name(tools, "update")
-    execute_by_id_fname = _tool_name(tools, "execute_task_by_id")
+    get_task_queue_fname = _tool_name(tools, "get_task_queue")
+    update_task_queue_fname = _tool_name(tools, "update_task_queue")
+    execute_by_id_fname = _tool_name(tools, "execute_by_id")
+    execute_isolated_by_id_fname = _tool_name(tools, "execute_isolated_by_id")
+    create_task_fname = _tool_name(tools, "create_task")
     request_clar_fname = _tool_name(tools, "request_clarification")
+    # Multi-queue helpers
+    list_queues_fname = _tool_name(tools, "list_queues")
+    get_queue_fname = _tool_name(tools, "get_queue")
+    reorder_queue_fname = _tool_name(tools, "reorder_queue")
+    move_tasks_to_queue_fname = _tool_name(tools, "move_tasks_to_queue")
+    partition_queue_fname = _tool_name(tools, "partition_queue")
+    # Reintegration & safety
+    reinstate_task_fname = _tool_name(tools, "reinstate_task_to_previous_queue")
+    checkpoint_fname = _tool_name(tools, "checkpoint_queue_state")
+    revert_checkpoint_fname = _tool_name(tools, "revert_to_checkpoint")
+    latest_checkpoint_fname = _tool_name(tools, "get_latest_checkpoint")
 
     _require_tools(
         {
             "ask": ask_fname,
-            "update": update_fname,
-            "execute_task_by_id": execute_by_id_fname,
+            "get_task_queue": get_task_queue_fname,
+            "update_task_queue": update_task_queue_fname,
+            "execute_by_id": execute_by_id_fname,
+            "create_task": create_task_fname,
         },
         tools,
     )
 
     lines: list[str] = [
-        "You are an assistant that **starts tasks on demand**."
-        "  The task referred to in the user's request may or may not already",
-        "  exist in the task list.",
+        "You are an assistant that **starts tasks on demand**.",
+        "The task referred to in the user's request may or may not already exist in the task list.",
         "",
         "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
         "Do not ask the user questions in your final response. If no clarification tool is available in this outer loop, make a best‑guess attempt using sensible defaults and state your assumptions; if an inner tool asks questions, inform it that no clarification channel exists and provide defaults/best guesses.",
+        "\nCRITICAL EXECUTION WORKFLOW (plan → apply → execute):",
+        f"0) Immediately create a reversible checkpoint: `{checkpoint_fname}(label='pre-execute')`. You MUST do this at the start of the session.",
+        f"1) Inspect queues: `{list_queues_fname}()` → then `{get_queue_fname}(queue_id=None)` to view the default queue (head→tail).",
+        f"2) PLAN the desired execution scope and timing in your thoughts (subset now vs later).",
+        f"   – To move subsets into separate queues with dates, call `{partition_queue_fname}(parts=[{{'task_ids':[...],'queue_start_at':<ISO>|None}}, ...], strategy='preserve_order')`.",
+        f"   – To target an existing queue, call `{move_tasks_to_queue_fname}(task_ids=[...], queue_id=<id>, position='front'|'back')` then `{reorder_queue_fname}(queue_id=<id>, new_order=[...])`.",
+        f"   – To reorder within a queue, call `{reorder_queue_fname}(queue_id=None, new_order=[...])`. Do NOT set `start_at` directly; it is applied to the head automatically when appropriate.",
+        f"   – After each successful edit, immediately call `{checkpoint_fname}(label='post-edit')` to allow reverting if the user changes their mind. If the user requests a revert, call `{revert_checkpoint_fname}(checkpoint_id=<latest id>)` or `{reinstate_task_fname}(task_id=<id>, allow_active=false)` depending on context.",
+        f"   – If you did not capture the last checkpoint id, call `{latest_checkpoint_fname}()` to retrieve it.",
+        (
+            f"3) EXECUTE by calling `{execute_by_id_fname}(task_id=<head of the 'now' queue>)`. "
+            "Do NOT modify `start_at` timestamps to force execution."
+        ),
+        (
+            f"   – If the user explicitly requests to run a task in isolation (detach it entirely from the queue), "
+            f"call `{execute_isolated_by_id_fname}(task_id=<id>)` instead."
+            if execute_isolated_by_id_fname
+            else ""
+        ),
+        f"4) Do not write status fields directly; lifecycle is managed by the scheduler.",
+        "",
         "Use the tools below, step-by-step, following these rules:",
         "",
         "A. If the request contains a *numeric task_id*:",
-        f"   • **First** call `{ask_fname}` (or another suitable read-only tool) to confirm the task exists.",
-        f"   • If exactly one matching task is found → call `{execute_by_id_fname}`.",
+        f"   • **First** call `{ask_fname}` (or `{get_task_queue_fname}`) to confirm the task exists and learn the current order.",
+        (
+            f"   • If the request says to run the task in isolation (detach it entirely), call `{execute_isolated_by_id_fname}(task_id=<id>)`."
+            if execute_isolated_by_id_fname
+            else ""
+        ),
+        f"   • Otherwise reorder explicitly with `{update_task_queue_fname}` if needed, then call `{execute_by_id_fname}` on the intended head.",
     ]
 
     if request_clar_fname:
@@ -404,7 +482,14 @@ def build_execute_task_prompt(
             "B. If **no numeric id** is given:",
             f"   1. Call `{ask_fname}` with the free-form description to search for matching task(s).",
             "   2. Based on the result:",
-            f"      • **Exactly one** clear match → call `{execute_by_id_fname}` with that id, do *not* bother the user with a clarification call.",
+            f"      • **Exactly one** clear match → if a specific subset/order is intended, reorder with `{update_task_queue_fname}`; then `{execute_by_id_fname}` with that id (as head).",
+            f"      • **Multiple tasks forming a sequence** and the user wants them in order → reorder explicitly (if needed) so the intended head is first; then `{execute_by_id_fname}(task_id=<head>)`.",
+            f"      • **No match** and it is obvious we should create the task → call `{create_task_fname}(name=<short title>, description=<free‑form user request>)`, then call `{ask_fname}` again to retrieve the new id, optionally reorder, then `{execute_by_id_fname}`.",
+            "",
+            "   Naming guidance for creation:",
+            "   • Derive a concise `name` by trimming punctuation and capitalising key words from the user's request.",
+            "   • Use the full free‑form request as the `description` (possibly normalised by removing a trailing period).",
+            "   • Do not specify status, schedule, start_at, prev_task/next_task, triggers, or deadlines here; the scheduler infers lifecycle and preserves invariants.",
         ],
     )
 
@@ -414,7 +499,7 @@ def build_execute_task_prompt(
                 f"      • **Multiple / ambiguous** matches → call `{request_clar_fname}` so the user can disambiguate, only do so if it's *genuinely* unclear.",
                 f"      • **No match**:",
                 f"          – If it's ambiguous whether a task should be created/updated → `{request_clar_fname}`.",
-                f"          – If it is obvious we need to *create* a new task or *update* an existing one → call `{update_fname}` to create/update the task, **then** call `{execute_by_id_fname}` with the returned/newly discovered id.",
+                f"          – If it is obvious we need to *create* a new task → the system will handle creation implicitly outside this tool list; once created, call `{execute_by_id_fname}` with its id.",
             ],
         )
     else:
@@ -423,14 +508,14 @@ def build_execute_task_prompt(
                 "      • **Multiple / ambiguous** matches → do not ask questions in your final response; proceed with sensible defaults or best‑guess identification, and state your assumptions.",
                 "      • **No match**:",
                 f"          – If it's ambiguous whether a task should be created/updated → do not ask questions; make a best‑guess decision, state assumptions, and continue.",
-                f"          – If it is obvious we need to *create* a new task or *update* an existing one → call `{update_fname}` to create/update the task, **then** call `{execute_by_id_fname}` with the returned/newly discovered id.",
+                f"          – If it is obvious we need to *create* a new task → the system will handle creation implicitly outside this tool list; once created, call `{execute_by_id_fname}` with its id.",
             ],
         )
 
     lines.extend(
         [
             "",
-            f"C. After creating a task with `{update_fname}`, you may either read its id from the update response *or* call `{ask_fname}` again to retrieve it before starting it.",
+            f"C. The Tasks list is updated implicitly by the system. To control execution scope, use `{get_task_queue_fname}` and `{update_task_queue_fname}` explicitly. Do NOT write status fields or override `start_at` to force execution. If a new task is clearly required, use `{create_task_fname}` (name + description only), then call `{ask_fname}` to find its id and `{execute_by_id_fname}` to start.",
             "",
             "Stopping semantics (required):",
             "--------------------------------",

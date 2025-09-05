@@ -1,5 +1,5 @@
 """
-Tests for `TaskScheduler.execute_task` which returns an `ActiveTask` handle.
+Tests for `TaskScheduler.execute` which returns an `ActiveTask` handle.
 
 These largely mirror *test_active_task.py* but go through the full
 `TaskScheduler` surface so that we cover the integration layer that
@@ -38,7 +38,7 @@ async def _make_scheduler_with_task(description: str, *, steps: int = 1):
     task_id = scheduler._create_task(name=description, description=description)[
         "details"
     ]["task_id"]
-    handle = await scheduler.execute_task(text=str(task_id))
+    handle = await scheduler.execute(text=str(task_id))
     return scheduler, handle
 
 
@@ -67,7 +67,7 @@ async def _make_ordered_queue(ts: TaskScheduler, names: List[str]) -> List[int]:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_ask(monkeypatch):
+async def test_execute_ask(monkeypatch):
     """`ActiveTask.ask` should forward to the wrapped plan exactly once."""
 
     calls: Dict[str, int] = {"ask": 0}
@@ -101,7 +101,7 @@ async def test_execute_task_ask(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_interject(monkeypatch):
+async def test_execute_interject(monkeypatch):
     """`ActiveTask.interject` should forward to the wrapped plan exactly once."""
 
     calls: Dict[str, int] = {"interject": 0}
@@ -137,7 +137,7 @@ async def test_execute_task_interject(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_pause_resume(monkeypatch):
+async def test_execute_pause_resume(monkeypatch):
     """The wrapper should transparently forward `pause` and `resume`."""
 
     counts: Dict[str, int] = {"pause": 0, "resume": 0}
@@ -181,7 +181,7 @@ async def test_execute_task_pause_resume(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_stop(monkeypatch):
+async def test_execute_stop(monkeypatch):
     """Calling `ActiveTask.stop` should proxy to the plan and mark it done."""
 
     called = {"stop": 0}
@@ -215,7 +215,7 @@ async def test_execute_task_stop(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_result_and_done():
+async def test_execute_result_and_done():
     """A normal workflow should complete once enough steps have been taken."""
 
     _scheduler, task = await _make_scheduler_with_task(
@@ -232,18 +232,19 @@ async def test_execute_task_result_and_done():
 
 
 # --------------------------------------------------------------------------- #
-#  5. Free-form execute_task triggers internal ask                           #
+#  5. Free-form execute triggers internal ask                           #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_invokes_ask_when_id_missing(monkeypatch):
+async def test_execute_invokes_ask_when_id_missing(monkeypatch):
     """Executing via *description only* should call TaskScheduler.ask exactly once."""
 
     description = "prepare the monthly analytics dashboard."
 
-    actor = SimulatedActor(steps=0)
+    # Keep the activated task in-flight so the queue does not advance before assertions.
+    actor = SimulatedActor(steps=1)
     ts = TaskScheduler(actor=actor)
 
     # Seed one queued task (the one we'll start)
@@ -261,7 +262,7 @@ async def test_execute_task_invokes_ask_when_id_missing(monkeypatch):
     monkeypatch.setattr(TaskScheduler, "ask", spy_ask, raising=True)
 
     # Execute via free-form prompt WITHOUT numeric id
-    handle = await ts.execute_task(text=description)
+    handle = await ts.execute(text=description)
 
     # Wait for completion
     await handle.interject("please be quick")
@@ -277,36 +278,40 @@ async def test_execute_task_invokes_ask_when_id_missing(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_creates_new_task_and_executes(monkeypatch):
+async def test_execute_creates_new_task_and_executes(monkeypatch):
     """When the task clearly does not exist the scheduler should create it via
     `update` and then start it – `TaskScheduler.update` must therefore be
     invoked exactly once (or more, in very unlikely multi-step flows)."""
 
     description = "Organise annual security audit report."
 
-    actor = SimulatedActor(steps=0)
+    # Use a short duration so activation doesn't immediately advance the queue
+    # before we can assert on linkage semantics.
+    actor = SimulatedActor(duration=0.5)
     ts = TaskScheduler(actor=actor)
 
-    # ---- spy on update -----------------------------------------------------
-    calls: Dict[str, int] = {"update": 0}
+    # ---- spy on _create_task -----------------------------------------------
+    calls: Dict[str, int] = {"_create_task": 0}
 
-    original_update = TaskScheduler.update
+    original_create = TaskScheduler._create_task
 
-    @functools.wraps(original_update)
-    async def spy_update(self, text: str, **kw):  # type: ignore[override]
-        calls["update"] += 1
-        return await original_update(self, text, **kw)
+    @functools.wraps(original_create)
+    def spy_create(self, *, name: str, description: str, **kw):  # type: ignore[override]
+        calls["_create_task"] += 1
+        return original_create(self, name=name, description=description, **kw)
 
-    monkeypatch.setattr(TaskScheduler, "update", spy_update, raising=True)
+    monkeypatch.setattr(TaskScheduler, "_create_task", spy_create, raising=True)
 
     # ---- execute (no prior task with that description exists) -------------
-    handle = await ts.execute_task(text=description)
+    handle = await ts.execute(text=description)
 
     # Get the final result.
     await handle.result()
 
     # ---- assertions --------------------------------------------------------
-    assert calls["update"] >= 1, "Expected at least one call to TaskScheduler.update"
+    assert (
+        calls["_create_task"] >= 1
+    ), "Expected at least one call to TaskScheduler._create_task"
 
     # Verify that a task with the expected description now exists
     # Description may be normalised (e.g. trailing period removed).  Accept any
@@ -327,12 +332,12 @@ async def test_execute_task_creates_new_task_and_executes(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_requests_clarification_for_unknown_id(monkeypatch):
+async def test_execute_requests_clarification_for_unknown_id(monkeypatch):
     """Supplying a numeric task_id that does *not* exist should trigger the
     internal `request_clarification` helper (i.e. push a question onto the
     clarification_up_q)."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=1)
     ts = TaskScheduler(actor=actor)
 
     # Provide queues so the tool can ask for clarification.
@@ -341,7 +346,7 @@ async def test_execute_task_requests_clarification_for_unknown_id(monkeypatch):
 
     nonexistent_id = 424242  # arbitrary id that will not exist in a fresh context
 
-    handle = await ts.execute_task(
+    handle = await ts.execute(
         text=str(nonexistent_id),
         clarification_up_q=clarification_up_q,
         clarification_down_q=clarification_down_q,
@@ -368,8 +373,8 @@ async def test_execute_task_requests_clarification_for_unknown_id(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_sets_activated_by_explicit():
-    """Starting a task explicitly via execute_task should set activated_by='explicit'."""
+async def test_execute_sets_activated_by_explicit():
+    """Starting a task explicitly via execute should set activated_by='explicit'."""
 
     actor = SimulatedActor(steps=0)
     ts = TaskScheduler(actor=actor)
@@ -379,7 +384,7 @@ async def test_execute_task_sets_activated_by_explicit():
     task_id = ts._create_task(name=name, description=name)["details"]["task_id"]
 
     # Start by id (fast-path)
-    handle = await ts.execute_task(text=str(task_id))
+    handle = await ts.execute(text=str(task_id))
     await handle.result()
 
     # Verify activated_by on the activated instance (may already be completed)
@@ -441,11 +446,12 @@ async def test_tasks_table_has_activated_by_column():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_isolate_detaches_entirely(monkeypatch):
-    """Branch A: Detach the activated task entirely from the queue.
+async def test_isolated_execute_detaches_entirely(monkeypatch):
+    """Explicit isolation prompt: Detach the activated task entirely from the queue.
 
-    Scenario: three tasks A->B->C, activate B explicitly with an 'isolate'-leaning
-    prompt (ambiguous by default). Expect B detached, A->C linked, head's start_at
+    Scenario: three tasks A->B->C, activate B with a prompt that is *explicitly*
+    and *unambiguously* requesting isolation (detach B from the queue and do not
+    keep followers attached). Expect B detached, A->C linked, head's start_at
     preserved/propagated, and B's schedule cleared.
     """
 
@@ -455,16 +461,23 @@ async def test_execute_task_isolate_detaches_entirely(monkeypatch):
     # Build queue A->B->C with start_at on A
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
 
-    # Execute B with an ambiguous request → defaults to isolate (A)
-    handle = await ts.execute_task(text=str(b))
+    # Execute B with an explicit isolation request (avoid pure-numeric fast path)
+    handle = await ts.execute(
+        text=(
+            f"Please run task {b} in isolation. Detach it entirely from the queue, "
+            "do not keep any followers attached, and execute only this task now."
+        ),
+    )
     await handle.result()
 
     rows_a = ts._filter_tasks(filter=f"task_id == {a}")
     rows_b = ts._filter_tasks(filter=f"task_id == {b}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
 
-    # B must be detached entirely (no schedule)
-    assert rows_b[0].get("schedule") in (None, {})
+    # B should be isolated as a single-task head (no prev/next followers)
+    sched_b = rows_b[0].get("schedule") or {}
+    assert sched_b.get("prev_task") is None
+    assert sched_b.get("next_task") is None
 
     # A should now link directly to C; C.prev_task should be A
     sched_a = rows_a[0].get("schedule") or {}
@@ -479,16 +492,21 @@ async def test_execute_task_isolate_detaches_entirely(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_isolate_when_head_moves_start_at_to_second(monkeypatch):
-    """Branch A (head case): If activated task was head, next becomes head and inherits start_at."""
+async def test_isolated_execute_start_at_to_second_when_head_moves(monkeypatch):
+    """Branch A (head case): Explicit isolation – if activated task was head, next becomes head and inherits start_at."""
 
     actor = SimulatedActor(steps=0)
     ts = TaskScheduler(actor=actor)
 
     x, y = await _make_ordered_queue(ts, ["X", "Y"])  # type: ignore[misc]
 
-    # Execute X (head) explicitly; ambiguous → isolate → detach X entirely
-    handle = await ts.execute_task(text=str(x))
+    # Execute X (head) with an explicit isolation request (avoid pure-numeric fast path)
+    handle = await ts.execute(
+        text=(
+            f"Please run task {x} in isolation. Detach it entirely from the queue, "
+            "do not keep any followers attached, and execute only this task now."
+        ),
+    )
     await handle.result()
 
     rows_x = ts._filter_tasks(filter=f"task_id == {x}")
@@ -505,12 +523,12 @@ async def test_execute_task_isolate_when_head_moves_start_at_to_second(monkeypat
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_task_chain_keeps_followers(monkeypatch):
-    """Branch B: Keep tasks behind still queued to follow the activated task.
+async def test_execute_default_keeps_followers():
+    """Default behaviour: Keep followers attached when activating a middle task.
 
-    We simulate an unambiguous 'chain' request by monkeypatching the internal
-    classifier to return 'chain'. Expect B to become sub-head (prev=None), keep
-    next pointer to C, and C.prev_task=B, with only the head owning start_at.
+    Scenario: A2->B2->C2. Activate B2 without any explicit isolation request.
+    Expect B2 to become sub-head (prev=None), keep next pointer to C2, and
+    C2.prev_task == B2, with only the head owning start_at.
     """
 
     actor = SimulatedActor(steps=0)
@@ -518,14 +536,12 @@ async def test_execute_task_chain_keeps_followers(monkeypatch):
 
     a, b, c = await _make_ordered_queue(ts, ["A2", "B2", "C2"])  # type: ignore[misc]
 
-    async def force_chain(*, request_text: str, parent_chat_context=None):  # type: ignore[override]
-        return "chain"
+    handle = await ts.execute(text=str(b))
 
-    monkeypatch.setattr(ts, "_decide_execution_scope", force_chain, raising=True)
+    # Give the scheduler a brief moment to apply activation-side linkage updates
+    await asyncio.sleep(0.05)
 
-    handle = await ts.execute_task(text=str(b))
-    await handle.result()
-
+    # Inspect linkage immediately after activation
     rows_b = ts._filter_tasks(filter=f"task_id == {b}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
 
@@ -539,3 +555,10 @@ async def test_execute_task_chain_keeps_followers(monkeypatch):
     assert sched_c.get("prev_task") == b
     # C must not carry start_at (non-head)
     assert "start_at" not in sched_c or sched_c.get("start_at") in (None, "")
+
+    # Stop to avoid leaking the background task and wait for shutdown
+    try:
+        handle.stop(cancel=True)
+    except Exception:
+        pass
+    await handle.result()

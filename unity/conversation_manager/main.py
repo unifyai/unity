@@ -78,6 +78,9 @@ class EventManager:
                     print("ping received - keeping event manager alive")
                     continue
                 elif event["topic"] == "call_process":
+                    print("waiting for call process to be ready...")
+                    while "call" not in self.writers:
+                        await asyncio.sleep(0.1)
                     print("recieved call event")
                     # handle messages going to the call process
                     # like gen
@@ -105,6 +108,15 @@ class EventManager:
                         )
                     for client in self.topic_to_subs[event["topic"]]:
                         client.handle_event(event)
+                if "event" in event and event["event"]["event_name"] in [
+                    "PhoneCallEndedEvent",
+                    "PhoneCallStopEvent"
+                ]:
+                    self.writers["call"].close()
+                    await self.writers["call"].wait_closed()
+                    self.writers.pop("call")
+                    self.readers.pop("call")
+                    print("call stream closed")
             except Exception as e:
                 print("Event Manager Error:")
                 traceback.print_exc()

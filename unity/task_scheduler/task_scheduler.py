@@ -8,6 +8,8 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
 from typing import cast
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 
 from ..common.embed_utils import list_private_fields
@@ -43,12 +45,13 @@ from ..common.model_to_fields import model_to_fields
 from .prompt_builders import (
     build_ask_prompt,
     build_update_prompt,
-    build_execute_task_prompt,
+    build_execute_prompt,
 )
 from .base import BaseTaskScheduler
 from ..actor.base import BaseActor
 from ..actor.simulated import SimulatedActor
 from .active_task import ActiveTask
+from .active_queue import ActiveQueue
 import json
 from dataclasses import dataclass
 
@@ -69,6 +72,7 @@ from ._queue_ops import (
     attach_with_links as _ops_attach_with_links,
 )
 from .reintegration import ReintegrationManager
+from .queue_engine import plan_reorder_queue
 
 
 # ------------------------------------------------------------------ #
@@ -189,6 +193,12 @@ class TaskScheduler(BaseTaskScheduler):
                 self._cancel_tasks,
                 # Queue manipulation
                 self._update_task_queue,
+                # Multi-queue helpers
+                self._list_queues,
+                self._get_queue,
+                self._reorder_queue,
+                self._move_tasks_to_queue,
+                self._partition_queue,
                 # Reintegration
                 self._reinstate_task_to_previous_queue,
                 # Attribute mutations
@@ -253,6 +263,11 @@ class TaskScheduler(BaseTaskScheduler):
             fields=model_to_fields(Task),
         )
 
+        # In-memory checkpoints for reversible multi-queue edits within a session
+        # Keyed by opaque checkpoint ids; values contain a minimal snapshot of all queues
+        # (queue_id, head_id, order list, and queue-level start_at).
+        self._queue_checkpoints: Dict[str, Dict[str, Any]] = {}
+
         # ID of the *single* task that is allowed to be in the **active**
         # state at any moment.  This will be maintained by a forthcoming
         # tool; until then it may legitimately stay as ``None``.
@@ -273,6 +288,13 @@ class TaskScheduler(BaseTaskScheduler):
         # original position on defer stop. Map: task_id -> ReintegrationPlan
         self._reintegration_plans: dict[int, "ReintegrationPlan"] = {}
         self._reintegration_manager = ReintegrationManager(self)
+
+        # Linkage barriers: per-task events set after queue linkage updates
+        # complete for a given activation. ActiveQueue can await these to avoid
+        # racing reads before symmetric neighbour writes are visible.
+        import asyncio as _aio  # local import to avoid top-level cost
+
+        self._linkage_barriers: Dict[int, _aio.Event] = {}
 
     # Public #
     # -------#
@@ -424,18 +446,17 @@ class TaskScheduler(BaseTaskScheduler):
 
         return handle
 
-    # Start Task
+    # Execute
 
-    @functools.wraps(BaseTaskScheduler.execute_task, updated=())
-    @_log_manager_call.__func__("execute_task", "request")  # type: ignore[attr-defined]
-    async def execute_task(
+    @functools.wraps(BaseTaskScheduler.execute, updated=())
+    @_log_manager_call.__func__("execute", "request")
+    async def execute(
         self,
         text: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-        execution_scope: Optional[Literal["isolate", "chain"]] = None,
     ) -> SteerableToolHandle:
         freeform_text: str = text
 
@@ -456,55 +477,33 @@ class TaskScheduler(BaseTaskScheduler):
                 "A task is marked as active, but no active handle is present – reconcile state before starting another task.",
             )
 
-        # ── Fast-path: direct numeric task_id ───────────────────────────────
-        # When the user input *is* a plain integer we can skip the full
-        # tool-resolution loop, execute the task immediately and hand back
-        # the live ActiveTask handle.  This guarantees that callers who know
-        # the id (including the unit-tests) observe the task promotion and
-        # instance cloning *synchronously* after awaiting this method.
-
+        # Fast path: numeric task_id provided → start at that id using queue semantics
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
-                # Decide execution scope (allows tests to monkeypatch)
-                scope = (
-                    execution_scope
-                    if execution_scope is not None
-                    else await self._decide_execution_scope(
-                        request_text=freeform_text,
-                        parent_chat_context=parent_chat_context,
-                    )
-                )
-                direct_handle = await self._execute_task_internal(
+                return await self._execute_queue_internal(
                     task_id=int(stripped),
                     parent_chat_context=parent_chat_context,
                     clarification_up_q=clarification_up_q,
                     clarification_down_q=clarification_down_q,
-                    activated_by=ActivatedBy.explicit,
-                    execution_scope=scope,
                 )
-
-                return direct_handle
-
             except (ValueError, RuntimeError):
-                # Fall back to the slower, reasoning-based path when the id is
-                # unknown or the task cannot be started directly (e.g. already
-                # active).  Let the LLM ask for clarification / create a task.
-                pass  # ↴ continue with regular flow
+                # Fall back to the outer loop (will ask/clarify/create)
+                pass
 
-        return self._start_execute_task_loop(
+        # Start LLM-driven outer loop which will resolve the task id and adopt the queue handle.
+        return self._start_execute_loop(
             freeform_text=freeform_text,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
-            execution_scope=execution_scope,
         )
 
     # ------------------------------------------------------------------ #
     #  Internal helper – run existing *by-id* logic without event logging   #
     # ------------------------------------------------------------------ #
 
-    async def _execute_task_internal(
+    async def _execute_internal(
         self,
         *,
         task_id: int,
@@ -512,7 +511,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         activated_by: Optional[ActivatedBy] = None,
-        execution_scope: Literal["isolate", "chain"] = "isolate",
+        detach: bool = True,
     ) -> SteerableToolHandle:
         """
         Start the execution of a runnable task by its identifier.
@@ -567,11 +566,32 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] in ("completed", "cancelled", "failed", "active"):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
-        # Adjust queue linkages based on explicit activation scope
+        # Adjust queue linkages for activation (and record reintegration plan).
+        # detach=True → isolation semantics; detach=False → chain semantics.
+        desired_next: Optional[int] = _q_next(task_row.get("schedule"))
         self._detach_from_queue_for_activation(
             task_id=task_id,
-            execution_scope=execution_scope,
+            detach=detach,
         )
+        # Yield the event loop until the current row reflects the expected
+        # sub-head linkage when chaining (prev=None, next=desired_next).
+        # Avoids relying on arbitrary sleeps while remaining low-latency.
+        if not detach and desired_next is not None:
+            for _ in range(5):  # a handful of yields should suffice
+                try:
+                    rows_after = self._filter_tasks(
+                        filter=f"task_id == {task_id}",
+                        limit=1,
+                    )
+                    if rows_after:
+                        sched_after = rows_after[0].get("schedule") or {}
+                        if (sched_after.get("prev_task") is None) and (
+                            sched_after.get("next_task") == desired_next
+                        ):
+                            break
+                except Exception:
+                    pass
+                await asyncio.sleep(0)
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
         handle = await ActiveTask.create(
@@ -628,42 +648,320 @@ class TaskScheduler(BaseTaskScheduler):
         return handle
 
     # ------------------------------------------------------------------ #
-    #  Helper – build and start the execute_task outer tool-use loop      #
+    #  Chain orchestrator: sequentially executes the follower queue       #
     # ------------------------------------------------------------------ #
-    def _start_execute_task_loop(
+
+    async def _execute_queue_internal(
+        self,
+        *,
+        task_id: int,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
+        """Start queue execution at `task_id` and return a composite queue handle."""
+        first = await self._execute_internal(
+            task_id=task_id,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+            activated_by=ActivatedBy.explicit,
+            # Always use queue semantics – followers remain attached
+            detach=False,
+        )
+        return ActiveQueue(
+            self,
+            first_task_id=task_id,
+            first_handle=first,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  Helper – build and start the execute outer tool-use loop      #
+    # ------------------------------------------------------------------ #
+    def _start_execute_loop(
         self,
         *,
         freeform_text: str,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        execution_scope: Optional[Literal["isolate", "chain"]] = None,
     ) -> SteerableToolHandle:
-        """Compose tools and prompt, then start the execute_task reasoning loop."""
+        """Compose tools and prompt, then start the execute reasoning loop."""
         client = self._new_llm_client("gpt-5@openai")
 
         # ── tool definitions ────────────────────────────────────────────────
-        async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
-            """Start the task with *task_id* and bubble up its handle (passthrough)."""
+        class _LaterGroup(BaseModel):
+            task_ids: List[int] = Field(min_length=1)
+            queue_start_at: Optional[str] = None
 
-            # Decide execution scope using the same helper as the fast-path
-            scope = (
-                execution_scope
-                if execution_scope is not None
-                else await self._decide_execution_scope(
-                    request_text=freeform_text,
-                    parent_chat_context=parent_chat_context,
+        class _QueuePlan(BaseModel):
+            now: List[int] = Field(min_length=1)
+            later_groups: List[_LaterGroup] = Field(default_factory=list)
+            notes: Optional[str] = None
+
+        def validate_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Validate a proposed queue plan (dict or JSON string) and return the normalised structure.
+
+            The plan must include a non-empty `now` list and zero or more
+            `later_groups`, each with a non-empty `task_ids` list. The function
+            returns the validated plan and previews of the resulting queues.
+            """
+            import json as _json
+
+            try:
+                parsed = _json.loads(plan) if isinstance(plan, str) else plan
+            except Exception as _e:  # noqa: N806 (keep local name)
+                raise ValueError(f"Invalid plan: {_e}")
+            model = _QueuePlan.model_validate(parsed)
+            # Preview shapes – we do not mutate here
+            preview: Dict[str, Any] = {"now": model.now, "later": []}
+            for g in model.later_groups:
+                preview["later"].append(
+                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at},
                 )
+            return {
+                "outcome": "validated",
+                "details": {"plan": model.model_dump(), "preview": preview},
+            }
+
+        def apply_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Atomically apply a validated plan (dict or JSON string) using invariant-preserving tools.
+
+            Strategy:
+            - Use `_partition_queue` when there are any later groups to split the
+              default queue into [now] and later queues with optional dates.
+            - Otherwise, reorder the default queue so that `now` is the head
+              (dropping other runnable tasks from default queue).
+            After success, automatically create a checkpoint to allow revert.
+            """
+            import json as _json
+
+            try:
+                parsed = _json.loads(plan) if isinstance(plan, str) else plan
+            except Exception as _e:
+                raise ValueError(f"Invalid plan: {_e}")
+            model = _QueuePlan.model_validate(parsed)
+            # If later groups exist, build parts payload
+            if model.later_groups:
+                parts = [{"task_ids": list(model.now)}] + [
+                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at}
+                    for g in model.later_groups
+                ]
+                self._partition_queue(parts=parts, strategy="preserve_order")
+            else:
+                # Only reorder default queue to contain exactly `now`
+                if model.now:
+                    self._reorder_queue(queue_id=None, new_order=list(model.now))
+            # Auto-checkpoint
+            cp = checkpoint_queue_state(label="post-apply-plan")
+            return {
+                "outcome": "applied",
+                "details": {"checkpoint_id": cp["details"]["checkpoint_id"]},
+            }
+
+        def checkpoint_queue_state(*, label: Optional[str] = None) -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Create a session-scoped checkpoint of ALL runnable queues.
+
+            The checkpoint captures, for every queue, the head id, the full order
+            (head→tail), and the queue-level start_at timestamp. This enables the
+            execute loop to revert multi-queue edits if the user changes their mind
+            before completion.
+
+            Parameters
+            ----------
+            label : str | None, optional
+                Optional human-readable label for diagnostics.
+
+            Returns
+            -------
+            dict
+                {"outcome": "checkpointed", "details": {"checkpoint_id": str}}
+            """
+            # Build snapshot
+            snapshot: Dict[str, Any] = {"label": label, "queues": []}
+            try:
+                all_q = self._list_queues()
+            except Exception:
+                all_q = []
+            for q in all_q:
+                qid = q.get("queue_id")
+                start_at = q.get("start_at")
+                try:
+                    order = [t.task_id for t in self._get_queue(queue_id=qid)]
+                except Exception:
+                    order = []
+                snapshot["queues"].append(
+                    {
+                        "queue_id": qid,
+                        "head_id": q.get("head_id"),
+                        "start_at": start_at,
+                        "order": order,
+                    },
+                )
+
+            from ..common.llm_helpers import short_id as _short_id  # local import
+
+            cid = _short_id(8)
+            self._queue_checkpoints[cid] = snapshot
+            # Optionally persist to a dedicated context for cross-session safety
+            try:
+                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                }:
+                    self._persist_checkpoint(cid, label, snapshot)
+            except Exception:
+                pass
+            return {"outcome": "checkpointed", "details": {"checkpoint_id": cid}}
+
+        # Create an initial checkpoint at the start of execute to guarantee a known revert point
+        try:
+            checkpoint_queue_state(label="pre-execute")
+        except Exception:
+            pass
+
+        def revert_to_checkpoint(*, checkpoint_id: str) -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Revert all queues to a previously created checkpoint.
+
+            This operation is deterministic and invariant-preserving. It rewrites
+            each queue to the exact order stored in the checkpoint and reapplies
+            the queue-level start_at to each restored head.
+            """
+            snap = self._queue_checkpoints.get(str(checkpoint_id))
+            if snap is None:
+                # Optionally load from persistence when enabled
+                try:
+                    if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
+                        "1",
+                        "true",
+                        "yes",
+                    }:
+                        snap = self._load_checkpoint(str(checkpoint_id))
+                except Exception:
+                    snap = None
+            assert snap is not None, f"Unknown checkpoint_id={checkpoint_id}"
+            for q in snap.get("queues", []):
+                qid = q.get("queue_id")
+                order = list(q.get("order", []) or [])
+                if order:
+                    self._reorder_queue(queue_id=qid, new_order=order)
+                    # Restore queue-level start_at on head if present
+                    start_at = q.get("start_at")
+                    if start_at is not None:
+                        head_tid = int(order[0])
+                        try:
+                            head_row = self._get_single_row_or_raise(head_tid)
+                            sched = {**(head_row.get("schedule") or {})}
+                            sched["start_at"] = start_at
+                            self._validated_write(
+                                task_id=head_tid,
+                                entries={"schedule": sched, "status": Status.scheduled},
+                                err_prefix="While restoring queue start_at from checkpoint:",
+                            )
+                        except Exception:
+                            # Defensive: if head row cannot be found now, skip silently
+                            pass
+            return {"outcome": "reverted", "details": {"checkpoint_id": checkpoint_id}}
+
+        def get_latest_checkpoint() -> Dict[str, Any]:  # type: ignore[valid-type]
+            """Return the most recently created checkpoint id and label.
+
+            When no checkpoints exist yet, returns {"checkpoint_id": None}.
+            """
+            try:
+                keys = list(self._queue_checkpoints.keys())
+                if keys:
+                    cid = keys[-1]
+                    snap = self._queue_checkpoints.get(cid, {})
+                    return {
+                        "outcome": "ok",
+                        "details": {"checkpoint_id": cid, "label": snap.get("label")},
+                    }
+                # Optionally consult persisted store
+                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                }:
+                    latest = self._get_latest_persisted_checkpoint()
+                    if latest is not None:
+                        return {"outcome": "ok", "details": latest}
+                return {
+                    "outcome": "none",
+                    "details": {"checkpoint_id": None, "label": None},
+                }
+            except Exception:
+                return {
+                    "outcome": "none",
+                    "details": {"checkpoint_id": None, "label": None},
+                }
+
+        def create_task(*, name: str, description: str) -> ToolOutcome:  # type: ignore[valid-type]
+            """Create a brand-new task with minimal inputs (name, description).
+
+            Notes
+            -----
+            - This scoped creator intentionally exposes only name/description to
+              prevent schedule/status/queue manipulation from the execute loop.
+            - Lifecycle values and invariants are inferred by the scheduler.
+            """
+            return self._create_task(name=name, description=description)
+
+        async def _execute_by_id(
+            *,
+            task_id: int,
+        ) -> SteerableToolHandle:  # type: ignore[valid-type]
+            """Start the task with *task_id* and adopt the queue handle.
+
+            Behavioural rules
+            -----------------
+            - Never modify scheduling/ordering or `start_at` to begin execution.
+            - If the user wants the whole sequence now, reorder the queue explicitly first
+              (see `_update_task_queue`) so the desired subset is at the head, then call this.
+            """
+
+            handle = await self._execute_queue_internal(
+                task_id=task_id,
+                parent_chat_context=parent_chat_context,
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
             )
-            handle = await self._execute_task_internal(
+            # 💡 signal pass-through so the outer loop adopts this handle
+            setattr(handle, "__passthrough__", True)
+            return handle
+
+        async def _execute_isolated_by_id(
+            *,
+            task_id: int,
+        ) -> SteerableToolHandle:  # type: ignore[valid-type]
+            """Start ONLY the specified task by first detaching it from the queue.
+
+            Behavioural rules
+            -----------------
+            - Use this when the user explicitly requests to run a task "in isolation"
+              or to "detach it entirely from the queue".
+            - Detachment semantics:
+              • If the task is the current head, its successor (if any) becomes the new head
+                and inherits the queue-level start_at timestamp.
+              • The detached task loses its schedule entirely (no prev/next/start_at).
+              • Followers of the detached task remain linked to each other.
+            - This does NOT move the task into a new queue, and does NOT partition queues.
+            """
+
+            # Run internal execute with detach=True to enforce isolation semantics
+            handle = await self._execute_internal(
                 task_id=task_id,
                 parent_chat_context=parent_chat_context,
                 clarification_up_q=clarification_up_q,
                 clarification_down_q=clarification_down_q,
                 activated_by=ActivatedBy.explicit,
-                execution_scope=scope,
+                detach=True,
             )
-            # 💡 signal pass-through so the outer loop adopts this handle
+            # Signal pass-through so the outer loop adopts this handle
             setattr(handle, "__passthrough__", True)
             return handle
 
@@ -675,16 +973,31 @@ class TaskScheduler(BaseTaskScheduler):
             )
             return await rc(question)
 
-        # Wrap update to hard-code tool_policy=None while preserving metadata
-        @functools.wraps(self.update, updated=())
-        async def _update_no_forcing(*args, **kwargs):  # type: ignore[valid-type]
-            kwargs["tool_policy"] = None
-            return await self.update(*args, **kwargs)
-
         tools = methods_to_tool_dict(
+            # Read-only helpers
             self.ask,
-            _update_no_forcing,
-            _execute_task_by_id,
+            self._get_task_queue,
+            # Queue mutation primitive (explicit reorder)
+            self._update_task_queue,
+            # Multi-queue helpers (coarse, invariant-preserving)
+            self._list_queues,
+            self._get_queue,
+            self._reorder_queue,
+            self._move_tasks_to_queue,
+            self._partition_queue,
+            # Plan helpers
+            validate_queue_plan,
+            apply_queue_plan,
+            # Reintegration and safety
+            self._reinstate_task_to_previous_queue,
+            checkpoint_queue_state,
+            revert_to_checkpoint,
+            get_latest_checkpoint,
+            # Start execution
+            _execute_by_id,
+            _execute_isolated_by_id,
+            # Creation (name + description only)
+            create_task,
             include_class_name=False,
         )
         # Only expose clarification tool when both queues are available
@@ -696,14 +1009,14 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ── dynamic system prompt ───────────────────────────────────────────
         client.set_system_message(
-            build_execute_task_prompt(tools),
+            build_execute_prompt(tools),
         )
 
         outer_handle = self._start_loop(
             client,
             freeform_text,
             tools,
-            loop_id=f"{self.__class__.__name__}.{self.execute_task.__name__}",
+            loop_id=f"{self.__class__.__name__}.execute",
             parent_chat_context=parent_chat_context,
             log_steps=True,
         )
@@ -713,76 +1026,6 @@ class TaskScheduler(BaseTaskScheduler):
     # ------------------------------------------------------------------ #
     #  Scope classification helper (LLM-routed)                           #
     # ------------------------------------------------------------------ #
-    async def _decide_execution_scope(
-        self,
-        *,
-        request_text: str,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-    ) -> Literal["isolate", "chain"]:
-        """Use an LLM router to decide execution scope: "isolate" vs "chain"."""
-        try:
-            client = self._new_llm_client("gpt-5@openai")
-            system = (
-                "You are a router that selects an execution scope for starting a queued task.\n"
-                "Choices:\n"
-                "- isolate: Start only the selected task now, detach its followers. The next task becomes the new head and inherits any queue-level start_at timestamp (becomes scheduled).\n"
-                "- chain: Start the selected task now and KEEP the follower chain attached behind it. The started task keeps the queue-level start_at; the immediate successor MUST NOT carry start_at.\n"
-                "Guidelines:\n"
-                "- Phrases like 'do them all now', 'do the whole set/sequence now', lists of multiple tasks to run now => chain.\n"
-                "- Phrases like 'just this one now', 'leave the rest for later/Monday' => isolate.\n"
-                "- If ambiguous, prefer chain when the user implies batch execution; otherwise isolate.\n"
-                'Return ONLY JSON with rationale first: {"rationale": <short string>, "execution_scope": "isolate|chain"}\n'
-                "Be concise and deterministic."
-            )
-            client.set_system_message(system)
-
-            # Build a compact, recent-first transcript for added context
-            def _format_ctx(
-                ctx: Optional[List[Dict[str, Any]]],
-                limit_chars: int = 2000,
-            ) -> str:
-                try:
-                    if not ctx:
-                        return "(no prior context)"
-                    lines: List[str] = []
-                    total = 0
-                    for msg in reversed(ctx[-20:]):
-                        role = str(msg.get("role", "")).strip() or "user"
-                        content = str(msg.get("content", "")).strip()
-                        line = f"{role}: {content}"
-                        if total + len(line) > limit_chars:
-                            break
-                        lines.append(line)
-                        total += len(line)
-                    return "\n".join(reversed(lines)) if lines else "(no prior context)"
-                except Exception:
-                    return "(no prior context)"
-
-            ctx_block = _format_ctx(parent_chat_context)
-            user = (
-                "Recent conversation (most recent last):\n"
-                f"{ctx_block}\n\n"
-                "User request (free-form):\n"
-                f"{(request_text or '').strip()}"
-            )
-            raw = await client.generate(user)
-            import json as _json
-
-            scope = "isolate"
-            try:
-                data = _json.loads(raw)
-                token = str(data.get("execution_scope", "")).strip().lower()
-                if token in {"isolate", "chain"}:
-                    scope = token  # type: ignore[assignment]
-            except Exception:
-                # attempt to extract simple token
-                low = (raw or "").lower()
-                if '"chain"' in low or 'execution_scope": "chain"' in low:
-                    scope = "chain"
-            return cast(Literal["isolate", "chain"], scope)
-        except Exception:
-            # Conservative fallback
-            return "isolate"
 
     #  Per-instance helpers
 
@@ -830,13 +1073,11 @@ class TaskScheduler(BaseTaskScheduler):
         # Normalise status to enum for consistent comparisons
         new_status_enum = self._to_status(new_status)
         entries: Dict[str, Any] = {"status": new_status_enum}
-        # Only allow `activated_by` to be set during transition to 'active'
+        # Only allow `activated_by` to be set during transition to 'active'.
+        # For transitions away from 'active', preserve the existing value for auditability.
         if new_status_enum == Status.active and activated_by is not None:
             # Set only at the moment of activation; never overwrite later
             entries["activated_by"] = str(activated_by)
-        else:
-            # Ensure non-active rows never carry activation metadata
-            entries["activated_by"] = None
 
         result = self._write_log_entries(
             logs=log_objs[0].id if hasattr(log_objs[0], "id") else log_objs[0],
@@ -902,7 +1143,7 @@ class TaskScheduler(BaseTaskScheduler):
           the queue-level timestamp lives on the head node only.
         - A 'primed' task must be the queue head (prev_task is None).
         - When setting status to 'scheduled', the task must have either a
-          prev_task (it sits in the chain) or a start_at timestamp.
+          prev_task (it sits in the queue) or a start_at timestamp.
 
         Parameters
         ----------
@@ -951,7 +1192,7 @@ class TaskScheduler(BaseTaskScheduler):
         if status != Status.scheduled:
             return
 
-        # 'scheduled' requires either a chain position or a start_at
+        # 'scheduled' requires either a queue position or a start_at
         if prev_task_id is None and start_at_ts is None:
             raise ValueError(
                 f"{err_prefix} a task with status 'scheduled' must have either "
@@ -1081,7 +1322,7 @@ class TaskScheduler(BaseTaskScheduler):
         • ``primed`` tasks must be at the head (``prev_task is None``). Do not
           set ``primed`` on tasks that sit behind another task.
 
-        • A task in ``scheduled`` state must have either a chain position
+        • A task in ``scheduled`` state must have either a queue position
           (``prev_task`` is set) or a ``start_at`` timestamp.
 
         To avoid mistakes, prefer omitting ``status`` and let the scheduler infer
@@ -1360,6 +1601,585 @@ class TaskScheduler(BaseTaskScheduler):
         """Delegate to queue-utils to maintain symmetric neighbour links."""
         _q_sync_adjacent_links(self, task_id=task_id, schedule=schedule)
 
+    # ────────────────────────────────────────────────────────────────────
+    # Multi-queue helpers (public tools for the update loop)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _allocate_new_queue_id(self) -> int:
+        """Return a fresh integer queue identifier.
+
+        Strategy – scan all tasks for existing ``schedule.queue_id`` numeric
+        values and return ``max + 1`` (starting at 1).  Queues are implicit in
+        this scheduler: a queue exists as soon as at least one task carries its
+        ``queue_id``.
+        """
+        rows = self._filter_tasks()
+        max_id = 0
+        for r in rows:
+            sched = r.get("schedule") or {}
+            qid = sched.get("queue_id") if isinstance(sched, dict) else None
+            try:
+                if isinstance(qid, int):
+                    max_id = max(max_id, qid)
+            except Exception:
+                pass
+        return max_id + 1 if max_id >= 0 else 1
+
+    def _head_row_for_queue(self, queue_id: Optional[int]) -> Optional[TaskRow]:
+        """Best-effort fetch of the head row for a given queue.
+
+        The "default" queue is represented by ``queue_id is None``.
+        Only non-terminal tasks are considered part of a runnable queue.
+        Returns ``None`` when no head exists (e.g., empty queue).
+        """
+        rows = [
+            r
+            for r in self._filter_tasks()
+            if r.get("schedule") is not None
+            and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+        ]
+        heads: list[TaskRow] = []
+        for r in rows:
+            sched = r.get("schedule") or {}
+            qid = sched.get("queue_id")
+            prev_id = sched.get("prev_task")
+            if qid == queue_id and prev_id is None:
+                heads.append(r)
+            if queue_id is None and qid is None and prev_id is None:
+                # explicit path for default queue
+                pass
+        if not heads:
+            return None
+        assert (
+            len(heads) == 1
+        ), f"Multiple heads detected for queue_id={queue_id}: {heads}"
+        return heads[0]
+
+    def _walk_queue(self, head_row: TaskRow) -> list[TaskRow]:
+        """Walk from ``head_row`` forward using ``next_task`` and return rows.
+
+        Defensive against missing rows or broken links; stops at first gap.
+        """
+        ordered: list[TaskRow] = []
+        cur = head_row
+        seen: set[int] = set()
+        while cur is not None:
+            tid = cur.get("task_id")
+            try:
+                if isinstance(tid, int) and tid in seen:
+                    break
+                if isinstance(tid, int):
+                    seen.add(tid)
+            except Exception:
+                pass
+            ordered.append(cur)
+            sched = cur.get("schedule") or {}
+            nxt = sched.get("next_task")
+            if nxt is None:
+                break
+            nxt_rows = self._filter_tasks(filter=f"task_id == {int(nxt)}", limit=1)
+            cur = nxt_rows[0] if nxt_rows else None
+        return ordered
+
+    def _list_queues(self) -> List[Dict[str, Any]]:
+        """
+        List all runnable queues.
+
+        Returns
+        -------
+        list[dict]
+            One entry per queue head with keys:
+            - ``queue_id`` (int | None): identifier; ``None`` denotes the default queue.
+            - ``head_id`` (int): task id of the head.
+            - ``size`` (int): number of runnable tasks in the queue.
+            - ``start_at`` (str | None): ISO timestamp from the head's schedule.
+
+        Notes
+        -----
+        Queues are implicit in the data model: a queue exists when at least one
+        runnable task has ``schedule.prev_task is None``. The "default" queue is
+        the one where tasks have ``schedule.queue_id is None``.
+        """
+        rows = [
+            r
+            for r in self._filter_tasks()
+            if r.get("schedule") is not None
+            and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+        ]
+        # heads are rows with prev_task == None
+        heads: list[TaskRow] = [
+            r for r in rows if (r.get("schedule") or {}).get("prev_task") is None
+        ]
+        out: list[Dict[str, Any]] = []
+        for h in heads:
+            sched = h.get("schedule") or {}
+            start_at = sched.get("start_at")
+            qid = sched.get("queue_id")
+            chain = self._walk_queue(h)
+            out.append(
+                {
+                    "queue_id": qid,
+                    "head_id": h.get("task_id"),
+                    "size": len(chain),
+                    "start_at": start_at,
+                },
+            )
+        return out
+
+    def _get_queue(self, *, queue_id: Optional[int] = None) -> List[Task]:
+        """
+        Return the runnable queue for a given ``queue_id`` (head→tail).
+
+        Parameters
+        ----------
+        queue_id : int | None, default ``None``
+            Identifier of the queue. ``None`` denotes the default queue (legacy
+            single-queue behaviour).
+
+        Returns
+        -------
+        list[Task]
+            Ordered tasks from head to tail. Returns an empty list when the
+            queue does not exist or contains no runnable tasks.
+        """
+        head = self._head_row_for_queue(queue_id)
+        if head is None:
+            return []
+        rows = self._walk_queue(head)
+        ordered: List[Task] = []
+        for row in rows:
+            # Strip stale activation metadata on non-active rows
+            _row = dict(row)
+            try:
+                if self._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
+                    _row.pop("activated_by", None)
+            except Exception:
+                if str(_row.get("status")) != str(Status.active):
+                    _row.pop("activated_by", None)
+            ordered.append(Task(**_row))
+        return ordered
+
+    def _reorder_queue(
+        self,
+        *,
+        queue_id: Optional[int],
+        new_order: List[int],
+    ) -> ToolOutcome:
+        """
+        Reorder a single queue to exactly match ``new_order`` (head→tail).
+
+        Parameters
+        ----------
+        queue_id : int | None
+            Target queue identifier (``None`` for the default queue).
+        new_order : list[int]
+            Complete desired order of all runnable tasks within this queue.
+            This tool does not add or remove tasks across queues; every task in
+            the current queue must appear exactly once in ``new_order``.
+
+        Behaviour
+        ---------
+        - Maintains neighbour pointers symmetrically.
+        - Ensures exactly one head owns ``start_at`` (carried from the former
+          head if present) and sets statuses consistently:
+            • head with ``start_at`` → ``scheduled``;
+            • non-heads → at most ``queued``.
+        - The active task (if any) in this queue retains its ``active`` status.
+        """
+        # Build current queue membership directly from storage to avoid
+        # assumptions about a single visible head during transitions.
+        all_rows = self._filter_tasks()
+        in_queue_rows: list[TaskRow] = [
+            r
+            for r in all_rows
+            if r.get("schedule") is not None
+            and (r.get("schedule") or {}).get("queue_id") == queue_id
+            and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+        ]
+        current_set: set[int] = {int(r.get("task_id")) for r in in_queue_rows}
+        assert current_set == set(
+            new_order,
+        ), "new_order must be a permutation of the current queue"
+
+        rows_by_id: Dict[int, TaskRow] = {
+            r["task_id"]: r
+            for r in self._filter_tasks(filter=f"task_id in {new_order}")
+        }
+
+        # Compute an invariant-preserving update plan via QueueEngine
+        updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
+            new_order=new_order,
+            rows_by_id=rows_by_id,
+            queue_id=queue_id,
+        )
+
+        # Persist through the central validated write funnel
+        for tid, payload in updates_per_log.items():
+            self._validated_write(
+                task_id=tid,
+                entries=payload,
+                err_prefix=f"While reordering queue {queue_id} (task {tid}):",
+            )
+
+        # Auto-checkpoint after successful edit (best-effort)
+        try:
+            # Silent; the execute loop also checkpoints explicitly
+            _ = self._queue_checkpoints  # guard attribute existence
+            # Build lightweight snapshot of just this queue
+            from ..common.llm_helpers import short_id as _short_id  # local import
+
+            cid = _short_id(8)
+            snap = {"label": "auto:_reorder_queue", "queues": []}
+            try:
+                order_now = [t.task_id for t in self._get_queue(queue_id=queue_id)]
+            except Exception:
+                order_now = list(new_order)
+            head_start = None
+            try:
+                head = self._head_row_for_queue(queue_id)
+                head_start = (
+                    (head.get("schedule") or {}).get("start_at") if head else None
+                )
+            except Exception:
+                head_start = None
+            snap["queues"].append(
+                {
+                    "queue_id": queue_id,
+                    "head_id": order_now[0] if order_now else None,
+                    "start_at": head_start,
+                    "order": order_now,
+                },
+            )
+            self._queue_checkpoints[cid] = snap
+            # Expose the checkpoint id in the return payload via outer scope variable
+            _last_checkpoint_id = cid  # noqa: F841 (read by return below if available)
+        except Exception:
+            pass
+
+        return {
+            "outcome": "queue reordered",
+            "details": {
+                "queue_id": queue_id,
+                "new_order": new_order,
+                "checkpoint_id": locals().get("_last_checkpoint_id"),
+            },
+        }
+
+    def _move_tasks_to_queue(
+        self,
+        *,
+        task_ids: List[int],
+        queue_id: Optional[int] = None,
+        position: Optional[str] = "back",
+    ) -> ToolOutcome:
+        """
+        Move one or more runnable tasks to a specific queue and position.
+
+        Parameters
+        ----------
+        task_ids : list[int]
+            Identifiers of tasks to move. All tasks must be non-terminal. The
+            currently active task cannot be moved.
+        queue_id : int | None, default ``None``
+            Target queue identifier. ``None`` denotes the default queue.  When
+            you intend to create a brand-new queue, pass ``queue_id=None`` and
+            this tool will allocate a fresh identifier automatically and return
+            it in the details payload.
+        position : {"front", "back"} | None, default "back"
+            Where to insert the moved tasks relative to the target queue.
+            - "front": insert as a block at the front (preserving the order of
+              ``task_ids`` as provided);
+            - "back": append at the end (preserving order);
+            - None: keep target queue unchanged (only change queue membership; the
+              tasks will not be linked unless you call `_reorder_queue` next).
+
+        Behaviour
+        ---------
+        - Detaches the tasks from their original queues by fixing neighbour links.
+        - Assigns the provided/allocated ``queue_id`` to the moved tasks.
+        - If inserting at the front or back, updates neighbour links to splice the
+          block into the target queue.
+        - Preserves the target queue's head-level ``start_at`` by keeping it on the
+          new head after insertion (if any).
+        - Sets statuses consistently (head with ``start_at`` → ``scheduled``; others
+          at most ``queued``). Active tasks are rejected.
+
+        Returns
+        -------
+        ToolOutcome
+            ``{"outcome": "tasks moved", "details": {"queue_id": <int>, "task_ids": [...]}}``
+        """
+        # Validate and normalise inputs
+        if isinstance(task_ids, int):
+            task_ids = [task_ids]
+        if not task_ids:
+            return {
+                "outcome": "tasks moved",
+                "details": {"queue_id": queue_id, "task_ids": []},
+            }
+
+        # Reject active and terminal tasks
+        rows = self._filter_tasks(filter=f"task_id in {task_ids}")
+        ids_found = {r.get("task_id") for r in rows}
+        missing = [tid for tid in task_ids if tid not in ids_found]
+        assert not missing, f"Unknown task ids: {missing}"
+        for r in rows:
+            st = self._to_status(r.get("status"))
+            assert st not in self._TERMINAL_STATUSES, f"Task {r['task_id']} is terminal"
+        # Guard against touching the active task via the central helper
+        self._ensure_not_active_task(task_ids)
+
+        # Allocate queue id when requested
+        target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
+
+        # 1) Detach each task from its current queue (fix predecessor/successor)
+        def _get_row(tid: int) -> TaskRow:
+            return self._get_single_row_or_raise(tid)
+
+        for tid in task_ids:
+            r = _get_row(tid)
+            sched = r.get("schedule") or {}
+            prev_tid = sched.get("prev_task")
+            next_tid = sched.get("next_task")
+            # Fix predecessor's next pointer
+            if prev_tid is not None:
+                prev_row = self._get_single_row_or_raise(int(prev_tid))
+                prev_sched = {**(prev_row.get("schedule") or {})}
+                if prev_sched.get("next_task") == tid:
+                    prev_sched["next_task"] = next_tid
+                    self._validated_write(
+                        task_id=int(prev_row["task_id"]),
+                        entries={"schedule": prev_sched},
+                        err_prefix=f"While detaching predecessor for move of task {tid}:",
+                    )
+            # Fix successor's prev pointer and remove start_at (no longer head)
+            if next_tid is not None:
+                next_row = self._get_single_row_or_raise(int(next_tid))
+                next_sched = {**(next_row.get("schedule") or {})}
+                if next_sched.get("prev_task") == tid:
+                    next_sched.pop("start_at", None)
+                    next_sched["prev_task"] = prev_tid
+                    self._validated_write(
+                        task_id=int(next_row["task_id"]),
+                        entries={"schedule": next_sched},
+                        err_prefix=f"While detaching successor for move of task {tid}:",
+                    )
+
+            # Clear this task's own linkage and queue id (will set below)
+            new_sched: Dict[str, Any] = {
+                "prev_task": None,
+                "next_task": None,
+                "queue_id": target_qid,
+            }
+            self._validated_write(
+                task_id=tid,
+                entries={"schedule": new_sched, "status": Status.queued},
+                err_prefix=f"While moving task {tid} to queue {target_qid}:",
+            )
+
+        # 2) Splice into the target queue when position is specified
+        if position in {"front", "back"}:
+            # Compose the new order using the current target queue snapshot
+            block = list(task_ids)
+            try:
+                existing_order = [
+                    t.task_id for t in self._get_queue(queue_id=target_qid)
+                ]
+            except Exception:
+                existing_order = []
+            # Remove any ids that are part of the moved block (defensive)
+            existing_order = [tid for tid in existing_order if tid not in block]
+
+            new_order = (
+                block + existing_order
+                if position == "front"
+                else existing_order + block
+            )
+
+            if new_order:
+                self._reorder_queue(queue_id=target_qid, new_order=new_order)
+
+        # Auto-checkpoint after successful edit (best-effort)
+        try:
+            from ..common.llm_helpers import short_id as _short_id  # local import
+
+            cid = _short_id(8)
+            snap = {"label": "auto:_move_tasks_to_queue", "queues": []}
+            # Capture target queue only for brevity
+            order_now = [t.task_id for t in self._get_queue(queue_id=target_qid)]
+            head_start = None
+            try:
+                head = self._head_row_for_queue(target_qid)
+                head_start = (
+                    (head.get("schedule") or {}).get("start_at") if head else None
+                )
+            except Exception:
+                head_start = None
+            snap["queues"].append(
+                {
+                    "queue_id": target_qid,
+                    "head_id": order_now[0] if order_now else None,
+                    "start_at": head_start,
+                    "order": order_now,
+                },
+            )
+            self._queue_checkpoints[cid] = snap
+            _last_checkpoint_id = cid  # noqa: F841
+        except Exception:
+            pass
+
+        return {
+            "outcome": "tasks moved",
+            "details": {
+                "queue_id": target_qid,
+                "task_ids": list(task_ids),
+                "checkpoint_id": locals().get("_last_checkpoint_id"),
+            },
+        }
+
+    def _partition_queue(
+        self,
+        *,
+        parts: List[Dict[str, Any]],
+        strategy: str = "preserve_order",
+    ) -> ToolOutcome:
+        """
+        Split the current default runnable queue into multiple smaller queues.
+
+        Parameters
+        ----------
+        parts : list[dict]
+            Each item describes one output queue with keys:
+            - ``task_ids`` (list[int], required): tasks that should form this queue.
+            - ``queue_start_at`` (str | datetime | None, optional): when set, the
+              head of this queue will carry this ``start_at`` and the queue head
+              status becomes ``scheduled``; otherwise it remains ``queued``.
+            - ``queue_name`` (str | None, optional): unused metadata; accepted for
+              future compatibility.
+
+            The first part is applied to the default (legacy) queue. Subsequent
+            parts are materialised as new queues (fresh ``queue_id``s).
+
+        strategy : {"preserve_order", "as_list"}
+            - ``preserve_order`` (default): within each part, preserve the relative
+              order as found in the original default queue;
+            - ``as_list``: use the exact ``task_ids`` order provided for each part.
+
+        Behaviour
+        ---------
+        - Tasks mentioned in later parts are detached from the default queue and
+          moved to newly created queues.
+        - The original default queue is reduced to the tasks in the first part.
+        - Queue-level ``start_at`` is set from each part's ``queue_start_at`` (if
+          provided); otherwise, the original default queue's timestamp is retained
+          on the new head of the first part only.
+
+        Notes
+        -----
+        This tool is designed for readability in the update loop when the user
+        asks for sequences like “do [0,2] tomorrow and [1,3] the day after”.
+        """
+        # Current default queue before split
+        original = [t.task_id for t in self._get_queue(queue_id=None)]
+        if not original:
+            return {"outcome": "queue partitioned", "details": {"queues": []}}
+
+        # Normalise per-part order
+        def _ordered(ids: List[int]) -> List[int]:
+            if strategy == "as_list":
+                return list(ids)
+            # preserve original relative order
+            rank = {tid: i for i, tid in enumerate(original)}
+            return sorted(ids, key=lambda x: rank.get(x, 10**9))
+
+        queue_start_ts = None
+        # Remember original queue-level timestamp
+        head_row = self._head_row_for_queue(None)
+        if head_row is not None:
+            queue_start_ts = (head_row.get("schedule") or {}).get("start_at")
+
+        # 1) Move all tasks not in the first part out first (to avoid complex rewiring)
+        first_ids = set(parts[0].get("task_ids", [])) if parts else set()
+        rest_ids = [tid for tid in original if tid not in first_ids]
+
+        # For later parts, compute their target membership
+        later_parts = parts[1:] if len(parts) > 1 else []
+        # Map each tid in rest_ids to the index of its part (relative to later_parts)
+        part_map: Dict[int, int] = {}
+        for idx, p in enumerate(later_parts):
+            for tid in p.get("task_ids", []):
+                part_map[int(tid)] = idx
+
+        # Group by part
+        groups: Dict[int, List[int]] = {}
+        for tid in rest_ids:
+            j = part_map.get(tid)
+            if j is None:
+                continue
+            groups.setdefault(j, []).append(tid)
+
+        created: list[Dict[str, Any]] = []
+
+        for j, tids in groups.items():
+            ordered = _ordered(tids)
+            qid = self._allocate_new_queue_id()
+            # Move block to new queue (append), then reorder to exact order
+            self._move_tasks_to_queue(task_ids=ordered, queue_id=qid, position=None)
+            self._reorder_queue(queue_id=qid, new_order=ordered)
+            # Apply queue_start_at if provided
+            qstart = later_parts[j].get("queue_start_at")
+            if qstart is not None and ordered:
+                # Set via central helper to preserve invariants
+                head_tid = ordered[0]
+                self._update_task_start_at(task_id=head_tid, new_start_at=qstart)
+            created.append({"queue_id": qid, "task_ids": ordered})
+
+        # 2) Reduce the default queue to the first part (in chosen order)
+        first_list = _ordered(list(first_ids))
+        # Reorder default queue to include only these tasks: move out everything else already done
+        if first_list:
+            self._reorder_queue(queue_id=None, new_order=first_list)
+            # apply provided start_at or carry the original one
+            fstart = parts[0].get("queue_start_at") if parts else None
+            if fstart is not None:
+                pass
+            else:
+                fstart = queue_start_ts
+            if fstart is not None:
+                head_tid = first_list[0]
+                self._update_task_start_at(task_id=head_tid, new_start_at=fstart)
+
+        details = {"default_queue": first_list, "new_queues": created}
+        # Auto-checkpoint after successful edit (best-effort)
+        try:
+            from ..common.llm_helpers import short_id as _short_id  # local import
+
+            cid = _short_id(8)
+            snap = {"label": "auto:_partition_queue", "queues": []}
+            for qinfo in self._list_queues():
+                qid = qinfo.get("queue_id")
+                order_now = [t.task_id for t in self._get_queue(queue_id=qid)]
+                snap["queues"].append(
+                    {
+                        "queue_id": qid,
+                        "head_id": qinfo.get("head_id"),
+                        "start_at": qinfo.get("start_at"),
+                        "order": order_now,
+                    },
+                )
+            self._queue_checkpoints[cid] = snap
+            _last_checkpoint_id = cid  # noqa: F841
+        except Exception:
+            pass
+
+        return {
+            "outcome": "queue partitioned",
+            "details": {
+                **details,
+                "checkpoint_id": locals().get("_last_checkpoint_id"),
+            },
+        }
+
     # ------------------------------------------------------------------ #
     #  Centralised schedule/status write with invariant validation        #
     # ------------------------------------------------------------------ #
@@ -1401,13 +2221,6 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        # Enforce activation metadata invariant at the funnel: only 'active' rows may carry it
-        try:
-            eff_status = self._to_status(prospective_status)  # type: ignore[arg-type]
-            if eff_status != Status.active:
-                entries = {**entries, "activated_by": None}
-        except Exception:
-            pass
         result = self._write_log_entries(logs=log_id, entries=entries)
 
         # Ensure neighbour symmetry whenever schedule changed
@@ -1424,12 +2237,12 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
-        execution_scope: Literal["isolate", "chain"],
+        detach: bool = True,
     ) -> None:
         _ops_detach_for_activation(
             self,
             task_id=task_id,
-            execution_scope=execution_scope,
+            detach=detach,
         )
 
     def _attach_with_links(
@@ -1519,6 +2332,13 @@ class TaskScheduler(BaseTaskScheduler):
         Only rows actually traversed are loaded; the full table is not materialised.
         """
         return _ops_get_task_queue(self, task_id=task_id)
+
+    # Small helper for ActiveQueue to await linkage stabilisation
+    def _get_linkage_barrier(self, *, task_id: int):
+        try:
+            return self._linkage_barriers.get(int(task_id))
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------ #
     #  Pure neighbour selection helper                                    #
@@ -1618,12 +2438,9 @@ class TaskScheduler(BaseTaskScheduler):
         ------
         AssertionError
             On duplicates, attempted removals or other invariants breaches.
-        RuntimeError
-            If the active task appears in either *original* or *new*.
         """
-        # The active task may **never** be reordered or touched here.
-        self._ensure_not_active_task(original)
-        self._ensure_not_active_task(new)
+        # Active tasks are allowed to appear in the queue while a queue is running.
+        # We preserve their lifecycle status (remain 'active') while updating links.
         # -------  sanity checks  -------
         assert len(set(original)) == len(
             original,
@@ -1633,96 +2450,25 @@ class TaskScheduler(BaseTaskScheduler):
             set(new),
         ), f"update cannot remove existing tasks; cancel them first. Missing tasks: {set(original) - set(new)}"
 
-        # -------  gather existing logs  -------
+        # -------  gather existing logs and validate triggers  -------
         for tid in new:
             row = self._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
             if row.get("trigger") is not None:
                 raise ValueError(
                     f"Task {tid} is trigger-based and cannot be placed in the queue.",
                 )
-        # Collect every task that already has a schedule entry – we need its
-        # linkage pointers *and* any existing start_at value.
-        existing_logs = {
-            t["task_id"]: t
-            for t in self._filter_tasks()
-            if t.get("schedule") is not None
+
+        # Build a read-only map of current rows for ids in the new order
+        rows_by_id: Dict[int, TaskRow] = {
+            r["task_id"]: r for r in self._filter_tasks(filter=f"task_id in {new}")
         }
 
-        # Extract the queue-level timestamp from the old head
-        queue_start_ts: Optional[str] = None
-        if original:
-            _old_head = existing_logs.get(original[0])
-            if _old_head:
-                queue_start_ts = (_old_head.get("schedule") or {}).get("start_at")
-
-        updates_per_log: Dict[int, Dict[str, Any]] = {}
-        for idx, tid in enumerate(new):
-            prev_tid = None if idx == 0 else new[idx - 1]
-            next_tid = None if idx == len(new) - 1 else new[idx + 1]
-
-            # Decide who owns the timestamp and status after re-order
-            if idx == 0:  # ↤ HEAD
-                # Prefer the queue-level ts taken from the old head; fall back
-                # to a ts that was already on the new head (rare but legal).
-                start_ts = queue_start_ts
-                if start_ts is None:
-                    start_ts = (existing_logs.get(tid, {}).get("schedule") or {}).get(
-                        "start_at",
-                    )
-            else:  # ↤ not head ⇒ must not have ts
-                start_ts = None
-
-            sched_payload = {
-                "prev_task": prev_tid,
-                "next_task": next_tid,
-            }
-
-            # Only include *start_at* when we actually know one (i.e. when
-            # the task was explicitly scheduled by the user).  For plain queue
-            # insertions `start_ts` will be *None* and we leave the field
-            # absent.
-            if start_ts is not None:
-                sched_payload["start_at"] = start_ts
-
-            # ----------------  derive *new* status  ---------------- #
-            existing_status = self._to_status(
-                existing_logs.get(tid, {}).get("status", Status.queued),
-            )
-
-            # ── Determine the desired status after re-ordering ─────────────
-            if start_ts is not None:  # head carries explicit timestamp
-                desired_status = Status.scheduled
-            else:
-                desired_status = (
-                    existing_status
-                    if existing_status != Status.scheduled
-                    else Status.queued
-                )
-
-            # Non-head tasks can *never* remain 'primed' – downgrade to queued
-            if idx != 0 and desired_status == Status.primed:
-                desired_status = Status.queued
-
-            payload: Dict[str, Any] = {"schedule": sched_payload}
-            if desired_status != existing_status:
-                payload["status"] = desired_status
-            # Ensure activation metadata is absent unless status becomes 'active' (it doesn't here)
-            if desired_status != Status.active:
-                payload["activated_by"] = None
-
-            updates_per_log[tid] = payload
-
-        # ── Invariant check across the whole queue relink ────────────────────
-        for tid, payload in updates_per_log.items():
-            status_here = payload.get(
-                "status",
-                existing_logs.get(tid, {}).get("status", Status.queued),
-            )
-            self._validate_scheduled_invariants(
-                status=status_here,
-                schedule=payload["schedule"],
-                err_prefix=f"While re-ordering the queue (task {tid}):",
-            )
+        # Compute invariant-preserving updates via QueueEngine (default queue)
+        updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
+            new_order=new,
+            rows_by_id=rows_by_id,
+            queue_id=None,
+        )
 
         # Re-primed
         prime_swap_needed = False
@@ -1746,11 +2492,11 @@ class TaskScheduler(BaseTaskScheduler):
                     payload = {**payload, "status": Status.queued}
             if tid == orig_primed_tid:
                 self._primed_task = {**self._primed_task, **payload}
-            logs = self._get_logs_by_task_ids(task_ids=tid, return_ids_only=False)
-            assert len(logs) == 1, "Task IDs should be unique"
-            log = logs[0]
-            _task_id_to_task[tid] = log
-            self._store.update(logs=log.id, entries=payload, overwrite=True)
+            self._validated_write(
+                task_id=tid,
+                entries=payload,
+                err_prefix=f"While re-ordering the queue (task {tid}):",
+            )
         return {
             "outcome": "queue reordered",
             "details": {"new_order": new},
@@ -1812,12 +2558,8 @@ class TaskScheduler(BaseTaskScheduler):
         elif new_trigger is None and cur_status == Status.triggerable:
             entries["status"] = Status.queued
 
-        # Triggers imply non-active lifecycle. Ensure activation metadata is cleared on write.
-        if entries.get("status", cur_status) != Status.active:
-            entries["activated_by"] = None
-
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        self._store.update(logs=log_id, entries=entries, overwrite=True)
+        self._write_log_entries(logs=log_id, entries=entries, overwrite=True)
 
         return {
             "outcome": "trigger updated",
@@ -1898,7 +2640,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         Notes:
         - Setting status to 'active' directly is forbidden. Activation is performed
-          exclusively by the execution path (execute_task / execute_task_by_id).
+          exclusively by the execution path (execute / execute_by_id).
         """
         # Forbid making anything active (unless explicitly allowed)
         new_status_enum = self._to_status(new_status)
@@ -1923,10 +2665,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
-        # Clear activation metadata whenever moving to a non-active state
         entries: Dict[str, Any] = {"status": new_status_enum}
-        entries["activated_by"] = None
-        return self._store.update(logs=log_ids, entries=entries, overwrite=True)
+        return self._write_log_entries(logs=log_ids, entries=entries, overwrite=True)
 
     def _update_task_start_at(
         self,
@@ -1990,17 +2730,17 @@ class TaskScheduler(BaseTaskScheduler):
             "start_at": new_start_at,
         }
 
-        # ensure the new schedule does not violate the invariant
-        self._validate_scheduled_invariants(
-            status=current_rows[0]["status"],
-            schedule=sched_payload,
-            err_prefix=f"While updating start_at for task {task_id}:",
-        )
-
-        # If we are assigning a head-level start_at, ensure the task's status is 'scheduled'
+        # Determine desired status first, then validate invariants against that status
         desired_status = self._to_status(current_rows[0]["status"])  # type: ignore[arg-type]
         if self._sched_prev(current_sched) is None and new_start_at is not None:
             desired_status = Status.scheduled
+
+        # Validate using desired status so head+start_at is allowed
+        self._validate_scheduled_invariants(
+            status=desired_status,
+            schedule=sched_payload,
+            err_prefix=f"While updating start_at for task {task_id}:",
+        )
 
         entries: Dict[str, Any] = {"schedule": sched_payload}
         if desired_status != self._to_status(current_rows[0]["status"]):  # type: ignore[arg-type]
@@ -2171,6 +2911,70 @@ class TaskScheduler(BaseTaskScheduler):
         return self._store.update(logs=logs, entries=entries, overwrite=overwrite)
 
     # ------------------------------------------------------------------ #
+    #  Optional checkpoint persistence                                   #
+    # ------------------------------------------------------------------ #
+
+    def _persist_checkpoint(
+        self,
+        cid: str,
+        label: Optional[str],
+        snapshot: Dict[str, Any],
+    ) -> None:
+        try:
+            ctx = f"{self._ctx}/Checkpoints"
+            if ctx not in unify.get_contexts():
+                unify.create_context(ctx)
+                unify.create_fields(
+                    {
+                        "checkpoint_id": "str",
+                        "label": "str",
+                        "payload": "json",
+                    },
+                    context=ctx,
+                )
+            unify.log(
+                context=ctx,
+                new=True,
+                checkpoint_id=cid,
+                label=label,
+                payload=snapshot,
+            )
+        except Exception:
+            pass
+
+    def _load_checkpoint(self, cid: str) -> Optional[Dict[str, Any]]:
+        try:
+            ctx = f"{self._ctx}/Checkpoints"
+            rows = unify.get_logs(
+                context=ctx,
+                filter=f"checkpoint_id == {cid!r}",
+                limit=1,
+                return_ids_only=False,
+            )
+            if not rows:
+                return None
+            log = rows[0]
+            entries = getattr(log, "entries", {}) or {}
+            return entries.get("payload")
+        except Exception:
+            return None
+
+    def _get_latest_persisted_checkpoint(self) -> Optional[Dict[str, Any]]:
+        try:
+            ctx = f"{self._ctx}/Checkpoints"
+            rows = unify.get_logs(context=ctx, offset=0, limit=1, return_ids_only=False)
+            if not rows:
+                return None
+            log = rows[-1]
+            entries = getattr(log, "entries", {}) or {}
+            return {
+                "checkpoint_id": entries.get("checkpoint_id"),
+                "label": entries.get("label"),
+            }
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------ #
     #  Best-effort helper                                                 #
     # ------------------------------------------------------------------ #
 
@@ -2320,6 +3124,49 @@ class TaskScheduler(BaseTaskScheduler):
         return self._reintegration_manager.apply(
             task_id=task_id,
             allow_active=_allow_active,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  Public helper – execute by id                                      #
+    # ------------------------------------------------------------------ #
+
+    async def execute_by_id(
+        self,
+        *,
+        task_id: int,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
+        """
+        Public entrypoint to start execution at a specific task id using queue semantics.
+
+        Behaviour mirrors the numeric-id fast path in `execute(text)` and returns
+        an ActiveQueue handle that will adopt and continue the sequence behind the
+        specified task (followers remain attached).
+        """
+        # Refuse execution when a task is already active.
+        if self._active_task is not None:
+            raise RuntimeError("Another task is already running – stop it first.")
+
+        # Also guard against orphan 'active' rows (e.g., after crash) even if pointer is None.
+        try:
+            any_active = any(
+                r.get("status") == str(Status.active)
+                for r in self._filter_tasks(filter="status == 'active'", limit=1)
+            )
+        except Exception:
+            any_active = False
+        if any_active:
+            raise RuntimeError(
+                "A task is marked as active, but no active handle is present – reconcile state before starting another task.",
+            )
+
+        return await self._execute_queue_internal(
+            task_id=task_id,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
         )
 
     # (Removed) heuristic fallback reinstatement – rely on stored plan only

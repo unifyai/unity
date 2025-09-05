@@ -4022,8 +4022,8 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
         # 4.  Fire off a *stand-alone* read-only loop.
         # Compose a clear loop identifier so logs show exactly which loop the
-        # question refers to, e.g. "Question(TaskScheduler.execute_task)" or
-        # "Question(TaskScheduler.execute_task->TaskScheduler.ask)" when a single
+        # question refers to, e.g. "Question(TaskScheduler.execute)" or
+        # "Question(TaskScheduler.execute->TaskScheduler.ask)" when a single
         # nested handle is present.
         try:
             parent_label: str = getattr(self, "_loop_id", "unknown") or "unknown"
@@ -4224,7 +4224,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         Move any *already queued* interjections over to the freshly adopted
         delegate so that early user guidance (issued *before* the delegate was
         ready) is not lost – a common source of hangs during tests that fire
-        `interject()` immediately after `execute_task()` returns.
+        `interject()` immediately after `execute()` returns.
         """
         # Flush queued interjections collected before the delegate became
         # available.  We dispatch them *asynchronously* so that we keep the

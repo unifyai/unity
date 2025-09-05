@@ -9,6 +9,7 @@ from typing import Callable
 from pathlib import Path
 from pydantic_core import from_json
 import unify
+from collections import deque
 from unity.helpers import run_script, terminate_process
 from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
 from unity.memory_manager.broader_context import get_broader_context
@@ -31,6 +32,12 @@ from unity.conversation_manager.prompt_builders import (
     build_non_call_sys_prompt,
     build_user_agent_prompt,
     build_action_prompt,
+)
+from unity.conversation_manager.utils import (
+    enter_name_with_retry,
+    get_meet_join_state,
+    join_meet_on_browser,
+    ensure_captions_enabled,
 )
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -161,6 +168,10 @@ class CommsAgent:
         self.project_name = project_name
         self.logging_lock = threading.Lock()
 
+        # speaker tracking
+        self.current_speaker = None
+        self.speaker_buffer = deque(maxlen=50)
+
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
 
@@ -187,8 +198,8 @@ class CommsAgent:
                 # self.conductor.ask,
                 # self.conductor.request,
                 # self.transcript_manager.ask,
-                self._start_screen_share,
-                self._stop_screen_share,
+                # self._start_screen_share,
+                # self._stop_screen_share,
                 self._send_call,
                 self._send_sms,
                 self._send_email,
@@ -277,20 +288,15 @@ class CommsAgent:
         return chat_history
 
     async def inactivity_check_for_meet(self):
-        # wait for the agent to be admitted into the meet
-        await asyncio.sleep(20)
-
-        while True:
+        while self.meet_browser:
             await asyncio.sleep(10)  # Check every 10 seconds
-            if self.meet_browser is None:
-                break  # meet call ended, exit the loop
             ret = await self.meet_browser.observe(
-                f"Is {self.assistant_name} the only participant in the meeting?",
+                f"Is {self.assistant_name} the only participant in the meeting? Ignoring screen share display and captions.",
                 bool,
             )
             print("ASSISTANT ONLY PARTICIPANT:", ret)
             if ret:
-                print("All participants left, shutting down agent...")
+                print("All participants left, shutting down agent and leaving meet...")
                 await self.publish(
                     {
                         "topic": self.user_number,
@@ -298,6 +304,79 @@ class CommsAgent:
                     },
                 )
                 break  # Exit the loop after shutdown
+
+    async def popup_check_for_meet(self):
+        while self.meet_browser:
+            ret = await self.meet_browser.observe(
+                f"Are there any popups on the screen?",
+                bool,
+            )
+            print("POPUPS:", ret)
+            if ret:
+                print("Popups detected, closing popups...")
+                await self.meet_browser.act(
+                    "Close any popup on the screen, usually related to clicking 'OK' or 'Got it'.",
+                )
+            await asyncio.sleep(2)
+
+    async def track_active_speaker(self):
+        """Track active speaker using Meet captions via screenshot-based observation.
+
+        Attempts to enable captions once, then polls the UI for the current caption
+        speaker label and records it with a timestamp.
+        """
+        if not self.meet_browser:
+            return
+
+        await ensure_captions_enabled(self.meet_browser)
+
+        while self.meet_browser:
+            try:
+                # Build recent buffers as context (avoid repeats / omissions)
+                recent_entries = list(self.speaker_buffer)[-5:]
+                recent_caps = [(s, c) for _, s, c in recent_entries if c]
+                prompt = (
+                    "From the current Google Meet screen, determine the CURRENT speaker and latest caption using BOTH sources: "
+                    "(1) live captions/subtitles (use the speaker label preceding the caption), and (2) visual active-speaker indicators "
+                    "(bold outline, speaker badge, audio indicator). Use the following previous context to avoid repeats: "
+                    f"recent_speakers_and_captions={json.dumps(recent_caps)}. "
+                    "Return STRICT JSON with keys: speaker (string, empty if none), caption (string, empty if none). "
+                    "If the detected caption equals the most recent in recent_captions, set caption to an empty string. "
+                    "Do not include any other keys or any explanatory text."
+                )
+
+                result = await self.meet_browser.observe(prompt, str)
+                speaker_name, caption_text = "", ""
+                if isinstance(result, str):
+                    result = result.strip()
+                    try:
+                        parsed = json.loads(result)
+                        speaker_name = (parsed.get("speaker") or "").strip()
+                        caption_text = (parsed.get("caption") or "").strip()
+                    except Exception:
+                        # fallback: treat plain string as speaker name if non-empty
+                        speaker_name = result
+
+                now_ts = asyncio.get_event_loop().time()
+                # Normalize speaker (ignore self/"you")
+                speaker_name = speaker_name.strip()
+                if speaker_name.lower() == "you":
+                    speaker_name = self.assistant_name
+
+                last_entry = self.speaker_buffer[-1] if self.speaker_buffer else None
+                last_speaker = last_entry[1] if last_entry else ""
+                last_caption = last_entry[2] if last_entry else ""
+                if speaker_name != last_speaker or (caption_text or "") != last_caption:
+                    self.speaker_buffer.append((now_ts, speaker_name, caption_text))
+                if speaker_name != self.assistant_name:
+                    self.current_speaker = speaker_name
+
+                print("\ncurrent user speaker (observe)", self.current_speaker)
+                print("speaker buffer", self.speaker_buffer)
+                if caption_text:
+                    print("caption", caption_text)
+            except Exception:
+                print("\nTRACKING ACTIVE SPEAKER ERROR!\n")
 
     async def listen_for_events(self):
         print("COLLECTING...")
@@ -324,12 +403,12 @@ class CommsAgent:
                         self.task_context = new_event["payload"]["task_context"]
                         target_number = new_event["payload"]["target_number"]
                         self.meet_id = new_event["payload"]["meet_id"]
+                        outbound = str(new_event["payload"]["outbound"])
 
                         print("call_requested", self.assistant_number)
                         print("new_event", new_event)
                         if not self.start_local:
                             target_path = Path(__file__).parent.resolve() / "call.py"
-
                             self.call_proc = run_script(
                                 str(target_path),
                                 "dev",
@@ -342,6 +421,7 @@ class CommsAgent:
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
                                 self.meet_id if self.meet_id else "None",
+                                outbound,
                             )
                         else:
                             target_path = Path(__file__).parent.resolve() / "call.py"
@@ -353,6 +433,7 @@ class CommsAgent:
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
                                 self.meet_id if self.meet_id else "None",
+                                outbound,
                             )
                         ONGOING_CALL = True
 
@@ -366,40 +447,24 @@ class CommsAgent:
                             self.meet_browser.start()
 
                             # Join meet
-                            await self.meet_browser.act(
-                                f"Go to the page: https://meet.google.com/{self.meet_id}",
-                            )
-                            await asyncio.sleep(2)
-
-                            # Set agent mic
-                            await self.meet_browser.act(
-                                "Click on microphone default",
-                            )
-                            await asyncio.sleep(1)
-                            await self.meet_browser.act(
-                                "Select 'agent_sink.monitor'",
+                            await join_meet_on_browser(self.meet_browser, self.meet_id)
+                            await enter_name_with_retry(
+                                self.meet_browser,
+                                self.assistant_name,
+                                max_attempts=3,
                             )
 
-                            # Set user speaker
-                            await self.meet_browser.act(
-                                "Click on speaker default",
-                            )
-                            await asyncio.sleep(1)
-                            await self.meet_browser.act("Select 'meet_sink'")
+                            # Check if agent has been admitted into the meet
+                            while (
+                                await get_meet_join_state(self.meet_browser) != "joined"
+                            ):
+                                await asyncio.sleep(0.5)
 
-                            # Enter name and join
-                            await self.meet_browser.act(
-                                "Click 'your name' textbox",
-                            )
-                            await self.meet_browser.act(
-                                f"Enter your name as {self.assistant_name} and press enter",
-                            )
-
-                            # await self.meet_browser.act("Click the 'Join' button")
-
-                            asyncio.create_task(self.inactivity_check_for_meet())
-                            await asyncio.sleep(5)
+                            # start checks in the background
                             self.meet_joined.set()
+                            asyncio.create_task(self.popup_check_for_meet())
+                            asyncio.create_task(self.inactivity_check_for_meet())
+                            asyncio.create_task(self.track_active_speaker())
 
                         continue
                     else:
@@ -541,7 +606,9 @@ class CommsAgent:
             {
                 "topic": "tool_use",
                 "event": ToolUseEndedEvent(
-                    answer, handle_id, call_mode=call_mode
+                    answer,
+                    handle_id,
+                    call_mode=call_mode,
                 ).to_dict(),
             },
         )
@@ -825,7 +892,10 @@ class CommsAgent:
         Args:
             message (str): The message to send.
         """
-        return await _send_sms_message_via_number(self.current_user["user_number"], message)
+        return await _send_sms_message_via_number(
+            self.current_user["user_number"],
+            message,
+        )
 
     async def _send_email(self, subject: str, message: str, message_id: str = None):
         """
@@ -1067,7 +1137,6 @@ class CommsAgent:
     def handle_logging(self, event: dict):
         with self.logging_lock:
             import unity
-            from unity.contact_manager.contact_manager import ContactManager
             from unity.transcript_manager.transcript_manager import TranscriptManager
             from unity.events.event_bus import EVENT_BUS
 
@@ -1210,21 +1279,21 @@ class CommsAgent:
                 print(f"Error setting details: {e}")
                 traceback.print_exc()
                 return
-            asyncio.create_task(
-                asyncio.to_thread(
-                    log_job_startup,
-                    job_name=self.job_name,
-                    timestamp=event["event"]["payload"]["timestamp"],
-                    medium=event["event"]["payload"]["medium"],
-                    user_id=self.user_id,
-                    assistant_id=self.assistant_id,
-                    user_name=self.user_name,
-                    assistant_name=self.assistant_name,
-                    user_number=self.user_number,
-                    user_whatsapp_number=self.user_whatsapp_number,
-                    assistant_number=self.assistant_number,
-                ),
-            )
+            kwargs = {
+                "job_name": self.job_name,
+                "timestamp": event["event"]["payload"]["timestamp"],
+                "medium": event["event"]["payload"]["medium"],
+                "user_id": self.user_id,
+                "assistant_id": self.assistant_id,
+                "user_name": self.user_name,
+                "assistant_name": self.assistant_name,
+                "user_number": self.user_number,
+                "user_whatsapp_number": self.user_whatsapp_number,
+                "assistant_number": self.assistant_number,
+                "user_email": self.user_email,
+                "assistant_email": self.assistant_email,
+            }
+            asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.meet_browser:
@@ -1288,6 +1357,18 @@ class CommsAgent:
                     "email_address"
                 ],
             }
+
+        # Attach speaker metadata to user phone utterances using recent captions
+        try:
+            if (
+                self.meet_browser is not None
+                and event["event"]["event_name"] == "PhoneUtteranceEvent"
+                and event["event"]["payload"].get("role") == "User"
+            ):
+                event["event"]["payload"]["role"] = f"User: {self.current_speaker}"
+                print("\n\nuser speaker", self.current_speaker, "\n\n")
+        except Exception:
+            ...
 
         if to == "past":
             self.past_events.append(event["event"])

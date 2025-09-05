@@ -438,7 +438,7 @@ def _build_initial_plan_rules_and_examples(
         7.  **Default Search Engine:** Prefer DuckDuckGo (https://duckduckgo.com) for searches unless the user specifies otherwise.
         8.  **Prefer .deb for Linux App Installations**: When installing apps, prefer .deb packages over other formats. `.deb` files are the most common and trusted format for Linux app installations. Then, use `dpkg` to install the app with full permissions.
         9.  **Desktop Mode**: You have control over a virtual desktop through the browser tools, and have access to apps like terminal, shell, browser, etc. You are also able to search for apps to be used in the desktop. Use screenshot to observe the desktop.
-        10.  **Browser Downloads**: The browser downloads directory is `/home/browser/Downloads`.
+        10. **Browser Downloads**: The browser downloads directory is `/tmp/unify/assistant/browser/install`.
         11. **Write General, Parameterized Functions**: Your functions should be reusable tools, not single-use scripts. Pass specific values (like search terms, filenames, or counts) as parameters.
         12. **Name for the Action, Not the Data**: Function names must describe the *process*, not the specific values being processed. Avoid hardcoding data like numbers or names into function names. This makes your plan robust and easy to modify later.
 
@@ -558,10 +558,10 @@ def _build_initial_plan_rules_and_examples(
         8.  **Await Keyword**: ALWAYS await async action_provider methods.
             ```python
             # ❌ WRONG: Missing await
-            action_provider.browser_navigate("[https://example.com](https://example.com)")
+            action_provider.browser_navigate("https://example.com")
 
             # ✅ CORRECT: With await
-            await action_provider.browser_navigate("[https://example.com](https://example.com)")
+            await action_provider.browser_navigate("https://example.com")
             ```
 
         9.  **Structured Output with Pydantic - THE COMPLETE PATTERN:**
@@ -2074,6 +2074,8 @@ def build_verification_prompt(
     interactions: list,
     has_browser_screenshot: bool,
     function_return_value: Any | None,
+    clarification_question: Optional[str] = None,
+    clarification_answer: Optional[str] = None,
     recent_transcript: Optional[str] = None,
     parent_chat_context: Optional[list] = None,
 ) -> str:
@@ -2087,6 +2089,8 @@ def build_verification_prompt(
         function_source_code: The source code of the function.
         interactions: A log of tool interactions made.
         has_browser_screenshot: Whether a screenshot of the browser is provided.
+        clarification_question: An optional question that was previously asked.
+        clarification_answer: An optional answer that was received.
 
     Returns:
         The complete prompt string for the verification LLM call.
@@ -2118,15 +2122,14 @@ def build_verification_prompt(
 
     agent_trace_section = "No low-level agent trace was recorded for this step."
     if formatted_agent_traces:
-        multi_line_formatted_agent_traces = "\n".join(formatted_agent_traces)
+        traces_joined = "\n".join(formatted_agent_traces)
         agent_trace_section = textwrap.dedent(
             f"""
         ---
-        ### 🔬 Low-Level Agent Trace
-        The following is the detailed "thought process" from the browser agent as it performed the actions.
-        This is the GROUND TRUTH of what happened on the page. Use it to understand *why* an action succeeded or failed.
+        ### 🔬 Low-Level Agent Trace (Ground Truth)
+        This is the detailed "thought process" from the underlying browser agent as it performed the actions. **This is your most important source of truth.** It reveals *why* an action was taken and what the agent observed at a micro-level. Analyze it carefully to understand the root cause of any success or failure.
 
-        {multi_line_formatted_agent_traces}
+        {traces_joined}
         ---
         """,
         )
@@ -2135,19 +2138,15 @@ def build_verification_prompt(
         screenshot_context_section = textwrap.dedent(
             """
             ---
-            ### CRITICAL: Visual Verification
-            You have been provided a **screenshot** of the browser's final state after the function finished.
-            - **Use this screenshot as the primary source of truth.**
-            - If the interaction log claims success (e.g., "navigated to page X") but the screenshot clearly shows this did not happen, you MUST rule the function a failure (`reimplement_local`).
-            - Use both the interaction log and the screenshot to make your assessment.
+            ### 📸 Visual Evidence (Screenshot)
+            You have been provided a **screenshot** of the browser's final state. Use this to visually confirm the outcome described in the agent trace.
             """,
         )
-    return_value_log = f"The function returned the following value:\n```\n{repr(function_return_value)}\n```"
+    return_value_log = f"```\n{repr(function_return_value)}\n```"
 
     source_code_section = f"""
 ---
-### Function Source Code
-The full source code of the function that was just executed is provided below. Analyze it to understand its internal logic.
+### ⚙️ Function Implementation
 ```python
 {function_source_code or "Source code not available."}
 ```
@@ -2158,8 +2157,7 @@ The full source code of the function that was just executed is provided below. A
         transcript_section = textwrap.dedent(
             f"""
         ---
-        ### Recent Conversation Transcript
-        The following is a summary of the most recent conversation turns, which may provide context for the function's execution.
+        ### 📖 Recent Conversation Transcript
         ```
         {recent_transcript}
         ```
@@ -2171,52 +2169,142 @@ The full source code of the function that was just executed is provided below. A
         chat_context_section = textwrap.dedent(
             f"""
         ---
-        ### Full Parent Chat Context
-        This is the broader conversation history that this plan is a part of.
+        ### 💬 Full Parent Chat Context
         ```json
         {json.dumps(parent_chat_context, indent=2)}
         ```
         """,
         )
 
+    clarification_section = ""
+    if clarification_question and clarification_answer:
+        clarification_section = textwrap.dedent(
+            f"""
+        ---
+        ### 💡 User Clarification Provided
+        CRITICAL: You previously requested clarification because the outcome was ambiguous. The user has provided an answer. Use this new information as the deciding factor in your final assessment.
+
+        - **Your Question:** "{clarification_question}"
+        - **User's Answer:** "{clarification_answer}"
+        ---
+        """,
+        )
+
     return textwrap.dedent(
         f"""
-        You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose and have made **meaningful and accurate progress** toward the **Overall User Goal**.
+        You are a pragmatic and meticulous Quality Assurance expert for an autonomous agent. Your task is to assess if an executed function has made **meaningful and accurate progress** towards the **Overall User Goal**, even if the website behaves in unexpected ways.
 
-        **Overall User Goal:** "{goal}"
-        **Function Under Review:** `{function_name}`
-        **Purpose of this function (Intent):** {function_docstring or 'No docstring provided.'}
+        **🎯 Overall User Goal:** "{goal}"
+        **🔍 Function Under Review:** `{function_name}`
+        **Intent (Purpose of this function):** {function_docstring or 'No docstring provided.'}
 
         {source_code_section}
         {agent_trace_section}
         {screenshot_context_section}
+        {clarification_section}
         {transcript_section}
         {chat_context_section}
 
-        **Execution Log (Tool Interactions):**
-        {interactions_log}
-
+        **📊 Execution Evidence**
         **Function Return Value:**
         {return_value_log}
+        **High-Level Tool Interactions Log:**
+        {interactions_log}
 
         ---
-        ### Assessment Task
-        Based on the function's purpose (intent), its source code (implementation), its return value, and the execution log, provide your assessment.
-        - **Compare Intent vs. Implementation**: Does the source code correctly implement the logic described in the function's purpose?
-        - **Trust the Return Value**: The `Function Return Value` is a critical piece of evidence. If the function was supposed to filter a list, check if the returned list is correctly filtered according to the source code.
-        - **Be pragmatic:** If the function's purpose is to gather data (like search results), and the log shows that the data was successfully retrieved, this should be considered a success (`ok`). The function does not need to perform extra analysis unless explicitly asked.
-        - **Compare the Result to the Goal**: Do not just check if the function *did something*. Check if the *outcome* of the function satisfies the requirements of the overall goal.
+        ### 🧠 Your Decision-Making Framework
+        You MUST follow this reasoning process to arrive at a decision.
 
-        **Valid Status Values:**
-        - `ok`: The function's purpose was fully and correctly achieved.
-        - `reimplement_local`: A tactical error occurred. The goal is correct, but the actions were wrong. The function needs to be re-written.
-        - `replan_parent`: A strategic error occurred. The function itself is flawed or was called at the wrong time. The parent function needs to be replanned.
-        - `request_clarification`: The function's goal is correct, but you need more information from the user to fix it. If you choose this, you MUST provide a clear, specific `clarification_question`.
-        - `fatal_error`: An unrecoverable error occurred that prevents any further progress.
+        **Step 1: Scrutinize the Low-Level Agent Trace.**
+        - This is your primary evidence. Read the agent's step-by-step reasoning. Does its logic hold up? Did it correctly identify elements? Did it notice any errors or unexpected UI changes?
+        - The trace is the ground truth of what happened.
 
-        **Your Response:**
-        - status: Choose one of the valid status values above
-        - reason: Provide a clear, concise explanation for your assessment
+        **Step 2: Assess the Core Purpose vs. The Evidence.**
+        - Look at the **Intent** and the **Overall Goal**. What was the most important outcome this function was supposed to achieve?
+        - Compare this with the hard evidence: the agent's reasoning in the **Trace**, the visual **Screenshot**, and the final **Return Value**.
+
+        **Step 3: Choose Your Action.**
+
+        - **Is the outcome definitively correct and does it advance the goal?**
+          - The **Agent Trace** shows sound reasoning, the **Screenshot** confirms the final state, and the **Return Value** is correct.
+          - Choose **`ok`**.
+
+        - **Is the outcome definitively wrong?**
+          - The **Agent Trace** shows the agent made a mistake (e.g., clicked the wrong button, extracted wrong text). The **Screenshot** or **Return Value** confirms the error.
+          - Choose **`reimplement_local`**.
+
+        - **Is the function's entire premise flawed?**
+          - The **Agent Trace** shows the agent correctly reasoning that it *cannot* perform the action (e.g., "I am looking for a 'shipping' button, but the page text says 'shipping is calculated at checkout'").
+          - Choose **`replan_parent`**.
+
+        - **Are you unsure, or did the agent's trace reveal confusion or ambiguity?**
+          - The **Agent Trace** shows the agent struggling or making an assumption you cannot verify (e.g., "I clicked the button, but I am not sure if it worked.").
+          - Choose **`request_clarification`**. This is your default for ambiguity.
+
+        ---
+        ### 💡 Examples of Verification Decisions
+
+
+        **Example 1: A Clear Success (`ok`)**
+        - **Goal**: "Find the cheapest flight to New York and select it."
+        - **Function**: `select_cheapest_flight()`
+        - **Agent Trace**:
+        - `◆ [act] Find and select the cheapest flight option.`
+        - `REASONING: I am scanning the flight results. I see three options: Delta for $250, United for $220, and Spirit for $195. The Spirit flight is the cheapest. I will click the 'Select' button for the Spirit flight.`
+        - `⊙ click 'Select' button next to 'Spirit - $195'`
+        - `✓ done`
+        - **Return Value**: `{{'airline': 'Spirit', 'price': 195}}`
+        - **Screenshot**: Shows the "Passenger Details" page, with a header that says "Your flight with Spirit to JFK".
+        - **Correct Assessment**:
+        ```json
+        {{
+            "status": "ok",
+            "reason": "The function's intent was fully achieved. The Agent Trace clearly shows correct reasoning for identifying the cheapest flight. The Function Return Value confirms the correct data was extracted, and the Screenshot proves the action resulted in successful progress to the next step in the booking process."
+        }}
+        ```
+
+        ---
+
+        **Example 2: An Ambiguous Outcome (`request_clarification`)**
+        - **Goal**: "Download the Q3 financial report."
+        - **Function**: `download_q3_report()`
+        - **Agent Trace**:
+        - `◆ [act] Download the Q3 financial report.`
+        - `REASONING: I have navigated to the reports page. I see two links: 'Q3 2024 Summary (PDF)' and 'Q3 2024 Raw Data (CSV)'. The user's request is ambiguous about the required format. I will assume the PDF summary is what they want and proceed with that.`
+        - `⊙ click link with text 'Q3 2024 Summary (PDF)'`
+        - `✓ done`
+        - **Return Value**: `None`
+        - **Screenshot**: Shows the browser's "File Download" dialog box for a file named `Q3_Report_Summary.pdf`.
+        - **Correct Assessment**:
+        ```json
+        {{
+            "status": "request_clarification",
+            "reason": "The function's success is ambiguous. The Agent Trace reveals it encountered two valid options (PDF and CSV) and had to make an assumption. While it successfully initiated a download, it may not be the format the user needs. It is best to verify with the user before proceeding.",
+            "clarification_question": "I found two versions of the Q3 report: a PDF summary and a CSV with raw data. I have started downloading the PDF. Is this the correct one, or do you need the CSV file instead?"
+        }}
+        ```
+
+        ---
+
+        **Example 3: A Clear Tactical Failure (`reimplement_local`)**
+        - **Goal**: "Sign me up for the newsletter with 'test@example.com'."
+        - **Function**: `submit_newsletter_signup(email='test@example.com')`
+        - **Agent Trace**:
+        - `◆ [act] Submit the newsletter signup form with the provided email.`
+        - `REASONING: I see the email input field and the 'Subscribe' button. I will type the email address and then click the button.`
+        - `⌨︎ type "test@example.com" into the email field`
+        - `⊙ click 'Subscribe' button`
+        - `✓ done`
+        - **Return Value**: `None`
+        - **Screenshot**: Shows the same signup form, but a new red error message is now visible below the input field, which reads: "Please provide a corporate email address."
+        - **Correct Assessment**:
+        ```json
+        {{
+            "status": "reimplement_local",
+            "reason": "A tactical error occurred. The Agent Trace confirms the steps (typing, clicking) were executed as intended. However, the Screenshot provides definitive evidence of failure through the 'Please provide a corporate email address' error message. The function's logic needs to be re-run, likely after obtaining a valid email from the user."
+        }}
+        ---
+        Now, provide your assessment based on all the evidence and the decision framework. Respond with ONLY the JSON object.
         """,
     )
 
@@ -2309,10 +2397,14 @@ def build_interjection_prompt(
     plan_source_code: str,
     call_stack: list[str],
     action_log: list[str],
-    is_teaching_session: bool,
     goal: str,
+    *,
+    tools: Dict[str, Callable],
 ) -> str:
     """Builds the system prompt for the Interjection Handler LLM."""
+    tool_reference = _build_tool_signatures(tools)
+    handle_apis = _build_handle_apis(tools)
+
     call_stack_str = (
         " -> ".join(call_stack) if call_stack else "Not inside any function."
     )
@@ -2323,27 +2415,11 @@ def build_interjection_prompt(
         else "No prior conversation."
     )
 
-    teaching_session_rule = ""
-    if is_teaching_session:
-        teaching_session_rule = textwrap.dedent(
-            f"""
-        ---
-        ### 📌 SPECIAL INSTRUCTIONS FOR THIS INTERJECTION
-
-        **You are in a "Teaching Session".** The user is building a plan step-by-step.
-        - The user is providing the next logical step. You **MUST** choose the `modify_task` action and generate a patch to add this new logic. The patch will typically modify the `main_plan` function.
-        - If the user signals they are finished (e.g., "we're done", "that's all"), you **MUST** choose the `complete_task` action.
-        ---
-        """,
-        )
-
     return textwrap.dedent(
         f"""
     You are an expert Python programmer and a master strategist responsible for steering a live-running automated plan. A user has interjected with a new instruction while the plan was executing.
 
     Your task is to perform a **global analysis** of the entire plan, the user's request, and the current execution state. You must then generate a set of **code patches** to update the plan's source code to reflect the user's intent, ensuring the entire plan remains logically consistent.
-
-    {teaching_session_rule}
 
     ### Full Situational Context
 
@@ -2370,13 +2446,27 @@ def build_interjection_prompt(
     {recent_actions}
     ---
 
+    ---
+    ### Tools Reference
+    You have access to a global `action_provider` object with these methods. You must call them with the correct arguments as specified here.
+    ```json
+    {tool_reference}
+    ```
+
+    ---
+    ### Handle APIs
+    Some tools return "handle" objects for ongoing interaction. Available methods:
+
+    {handle_apis}
+
+
     ### Your Task: Follow This Decision Tree and Generate Patches
 
     **1. Analyze Intent:** First, determine the user's primary intent based on the decision tree below.
 
     **2. Perform Global Code Analysis:** Once you've chosen `modify_task` or `refactor_and_generalize`, you must act like an expert developer.
     - **Read the ENTIRE `plan_source_code`**.
-    - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstring of `main_plan`.
+    - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstrings.
     - **Generate Patches:** For every function that needs to be changed, create a `FunctionPatch` object containing its full, updated source code.
 
     ---
@@ -2397,7 +2487,7 @@ def build_interjection_prompt(
 
     **Example 1: Correcting a Parameter (Multi-Function Patch)**
     - **Context:** The plan was to book a hotel for 2 guests. The user interjects to change it to 4 guests.
-    - **Analysis:** This requires changing the `search_hotels_by_capacity` function's default parameter AND the call to it in `main_plan`.
+    - **Analysis:** This requires changing the `Google Hotels_by_capacity` function's default parameter AND the call to it in `main_plan`.
     ```json
     {{
         "action": "modify_task",
@@ -2431,13 +2521,13 @@ def build_interjection_prompt(
     }}
     ```
 
-    **Example 3: A Simple "Teaching Session" Step**
-    - **Context:** Teaching session is paused, awaiting instructions. User says, "Navigate to LinkedIn.com".
+    **Example 3: Adding a New Navigation Step**
+    - **Context:** Plan is paused, awaiting instructions. User says, "Navigate to LinkedIn.com".
     - **Analysis:** This is a new step. It should be appended to the end of the `main_plan` body.
     ```json
     {{
         "action": "modify_task",
-        "reason": "User wants to navigate to LinkedIn.com as the next step in the teaching session.",
+        "reason": "User wants to navigate to LinkedIn.com as the next step.",
         "patches": [
             {{
                 "function_name": "main_plan",
@@ -2460,7 +2550,7 @@ def build_interjection_prompt(
     ```json
     {{
         "action": "complete_task",
-        "reason": "User has indicated that the teaching session is finished and the plan should now execute to completion."
+        "reason": "User has indicated that the plan is finished and should now execute to completion."
     }}
     ```
     """,
@@ -2488,7 +2578,7 @@ def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
         # ---
         # Example 1: The agent navigated to the wrong page ('/settings') instead of the user's profile.
         # Goal: Get back to the correct user profile page.
-        await action_provider.browser_navigate("https://example.com/user/123/profile")
+            await action_provider.browser_navigate("https://example.com/user/123/profile")
 
         # ---
         # Example 2: The agent opened an unwanted "Share" popup that is now obscuring the page content.
@@ -2606,6 +2696,7 @@ def build_sandbox_merge_prompt(
 def build_refactor_prompt(
     monolithic_code: str,
     generalization_request: str,
+    action_log: str,
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -2615,6 +2706,7 @@ def build_refactor_prompt(
     Args:
         monolithic_code: The source code of the current single-function plan.
         generalization_request: The user's request to generalize the logic.
+        action_log: The full execution trace for deducing the precondition.
         tools: The available tools for the actor.
 
     Returns:
@@ -2630,11 +2722,18 @@ def build_refactor_prompt(
 
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer specializing in code refactoring and generalization.
-        Your task is to refactor the provided monolithic Python function into a set of smaller, logical, and reusable `async def` helper functions.
+        You are an expert Python programmer and a strategic analyst.
+        Your task is to perform two critical actions:
+        1. Refactor the provided monolithic Python script into a set of reusable helper functions.
+        2. Analyze the complete execution `action_log` to determine the correct starting state (precondition) for the entire process.
 
         **User's Generalization Request:**
         "{generalization_request}"
+
+        **Full Execution Action Log (Source of Truth for Precondition):**
+        ```
+        {action_log}
+        ```
 
         **Current Monolithic Code to Refactor:**
         ```python
@@ -2642,14 +2741,14 @@ def build_refactor_prompt(
         ```
 
         **Your Task & Instructions:**
-        1.  **Identify the Core Logic:** Analyze the user's request and the existing code to identify the central, repeated sequence of actions (e.g., the steps to process one item).
-        2.  **Create a Parameterized Function:** Encapsulate this core logic within a new, parameterized helper function. For example, `async def process_item(item_name: str)`.
-        3.  **Rewrite `main_plan`:** Rewrite the `main_plan` to be a clean coordinator. It should preserve the logic for the original subject that was taught but should now call your new helper functions, incorporating the user's generalization request.
-        4.  **Follow All Rules:** Your final output must adhere to all the established rules for plan creation, including docstrings, async usage, and placing imports inside functions.
+        1.  **Analyze the Action Log:** Read the entire log to understand the sequence of events. Identify the very first navigation or action that set up the initial state for the process.
+        2.  **Determine Precondition:** Based on your analysis, define the `deduced_precondition`. This should be the state the browser must be in before the refactored plan can run (e.g., on the homepage at a specific URL, with a clear visual description).
+        3.  **Refactor the Code:** Rewrite the monolithic code into a modular script with a `main_plan` and helper functions. The new `main_plan` should ONLY execute the logic for the new generalization request.
+        4.  **Format Output:** Your response MUST be a JSON object that strictly adheres to the `RefactorDecision` schema, containing both the `refactored_code` and the `deduced_precondition`.
 
         {rules_and_examples}
 
-        Begin your response now. Your response must be a single, complete Python code block containing the fully refactored script.
+        Begin your response now. Your response must start immediately with the JSON object.
         """,
     )
 

@@ -6,6 +6,8 @@ set -e
 # Global variables to track processes
 REDIS_PID=""
 MAIN_PID=""
+AGENT_PID=""
+DESKTOP_PID=""
 
 # Function to handle graceful shutdown
 cleanup() {
@@ -37,6 +39,15 @@ cleanup() {
         pkill -f "desktop.sh" 2>/dev/null || true
     fi
 
+    if [ ! -z "$AGENT_PID" ]; then
+        echo "Stopping agent-service (PID: $AGENT_PID)..."
+        kill -TERM $AGENT_PID 2>/dev/null || true
+        wait $AGENT_PID 2>/dev/null || true
+    else
+        echo "Stopping agent-service..."
+        pkill -f "ts-node" 2>/dev/null || true
+    fi
+
     echo "Cleanup complete"
     exit 0
 }
@@ -58,9 +69,43 @@ echo "Redis started with PID: $REDIS_PID"
 
 
 # Virtual desktop and devices
-echo "Starting virtual desktop and Magnitude server..."
-bash desktop/startup.sh &
+export XDG_RUNTIME_DIR=/tmp/runtime-root
+mkdir -p $XDG_RUNTIME_DIR
+chmod 700 $XDG_RUNTIME_DIR
+
+mkdir -p /run/dbus
+dbus-daemon --system --fork
+eval "$(dbus-launch)"
+export DBUS_SESSION_BUS_ADDRESS
+
+# Start virtual device
+pipewire &
+pipewire-pulse &
+wireplumber &
+sleep 2
+
+# 1. For capturing Meet participant audio
+pactl load-module module-null-sink sink_name=meet_sink
+pactl load-module module-remap-source master=meet_sink.monitor source_name=meet_mic
+
+# 2. For agent TTS (only goes to Meet, not to agent itself)
+pactl load-module module-null-sink sink_name=agent_sink
+pactl load-module module-remap-source master=agent_sink.monitor source_name=agent_mic
+
+pactl set-default-source meet_mic
+pactl set-default-sink agent_sink
+
+# Launch virtual desktop
+bash /app/desktop/desktop.sh &
 DESKTOP_PID=$!
+
+# Start agent-service (ts-node)
+npx ts-node /app/agent-service/src/index.ts &
+AGENT_PID=$!
+
+# echo "Starting virtual desktop and Magnitude server..."
+# bash desktop/startup.sh &
+# DESKTOP_PID=$!
 
 
 # Start the main application in parallel
