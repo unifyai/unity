@@ -92,6 +92,7 @@ class EventManager:
                         self.writers["call"].close()
                         await self.writers["call"].wait_closed()
                         self.writers.pop("call")
+                        self.readers.pop("call")
                         print("call process stopped")
                 else:
                     if event["topic"] == "startup":
