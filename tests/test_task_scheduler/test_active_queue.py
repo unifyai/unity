@@ -199,7 +199,9 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_freeform_queue_routed_by_llm(monkeypatch):
+async def test_execute_queue_by_numeric_id_completes_all(monkeypatch):
+    """Numeric id path: starting at head should run through all followers to completion."""
+
     # Steps-based actor: immediate completion per task
     class _Short(SimulatedActor):  # type: ignore[misc]
         def __init__(self, *a, **kw):
@@ -216,7 +218,7 @@ async def test_freeform_queue_routed_by_llm(monkeypatch):
     ts = TaskScheduler()
     x, y = await _make_ordered_queue(ts, ["X", "Y"])  # type: ignore[misc]
 
-    # Reorder explicitly to ensure the queue shape, then start by id
+    # Ensure the queue order, then start by id
     ts._update_task_queue(original=[x, y], new=[x, y])
     h = await ts.execute(text=str(x))
     await h.result()
@@ -370,6 +372,57 @@ async def test_queue_interject_routing_multi_task(monkeypatch):
         return None
 
     monkeypatch.setattr(SimulatedActorHandle, "interject", spy_interject, raising=True)
+
+    # Make routing deterministic by faking the router LLM used inside ActiveQueue
+    class _FakeRouterClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def set_system_message(self, _sys):
+            return None
+
+        async def generate(self, user: str) -> str:
+            import json as _json
+
+            try:
+                marker = "Chain (head→tail):\n"
+                start = user.index(marker) + len(marker)
+                end = user.index("\nMetadata:\n", start)
+                rows = _json.loads(user[start:end])
+            except Exception:
+                rows = []
+            tid_by_desc = {
+                str(r.get("description")): int(r.get("task_id"))
+                for r in rows
+                if r.get("task_id") is not None
+            }
+            a_tid = tid_by_desc.get("A_r")
+            b_tid = tid_by_desc.get("B_r")
+            c_tid = tid_by_desc.get("C_r")
+            payload = {
+                "routes": [
+                    {
+                        "task_ids": [t for t in [a_tid, b_tid, c_tid] if t is not None],
+                        "instruction": "GLOBAL_OK",
+                    },
+                    {
+                        "task_ids": [b_tid] if b_tid is not None else [],
+                        "instruction": "SAFE_FOR_B",
+                    },
+                    {
+                        "task_ids": [c_tid] if c_tid is not None else [],
+                        "instruction": "SAFE_FOR_LAST",
+                    },
+                    {
+                        "task_ids": [a_tid] if a_tid is not None else [],
+                        "instruction": "SAFE_FOR_FIRST",
+                    },
+                ],
+                "uncovered_directives": [],
+            }
+            return _json.dumps(payload)
+
+    monkeypatch.setattr("unify.AsyncUnify", _FakeRouterClient, raising=True)
 
     # Start queue at A and issue one multi-task interjection
     h = await ts.execute(text=str(a_id))
@@ -637,10 +690,8 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_isolate_returns_active_queue_handle(monkeypatch):
-    """
-    Executing by id must always return an ActiveQueue handle (not ActiveTask).
-    """
+async def test_execute_by_id_returns_active_queue_handle(monkeypatch):
+    """Executing by id returns an ActiveQueue handle (composite queue wrapper)."""
 
     # Immediate completion per task to avoid timing races
     class _Immediate(SimulatedActor):  # type: ignore[misc]
@@ -664,7 +715,7 @@ async def test_execute_isolate_returns_active_queue_handle(monkeypatch):
     # Create a single runnable task
     task_id = ts._create_task(name="ISO", description="ISO")["details"]["task_id"]  # type: ignore[index]
 
-    # Execute by numeric id; even in isolate, we should receive an ActiveQueue handle
+    # Execute by numeric id; we should receive an ActiveQueue handle
     h = await ts.execute(text=str(task_id))
 
     # Import locally and tolerate logging wrapper by unwrapping the inner handle
