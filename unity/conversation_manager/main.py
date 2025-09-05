@@ -88,6 +88,11 @@ class EventManager:
                         (json.dumps(event) + "\n").encode("utf-8"),
                     )
                     await self.writers["call"].drain()
+                    if event["type"] == "stop":
+                        self.writers["call"].close()
+                        await self.writers["call"].wait_closed()
+                        self.writers.pop("call")
+                        print("call process stopped")
                 else:
                     if event["topic"] == "startup":
                         self.update_topics_to_subs(
