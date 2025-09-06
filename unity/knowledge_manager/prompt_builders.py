@@ -161,6 +161,12 @@ def build_refactor_prompt(
         3. Execute the plan step-by-step via the tool calls.
         4. End with a concise plain-English *migration report*.
 
+        Anti-patterns
+        -------------
+        • Avoid delete+create when rename suffices.
+        • Avoid duplicating denormalised data across tables – normalise.
+        • Avoid mixed-type columns; split into well-typed columns.
+
         --------------------------------------------------------------------
         ## Usage examples
         {examples}
@@ -169,13 +175,39 @@ def build_refactor_prompt(
 
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
+
+    # Conditional guidance about asking questions in final responses
+    request_clar_fname = _tool_name(tools, "request_clarification")
+    clar_sentence = (
+        f"Do not ask the user questions in your final response; only use the `{request_clar_fname}` tool to ask clarifying questions."
+        if request_clar_fname
+        else (
+            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
+        )
+    )
+
+    clarification_block = (
+        textwrap.dedent(
+            f"""
+            Clarification
+            -------------
+            • Ask for clarification when the user's request is underspecified
+              `{request_clar_fname}(question="Which specific items should be refactored?")`
+            """,
+        ).strip()
+        if request_clar_fname
+        else ""
+    )
+
     return "\n".join(
         [
             activity_block,
             base_prompt,
             "",
             f"Current UTC time: {_now()}.",
+            clar_sentence,
             clar_section,
+            clarification_block,
             "",
         ],
     )
@@ -188,7 +220,7 @@ def build_update_prompt(
     include_activity: bool = True,
 ) -> str:
     """
-    Build the **system message** for `KnowledgeManager.store`.
+    Build the **system message** for `KnowledgeManager.update`.
 
     Parameters
     ----------

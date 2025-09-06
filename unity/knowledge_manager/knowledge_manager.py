@@ -13,19 +13,16 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
     methods_to_tool_dict,
+    inject_broader_context,
+    make_request_clarification_tool,
     TOOL_LOOP_LINEAGE,
 )
-from ..helpers import _handle_exceptions
 from .base import BaseKnowledgeManager
+from ..events.manager_event_logging import log_manager_call
 from .prompt_builders import (
     build_update_prompt,
     build_ask_prompt,
     build_refactor_prompt,
-)
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
 )
 from ..common.semantic_search import (
     fetch_top_k_by_references,
@@ -186,17 +183,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             include_class_name=False,
         )
 
-        # ── immutable built-ins for *Contacts* ───────────────────────────
-        self._CONTACT_REQUIRED_COLUMNS: set[str] = {
-            "contact_id",
-            "first_name",
-            "surname",
-            "email_address",
-            "phone_number",
-            "whatsapp_number",
-            "description",
-        }
-
         self._ask_tools = {
             **methods_to_tool_dict(
                 self._tables_overview,
@@ -329,12 +315,49 @@ class KnowledgeManager(BaseKnowledgeManager):
             )
         return "auto", tls
 
+    @staticmethod
+    def _default_ask_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require search on the first step; auto thereafter."""
+        if step_index < 1 and "search" in current_tools:
+            return ("required", {"search": current_tools["search"]})
+        return ("auto", current_tools)
+
+    @staticmethod
+    def _default_update_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require ask on the first step; auto thereafter."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
+        return ("auto", current_tools)
+
+    @staticmethod
+    def _default_refactor_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require lookup/search tools on the first step; auto thereafter."""
+        if step_index < 1:
+            lookup_tools = {
+                k: v
+                for k, v in current_tools.items()
+                if k in {"filter", "search", "filter_join", "search_join"}
+            }
+            if lookup_tools:
+                return ("required", lookup_tools)
+        return ("auto", current_tools)
+
     # Public #
     # -------#
 
     # English-Text Command
 
     @functools.wraps(BaseKnowledgeManager.refactor, updated=())
+    @log_manager_call("KnowledgeManager", "refactor", payload_key="request")
     async def refactor(
         self,
         text: str,
@@ -344,6 +367,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
         """
         English‑text command interface for schema/data refactoring.
@@ -372,44 +396,59 @@ class KnowledgeManager(BaseKnowledgeManager):
             A handle that allows interjection, pause/resume, and awaiting the
             final result.
         """
-
-        # ── 0.  Emit *incoming* ManagerMethod event ──────────────────────
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "KnowledgeManager",
-            "refactor",
-            phase="incoming",
-            command=text,
-        )
-
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
 
         # 1️⃣  Prepare toolset (and optional live clarification helper)
         tools = dict(self._refactor_tools)
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                """Bubble a clarification question upward and await the answer.
-
-                Note: If the enclosing loop has no clarification queues, callers
-                must not ask the user questions in the final response. Proceed
-                with sensible defaults or best guesses instead.
-                """
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "KnowledgeManager.refactor was invoked without both "
-                        "clarification queues but the model requested one.",
+            async def _on_request(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "refactor",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
                     )
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                except Exception:
+                    pass
 
-            tools["request_clarification"] = request_clarification
+            async def _on_answer(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "refactor",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         # 2️⃣  Build & inject system prompt
         table_schemas_json = json.dumps(self._tables_overview(), indent=4)
@@ -434,16 +473,8 @@ class KnowledgeManager(BaseKnowledgeManager):
             loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=self._look_first_tool_policy,
-            preprocess_msgs=self._inject_broader_context,
-        )
-
-        # ── 3.  Add logging wrapper so every handle-interaction is traced ─
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "KnowledgeManager",
-            "refactor",
+            tool_policy=self._default_refactor_tool_policy,
+            preprocess_msgs=inject_broader_context,
         )
 
         # 4️⃣  Optionally wrap .result() to expose hidden reasoning
@@ -459,6 +490,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         return handle
 
     @functools.wraps(BaseKnowledgeManager.update, updated=())
+    @log_manager_call("KnowledgeManager", "update", payload_key="request")
     async def update(
         self,
         text: str,
@@ -468,6 +500,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
         """
         Modify tables/rows based on a natural‑language request.
@@ -496,43 +529,59 @@ class KnowledgeManager(BaseKnowledgeManager):
             A handle that allows interjection, pause/resume, and awaiting the
             final result.
         """
-
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "KnowledgeManager",
-            "update",
-            phase="incoming",
-            request=text,
-        )
-
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self._update_tools)
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                """Query the user for more information, and wait for the reply.
-
-                If clarification queues are not present, higher‑level logic must
-                continue with sensible defaults and should not ask questions in
-                the final response.
-                """
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "TranscriptManager.ask was called without both "
-                        "clarification queues but the model requested clarifications.",
+            async def _on_request(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "update",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
                     )
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                except Exception:
+                    pass
 
-            tools["request_clarification"] = request_clarification
+            async def _on_answer(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "update",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
@@ -558,19 +607,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=self._look_first_tool_policy,
-            preprocess_msgs=self._inject_broader_context,
+            tool_policy=self._default_update_tool_policy,
+            preprocess_msgs=inject_broader_context,
         )
 
-        # ── 3a.  Add logging wrapper  ─────────────────────────────────────
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "KnowledgeManager",
-            "update",
-        )
-
-        # ── 3b.  Optionally wrap .result() to expose reasoning  ───────────
+        # Optionally wrap .result() to expose reasoning
         if _return_reasoning_steps:
             original_result = handle.result
 
@@ -583,6 +624,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         return handle
 
     @functools.wraps(BaseKnowledgeManager.ask, updated=())
+    @log_manager_call("KnowledgeManager", "ask", payload_key="question")
     async def ask(
         self,
         text: str,
@@ -592,6 +634,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
         """
         Retrieve information from knowledge tables using natural language.
@@ -620,41 +663,59 @@ class KnowledgeManager(BaseKnowledgeManager):
             A handle that allows interjection, pause/resume, and awaiting the
             final result.
         """
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "KnowledgeManager",
-            "ask",
-            phase="incoming",
-            question=text,
-        )
-
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self._ask_tools)
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                """Query the user for more information, and wait for the reply.
-
-                If queues are unavailable, do not ask questions in the outer
-                response; proceed with sensible defaults or best guesses.
-                """
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "KnowledgeManager.retrieve was called without both "
-                        "clarification queues but the model requested clarifications.",
+            async def _on_request(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "ask",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
                     )
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                except Exception:
+                    pass
 
-            tools["request_clarification"] = request_clarification
+            async def _on_answer(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "ask",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
@@ -679,19 +740,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
-            preprocess_msgs=self._inject_broader_context,
+            tool_policy=self._default_ask_tool_policy,
+            preprocess_msgs=inject_broader_context,
         )
 
-        # ── 3a.  Add logging wrapper  ─────────────────────────────────────
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "KnowledgeManager",
-            "ask",
-        )
-
-        # ── 3b.  Optionally wrap .result() to expose reasoning  ───────────
+        # Optionally wrap .result() to expose reasoning
         if _return_reasoning_steps:
             original_result = handle.result
 
@@ -724,7 +777,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         response = http_request("GET", url, headers=headers)
         _handle_exceptions(response)
         ret = response.json()
@@ -784,7 +840,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         if columns is None:
             columns = {}
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         json_input = {"project": proj, "context": ctx, "fields": columns}
         response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
@@ -857,7 +916,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         old_name = f"{self._ctx}/{old_name}"
         new_name = f"{self._ctx}/{new_name}"
         url = f"{unify.BASE_URL}/project/{proj}/contexts/{old_name}/rename"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         json_input = {"name": new_name}
         response = http_request("PATCH", url, json=json_input, headers=headers)
         _handle_exceptions(response)
@@ -1002,17 +1064,39 @@ class KnowledgeManager(BaseKnowledgeManager):
                 Backend confirmation or error.
         """
         table_ctx = unify.get_context(self._ctx_for_table(table))
-        unique_column_name = table_ctx["unique_keys"]
+        keys = table_ctx.get("unique_keys")
+        unique_column_name = keys[0] if isinstance(keys, list) and keys else keys
         # Guard against removal of mandatory columns
-        if (table == "Contacts" and column_name in self._CONTACT_REQUIRED_COLUMNS) or (
-            table != "Contacts" and column_name == unique_column_name
-        ):
+        if table == "Contacts":
+            try:
+                from unity.contact_manager.types.contact import Contact as _C
+
+                required_cols = set(_C.model_fields.keys()) - set(
+                    ["rolling_summary", "response_policy", "respond_to"],
+                )
+            except Exception:
+                required_cols = {"contact_id"}
+            if column_name in required_cols:
+                raise ValueError(
+                    (
+                        f"Cannot delete required Contacts column '{column_name}'. "
+                        "Contacts core schema is protected. If you need to restructure, "
+                        "use rename_column or create a new optional column and migrate values."
+                    ),
+                )
+        elif column_name == unique_column_name:
             raise ValueError(
-                f"❌  Column '{column_name}' is mandatory and cannot be deleted.",
+                (
+                    f"Cannot delete primary key column '{column_name}'. "
+                    "This column uniquely identifies rows. Use rename_column if you need a different name."
+                ),
             )
 
         url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         json_input = {
             "project": unify.active_project(),
             "context": self._ctx_for_table(table),
@@ -1328,7 +1412,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         ctx = self._ctx_for_table(table)
         ctx_info = unify.get_context(ctx)
-        unique_column_name = ctx_info["unique_keys"][0]
+        keys = ctx_info.get("unique_keys")
+        unique_column_name = keys[0] if isinstance(keys, list) and keys else keys
         unique_ids = sorted([int(k) for k in updates.keys()])
         log_ids: List[int] = sorted(
             unify.get_logs(
@@ -1396,7 +1481,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 Mapping from a source expression (plain column or derived Unify expression) to the
                 reference text to compare against. Supports multiple expressions; when more than one
                 is provided the ranking uses a sum of cosine distances over all terms.
-        k : int, default 5
+        k : int, default 10
                 Maximum number of rows to return.
 
         Returns
