@@ -1799,9 +1799,10 @@ class DynamicToolFactory:
         info = self.tools_data.info[task]
         handle = info.get("handle")
         ev = info.get("pause_event")
+        handle_available = handle is not None
 
         # ── DYNAMIC capability refresh (handle may change) ─────
-        if handle is not None:
+        if handle_available:
             # 1. interjection
             info["is_interjectable"] = hasattr(handle, "interject")
 
@@ -1970,7 +1971,7 @@ class DynamicToolFactory:
         if can_pause:
             _pause_doc = f"Pause the pending call {_fn_name}({_arg_repr})."
 
-            if handle is not None and hasattr(handle, "pause"):
+            if handle_available and hasattr(handle, "pause"):
 
                 async def _pause(**_kw) -> Dict[str, str]:
                     with suppress(Exception):
@@ -1987,7 +1988,7 @@ class DynamicToolFactory:
             else:
 
                 async def _pause() -> Dict[str, str]:
-                    if handle is not None and hasattr(handle, "pause"):
+                    if handle_available and hasattr(handle, "pause"):
                         await _maybe_await(handle.pause())
                     elif ev is not None:
                         ev.clear()
@@ -1999,12 +2000,12 @@ class DynamicToolFactory:
                 fn=_pause,
             )
 
-        can_resume = (handle is not None and hasattr(handle, "resume")) or ev
+        can_resume = (handle_available and hasattr(handle, "resume")) or ev
         # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
         if can_resume:
             _resume_doc = f"Resume the previously paused call {_fn_name}({_arg_repr})."
 
-            if handle is not None and hasattr(handle, "resume"):
+            if handle_available and hasattr(handle, "resume"):
 
                 async def _resume(**_kw) -> Dict[str, str]:
                     with suppress(Exception):
@@ -2020,7 +2021,7 @@ class DynamicToolFactory:
             else:
 
                 async def _resume() -> Dict[str, str]:
-                    if handle is not None and hasattr(handle, "resume"):
+                    if handle_available and hasattr(handle, "resume"):
                         await _maybe_await(handle.resume())
                     elif ev is not None:
                         ev.set()
@@ -2033,7 +2034,7 @@ class DynamicToolFactory:
             )
 
         # 7.  expose *all* other public methods of the handle
-        if handle is not None:
+        if handle_available:
 
             public_methods = _discover_custom_public_methods(handle)
 
