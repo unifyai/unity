@@ -968,15 +968,11 @@ async def _insert_after_assistant(
 
 # ── *single* authoritative implementation of "task finished" handling ──
 async def _process_completed_task(
-    # ACTUALLY Task related
     task: asyncio.Task,
     consecutive_failures: _AsyncToolLoopToolFailureTracker,
-    # Loop & State related
     tools_data: _ToolsData,
     outer_handle_container,
     assistant_meta,
-    completed_results,
-    #
     client,
     msg_dispatcher,
     logger,
@@ -1143,7 +1139,7 @@ async def _process_completed_task(
                 pass
 
     # 3️⃣  remember so later `_continue_*` helpers can answer instantly
-    completed_results[call_id] = result
+    tools_data.completed_results[call_id] = result
 
     # 4️⃣  update / insert tool-result message --------------------------
     asst_msg = info["assistant_msg"]
@@ -1471,7 +1467,6 @@ async def _schedule_missing_for_message(
     only_ids: set[str],
     *,
     tools_data: _ToolsData,
-    completed_results,
     parent_chat_context,
     propagate_chat_context,
     assistant_meta,
@@ -1489,7 +1484,7 @@ async def _schedule_missing_for_message(
             # Skip if already pending or completed
             if any(inf.get("call_id") == cid for _t, inf in tools_data.info.items()):
                 continue
-            if cid in completed_results:
+            if cid in tools_data.completed_results:
                 continue
 
             name = call["function"]["name"]
@@ -1673,6 +1668,7 @@ class _ToolsData:
             str,
             Tuple[asyncio.Queue[str], asyncio.Queue[str]],
         ] = {}
+        self.completed_results: Dict[str, str] = {}
 
     def _quota_count(self, task_name: str) -> int:
         return self.call_counts.get(task_name, 0)
@@ -2345,7 +2341,6 @@ async def _async_tool_use_loop_inner(
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: _ToolsData = _ToolsData(tools)
     consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
-    completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
     # Expose live task_info mapping on the current Task so outer handles/tests
@@ -2373,7 +2368,6 @@ async def _async_tool_use_loop_inner(
                     amsg,
                     missing_ids,
                     tools_data=tools_data,
-                    completed_results=completed_results,
                     parent_chat_context=parent_chat_context,
                     propagate_chat_context=propagate_chat_context,
                     assistant_meta=assistant_meta,
@@ -2474,7 +2468,6 @@ async def _async_tool_use_loop_inner(
                             tools_data=tools_data,
                             outer_handle_container=outer_handle_container,
                             assistant_meta=assistant_meta,
-                            completed_results=completed_results,
                             client=client,
                             msg_dispatcher=_msg_dispatcher,
                             logger=logger,
@@ -2567,7 +2560,6 @@ async def _async_tool_use_loop_inner(
                             amsg,
                             missing_ids,
                             tools_data=tools_data,
-                            completed_results=completed_results,
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
@@ -2785,7 +2777,6 @@ async def _async_tool_use_loop_inner(
                         tools_data=tools_data,
                         outer_handle_container=outer_handle_container,
                         assistant_meta=assistant_meta,
-                        completed_results=completed_results,
                         client=client,
                         msg_dispatcher=_msg_dispatcher,
                         logger=logger,
@@ -2978,7 +2969,6 @@ async def _async_tool_use_loop_inner(
                             tools_data=tools_data,
                             outer_handle_container=outer_handle_container,
                             assistant_meta=assistant_meta,
-                            completed_results=completed_results,
                             client=client,
                             msg_dispatcher=_msg_dispatcher,
                             logger=logger,
@@ -3195,12 +3185,12 @@ async def _async_tool_use_loop_inner(
                             _full_id = next(
                                 (
                                     k
-                                    for k in completed_results.keys()
+                                    for k in tools_data.completed_results.keys()
                                     if k.endswith(call_id_suffix)
                                 ),
                                 None,
                             )
-                            finished = completed_results.get(
+                            finished = tools_data.completed_results.get(
                                 _full_id,
                                 _dumps(
                                     {"status": "not-found", "call_id": call_id_suffix},
