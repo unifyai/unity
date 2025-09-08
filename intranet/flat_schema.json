@@ -1,0 +1,47 @@
+{
+  "schema_name": "Midland Heart RAG Unified Table",
+  "version": "3.1.0",
+  "description": "Simplified single-table schema optimised for fast summary-based embeddings and hierarchical retrieval.",
+  "tables": {
+    "content": {
+      "description": "Unified content table storing documents, sections, paragraphs and sentences.  Summaries (or raw sentence text) are embedded for semantic search; full text is kept for answer generation only where needed.",
+      "columns": {
+        "content_id": { "type": "str", "description": "Unique identifier for this record", "unique": true },
+        "content_type": { "type": "str", "description": "'document' | 'section' | 'paragraph' | 'sentence'" },
+        "title": { "type": "str", "description": "Heading / suggested title (fallback if none extracted)" },
+        "summary": { "type": "str", "description": "Rich summary capturing all key facts / figures / instructions / topics / entities.  Used for embeddings." },
+        "content_text": { "type": "str", "description": "Original text (sentence) or raw concatenation for higher levels.  Not embedded." },
+
+        "document_id": { "type": "str", "description": "Document-level ID" },
+        "section_id": { "type": "str", "description": "Section-level ID (null for document)" },
+        "paragraph_id": { "type": "str", "description": "Paragraph-level ID (null for document / section)" },
+        "sentence_id": { "type": "str", "description": "Sentence-level ID (null for higher levels)" },
+
+        "level": { "type": "int", "description": "1=document, 2=section, 3=paragraph, 4=sentence" },
+        "parent_id": { "type": "str", "description": "Parent content_id for hierarchy navigation" },
+
+        "document_type": { "type": "str", "description": "Policy, procedure, guideline, etc." },
+        "category": { "type": "str", "description": "Business category" },
+        "department": { "type": "str", "description": "Owning department" },
+
+        "confidence_score": { "type": "float", "description": "Extraction / classification confidence" },
+
+        "schema_id": { "type": "str", "description": "Logical schema/version label for ingestion provenance" },
+        "source_uri": { "type": "str", "description": "Absolute file path or original URL" },
+        "document_fingerprint": { "type": "str", "description": "SHA-256 fingerprint of the source artifact" },
+        "is_active": { "type": "bool", "description": "False when row is deprecated or superseded" }
+      }
+    }
+  },
+
+  "embedding_configuration": {
+    "description": "Only the 'summary' column is embedded for fast semantic search (except for sentences where summary == content_text).  The resulting vector is stored in _summary_emb.",
+    "tables": {
+      "content": {
+        "columns_to_embed": [
+          { "source_column": "summary", "target_column": "_summary_emb", "description": "Primary embedding used in retrieval" }
+        ]
+      }
+    }
+  }
+}

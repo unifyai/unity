@@ -1,0 +1,112 @@
+[
+    {
+      "id": "A",
+      "questions": [
+        "According to the Motability Scooter Policy, what is the speed limit for Class 2 scooters?",
+        "And how does that limit compare with Class 3 scooters on the road?"
+      ],
+      "answers": [
+        "4 mph.",
+        "Class 3 scooters may travel up to 8 mph on the road, so the Class 2 limit is half that."
+      ]
+    },
+    {
+      "id": "B",
+      "questions": [
+        "Who pays to install an EV charge point?",
+        "Given that responsibility, name the document that sets out the technical specification they must follow."
+      ],
+      "answers": [
+        "The resident (tenant / leaseholder).",
+        "The “Tenant Electric Vehicle charge points technical specification”."
+      ]
+    },
+    {
+      "id": "C",
+      "questions": [
+        "Define a ‘means of escape’ per the Fire Safety Policy.",
+        "Using that definition, which fire‑risk rating would apply if an escape route is partially blocked by combustible items?"
+      ],
+      "answers": [
+        "A safe route enabling occupants to reach ultimate safety without assistance.",
+        "At least a ‘Moderate’ risk rating, because an obstruction compromises the means of escape."
+      ]
+    },
+    {
+      "id": "D",
+      "questions": [
+        "How many working days are allowed to issue a full Stage 1 complaints response?",
+        "If that deadline is missed, to which next stage can a resident escalate?"
+      ],
+      "answers": [
+        "10 working days.",
+        "Stage 2 – Internal Review (and ultimately the Housing Ombudsman if still dissatisfied)."
+      ]
+    },
+    {
+      "id": "E",
+      "questions": [
+        "What average SAP rating target is stated in the Planned Investment Policy?",
+        "Which strategic theme most directly supports achieving that target?"
+      ],
+      "answers": [
+        "SAP 71.",
+        "The ‘Carbon reduction’ theme."
+      ]
+    },
+    {
+      "id": "F",
+      "questions": [
+        "What is the maximum loan value in the Leaseholder Assistance Scheme?",
+        "Over how many years is that loan expected to be repaid?"
+      ],
+      "answers": [
+        "£15,000 (or cost of works if lower).",
+        "10 years."
+      ]
+    },
+    {
+      "id": "G",
+      "questions": [
+        "What is the preferred payment method for rent and service charges?",
+        "If a tenant refuses that method, what notice period must Midland Heart still give before increasing rent?"
+      ],
+      "answers": [
+        "Direct Debit.",
+        "A minimum of one calendar month’s written notice."
+      ]
+    },
+    {
+      "id": "H",
+      "questions": [
+        "Under succession rules, how long must a family member occupy the property?",
+        "Which Housing Act sections grant an automatic right of succession to spouses regardless of that 12‑month rule?"
+      ],
+      "answers": [
+        "12 months.",
+        "Housing Act 1985 §87 and Housing Act 1988 §17."
+      ]
+    },
+    {
+      "id": "I",
+      "questions": [
+        "Name one policy that references the Equality Act 2010.",
+        "Identify two other Midland Heart policies that also cite that Act."
+      ],
+      "answers": [
+        "The Fire Safety Policy 2024 (any one is acceptable).",
+        "The Anti‑Social Behaviour Policy 2024 and the Complaints Policy 2024."
+      ]
+    },
+    {
+      "id": "J",
+      "questions": [
+        "Under the Motability Scooter Policy, can scooters be kept in communal corridors?",
+        "If a resident must remove a scooter from a corridor, where may it be stored according to policy guidance?"
+      ],
+      "answers": [
+        "No, they should not be stored in communal corridors or landings.",
+        "In a designated scooter store or another area approved by a risk assessment (e.g., a ground‑floor storeroom)."
+      ]
+    }
+]
