@@ -20,7 +20,7 @@ from livekit.plugins import (
     silero,
 )
 
-if sys.platform == "darwin":
+if not sys.platform.startswith("win"):
     from livekit.plugins import noise_cancellation
 from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
@@ -381,7 +381,7 @@ async def entrypoint(ctx: agents.JobContext):
             # - If self-hosting, omit this parameter
             # - For telephony applications, use `BVCTelephony` for best results
             noise_cancellation=(
-                noise_cancellation.BVC() if sys.platform == "darwin" else None
+                noise_cancellation.BVC() if not sys.platform.startswith("win") else None
             ),
         ),
     )
