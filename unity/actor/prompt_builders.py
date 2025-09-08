@@ -1463,7 +1463,7 @@ def _build_dynamic_implement_rules_and_examples(
         This shows how to use the `send_sms_message` tool which returns a SteerableToolHandle.
         ```python
         async def send_appointment_reminder(phone_number: str, appointment_details: str) -> str:
-            "\"\"\Sends an SMS reminder about an appointment.
+            \"\"\"Sends an SMS reminder about an appointment.
 
             Args:
                 phone_number: The phone number to text
@@ -1497,7 +1497,7 @@ def _build_dynamic_implement_rules_and_examples(
         This demonstrates the full capabilities of SteerableToolHandle with the start_call tool.
         ```python
         async def conduct_detailed_appointment_call(phone_number: str, appointment_info: dict) -> dict:
-            "\"\"\Makes an interactive phone call to confirm appointment details.
+            \"\"\"Makes an interactive phone call to confirm appointment details.
 
             Args:
                 phone_number: The phone number to call
@@ -1569,7 +1569,7 @@ def _build_dynamic_implement_rules_and_examples(
         This shows the proper pattern for extracting structured data from web pages.
         ```python
         async def extract_product_listings() -> list[dict]:
-            "\"\"\Extracts all product information from a search results page.
+            \"\"\"Extracts all product information from a search results page.
 
             Returns:
                 list[dict]: List of products with name, price, rating, and availability
@@ -1632,7 +1632,7 @@ def _build_dynamic_implement_rules_and_examples(
         This demonstrates robust error handling with fallback approaches.
         ```python
         async def complete_checkout_process(payment_info: dict) -> dict:
-            "\"\"\Completes the checkout process with payment information.
+            \"\"\"Completes the checkout process with payment information.
 
             Args:
                 payment_info: Dict containing 'card_number', 'cvv', 'expiry', 'zip'
@@ -1714,7 +1714,7 @@ def _build_dynamic_implement_rules_and_examples(
         The actor will cache results of each function, so separating pure logic ensures it won't be re-executed.
         ```python
         async def analyze_competitor_pricing(product_name: str) -> dict:
-            "\"\"\Analyzes competitor pricing data for a specific product.
+            \"\"\"Analyzes competitor pricing data for a specific product.
 
             This function demonstrates the pattern of isolating pure computation
             from browser interaction to leverage the actor's caching system.
@@ -1769,7 +1769,7 @@ def _build_dynamic_implement_rules_and_examples(
         # This helper function would be implemented separately in the plan
         # It contains pure logic with no browser interaction, making it cacheable
         async def _perform_pricing_analysis(pricing_data: dict) -> dict:
-            "\"\"\Performs detailed statistical analysis on pricing data.
+            \"\"\"Performs detailed statistical analysis on pricing data.
 
             This is a separate function containing only pure Python logic.
             The actor caches its result, so it won't re-execute if the plan restarts.
@@ -1827,6 +1827,16 @@ def _build_dynamic_implement_rules_and_examples(
                 "total_competitors": len(competitors),
                 "analysis_timestamp": pricing_data['search_timestamp']
             }}
+        ```
+
+        **Example 6: Requesting Clarification During Implementation**
+        This demonstrates how to use request_clarification when the implementation strategy is unclear.
+        ```json
+        {{
+            "action": "request_clarification",
+            "reason": "The page contains two visually identical 'Continue' buttons. I need to know which one to click to proceed with the payment.",
+            "clarification_question": "I see two 'Continue' buttons on the page. Should I click the one in the 'Order Summary' section or the one at the very bottom of the page?"
+        }}
         ```
     """,
     )
@@ -2345,7 +2355,9 @@ def build_ask_prompt(
         2. **Full Action Log:** This is a chronological history of everything that has happened, including your actions, verifications, and any user interjections or clarifications. This is your memory.
         3. **Current Browser View:** A screenshot of what you see on the screen RIGHT NOW. This is your most important source of truth for visual questions.
         4. **Call Stack:** Shows which part of your plan you are currently executing.
+        5. **Tools:** You have access to one tool: `query_browser`. This tool allows you to ask questions about the parent agent's memory, including its past actions and observations.
 
+        First, carefully review the context of the parent agent provided below. Then, formulate a plan to answer the user's question. This may involve one or more calls to the `query_browser` tool. Once you have gathered enough information, provide a final, concise answer to the user.
         **Current Goal:** {goal}
         **Current State:** {state}
         **Current Call Stack:** {call_stack}
@@ -2558,6 +2570,17 @@ def build_interjection_prompt(
     {{
         "action": "complete_task",
         "reason": "User has indicated that the plan is finished and should now execute to completion."
+    }}
+    ```
+
+    **Example 6: Clarifying an Ambiguous Interjection**
+    - **Context:** The plan has just failed. The user interjects with "No, that's wrong. Fix it."
+    - **Analysis:** The instruction "Fix it" is not specific enough to generate a code patch. The model must ask for more detail.
+    ```json
+    {{
+        "action": "clarify",
+        "reason": "The user's interjection 'Fix it' is ambiguous. I need more specific instructions to generate the correct code modification.",
+        "clarification_question": "I understand the last step was incorrect. Could you please tell me more specifically what I should do instead?"
     }}
     ```
     """,
