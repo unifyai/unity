@@ -26,6 +26,12 @@ from .types.document import (
     DocumentSection,
     DocumentSentence,
 )
+from .token_utils import (
+    count_tokens,
+    has_meaningful_text,
+    is_within_token_limit,
+    clip_text_to_token_limit,
+)
 
 # Check for optional dependencies
 try:
@@ -1740,32 +1746,93 @@ class DoclingParser(GenericParser[Document]):
                 cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             )
 
-            # Build extraction prompt with schema
+            # Token accounting (align with summariser defaults)
+            METADATA_ENCODING = os.environ.get("SUMMARY_ENCODING", "o200k_base")
+            METADATA_MAX_TOKENS = int(os.environ.get("SUMMARY_MAX_TOKENS", "60000"))
+            METADATA_REDUCE_STEP = int(os.environ.get("SUMMARY_REDUCE_STEP", "5000"))
+            METADATA_MIN_TOKENS = int(os.environ.get("SUMMARY_MIN_TOKENS", "45000"))
+            MAX_RETRY_ATTEMPTS = 3
+
+            # Compute a *token* budget for text (prompt-aware)
             from unity.file_manager.parser.prompt_builders import (
                 build_metadata_extraction_prompt,
             )
 
             prompt = build_metadata_extraction_prompt()
+            prompt_tokens = count_tokens(prompt, METADATA_ENCODING)
+            budget_for_text = max(METADATA_MAX_TOKENS - prompt_tokens, 256)
 
-            # Define text sources in priority order
+            def _first_tokens(text: str, n: int, enc: str) -> str:
+                try:
+                    import tiktoken
+
+                    e = tiktoken.get_encoding(enc)
+                    toks = e.encode(text)
+                    return e.decode(toks[: max(n, 0)])
+                except Exception:
+                    # char-based fallback
+                    return text[: n * 4]
+
+            def _last_tokens(text: str, n: int, enc: str) -> str:
+                try:
+                    import tiktoken
+
+                    e = tiktoken.get_encoding(enc)
+                    toks = e.encode(text)
+                    return e.decode(toks[-max(n, 0) :]) if n > 0 else ""
+                except Exception:
+                    return text[-(n * 4) :] if n > 0 else ""
+
+            def _middle_tokens(text: str, n: int, enc: str) -> str:
+                try:
+                    import tiktoken
+
+                    e = tiktoken.get_encoding(enc)
+                    toks = e.encode(text)
+                    L = len(toks)
+                    if L == 0 or n <= 0:
+                        return ""
+                    start = max((L // 2) - (n // 2), 0)
+                    end = min(start + n, L)
+                    return e.decode(toks[start:end])
+                except Exception:
+                    # char-based heuristic
+                    approx = n * 4
+                    s = max((len(text) // 2) - (approx // 2), 0)
+                    return text[s : s + approx]
+
+            def _safe_generate_text(prompt: str, text: str) -> str:
+                """Token-aware generate with prompt+text clipping and backoff."""
+                prompt_tokens = count_tokens(prompt, METADATA_ENCODING)
+                budget_for_text = max(METADATA_MAX_TOKENS - prompt_tokens, 256)
+                clipped_text = clip_text_to_token_limit(
+                    text,
+                    budget_for_text,
+                    METADATA_ENCODING,
+                )
+                return client.copy().generate(prompt + clipped_text)
+
+            # Define text sources in priority order (we will clip token-aware later)
             text_sources = []
 
             # Priority 1: Full document text (if available and not too large)
             if hasattr(document, "full_text") and document.full_text:
-                # Use full text if it's reasonable size (up to ~16k chars for good results)
-                if len(document.full_text) <= 16000:
-                    text_sources.append(("full_text", document.full_text))
-                else:
-                    # Take beginning, middle, and end portions for comprehensive coverage
-                    text_length = len(document.full_text)
-                    chunk_size = 5000
-                    beginning = document.full_text[:chunk_size]
-                    middle_start = (text_length // 2) - (chunk_size // 2)
-                    middle = document.full_text[
-                        middle_start : middle_start + chunk_size
-                    ]
-                    end = document.full_text[-chunk_size:]
-                    combined = f"{beginning}\n\n[...Document middle section...]\n\n{middle}\n\n[...Document end section...]\n\n{end}"
+                # Always offer the *full* text source; _safe_generate_text will clip token-aware.
+                text_sources.append(("full_text", document.full_text))
+                # Additionally add a token-aware head/middle/tail sample when text exceeds budget.
+                if not is_within_token_limit(
+                    document.full_text,
+                    budget_for_text,
+                    METADATA_ENCODING,
+                ):
+                    each = max(budget_for_text // 3, 128)
+                    head = _first_tokens(document.full_text, each, METADATA_ENCODING)
+                    middle = _middle_tokens(document.full_text, each, METADATA_ENCODING)
+                    tail = _last_tokens(document.full_text, each, METADATA_ENCODING)
+                    combined = (
+                        f"{head}\n\n[...Document middle section...]\n\n"
+                        f"{middle}\n\n[...Document end section...]\n\n{tail}"
+                    )
                     text_sources.append(("full_text_sampled", combined))
 
             # Priority 2: Document summary (if available)
@@ -1814,28 +1881,32 @@ class DoclingParser(GenericParser[Document]):
             # Try each text source in priority order
             last_error = None
             for source_name, metadata_text in text_sources:
-                if not metadata_text or len(metadata_text.strip()) < 50:
+                if (
+                    not has_meaningful_text(metadata_text)
+                    or len(metadata_text.strip()) < 50
+                ):
                     continue
 
                 try:
-                    # Ensure reasonable size
-                    if len(metadata_text) > 16000:
-                        metadata_text = (
-                            metadata_text[:16000]
-                            + "\n[Text truncated for processing...]"
-                        )
-
                     # Make the API call with retries for transient errors
                     response = None
-                    for attempt in range(3):
+                    for attempt in range(MAX_RETRY_ATTEMPTS):
                         try:
-                            response = client.copy().generate(prompt + metadata_text)
+                            response = _safe_generate_text(prompt, metadata_text)
                             break
                         except Exception as api_error:
-                            if attempt < 2 and "rate" in str(api_error).lower():
-                                import time
-
-                                time.sleep(2**attempt)  # Exponential backoff
+                            # Backoff on token errors by reducing budget and clipping again
+                            if (
+                                "token" in str(api_error).lower()
+                                and attempt < MAX_RETRY_ATTEMPTS - 1
+                            ):
+                                # reduce budgets for next iteration
+                                new_budget = max(
+                                    METADATA_MAX_TOKENS
+                                    - (attempt + 1) * METADATA_REDUCE_STEP,
+                                    METADATA_MIN_TOKENS,
+                                )
+                                os.environ["SUMMARY_MAX_TOKENS"] = str(new_budget)
                                 continue
                             raise
 
@@ -1897,30 +1968,39 @@ class DoclingParser(GenericParser[Document]):
                 cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             )
 
-            # Industry-standard token limits based on model capabilities
-            # Using tiktoken's cl100k_base tokenizer estimates (GPT-3.5/4)
-            # Average ratio: ~1 token per 4 characters for English text
-            # Model context windows: GPT-3.5 (16k), GPT-4 (8k-128k)
-            # Reserve ~2k tokens for prompt and response formatting
-
-            # Start with generous limit, progressively reduce if needed
-            INITIAL_MAX_TOKENS = 6000  # ~24k chars
-            TOKEN_REDUCTION_STEP = 1500  # Reduce by ~6k chars each iteration
-            MIN_TOKEN_LIMIT = 1500  # ~6k chars minimum
+            # ---------- Token accounting (tiktoken-backed) ----------
+            # Model/encoding guidance:
+            # - o4 / gpt-4o / gpt-4o-mini → o200k_base
+            # - text-embedding-3-* → cl100k_base (used elsewhere for embeddings)
+            SUMMARISER_MODEL_ENCODING = os.environ.get("SUMMARY_ENCODING", "o200k_base")
+            INITIAL_MAX_TOKENS = int(os.environ.get("SUMMARY_MAX_TOKENS", "60000"))
+            TOKEN_REDUCTION_STEP = int(os.environ.get("SUMMARY_REDUCE_STEP", "5000"))
+            MIN_TOKEN_LIMIT = int(os.environ.get("SUMMARY_MIN_TOKENS", "45000"))
             MAX_RETRY_ATTEMPTS = 3
 
-            # Chunking overlap for context preservation (20% overlap is standard)
+            # Chunk overlap ratio for context preservation
             CHUNK_OVERLAP_RATIO = 0.2
 
-            def _estimate_tokens(text: str) -> int:
-                """Estimate token count using cl100k_base approximation."""
-                # Industry standard: ~4 characters per token for English
-                # Add 10% buffer for safety
-                return int(len(text) / 4 * 1.1)
+            def _safe_map(name: str, items: list[dict], fn):
+                """Run unify.map with fallback to sequential when the pool errors."""
+                try:
+                    return unify.map(fn, items, name=name) if items else []
+                except Exception:
+                    return [fn(**it) for it in items]
 
-            def _semantic_chunk_text(text: str, max_chars: int) -> List[str]:
-                """Split text into semantic chunks with overlap, respecting sentence boundaries."""
-                if len(text) <= max_chars:
+            def _semantic_chunk_text_by_tokens(
+                text: str,
+                max_tokens_for_text: int,
+            ) -> List[str]:
+                """
+                Split *text* into token-aware chunks with sentence boundaries where possible.
+                Each chunk will be **<= max_tokens_for_text**.
+                """
+                if is_within_token_limit(
+                    text,
+                    max_tokens_for_text,
+                    SUMMARISER_MODEL_ENCODING,
+                ):
                     return [text]
 
                 # Split by sentences first (preserve semantic units)
@@ -1928,72 +2008,83 @@ class DoclingParser(GenericParser[Document]):
 
                 sentences = re.split(r"(?<=[.!?])\s+", text)
 
-                chunks = []
-                current_chunk = []
-                current_length = 0
-                overlap_buffer = []
-                overlap_size = int(max_chars * CHUNK_OVERLAP_RATIO)
+                chunks: List[str] = []
+                current_chunk: List[str] = []
+                current_tokens = 0
+                overlap_buffer: List[str] = []
+                overlap_tokens = int(max_tokens_for_text * CHUNK_OVERLAP_RATIO)
 
                 for sentence in sentences:
-                    sentence_length = len(sentence) + 1  # +1 for space
+                    if not sentence.strip():
+                        continue
+                    sent = sentence.strip()
+                    sent_tokens = count_tokens(sent, SUMMARISER_MODEL_ENCODING)
 
                     # If single sentence exceeds limit, split by clauses
-                    if sentence_length > max_chars:
+                    if sent_tokens > max_tokens_for_text:
                         # Split by common clause markers
-                        clauses = re.split(r"(?<=[,;:])\s+", sentence)
+                        clauses = re.split(r"(?<=[,;:])\s+", sent)
                         for clause in clauses:
-                            if current_length + len(clause) > max_chars:
+                            if not clause.strip():
+                                continue
+                            clause_tokens = count_tokens(
+                                clause,
+                                SUMMARISER_MODEL_ENCODING,
+                            )
+                            if current_tokens + clause_tokens > max_tokens_for_text:
                                 if current_chunk:
-                                    chunks.append(" ".join(current_chunk))
-                                    # Keep last portion for overlap
+                                    chunks.append(" ".join(current_chunk).strip())
+                                    overlap_text = " ".join(current_chunk).strip()
+                                    overlap_trimmed = clip_text_to_token_limit(
+                                        overlap_text,
+                                        overlap_tokens,
+                                        SUMMARISER_MODEL_ENCODING,
+                                    )
                                     overlap_buffer = (
-                                        current_chunk[-3:]
-                                        if len(current_chunk) > 3
-                                        else current_chunk
+                                        [overlap_trimmed] if overlap_trimmed else []
                                     )
                                     current_chunk = overlap_buffer + [clause]
-                                    current_length = sum(
-                                        len(c) + 1 for c in current_chunk
+                                    current_tokens = count_tokens(
+                                        " ".join(current_chunk),
+                                        SUMMARISER_MODEL_ENCODING,
                                     )
                                 else:
-                                    # Force add even if too long
-                                    chunks.append(clause)
+                                    # Force add even if too long (rare)
+                                    chunks.append(
+                                        clip_text_to_token_limit(
+                                            clause,
+                                            max_tokens_for_text,
+                                            SUMMARISER_MODEL_ENCODING,
+                                        ),
+                                    )
                             else:
                                 current_chunk.append(clause)
-                                current_length += len(clause) + 1
-                    elif current_length + sentence_length > max_chars:
+                                current_tokens += clause_tokens
+                    elif current_tokens + sent_tokens > max_tokens_for_text:
                         # Complete current chunk
                         if current_chunk:
-                            chunks.append(" ".join(current_chunk))
-                            # Create overlap from last sentences
-                            overlap_text = " ".join(current_chunk)
-                            if len(overlap_text) > overlap_size:
-                                # Take last portion of text for overlap
-                                overlap_start = len(overlap_text) - overlap_size
-                                # Find sentence boundary in overlap region
-                                overlap_match = re.search(
-                                    r"[.!?]\s+",
-                                    overlap_text[overlap_start:],
-                                )
-                                if overlap_match:
-                                    overlap_start += overlap_match.end()
-                                overlap_buffer = overlap_text[overlap_start:].split()
-                            else:
-                                overlap_buffer = (
-                                    current_chunk[-2:]
-                                    if len(current_chunk) > 2
-                                    else current_chunk
-                                )
-
-                        current_chunk = overlap_buffer + [sentence]
-                        current_length = sum(len(s) + 1 for s in current_chunk)
+                            chunks.append(" ".join(current_chunk).strip())
+                            overlap_text = " ".join(current_chunk).strip()
+                            overlap_trimmed = clip_text_to_token_limit(
+                                overlap_text,
+                                overlap_tokens,
+                                SUMMARISER_MODEL_ENCODING,
+                            )
+                            overlap_buffer = (
+                                [overlap_trimmed] if overlap_trimmed else []
+                            )
+                        current_chunk = overlap_buffer + [sent]
+                        current_tokens = count_tokens(
+                            " ".join(current_chunk),
+                            SUMMARISER_MODEL_ENCODING,
+                        )
                     else:
-                        current_chunk.append(sentence)
-                        current_length += sentence_length
+                        current_chunk.append(sent)
+                        current_tokens += sent_tokens
 
                 # Add final chunk
                 if current_chunk:
-                    chunks.append(" ".join(current_chunk))
+                    chunks.append(" ".join(current_chunk).strip())
 
                 return chunks
 
@@ -2004,9 +2095,7 @@ class DoclingParser(GenericParser[Document]):
                 max_tokens: int = INITIAL_MAX_TOKENS,
                 attempt: int = 0,
             ):
-                """Split text into chunks if needed, with progressive token limit reduction."""
-
-                max_chars = max_tokens * 4  # Convert tokens to approximate characters
+                """Split text into **token-aware** chunks if needed, with progressive token limit reduction."""
 
                 # Build the prompt first to account for its tokens
                 if context_info and "chunk_number" in context_info:
@@ -2017,18 +2106,26 @@ class DoclingParser(GenericParser[Document]):
                 else:
                     prompt = prompt_builder()
 
-                prompt_tokens = _estimate_tokens(prompt)
-                available_chars = max(
-                    (max_tokens - prompt_tokens) * 4,
-                    1000,
-                )  # Minimum 1000 chars
+                prompt_tokens = count_tokens(prompt, SUMMARISER_MODEL_ENCODING)
+                available_tokens_for_text = max(max_tokens - prompt_tokens, 256)
 
-                if len(text) <= available_chars:
-                    # Text fits in single call
+                if not has_meaningful_text(text):
+                    return ""  # nothing to summarise sensibly
+
+                if (
+                    is_within_token_limit(
+                        text,
+                        available_tokens_for_text,
+                        SUMMARISER_MODEL_ENCODING,
+                    )
+                    and text.strip()
+                ):  # Text fits in single call
                     try:
                         return client.copy().generate(prompt + text).strip()
                     except Exception as e:
                         # If we hit token limit, retry with reduced limit
+                        if not text.strip():
+                            return ""
                         if attempt < MAX_RETRY_ATTEMPTS and "token" in str(e).lower():
                             new_max_tokens = max(
                                 max_tokens - TOKEN_REDUCTION_STEP,
@@ -2042,16 +2139,17 @@ class DoclingParser(GenericParser[Document]):
                                 attempt + 1,
                             )
                         elif attempt >= MAX_RETRY_ATTEMPTS:
-                            # Final fallback: return truncated text
-                            return (
-                                text[:available_chars]
-                                + "... [Text truncated due to length]"
+                            clipped = clip_text_to_token_limit(
+                                text,
+                                available_tokens_for_text,
+                                SUMMARISER_MODEL_ENCODING,
                             )
+                            return clipped + "... [Text truncated due to length]"
                         else:
                             raise
 
-                # Text needs chunking
-                chunks = _semantic_chunk_text(text, available_chars)
+                # Text needs chunking (token-aware)
+                chunks = _semantic_chunk_text_by_tokens(text, available_tokens_for_text)
 
                 if len(chunks) == 1:
                     # Single chunk after semantic splitting
@@ -2071,16 +2169,20 @@ class DoclingParser(GenericParser[Document]):
                                 attempt + 1,
                             )
                         else:
-                            return (
-                                chunks[0][:available_chars]
-                                + "... [Text truncated due to length]"
+                            clipped = clip_text_to_token_limit(
+                                chunks[0],
+                                available_tokens_for_text,
+                                SUMMARISER_MODEL_ENCODING,
                             )
+                            return clipped + "... [Text truncated due to length]"
 
                 # Summarize chunks in parallel
 
                 # Prepare chunk data for parallel processing
                 chunk_data = []
                 for i, chunk in enumerate(chunks):
+                    if not has_meaningful_text(chunk):
+                        continue
                     chunk_data.append(
                         {
                             "chunk": chunk,
@@ -2117,21 +2219,35 @@ class DoclingParser(GenericParser[Document]):
                                 attempt + 1,
                             )
                         else:
-                            # Fallback
-                            return data["chunk"][:1000] + "... [Chunk truncated]"
+                            # Fallback: keep a small, token-aware excerpt
+                            return (
+                                clip_text_to_token_limit(
+                                    data["chunk"],
+                                    1000,
+                                    SUMMARISER_MODEL_ENCODING,
+                                )
+                                + "... [Chunk truncated]"
+                            )
 
-                # Run chunk summaries in parallel
-                chunk_summaries = unify.map(
-                    _summarize_chunk,
-                    chunk_data,
+                # Run chunk summaries in parallel with fallback
+                chunk_summaries = _safe_map(
                     name=f"Chunk Summaries ({len(chunks)} chunks)",
+                    items=[
+                        {
+                            "chunk": it["chunk"],
+                            "chunk_num": it["chunk_num"],
+                            "total_chunks": it["total_chunks"],
+                        }
+                        for it in chunk_data
+                    ],
+                    fn=_summarize_chunk,
                 )
 
                 # Combine chunk summaries
                 if len(chunk_summaries) > 1:
                     combined = "\n\n".join(chunk_summaries)
                     # Check if combined summaries need further summarization
-                    if _estimate_tokens(combined) > max_tokens:
+                    if count_tokens(combined, SUMMARISER_MODEL_ENCODING) > max_tokens:
                         # Recursive summarization
                         return _chunk_text_if_needed(
                             combined,
@@ -2160,7 +2276,7 @@ class DoclingParser(GenericParser[Document]):
 
             for section_idx, section in enumerate(document.sections):
                 for para_idx, para in enumerate(section.paragraphs):
-                    if para.summary is None:
+                    if para.summary is None and has_meaningful_text(para.text or ""):
                         # Always generate summaries (no short text bypass)
                         # This ensures we get topics, entities, etc. even for short text
                         paragraphs_to_process.append(
@@ -2184,21 +2300,19 @@ class DoclingParser(GenericParser[Document]):
                 )
 
             # Run all paragraph summaries in parallel
+            para_summaries: list[str] = []
             if paragraphs_to_process:
-                para_summaries = unify.map(
-                    _summarize_paragraph,
-                    paragraphs_to_process,
+                para_summaries = _safe_map(
                     name="Paragraph Summaries",
+                    items=paragraphs_to_process,
+                    fn=_summarize_paragraph,
                 )
 
-                # Update the document with the summaries
-                for (section_idx, para_idx), summary in zip(
-                    paragraph_refs,
-                    para_summaries,
-                ):
-                    document.sections[section_idx].paragraphs[
-                        para_idx
-                    ].summary = summary
+                # Guard against length mismatches
+                for i, ((section_idx, para_idx)) in enumerate(paragraph_refs):
+                    if i >= len(para_summaries):
+                        break
+                    summary = para_summaries[i] or ""
 
             # LEVEL 2: Parallel Section summaries
 
@@ -2207,8 +2321,14 @@ class DoclingParser(GenericParser[Document]):
             section_refs = []
 
             for section_idx, section in enumerate(document.sections):
-                if section.summary is None and section.paragraphs:
-                    # Combine paragraph summaries
+                if (
+                    section.summary is None
+                    and section.paragraphs
+                    and any(
+                        has_meaningful_text(p.summary or p.text or "")
+                        for p in section.paragraphs
+                    )
+                ):  # Combine paragraph summaries
                     para_summaries = []
                     for para in section.paragraphs:
                         if para.summary:
@@ -2250,16 +2370,19 @@ class DoclingParser(GenericParser[Document]):
                 )
 
             # Run all section summaries in parallel
+            section_summaries: list[str] = []
             if sections_to_process:
-                section_summaries = unify.map(
-                    _summarize_section,
-                    sections_to_process,
+                section_summaries = _safe_map(
                     name="Section Summaries",
+                    items=sections_to_process,
+                    fn=_summarize_section,
                 )
 
                 # Update the document with the summaries
-                for section_idx, summary in zip(section_refs, section_summaries):
-                    document.sections[section_idx].summary = summary
+                for i, section_idx in enumerate(section_refs):
+                    if i >= len(section_summaries):
+                        break
+                    document.sections[section_idx].summary = section_summaries[i] or ""
 
             # LEVEL 3: Document summary (from section summaries)
             if document.summary is None and document.sections:
@@ -2281,10 +2404,25 @@ class DoclingParser(GenericParser[Document]):
                     doc_context += f"Total Sections: {len(document.sections)}\n\n"
 
                     # Generate document summary from section summaries
-                    document.summary = _chunk_text_if_needed(
+                    doc_prompt = build_document_summary_prompt()
+                    # Ensure the combined text fits within token budget with prompt
+                    prompt_tokens = count_tokens(doc_prompt, SUMMARISER_MODEL_ENCODING)
+                    budget = max(INITIAL_MAX_TOKENS - prompt_tokens, 256)
+                    clipped = clip_text_to_token_limit(
                         doc_context + combined_sections,
-                        build_document_summary_prompt,
+                        budget,
+                        SUMMARISER_MODEL_ENCODING,
                     )
+                    try:
+                        document.summary = (
+                            client.copy().generate(doc_prompt + clipped).strip()
+                        )
+                    except Exception:
+                        # Fallback – use chunking path
+                        document.summary = _chunk_text_if_needed(
+                            doc_context + combined_sections,
+                            lambda: doc_prompt,
+                        )
 
             print("Summary generation completed")
 
@@ -2298,7 +2436,7 @@ class DoclingParser(GenericParser[Document]):
             # Basic paragraph summaries - first 200 chars
             for section in document.sections:
                 for para in section.paragraphs:
-                    if para.summary is None and para.text:
+                    if para.summary is None and has_meaningful_text(para.text or ""):
                         para.summary = (
                             para.text[:200] + "..."
                             if len(para.text) > 200
@@ -2307,7 +2445,14 @@ class DoclingParser(GenericParser[Document]):
 
             # Basic section summaries - combine paragraph starts
             for section in document.sections:
-                if section.summary is None and section.paragraphs:
+                if (
+                    section.summary is None
+                    and section.paragraphs
+                    and any(
+                        has_meaningful_text(p.summary or p.text or "")
+                        for p in section.paragraphs
+                    )
+                ):
                     summary_parts = []
                     for i, para in enumerate(
                         section.paragraphs[:3],
@@ -2317,7 +2462,14 @@ class DoclingParser(GenericParser[Document]):
                     section.summary = " ".join(summary_parts)
 
             # Basic document summary - combine section titles and starts
-            if document.summary is None and document.sections:
+            if (
+                document.summary is None
+                and document.sections
+                and any(
+                    has_meaningful_text(s.summary or s.title or "")
+                    for s in document.sections
+                )
+            ):
                 summary_parts = []
                 for section in document.sections[:5]:  # First 5 sections
                     if section.title:
