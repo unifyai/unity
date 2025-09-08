@@ -1204,44 +1204,18 @@ class HierarchicalPlan(BaseActiveTask):
         token = current_run_id_var.set(self.run_id)
         self.runtime.execution_mode = mode
         try:
-            if self.goal:
-                if not self._is_complete:
-                    self._set_state(_HierarchicalPlanState.RUNNING)
+            if not self._is_complete:
+                self._set_state(_HierarchicalPlanState.RUNNING)
 
-                if self.plan_source_code is None:
-                    self.action_log.append("Generating new plan from goal...")
-                    self.plan_source_code = await self.actor._generate_initial_plan(
-                        plan=self,
-                        goal=self.goal,
-                    )
-                    self.action_log.append("Initial plan generated successfully.")
-                else:
-                    self.action_log.append("Proceeding with existing plan source code.")
+            if self.plan_source_code is None:
+                self.action_log.append("Generating plan from goal...")
+                self.plan_source_code = await self.actor._generate_initial_plan(
+                    plan=self,
+                    goal=self.goal,
+                )
+                self.action_log.append("Initial plan generated successfully.")
             else:
-                if not self.plan_source_code:
-                    self.action_log.append(
-                        "Starting goal-less session. Awaiting user instruction.",
-                    )
-                    self.plan_source_code = textwrap.dedent(
-                        """
-                        @verify
-                        async def main_plan():
-                            \"\"\"Main entry point for the hierarchical plan.
-
-                            This is a teaching session that started without a specific goal.
-                            The plan will grow incrementally as you provide guidance.
-                            \"\"\"
-                            pass
-                    """,
-                    ).strip()
-                    self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
-                    self.action_log.append(
-                        "Starting goal-less session. Awaiting user instruction.",
-                    )
-                    await self.actor._prepare_execution_environment(self)
-                    return
-                else:
-                    self._set_state(_HierarchicalPlanState.RUNNING)
+                self.action_log.append("Proceeding with existing plan source code.")
 
             await self.actor._prepare_execution_environment(self)
             await self._start_main_execution_loop()
