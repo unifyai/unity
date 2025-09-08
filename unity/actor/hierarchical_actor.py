@@ -1661,6 +1661,91 @@ class HierarchicalPlan(BaseActiveTask):
         if decision.action == "modify_task" and decision.patches:
             self.action_log.append("Executing stateful decision: modify_task.")
 
+            first_modified_function_name = None
+            try:
+                original_call_stack = list(self.call_stack)
+                first_modified_function_index = -1
+
+                for i, func_name in enumerate(original_call_stack):
+                    if any(p.function_name == func_name for p in decision.patches):
+                        first_modified_function_index = i
+                        break
+
+                if first_modified_function_index != -1:
+                    functions_to_invalidate = set(
+                        original_call_stack[first_modified_function_index:],
+                    )
+                    first_modified_function_name = original_call_stack[
+                        first_modified_function_index
+                    ]
+                    self.action_log.append(
+                        f"CACHE INVALIDATION: Interjection modifies past actions. Invalidating cache for: {', '.join(functions_to_invalidate)}",
+                    )
+                    logger.debug(
+                        f"Invalidating {len(functions_to_invalidate)} functions' cache entries due to interjection.",
+                    )
+                    keys_to_delete = [
+                        key
+                        for key in self.idempotency_cache
+                        if any(
+                            func_name in functions_to_invalidate for func_name in key[0]
+                        )
+                    ]
+
+                    if keys_to_delete:
+                        logger.debug(
+                            f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
+                        )
+                        for key in keys_to_delete:
+                            del self.idempotency_cache[key]
+                else:
+                    self.action_log.append(
+                        "CACHE INVALIDATION: No past running functions were modified, cache remains intact.",
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    f"Error during selective cache invalidation: {e}. For safety, clearing the entire cache.",
+                )
+                self.idempotency_cache.clear()
+
+            if first_modified_function_name:
+                self.action_log.append(
+                    f"STATE VERIFICATION: Checking precondition for the first modified function: '{first_modified_function_name}'.",
+                )
+                logger.debug(
+                    f"Checking precondition for the first modified function: '{first_modified_function_name}'.",
+                )
+                try:
+                    precondition = self.actor.function_manager.get_precondition(
+                        function_name=first_modified_function_name,
+                    )
+                    if precondition and precondition.get("status") != "not_applicable":
+                        await self.actor._verify_and_correct_state(
+                            plan=self,
+                            target_precondition=precondition,
+                            context_label=f"interjection recovery for '{first_modified_function_name}'",
+                        )
+                        self.action_log.append(
+                            "STATE VERIFICATION: Precondition verified and corrected if necessary.",
+                        )
+                        logger.debug("Precondition verified and corrected!")
+                    else:
+                        self.action_log.append(
+                            "STATE VERIFICATION: No precondition found or needed for this function.",
+                        )
+                        logger.debug(
+                            "No precondition found or needed for this function.",
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Error during proactive state verification for interjection: {e}",
+                        exc_info=True,
+                    )
+                    self.action_log.append(
+                        f"WARNING: Proactive state verification failed: {e}. Proceeding with replay from current state.",
+                    )
+
             modification_summary = ", ".join(
                 [p.function_name for p in decision.patches],
             )
@@ -1730,7 +1815,10 @@ class HierarchicalPlan(BaseActiveTask):
             self._execution_task = asyncio.create_task(
                 self._initialize_and_run(mode="replay_after_modification"),
             )
-            if self._state == _HierarchicalPlanState.PAUSED:
+            if self._state in (
+                _HierarchicalPlanState.PAUSED,
+                _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
+            ):
                 self.runtime.resume()
 
             return f"Plan modification for '{modification_summary}' applied. Resuming execution from a clean state."
