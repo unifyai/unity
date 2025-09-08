@@ -1959,23 +1959,24 @@ class HierarchicalPlan(BaseActiveTask):
                 try:
 
                     class TabState(BaseModel):
-                        current_tab_index: int = Field(
-                            ...,
-                            description="The index of the current tab.",
+                        current_tab_index: int | None = Field(
+                            None,
+                            description="The index of the current tab. Return None if the tab index cannot be determined from the visible content.",
                         )
 
-                    original_tab_index = (
-                        await self.actor.action_provider.browser_observe(
-                            "What is the index of the current tab?",
-                            response_format=TabState,
-                        )
+                    original_tab_index = await self.actor.action_provider.browser_observe(
+                        "Look at the browser tabs at the top of the screen. What is the numerical index (starting from 0) of the currently active/selected tab? If you cannot see clear tab indicators or determine the active tab index, return null for current_tab_index.",
+                        response_format=TabState,
                     )
                     original_url = (
                         await self.actor.action_provider.browser.get_current_url()
                     )
                 except Exception as e:
                     self.action_log.append(f"SANDBOX: Could not record tab state: {e}")
-                    original_tab_index = 0
+                    original_tab_index = TabState(current_tab_index=0)
+                    original_url = (
+                        await self.actor.action_provider.browser.get_current_url()
+                    )
 
                 self.action_log.append("SANDBOX: Opening new tab for exploration")
                 await self.actor.action_provider.browser_act(
@@ -2052,8 +2053,13 @@ class HierarchicalPlan(BaseActiveTask):
             finally:
                 self.action_log.append("SANDBOX: Returning to original tab")
                 try:
+                    tab_index = (
+                        original_tab_index.current_tab_index
+                        if original_tab_index.current_tab_index is not None
+                        else 0
+                    )
                     await self.actor.action_provider.browser_act(
-                        f"Switch to tab {original_tab_index} which was on the url {original_url} to go back to the original tab",
+                        f"Switch to tab {tab_index} which was on the url {original_url} to go back to the original tab",
                     )
                     self.action_log.append("SANDBOX: Returned to original tab")
 
