@@ -484,6 +484,19 @@ app.post('/stop', isAgentReady, async (_req: Request, res: Response) => {
   }
 });
 
+app.post('/interrupt_action', isAgentReady, async (_req: Request, res: Response) => {
+  try {
+    if (browserAgent) {
+      browserAgent.interrupt();
+      res.json({ status: 'interrupted', message: 'The current agent action has been interrupted.' });
+    } else {
+      res.status(404).json({ error: 'agent_not_found', message: 'No active agent to interrupt.' });
+    }
+  } catch (err) {
+    handleAgentError(err, res, 'interrupt_failed');
+  }
+});
+
 
 function handleAgentError(err: unknown, res: Response, defaultErrorType = 'unknown') {
   if (err instanceof AgentError) {
