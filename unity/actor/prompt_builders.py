@@ -441,12 +441,19 @@ def _build_initial_plan_rules_and_examples(
         10. **Browser Downloads**: The browser downloads directory is `/tmp/unify/assistant/browser/install`.
         11. **Write General, Parameterized Functions**: Your functions should be reusable tools, not single-use scripts. Pass specific values (like search terms, filenames, or counts) as parameters.
         12. **Name for the Action, Not the Data**: Function names must describe the *process*, not the specific values being processed. Avoid hardcoding data like numbers or names into function names. This makes your plan robust and easy to modify later.
+        13. **Handle Ambiguous or "Non-Goals"**: If the user's goal is not a specific, actionable task (e.g., it's vague, "I don't know," or an instruction like "I will guide you"), your responsibility is to generate a simple, empty plan that allows the user to provide the first real instruction via interjection.
 
         | ❌ Bad (Too Specific & Brittle)        | ✅ Good (Generic & Reusable)                    |
         | ------------------------------------ | --------------------------------------------- |
         | `async def process_user_smith()`       | `async def process_user(username: str)`       |
         | `async def get_report_for_q3()`        | `async def get_report(quarter: str)`          |
         | `async def extract_ten_items()`        | `async def extract_items(item_count: int)`    |
+
+        | User Goal                                           | Correct Plan Output                                                                                                                              |
+        | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+        | `"I\\'ll tell you what to do step-by-step."`            | `async def main_plan():\\n    "\"\"\"This is a teaching session. I will await user instructions.\"\"\"\\n    pass`                                            |
+        | `"Ummm, I\\'m not sure yet."`                           | `async def main_plan():\\n    "\"\"\"The user\\'s goal is unclear. I will await instructions.\"\"\"\\n    pass`                                                |
+        | `None` or Empty String                              | `async def main_plan():\\n    "\"\"\"No goal was provided. Awaiting user instructions.\"\"\"\\n    pass`                                                      |
         ---
         """,
     )
