@@ -392,6 +392,9 @@ def build_ask_prompt(
         1. List each distinct piece of information the question asks for.
         2. Identify which tables / columns can hold that info.
         3. Fetch *all* relevant rows (use `{search}` if useful; use `{filter}` for precise filters).
+           **Avoid joins on the same table** (including self-joins). When all required fields live in a single table,
+           prefer using `{filter}` directly. Reserve join operations for combining **different** tables where a join
+           is actually necessary.
         4. If the schema is awkward, refactor it before continuing.
         5. Aggregate results into a concise answer covering every fact.
         6. Double-check nothing is missing; if so, repeat the search/refactor.

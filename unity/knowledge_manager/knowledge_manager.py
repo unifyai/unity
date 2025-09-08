@@ -1325,6 +1325,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Mapping ``table_name → backend message / "no-op"``.
         """
+        if limit > 1000:
+            raise ValueError("Limit must be less than 1000")
         if tables is None:
             tables = list(self._tables_overview().keys())
 
@@ -1713,6 +1715,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             )
             return backfill_rows(final_ctx, rows, k)
         finally:
+            raise Exception("test")
             # Clean up temporary contexts (best-effort)
             try:
                 self._delete_tables(tables=tmp_tables)
@@ -1861,6 +1864,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, list[dict[str, Any]]]
                 Mapping ``table_name → [row_dict, …]``.
         """
+        if limit > 1000:
+            raise ValueError("Limit must be less than 1000")
         if tables is None:
             tables = self._tables_overview()
         elif isinstance(tables, str):
