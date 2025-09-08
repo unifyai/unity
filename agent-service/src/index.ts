@@ -445,6 +445,20 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
   handleAgentError(lastError, res);
 });
 
+app.post('/query', isAgentReady, async (req: Request, res: Response) => {
+  const { query, schema } = req.body;
+  if (!query) {
+    return res.status(400).json({ error: 'bad_request', message: 'Query is required.' });
+  }
+  try {
+    const zodSchema = schema ? jsonSchemaToZod(schema) : z.any();
+    const data = await browserAgent!.query(query, zodSchema);
+    res.json({ data });
+  } catch (err) {
+    handleAgentError(err, res);
+  }
+});
+
 app.get('/screenshot', isAgentReady, async (_req: Request, res: Response) => {
   try {
     const harness = browserAgent!.require(BrowserConnector).getHarness();
