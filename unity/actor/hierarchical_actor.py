@@ -1598,6 +1598,11 @@ class HierarchicalPlan(BaseActiveTask):
             return "Cannot interject: plan not running."
 
         async with self._interject_lock:
+            if hasattr(
+                self.actor.action_provider.browser.backend,
+                "interrupt_current_action",
+            ):
+                await self.actor.action_provider.browser.backend.interrupt_current_action()
             await self.pause()
             decision = None
             try:
