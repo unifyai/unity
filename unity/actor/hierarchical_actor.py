@@ -26,6 +26,7 @@ from pathlib import Path
 import contextvars
 from unity.common.llm_helpers import (
     SteerableToolHandle,
+    start_async_tool_use_loop,
 )
 from unity.function_manager.function_manager import FunctionManager
 from unity.actor.base import (
@@ -2165,17 +2166,13 @@ class HierarchicalPlan(BaseActiveTask):
     async def ask(self, question: str) -> SteerableToolHandle:
         """
         Asks a question about the current state of the plan by creating a new,
-        isolated tool loop that returns a handle to its result.
+        isolated tool loop that returns a handle to its result. This loop
+        has access to the browser's query tool to answer questions about
+        the agent's actions and memory.
         """
-        screenshot = None
-        try:
-            screenshot = await self.actor.action_provider.browser.get_screenshot()
-        except Exception as e:
-            logger.warning(f"Could not capture screenshot for /ask: {e}")
-
         full_context_log = "\n".join(f"- {log}" for log in self.action_log)
 
-        prompt = prompt_builders.build_ask_prompt(
+        system_message = prompt_builders.build_ask_prompt(
             goal=self.goal,
             state=self._state.name,
             call_stack=" -> ".join(self.call_stack) or "None",
@@ -2185,36 +2182,26 @@ class HierarchicalPlan(BaseActiveTask):
 
         self.ask_client.reset_messages()
         self.ask_client.reset_system_message()
+        self.ask_client.set_system_message(system_message)
 
-        answer = await llm_call(self.ask_client, prompt, screenshot=screenshot)
+        async def query_tool(query: str) -> str:
+            """
+            Query the browser agent's memory and action history to answer a question.
+            """
+            try:
+                return await self.actor.action_provider.browser_query(query)
+            except Exception as e:
+                return f"Error querying browser: {e}"
 
-        class SimpleHandle(SteerableToolHandle):
-            def __init__(self, answer_text: str):
-                self._answer = answer_text
-                self._done = True
+        tools = {"query_browser": query_tool}
+        handle = start_async_tool_use_loop(
+            client=self.ask_client,
+            message=question,
+            tools=tools,
+        )
 
-            async def ask(self, question: str) -> "SteerableToolHandle":
-                return self
-
-            async def interject(self, message: str):
-                pass
-
-            def stop(self, reason: Optional[str] = None):
-                pass
-
-            def pause(self):
-                pass
-
-            def resume(self):
-                pass
-
-            def done(self) -> bool:
-                return self._done
-
-            async def result(self) -> str:
-                return self._answer
-
-        return SimpleHandle(answer)
+        self.action_log.append(f"USER ASKED: {question}")
+        return handle
 
     def _is_valid_method(self, name: str) -> bool:
         """
