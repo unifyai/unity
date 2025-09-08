@@ -6,6 +6,9 @@ import functools
 from typing import Any, Dict, List, Optional, Callable, Union
 
 import json
+
+from unity.file_manager.base import BaseFileManager
+from unity.file_manager.file_manager import FileManager
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..helpers import _handle_exceptions
 from .types import ColumnType
@@ -140,6 +143,7 @@ class KnowledgeManager(BaseKnowledgeManager):
     def __init__(
         self,
         *,
+        file_manager: Optional[BaseFileManager] = None,
         rolling_summary_in_prompts: bool = True,
         include_contacts: bool = True,
     ) -> None:
@@ -152,6 +156,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         Parameters
         ----------
+        file_manager: Optional[BaseFileManager], default ``None``
+            Optional file manager to use for file-related operations.
         rolling_summary_in_prompts : bool, default ``True``
             When enabled, inject a short rolling activity summary (sourced
             from ``MemoryManager``) into system prompts for LLM calls.
@@ -160,7 +166,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools such as joins and filters can reference it via the special
             table name ``"Contacts"``.
         """
+        if file_manager is not None:
+            self._file_manager = file_manager
+        else:
+            self._file_manager = FileManager()
 
+        # Allow ingestion/deprecation only within update/refactor flows
         self._refactor_tools = methods_to_tool_dict(
             # Ask
             self.ask,
@@ -180,6 +191,8 @@ class KnowledgeManager(BaseKnowledgeManager):
             # Rows
             self._delete_rows,
             self._update_rows,
+            # Files
+            self._ingest_documents,
             include_class_name=False,
         )
 
@@ -501,6 +514,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
+        case_specific_instructions: str | None = None,
     ) -> "SteerableToolHandle":
         """
         Modify tables/rows based on a natural‑language request.
@@ -522,7 +536,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         rolling_summary_in_prompts : bool | None, default ``None``
             Overrides the instance‑level ``rolling_summary_in_prompts`` for
             this call only when not ``None``.
-
+        case_specific_instructions : str | None, default ``None``
+            Optional case-specific instructions to add to the system prompt.
         Returns
         -------
         SteerableToolHandle
@@ -597,6 +612,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 tools=tools,
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
+                case_specific_instructions=case_specific_instructions,
             ),
         )
 
@@ -634,6 +650,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        case_specific_instructions: str | None = None,
+        response_format: Any | None = None,
         _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
         """
@@ -656,7 +674,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         rolling_summary_in_prompts : bool | None, default ``None``
             Overrides the instance‑level ``rolling_summary_in_prompts`` for
             this call only when not ``None``.
-
+        case_specific_instructions : str | None, default ``None``
+            Optional case-specific instructions to add to the system prompt.
         Returns
         -------
         SteerableToolHandle
@@ -731,6 +750,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 tools=tools,
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
+                case_specific_instructions=case_specific_instructions,
             ),
         )
         handle = start_async_tool_use_loop(
@@ -742,6 +762,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             parent_chat_context=parent_chat_context,
             tool_policy=self._default_ask_tool_policy,
             preprocess_msgs=inject_broader_context,
+            response_format=response_format,
         )
 
         # Optionally wrap .result() to expose reasoning
@@ -1433,6 +1454,200 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
         return res
 
+    # File ingestion / deprecation
+
+    async def _ingest_documents(
+        self,
+        *,
+        filenames: Union[str, List[str]],
+        table: str = "content",
+        replace_existing: bool = True,
+        batch_size: int = 3,
+        **parse_options: Any,
+    ) -> Dict[str, Any]:
+        """
+        Ingest one or more documents efficiently with streaming.
+        This tool handles the complete workflow for document ingestion:
+        1. Stream parse documents in batches
+        2. Delete existing records that match (if replace_existing=True)
+        3. Insert new records as they become available
+        Args:
+            filenames: Single filename (str) or list of filenames to ingest
+            table: Target table (default: "content")
+            replace_existing: Whether to delete old records first
+            batch_size: Number of documents to parse in parallel
+            **parse_options: Options passed to parser
+        Returns:
+            Dict with success status, per-file results, and aggregate statistics
+        """
+        try:
+            if not self._file_manager:
+                return {"success": False, "error": "FileManager not available"}
+
+            # Normalize input to always be a list
+            if isinstance(filenames, str):
+                filenames = [filenames]
+
+            if not filenames:
+                return {"success": False, "error": "No filenames provided"}
+
+            print(
+                f"📄 Processing {len(filenames)} document{'s' if len(filenames) > 1 else ''} with batch size {batch_size}...",
+            )
+
+            # Initialize tracking
+            total_inserted = 0
+            total_deleted = 0
+            file_results = {}
+            batch_records = []
+            batch_files = []
+            processed_count = 0
+
+            # Process documents as they complete parsing
+            async for result in self._file_manager.parse_async(
+                filenames,
+                batch_size=batch_size,
+                **parse_options,
+            ):
+                filename = result.get("filename")
+
+                if result["status"] == "error":
+                    file_results[filename] = {
+                        "filename": filename,
+                        "success": False,
+                        "error": result["error"],
+                        "inserted": 0,
+                        "deleted": 0,
+                    }
+                    continue
+
+                records = result.get("records", [])
+                if not records:
+                    file_results[filename] = {
+                        "filename": filename,
+                        "success": False,
+                        "error": "No records extracted",
+                        "inserted": 0,
+                        "deleted": 0,
+                    }
+                    continue
+
+                # Delete existing records if requested
+                deleted_count = 0
+                if replace_existing and records:
+                    first_record = records[0]
+                    doc_filters = []
+
+                    if doc_id := first_record.get("document_id"):
+                        doc_filters.append(f"document_id == '{doc_id}'")
+
+                    if source_uri := first_record.get("source_uri"):
+                        # Clean up temp directory from path for matching
+                        clean_uri = source_uri
+                        if "/tmp/" in clean_uri:
+                            parts = clean_uri.split("/tmp/")
+                            if len(parts) > 1:
+                                after_tmp = parts[1]
+                                subparts = after_tmp.split("/", 1)
+                                if len(subparts) > 1:
+                                    clean_uri = subparts[1]
+                        # Use Python string method for pattern matching
+                        doc_filters.append(f"source_uri.endswith('{clean_uri}')")
+
+                    if doc_fingerprint := first_record.get("document_fingerprint"):
+                        doc_filters.append(
+                            f"document_fingerprint == '{doc_fingerprint}'",
+                        )
+
+                    if doc_filters:
+                        filter_expr = " or ".join(f"({f})" for f in doc_filters)
+                        try:
+                            # Check how many records will be deleted
+                            existing = self._filter(tables=[table], filter=filter_expr)
+                            deleted_count = len(existing.get(table, []))
+
+                            if deleted_count > 0:
+                                self._delete_rows(table=table, filter=filter_expr)
+                                total_deleted += deleted_count
+                                print(
+                                    f"🗑️  Deleted {deleted_count} old records for {filename}",
+                                )
+                        except Exception as e:
+                            print(
+                                f"⚠️  Failed to delete old records for {filename}: {e}",
+                            )
+
+                # Add to batch
+                batch_records.extend(records)
+                batch_files.append(
+                    {
+                        "filename": filename,
+                        "record_count": len(records),
+                        "deleted_count": deleted_count,
+                    },
+                )
+                processed_count += 1
+
+                print(f"✅ Parsed {filename}: {len(records)} records")
+
+                # Insert batch when we have processed batch_size documents or it's the last one
+                if len(batch_files) >= batch_size or processed_count == len(filenames):
+                    if batch_records:
+                        try:
+                            print(
+                                f"📥 Inserting batch of {len(batch_records)} records from {len(batch_files)} documents...",
+                            )
+                            self._add_rows(table=table, rows=batch_records)
+                            total_inserted += len(batch_records)
+
+                            # Update file results for this batch
+                            for file_info in batch_files:
+                                file_results[file_info["filename"]] = {
+                                    "filename": file_info["filename"],
+                                    "success": True,
+                                    "inserted": file_info["record_count"],
+                                    "deleted": file_info["deleted_count"],
+                                    "error": None,
+                                }
+
+                            print(f"✅ Batch inserted successfully")
+
+                        except Exception as e:
+                            # Update file results for failed batch
+                            for file_info in batch_files:
+                                file_results[file_info["filename"]] = {
+                                    "filename": file_info["filename"],
+                                    "success": False,
+                                    "inserted": 0,
+                                    "deleted": file_info["deleted_count"],
+                                    "error": f"Batch insertion failed: {str(e)}",
+                                }
+                            print(f"❌ Failed to insert batch: {e}")
+
+                        # Clear batch for next set
+                        batch_records = []
+                        batch_files = []
+
+            # Calculate summary statistics
+            successful_files = sum(
+                1 for fr in file_results.values() if fr.get("success", False)
+            )
+            failed_files = len(filenames) - successful_files
+
+            return {
+                "success": failed_files == 0,
+                "total_files": len(filenames),
+                "successful_files": successful_files,
+                "failed_files": failed_files,
+                "total_records": total_inserted,
+                "total_inserted": total_inserted,
+                "total_deleted": total_deleted,
+                "file_results": list(file_results.values()),
+            }
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     # Vector Search Helpers
     @_km_log_tool_runtime
     def _vectorize_column(
@@ -1715,7 +1930,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             )
             return backfill_rows(final_ctx, rows, k)
         finally:
-            raise Exception("test")
             # Clean up temporary contexts (best-effort)
             try:
                 self._delete_tables(tables=tmp_tables)
