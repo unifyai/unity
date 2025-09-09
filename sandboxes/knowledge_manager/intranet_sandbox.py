@@ -5,7 +5,7 @@ Interactive sandbox for **KnowledgeManager**.
 It supports:
 • Fixed or LLM‑generated seed data.
 • Voice or plain‑text input (same helpers as the other sandboxes).
-• Automatic dispatch to `ask`, `update` or `refactor` depending on intent.
+• Direct dispatch to `ask` or `update` based on CLI --mode argument.
 • Mid‑conversation interruption (pause / interject / cancel).
 """
 
@@ -68,9 +68,6 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     _wait_for_tts_end as _wait_tts_end,
 )
 
-# Lightweight intent schema (mirrors regular sandbox)
-from pydantic import BaseModel, Field
-import unify
 from unity.common.llm_helpers import SteerableToolHandle  # type hint only
 
 LG = logging.getLogger("intranet_sandbox")
@@ -110,23 +107,13 @@ for _sig in (signal.SIGINT, signal.SIGTERM):
 # (synthetic scenario generation dropped – we rely on pre-seeded data)
 
 
-# ═════════════════════════════════ intent dispatcher (ask | update | refactor) ═════════════════════════════
-class _Intent(BaseModel):
-    action: str = Field(..., pattern="^(ask|update|refactor)$")
-
-
-_INTENT_SYS_MSG = (
-    "Classify the user's message into exactly one of: 'ask' | 'update' | 'refactor'.\n"
-    "- ask: read-only retrieval or analysis over existing knowledge.\n"
-    "- update: add or modify rows/columns/tables.\n"
-    "- refactor: schema normalization or structural changes (rename/split/move columns, joins migration).\n"
-    "Return ONLY JSON: {'action': 'ask'|'update'|'refactor'}"
-)
+# ═════════════════════════════════ mode-based dispatcher ═════════════════════════════
 
 
 async def _dispatch_with_context(
     rag_agent: "IntranetRAGAgent",
     raw: str,
+    mode: str,
     *,
     show_steps: bool,
     parent_chat_context: List[
@@ -141,87 +128,27 @@ async def _dispatch_with_context(
     Optional[asyncio.Queue[str]],
 ]:
     """
-    Decide whether to call rag_agent.ask / rag_agent.update / rag_agent.refactor.
+    Route request to rag_agent.ask or rag_agent.update based on CLI mode.
     Returns (kind, handle_or_result, clar_up_q, clar_down_q).  Clar queues are always None here.
     """
-    lowered = raw.lower()
-
-    # Fast-path heuristics (mirror regular sandbox)
-    if lowered.startswith(
-        (
-            "add ",
-            "create ",
-            "update ",
-            "change ",
-            "delete ",
-            "store ",
-            "remember ",
-            "note ",
-        ),
-    ):
-        if enable_voice:
-            try:
-                _speak("Working on it.")
-            except Exception:
-                pass
-        return (
-            "update",
-            await rag_agent.update(
-                update_prompt=raw,
-                conversation_context=list(parent_chat_context),
-            ),
-            None,
-            None,
-        )
-
-    if lowered.startswith(
-        ("refactor ", "restructure ", "normalize ", "normalise ", "schema "),
-    ):
-        if enable_voice:
-            try:
-                _speak("Working on it.")
-            except Exception:
-                pass
-        return (
-            "refactor",
-            await rag_agent.refactor(
-                schema_prompt=raw,
-                conversation_context=list(parent_chat_context),
-            ),
-            None,
-            None,
-        )
-
-    # LLM judge for everything else
-    judge = unify.Unify("gpt-5@openai", response_format=_Intent)
-    intent = _Intent.model_validate_json(
-        judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
-    )
-    action = intent.action
-
     if enable_voice:
         try:
             _speak("Working on it.")
         except Exception:
             pass
 
-    if action == "ask":
+    if mode == "ask":
         result = await rag_agent.ask(
             query_text=raw,
             conversation_context=list(parent_chat_context),
         )
-    elif action == "update":
+    else:  # mode == "update"
         result = await rag_agent.update(
             update_prompt=raw,
             conversation_context=list(parent_chat_context),
         )
-    else:
-        result = await rag_agent.refactor(
-            schema_prompt=raw,
-            conversation_context=list(parent_chat_context),
-        )
 
-    return action, result, None, None
+    return mode, result, None, None
 
 
 # ══════════════════════════════════  CLI  ═══════════════════════════════════
@@ -229,6 +156,13 @@ async def _dispatch_with_context(
 
 async def _main_async() -> None:
     parser = build_cli_parser("Intranet sandbox")
+    parser.add_argument(
+        "--mode",
+        "-m",
+        choices=["ask", "update"],
+        default="ask",
+        help="Mode for RAG agent operations: 'ask' for read-only queries, 'update' for data modifications (default: ask)",
+    )
     args = parser.parse_args()
 
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
@@ -242,15 +176,15 @@ async def _main_async() -> None:
 
     rag_agent = IntranetRAGAgent()
 
-    _COMMANDS_HELP = (
-        "\nKnowledgeManager sandbox (Intranet) – type commands below (press ↵ with an empty "
-        "line to dictate via voice when --voice mode is active – type 'r' to record).  'quit' to exit.\n\n"
-        "┌────────────────── accepted commands ─────────────────────┐\n"
-        "│ r / free text         – freeform ask / update / refactor │\n"
-        "│ save_project | sp     – save project snapshot            │\n"
-        "│ help | h              – show this help                   │\n"
-        "└──────────────────────────────────────────────────────────┘\n"
-    )
+    _COMMANDS_HELP = f"""
+KnowledgeManager sandbox (Intranet) – type commands below (press ↵ with an empty line to dictate via voice when --voice mode is active – type 'r' to record).  'quit' to exit.
+
+┌────────────────── accepted commands ─────────────────────┐
+│ r / free text         – freeform operations (mode: {args.mode})   │
+│ save_project | sp     – save project snapshot            │
+│ help | h              – show this help                   │
+└──────────────────────────────────────────────────────────┘
+"""
 
     def _explain_commands() -> None:
         print(_COMMANDS_HELP)
@@ -347,11 +281,12 @@ async def _main_async() -> None:
                         "🙏 Sorry, this is taking longer than expected… still working …",
                     )
 
-            # Dispatch to RAG method (intent-based)
+            # Dispatch to RAG method (mode-based)
             async def _dispatch_async():
                 kind, result, _cu, _cd = await _dispatch_with_context(
                     rag_agent,
                     raw,
+                    args.mode,
                     show_steps=args.debug,
                     parent_chat_context=list(chat_history),
                     clarifications_enabled=not getattr(
@@ -417,7 +352,7 @@ async def _main_async() -> None:
                 chat_history.append({"role": "user", "content": raw})
                 chat_history.append({"role": "assistant", "content": answer})
             else:
-                # update/refactor: print raw result as-is (dict or string)
+                # update: print raw result as-is (dict or string)
                 print(
                     "\n🛠️ ==== RAG OPERATION RESULT ==========================================",
                 )
@@ -434,7 +369,7 @@ async def _main_async() -> None:
                     "================================================================\n",
                 )
 
-                # Persist dialogue for non-ask modes as well
+                # Persist dialogue for update mode as well
                 chat_history.append({"role": "user", "content": raw})
                 chat_history.append({"role": "assistant", "content": assistant_text})
 
