@@ -162,7 +162,6 @@ async def initialize_single_table_schema(knowledge_manager):
         knowledge_manager._create_table(
             name="content",
             columns=columns,
-            unique_column_name="row_id",
         )
 
         print(
@@ -216,7 +215,7 @@ async def initialize_legacy_schema(knowledge_manager):
                 "processed_at": "str",
                 "metadata": "dict",
             },
-            unique_column_name="document_id",
+            unique_key_name="document_id",
         )
 
         # Create sections table
@@ -232,7 +231,7 @@ async def initialize_legacy_schema(knowledge_manager):
                 "section_index": "str",
                 "metadata": "dict",
             },
-            unique_column_name="section_id",
+            unique_key_name="section_id",
         )
 
         # Create chunks table
@@ -248,7 +247,7 @@ async def initialize_legacy_schema(knowledge_manager):
                 "chunk_type": "str",
                 "metadata": "dict",
             },
-            unique_column_name="chunk_id",
+            unique_key_name="chunk_id",
         )
 
         print("✅ Legacy multi-table schema created successfully")
@@ -372,7 +371,7 @@ async def ingest_documents_direct(
             failed_count = len(document_files)
             error_msg = result.get("error", "Batch ingestion failed")
             errors.append({"file": "batch_operation", "error": error_msg})
-            print(f"❌ Batch ingestion failed: {error_msg}")
+            print(f"❌ Batch ingestion failed: {str(result)}")
 
     except Exception as e:
         failed_count = len(document_files)
