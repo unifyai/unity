@@ -4,6 +4,8 @@ import os
 
 from datetime import datetime
 
+import requests
+
 sys.path.append("..")
 import asyncio
 
@@ -40,6 +42,21 @@ chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
 READER: asyncio.StreamReader | None = None
 WRITER: asyncio.StreamWriter | None = None
+
+unity_comms_url = os.getenv("UNITY_COMMS_URL")
+admin_headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
+
+
+def dispatch_agent(agent_name: str):
+    response = requests.post(
+        f"{unity_comms_url}/phone/dispatch-agent",
+        headers=admin_headers,
+        json={"agent_name": agent_name},
+    )
+    if response.status_code != 200:
+        print(f"Failed to dispatch agent. Status: {response.status_code}")
+        return False
+    return True
 
 
 async def publish_event(ev: dict):
@@ -354,9 +371,14 @@ async def entrypoint(ctx: agents.JobContext):
 
 if __name__ == "__main__":
     # Extract phone numbers before passing to agents.cli
+    agent_name = "unity_+17343611691"
+
+    if sys.argv[1] == "dev":
+        dispatch_agent(agent_name)
+
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name="unity_+17343611691",
+            agent_name=agent_name,
         ),
     )
