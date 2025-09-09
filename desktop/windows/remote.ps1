@@ -71,28 +71,28 @@ if ($py) {
   $websockifyProc = Start-Process -FilePath python -ArgumentList "-m websockify --web=$noVncWeb 6080 localhost:5900" -WindowStyle Hidden -PassThru
 }
 
-# Start agent-service like Linux script
-$agentProc = $null
-if (Get-Command npx -ErrorAction SilentlyContinue) {
-  try {
-    $agentProc = Start-Process -FilePath npx -ArgumentList "ts-node agent-service/src/index.ts" -PassThru
-  } catch {
-    Write-Warning "Failed to start agent-service via npx. $_"
-  }
-} else {
-  Write-Warning "'npx' not found. Skipping agent-service startup."
-}
-
+# Start agent-service in foreground like Linux script and clean up on Ctrl+C
 Write-Host "Remote desktop available at http://localhost:6080/vnc.html"
 
-# Wait and cleanup similar to Linux script
 try {
-  if ($agentProc) {
-    Wait-Process -Id $agentProc.Id
-  } elseif ($websockifyProc) {
-    Wait-Process -Id $websockifyProc.Id
+  $agentRan = $false
+  if (Get-Command npx -ErrorAction SilentlyContinue) {
+    try {
+      & cmd.exe /c "npx --yes ts-node agent-service/src/index.ts"
+      $agentRan = $true
+    } catch {
+      Write-Warning "Agent-service exited with error. $_"
+    }
   } else {
-    Start-Sleep -Seconds 2
+    Write-Warning "'npx' not found. Skipping agent-service startup."
+  }
+
+  if (-not $agentRan) {
+    if ($websockifyProc) {
+      Wait-Process -Id $websockifyProc.Id
+    } else {
+      Start-Sleep -Seconds 2
+    }
   }
 } finally {
   Write-Host "[remote] Shutting down..."
