@@ -39,7 +39,8 @@
     "tables": {
       "content": {
         "columns_to_embed": [
-          { "source_column": "summary", "target_column": "_summary_emb", "description": "Primary embedding used in retrieval" }
+          { "source_column": "summary", "target_column": "_summary_emb", "description": "Primary embedding used in retrieval" },
+          { "source_column": "content_text", "target_column": "_content_text_emb", "description": "Embedding used for answer generation" }
         ]
       }
     }
