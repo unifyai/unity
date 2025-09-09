@@ -20,7 +20,7 @@ from typing import Optional
 _TIKTOKEN_AVAILABLE = True
 try:
     import tiktoken  # type: ignore
-except Exception:  # pragma: no cover
+except Exception as e:  # pragma: no cover
     _TIKTOKEN_AVAILABLE = False
     tiktoken = None  # type: ignore
 
@@ -36,13 +36,14 @@ def _warn_once() -> None:
                 "⚠️  tiktoken not available – using a conservative char→token heuristic. "
                 "Install `tiktoken` for precise accounting.",
             )
-        except Exception:
+        except Exception as e:
             pass
         _WARNED_ON_FALLBACK = True
 
 
-def has_meaningful_text(s: str) -> bool:
-    return bool(s and any(ch.isalnum() for ch in s))
+def has_meaningful_text(s: str | None) -> bool:
+    s = (s or "").strip()
+    return bool(s and any(ch.isalnum() for ch in s)) and len(s) > 50
 
 
 def get_encoding_for(model_or_encoding: Optional[str] = None):
@@ -58,14 +59,15 @@ def get_encoding_for(model_or_encoding: Optional[str] = None):
         # Try model first
         try:
             return tiktoken.encoding_for_model(model_or_encoding)
-        except Exception:
+        except Exception as e:
             # Try as raw encoding name
             try:
                 return tiktoken.get_encoding(model_or_encoding)
-            except Exception:
+            except Exception as e:
                 pass
+
         # Default by rough family
-        if "gpt-4o" in model_or_encoding:
+        if "gpt-4o" in model_or_encoding or "o4-mini" in model_or_encoding:
             return tiktoken.get_encoding("o200k_base")
         return tiktoken.get_encoding("cl100k_base")
 
@@ -81,7 +83,7 @@ def count_tokens(text: str, model_or_encoding: Optional[str] = None) -> int:
     enc = get_encoding_for(model_or_encoding)
     try:
         return len(enc.encode(text))  # type: ignore[attr-defined]
-    except Exception:
+    except Exception as e:
         return int(len(text) / _AVG_CHARS_PER_TOKEN * 1.1)
 
 
@@ -116,6 +118,6 @@ def clip_text_to_token_limit(
             return text
         toks = toks[:max_tokens]
         return enc.decode(toks)  # type: ignore[attr-defined]
-    except Exception:
+    except Exception as e:
         max_chars = int(max_tokens * _AVG_CHARS_PER_TOKEN)
         return text[:max_chars]
