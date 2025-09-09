@@ -29,7 +29,18 @@ if (-not (Test-Path $noVncWeb)) {
   throw "noVNC web assets not found. Ensure novnc is installed and the web assets exist at C:\\ProgramData\\noVNC or Chocolatey novnc tools directory."
 }
 
-Write-Host "Starting websockify on http://localhost:6080/vnc.html"
-Start-Process -FilePath websockify -ArgumentList "--web=$noVncWeb 6080 localhost:5900" -WindowStyle Hidden
+# Start websockify via Python module (per https://github.com/novnc/websockify and guide https://mannygyan.com/novnc/#toc-4)
+$py = Get-Command py -ErrorAction SilentlyContinue
+$python = Get-Command python -ErrorAction SilentlyContinue
+if (-not $py -and -not $python) {
+  throw "Python is required to run websockify. Install Python or run install.ps1 first."
+}
+
+Write-Host "Starting websockify on http://localhost:6080/vnc.html (proxying to localhost:5900)"
+if ($py) {
+  Start-Process -FilePath py -ArgumentList "-m websockify --web=$noVncWeb 6080 localhost:5900" -WindowStyle Hidden
+} else {
+  Start-Process -FilePath python -ArgumentList "-m websockify --web=$noVncWeb 6080 localhost:5900" -WindowStyle Hidden
+}
 
 Write-Host "Remote desktop available at http://localhost:6080/vnc.html"

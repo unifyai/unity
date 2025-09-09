@@ -19,14 +19,33 @@ function Install-NoVNC {
 }
 
 function Install-Websockify {
-  if (-not (Get-Command websockify -ErrorAction SilentlyContinue)) {
-    choco install websockify -y --no-progress | Out-Host
+  # Prefer Python module per official README: https://github.com/novnc/websockify
+  $hasPy = Get-Command py -ErrorAction SilentlyContinue
+  $hasPython = Get-Command python -ErrorAction SilentlyContinue
+  if (-not $hasPy -and -not $hasPython) {
+    choco install python -y --no-progress | Out-Host
+  }
+  try { py -m pip install --user --upgrade pip | Out-Host } catch {}
+  try {
+    py -m pip install --user --upgrade websockify | Out-Host
+  } catch {
+    try {
+      python -m pip install --user --upgrade websockify | Out-Host
+    } catch {
+      Write-Warning "Failed to install websockify via pip. Ensure Python is installed and accessible. $_"
+    }
   }
 }
 
 function Install-Cloudflared {
   if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
     choco install cloudflared -y --no-progress | Out-Host
+  }
+}
+
+function Install-Docker {
+  if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    choco install docker-desktop -y --no-progress | Out-Host
   }
 }
 
