@@ -90,6 +90,7 @@ class ActionProvider:
         methods_to_proxy = {
             "browser_act": self.browser.backend.act,
             "browser_observe": self.browser.backend.observe,
+            "browser_query": self.browser.backend.query,
             "browser_navigate": self.browser.backend.navigate,
         }
 

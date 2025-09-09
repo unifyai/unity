@@ -37,6 +37,10 @@ class BrowserBackend(ABC):
         """Observe the state of the browser page."""
 
     @abstractmethod
+    async def query(self, query: str, response_format: Any = str) -> Any:
+        """Query the agent's memory and action history."""
+
+    @abstractmethod
     async def get_screenshot(self) -> str:
         """Get a base64 encoded screenshot of the current page."""
 
@@ -126,6 +130,17 @@ class LegacyBrowserBackend(BrowserBackend):
             response_format: Optional. A Pydantic model to structure the output. The LLM will return a JSON object matching the model.
         """
         return await self.controller.observe(query, response_format)
+
+    async def query(self, query: str, response_format: Any = str) -> Any:
+        """
+        Query the agent's memory and action history (not supported in LegacyBrowserBackend).
+
+        This method is not supported by the legacy backend as it doesn't have access to
+        agent memory. Consider using MagnitudeBrowserBackend for this functionality.
+        """
+        raise NotImplementedError(
+            "Query method is not supported by LegacyBrowserBackend. Use MagnitudeBrowserBackend instead.",
+        )
 
     async def get_screenshot(self) -> str:
         return self.controller._last_shot
@@ -626,6 +641,15 @@ class MagnitudeBrowserBackend(BrowserBackend):
         response = await self._request("POST", "/act", {"task": instruction})
         return response.get("status", "success")
 
+    async def interrupt_current_action(self):
+        """Sends a non-destructive request to interrupt the agent's current action loop."""
+        try:
+            await self._request("POST", "/interrupt_action")
+        except Exception as e:
+            print(
+                f"⚠️ Warning: Failed to send interrupt request. The browser action may continue in the background. Error: {e}",
+            )
+
     async def observe(self, query: str, response_format: Any = str) -> Any:
         """
         Extracts structured information from the current page using the Magnitude BrowserAgent.
@@ -706,6 +730,58 @@ class MagnitudeBrowserBackend(BrowserBackend):
         data = response.get("data")
 
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            return response_format.model_validate(data)
+        return data
+
+    async def query(self, query: str, response_format: Any = str) -> Any:
+        """
+        Asks questions about the agent's action history and memory context.
+
+        This method allows you to query the agent's understanding of what it has done and observed.
+        It does not interact with the live webpage but rather introspects the agent's memory.
+
+        **Key characteristics**:
+        - **Memory-focused**: Uses the agent's accumulated memory and context from past actions.
+        - **Historical analysis**: Analyzes what happened during previous `act()` calls.
+        - **Context-aware**: Includes full agent memory context in the query.
+        - **No fresh content**: Doesn't capture new page content, works with existing observations.
+
+        Args:
+            query: The natural-language question to ask about the agent's history.
+            response_format: Optional. A Pydantic model to structure the output.
+
+        **✅ Good Queries (What the agent has done):**
+        - "Did the login attempt succeed?"
+        - "What were the steps you took to add the item to the cart?"
+        - "Summarize the actions you have performed so far."
+
+        **❌ Bad Queries (Requires live page content):**
+        - "What is the current price of the item on the page?" (Use `observe` for this)
+        - "Click the 'Submit' button." (Use `act` for this)
+        """
+        await self._ensure_async_initialized()
+
+        def _safe_model_json_schema(model: type[BaseModel]):
+            try:
+                return model.model_json_schema()
+            except PydanticUserError:
+                model.model_rebuild()
+                return model.model_json_schema()
+
+        payload = {"query": query}
+        if inspect.isclass(response_format) and issubclass(
+            response_format,
+            BaseModel,
+        ):
+            payload["schema"] = _safe_model_json_schema(response_format)
+
+        response = await self._request("POST", "/query", payload)
+        data = response.get("data")
+
+        if inspect.isclass(response_format) and issubclass(
+            response_format,
+            BaseModel,
+        ):
             return response_format.model_validate(data)
         return data
 

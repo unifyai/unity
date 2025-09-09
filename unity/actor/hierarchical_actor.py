@@ -26,6 +26,7 @@ from pathlib import Path
 import contextvars
 from unity.common.llm_helpers import (
     SteerableToolHandle,
+    start_async_tool_use_loop,
 )
 from unity.function_manager.function_manager import FunctionManager
 from unity.actor.base import (
@@ -1204,44 +1205,18 @@ class HierarchicalPlan(BaseActiveTask):
         token = current_run_id_var.set(self.run_id)
         self.runtime.execution_mode = mode
         try:
-            if self.goal:
-                if not self._is_complete:
-                    self._set_state(_HierarchicalPlanState.RUNNING)
+            if not self._is_complete:
+                self._set_state(_HierarchicalPlanState.RUNNING)
 
-                if self.plan_source_code is None:
-                    self.action_log.append("Generating new plan from goal...")
-                    self.plan_source_code = await self.actor._generate_initial_plan(
-                        plan=self,
-                        goal=self.goal,
-                    )
-                    self.action_log.append("Initial plan generated successfully.")
-                else:
-                    self.action_log.append("Proceeding with existing plan source code.")
+            if self.plan_source_code is None:
+                self.action_log.append("Generating plan from goal...")
+                self.plan_source_code = await self.actor._generate_initial_plan(
+                    plan=self,
+                    goal=self.goal,
+                )
+                self.action_log.append("Initial plan generated successfully.")
             else:
-                if not self.plan_source_code:
-                    self.action_log.append(
-                        "Starting goal-less session. Awaiting user instruction.",
-                    )
-                    self.plan_source_code = textwrap.dedent(
-                        """
-                        @verify
-                        async def main_plan():
-                            \"\"\"Main entry point for the hierarchical plan.
-
-                            This is a teaching session that started without a specific goal.
-                            The plan will grow incrementally as you provide guidance.
-                            \"\"\"
-                            pass
-                    """,
-                    ).strip()
-                    self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
-                    self.action_log.append(
-                        "Starting goal-less session. Awaiting user instruction.",
-                    )
-                    await self.actor._prepare_execution_environment(self)
-                    return
-                else:
-                    self._set_state(_HierarchicalPlanState.RUNNING)
+                self.action_log.append("Proceeding with existing plan source code.")
 
             await self.actor._prepare_execution_environment(self)
             await self._start_main_execution_loop()
@@ -1624,6 +1599,11 @@ class HierarchicalPlan(BaseActiveTask):
             return "Cannot interject: plan not running."
 
         async with self._interject_lock:
+            if hasattr(
+                self.actor.action_provider.browser.backend,
+                "interrupt_current_action",
+            ):
+                await self.actor.action_provider.browser.backend.interrupt_current_action()
             await self.pause()
             decision = None
             try:
@@ -1681,6 +1661,91 @@ class HierarchicalPlan(BaseActiveTask):
         """Executes the action decided by the Interjection Handler LLM."""
         if decision.action == "modify_task" and decision.patches:
             self.action_log.append("Executing stateful decision: modify_task.")
+
+            first_modified_function_name = None
+            try:
+                original_call_stack = list(self.call_stack)
+                first_modified_function_index = -1
+
+                for i, func_name in enumerate(original_call_stack):
+                    if any(p.function_name == func_name for p in decision.patches):
+                        first_modified_function_index = i
+                        break
+
+                if first_modified_function_index != -1:
+                    functions_to_invalidate = set(
+                        original_call_stack[first_modified_function_index:],
+                    )
+                    first_modified_function_name = original_call_stack[
+                        first_modified_function_index
+                    ]
+                    self.action_log.append(
+                        f"CACHE INVALIDATION: Interjection modifies past actions. Invalidating cache for: {', '.join(functions_to_invalidate)}",
+                    )
+                    logger.debug(
+                        f"Invalidating {len(functions_to_invalidate)} functions' cache entries due to interjection.",
+                    )
+                    keys_to_delete = [
+                        key
+                        for key in self.idempotency_cache
+                        if any(
+                            func_name in functions_to_invalidate for func_name in key[0]
+                        )
+                    ]
+
+                    if keys_to_delete:
+                        logger.debug(
+                            f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
+                        )
+                        for key in keys_to_delete:
+                            del self.idempotency_cache[key]
+                else:
+                    self.action_log.append(
+                        "CACHE INVALIDATION: No past running functions were modified, cache remains intact.",
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    f"Error during selective cache invalidation: {e}. For safety, clearing the entire cache.",
+                )
+                self.idempotency_cache.clear()
+
+            if first_modified_function_name:
+                self.action_log.append(
+                    f"STATE VERIFICATION: Checking precondition for the first modified function: '{first_modified_function_name}'.",
+                )
+                logger.debug(
+                    f"Checking precondition for the first modified function: '{first_modified_function_name}'.",
+                )
+                try:
+                    precondition = self.actor.function_manager.get_precondition(
+                        function_name=first_modified_function_name,
+                    )
+                    if precondition and precondition.get("status") != "not_applicable":
+                        await self.actor._verify_and_correct_state(
+                            plan=self,
+                            target_precondition=precondition,
+                            context_label=f"interjection recovery for '{first_modified_function_name}'",
+                        )
+                        self.action_log.append(
+                            "STATE VERIFICATION: Precondition verified and corrected if necessary.",
+                        )
+                        logger.debug("Precondition verified and corrected!")
+                    else:
+                        self.action_log.append(
+                            "STATE VERIFICATION: No precondition found or needed for this function.",
+                        )
+                        logger.debug(
+                            "No precondition found or needed for this function.",
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Error during proactive state verification for interjection: {e}",
+                        exc_info=True,
+                    )
+                    self.action_log.append(
+                        f"WARNING: Proactive state verification failed: {e}. Proceeding with replay from current state.",
+                    )
 
             modification_summary = ", ".join(
                 [p.function_name for p in decision.patches],
@@ -1751,7 +1816,10 @@ class HierarchicalPlan(BaseActiveTask):
             self._execution_task = asyncio.create_task(
                 self._initialize_and_run(mode="replay_after_modification"),
             )
-            if self._state == _HierarchicalPlanState.PAUSED:
+            if self._state in (
+                _HierarchicalPlanState.PAUSED,
+                _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
+            ):
                 self.runtime.resume()
 
             return f"Plan modification for '{modification_summary}' applied. Resuming execution from a clean state."
@@ -1892,23 +1960,24 @@ class HierarchicalPlan(BaseActiveTask):
                 try:
 
                     class TabState(BaseModel):
-                        current_tab_index: int = Field(
-                            ...,
-                            description="The index of the current tab.",
+                        current_tab_index: int | None = Field(
+                            None,
+                            description="The index of the current tab. Return None if the tab index cannot be determined from the visible content.",
                         )
 
-                    original_tab_index = (
-                        await self.actor.action_provider.browser_observe(
-                            "What is the index of the current tab?",
-                            response_format=TabState,
-                        )
+                    original_tab_index = await self.actor.action_provider.browser_observe(
+                        "Look at the browser tabs at the top of the screen. What is the numerical index (starting from 0) of the currently active/selected tab? If you cannot see clear tab indicators or determine the active tab index, return null for current_tab_index.",
+                        response_format=TabState,
                     )
                     original_url = (
                         await self.actor.action_provider.browser.get_current_url()
                     )
                 except Exception as e:
                     self.action_log.append(f"SANDBOX: Could not record tab state: {e}")
-                    original_tab_index = 0
+                    original_tab_index = TabState(current_tab_index=0)
+                    original_url = (
+                        await self.actor.action_provider.browser.get_current_url()
+                    )
 
                 self.action_log.append("SANDBOX: Opening new tab for exploration")
                 await self.actor.action_provider.browser_act(
@@ -1985,8 +2054,13 @@ class HierarchicalPlan(BaseActiveTask):
             finally:
                 self.action_log.append("SANDBOX: Returning to original tab")
                 try:
+                    tab_index = (
+                        original_tab_index.current_tab_index
+                        if original_tab_index.current_tab_index is not None
+                        else 0
+                    )
                     await self.actor.action_provider.browser_act(
-                        f"Switch to tab {original_tab_index} which was on the url {original_url} to go back to the original tab",
+                        f"Switch to tab {tab_index} which was on the url {original_url} to go back to the original tab",
                     )
                     self.action_log.append("SANDBOX: Returned to original tab")
 
@@ -2092,17 +2166,13 @@ class HierarchicalPlan(BaseActiveTask):
     async def ask(self, question: str) -> SteerableToolHandle:
         """
         Asks a question about the current state of the plan by creating a new,
-        isolated tool loop that returns a handle to its result.
+        isolated tool loop that returns a handle to its result. This loop
+        has access to the browser's query tool to answer questions about
+        the agent's actions and memory.
         """
-        screenshot = None
-        try:
-            screenshot = await self.actor.action_provider.browser.get_screenshot()
-        except Exception as e:
-            logger.warning(f"Could not capture screenshot for /ask: {e}")
-
         full_context_log = "\n".join(f"- {log}" for log in self.action_log)
 
-        prompt = prompt_builders.build_ask_prompt(
+        system_message = prompt_builders.build_ask_prompt(
             goal=self.goal,
             state=self._state.name,
             call_stack=" -> ".join(self.call_stack) or "None",
@@ -2112,36 +2182,26 @@ class HierarchicalPlan(BaseActiveTask):
 
         self.ask_client.reset_messages()
         self.ask_client.reset_system_message()
+        self.ask_client.set_system_message(system_message)
 
-        answer = await llm_call(self.ask_client, prompt, screenshot=screenshot)
+        async def query_tool(query: str) -> str:
+            """
+            Query the browser agent's memory and action history to answer a question.
+            """
+            try:
+                return await self.actor.action_provider.browser_query(query)
+            except Exception as e:
+                return f"Error querying browser: {e}"
 
-        class SimpleHandle(SteerableToolHandle):
-            def __init__(self, answer_text: str):
-                self._answer = answer_text
-                self._done = True
+        tools = {"query_browser": query_tool}
+        handle = start_async_tool_use_loop(
+            client=self.ask_client,
+            message=question,
+            tools=tools,
+        )
 
-            async def ask(self, question: str) -> "SteerableToolHandle":
-                return self
-
-            async def interject(self, message: str):
-                pass
-
-            def stop(self, reason: Optional[str] = None):
-                pass
-
-            def pause(self):
-                pass
-
-            def resume(self):
-                pass
-
-            def done(self) -> bool:
-                return self._done
-
-            async def result(self) -> str:
-                return self._answer
-
-        return SimpleHandle(answer)
+        self.action_log.append(f"USER ASKED: {question}")
+        return handle
 
     def _is_valid_method(self, name: str) -> bool:
         """

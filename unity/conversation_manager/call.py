@@ -20,9 +20,9 @@ from livekit.plugins import (
     silero,
 )
 
-if sys.platform == "darwin":
+if not sys.platform.startswith("win"):
     from livekit.plugins import noise_cancellation
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
 
 from livekit.agents import ModelSettings, llm, FunctionTool, Agent
@@ -264,7 +264,7 @@ async def entrypoint(ctx: agents.JobContext):
     print("voice_id", voice_id)
 
     session = AgentSession(
-        stt=deepgram.STT(model="nova-3", language="multi"),
+        stt=deepgram.STT(model="nova-3", language="en-GB"),
         llm=openai.LLM(model="gpt-4o"),
         tts=(
             elevenlabs.TTS(
@@ -276,8 +276,8 @@ async def entrypoint(ctx: agents.JobContext):
                 voice=voice_id if voice_id != "" else cartesia.tts.TTSDefaultVoiceId,
             )
         ),
-        vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
+        vad=silero.VAD.load(min_speech_duration=0.15),
+        turn_detection=EnglishModel(),
     )
 
     async def end_call():
@@ -381,7 +381,7 @@ async def entrypoint(ctx: agents.JobContext):
             # - If self-hosting, omit this parameter
             # - For telephony applications, use `BVCTelephony` for best results
             noise_cancellation=(
-                noise_cancellation.BVC() if sys.platform == "darwin" else None
+                noise_cancellation.BVC() if not sys.platform.startswith("win") else None
             ),
         ),
     )

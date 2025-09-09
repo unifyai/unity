@@ -110,7 +110,7 @@ class EventManager:
                         client.handle_event(event)
                 if "event" in event and event["event"]["event_name"] in [
                     "PhoneCallEndedEvent",
-                    "PhoneCallStopEvent"
+                    "PhoneCallStopEvent",
                 ]:
                     self.writers["call"].close()
                     await self.writers["call"].wait_closed()
