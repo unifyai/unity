@@ -37,22 +37,9 @@ function Install-Websockify {
   }
 }
 
-function Install-Cloudflared {
-  if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
-    choco install cloudflared -y --no-progress | Out-Host
-  }
-}
-
-function Install-Docker {
-  if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    choco install docker-desktop -y --no-progress | Out-Host
-  }
-}
-
 
 Install-TightVNC
 Install-NoVNC
 Install-Websockify
-Install-Cloudflared
 
 Write-Host "Install complete. Use desktop\\windows\\remote.ps1 to configure and start the services."
