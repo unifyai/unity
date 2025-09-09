@@ -19,6 +19,7 @@ Retrieval Strategy:
 This implementation uses Unity's tool-loop pattern while supporting the efficient single-table retrieval approach.
 """
 
+import asyncio
 import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
@@ -299,6 +300,11 @@ class IntranetRAGAgent:
         conversation_id: str = "default",
         user_id: Optional[str] = None,
         generate_follow_up: bool = False,
+        _return_reasoning_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Delegate to KnowledgeManager.ask with optional case-specific instructions.
@@ -319,7 +325,11 @@ class IntranetRAGAgent:
             ask_handle = await self.knowledge_manager.ask(
                 query_text,
                 case_specific_instructions=case_specific_instructions,
+                _return_reasoning_steps=_return_reasoning_steps,
                 parent_chat_context=conversation_context,
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
                 response_format=RAGLLMResponse,
             )
 
@@ -352,7 +362,11 @@ class IntranetRAGAgent:
         self,
         update_prompt: str,
         *,
+        _return_reasoning_steps: bool = False,
         conversation_context: Optional[List[Dict[str, str]]] = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Delegate update requests to KnowledgeManager with enhanced instructions.
@@ -371,7 +385,11 @@ class IntranetRAGAgent:
             # Delegate to KnowledgeManager's update method
             handle = await self.knowledge_manager.update(
                 update_prompt,
+                _return_reasoning_steps=_return_reasoning_steps,
                 parent_chat_context=conversation_context,
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
                 case_specific_instructions=case_specific_instructions,
             )
 

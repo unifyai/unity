@@ -75,12 +75,20 @@ def build_intranet_ask_instructions(*, generate_follow_up: bool = False) -> str:
    - Work with the table that exposes **summary** (dense text) and **content_text** (longer body).
      If multiple tables exist, prefer the one that clearly stores unified content.
 
-   Semantic retrieval (primary)
-   - Start with `_search` using **focused** references:
-       • `{"summary": "<user_query>"}` (primary pass).
-       • If the question needs exact numbers, quotes or dates, also include
-         `{"content_text": "<user_query>"}`.
-   - Keep the `references` map small (≤2) and choose a modest `k` to minimise noise.
+   Semantic retrieval (primary — search **summary only**)
+   - Perform semantic search with `_search` using **only** the summary column:
+       • `{"summary": "<user_query>"}`
+   - Do **not** include `content_text` in semantic `references`.
+   - If precise numbers/quotes/dates are required, first get the **row ids** from the summary search,
+     then fetch those rows directly with `_filter` to read `content_text` (no semantic over `content_text`).
+   - Choose a modest `k` to minimise noise.
+
+   Tiered passes (fast → slow; expand only if needed)
+   - If the initial pass is insufficient, escalate in a **single-table** hierarchy using `_search` with filters:
+       1) Paragraphs (highest precision):    `filter="content_type == 'paragraph'", k=10`
+       2) Sections (broader context):        `filter="content_type == 'section'",   k=6`
+       3) Documents (coarsest fallback):     `filter="content_type == 'document'",  k=3`
+   - Move to the next tier **only** when evidence is insufficient or you need more context.
 
    Optional narrowing
    - When the request contains strict, unambiguous structured constraints (e.g., specific ids, types or ranges),
@@ -105,11 +113,20 @@ def build_intranet_update_instructions() -> str:
    Use this *in addition* to the general KnowledgeManager update prompt. Keep it brief and non-redundant.
 
    Discovery (read-only)
-   - Call `ask` to locate the exact row ids to modify. In your ask query, prioritise semantic matching over:
-       • `summary` for fast, dense matching (primary)
-       • `content_text` when exact numbers, dates, codes or quotes are needed
-     Include any clear structured constraints (e.g., specific ids or known fields) in the ask text, but do not
-     rely on `_filter`/`_search` directly from the update loop—use `ask` for inspection.
+   - Call `ask` to locate the exact row ids to modify.
+     • The retrieval step must perform semantic search over **summary only**.
+     • Do **not** add `content_text` to semantic `references`.
+     • When exact numbers, dates, codes or quotes are needed: after obtaining candidate **row ids**
+       from the summary search, use `_filter` on those ids to read `content_text` directly.
+   - You may include clear structured constraints (specific ids, types, ranges) in the ask text to
+     guide retrieval, but do not replace semantic matching with `_filter`—use `_filter` only to fetch
+     the already-identified rows or to apply strict non-semantic constraints.
+
+   - When the `ask` flow runs semantic retrieval, prefer a **tiered escalation** with `_search` on the unified table:
+        1) `filter="content_type == 'paragraph'", k=10`  → precise hits
+        2) `filter="content_type == 'section'",   k=6`   → broaden if still unclear
+        3) `filter="content_type == 'document'",  k=3`   → coarse fallback
+     Proceed to the next tier **only** if the prior tier cannot confidently identify targets.
 
    Writes (minimal, precise)
    - Use `update_rows` when you know the target ids; use `add_rows` to create new records.
