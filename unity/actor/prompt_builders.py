@@ -54,9 +54,9 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
     all_tools = {}
 
     browser_tools = {
-        "browser_navigate": action_provider.browser_navigate,
-        "browser_act": action_provider.browser_act,
-        "browser_observe": action_provider.browser_observe,
+        "navigate": action_provider.navigate,
+        "act": action_provider.act,
+        "observe": action_provider.observe,
     }
     all_tools.update(browser_tools)
 
@@ -85,11 +85,11 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
         2. **Use `await`**: The execution sandbox is asynchronous. You **MUST** use the `await` keyword for any action_provider operations:
            ```python
            # ✅ CORRECT: Using await
-           await action_provider.browser_navigate("https://example.com")
-           result = await action_provider.browser_observe("What is the heading?")
+           await action_provider.navigate("https://example.com")
+           result = await action_provider.observe("What is the heading?")
 
            # ❌ WRONG: Missing await
-           action_provider.browser_navigate("https://example.com")
+           action_provider.navigate("https://example.com")
            ```
 
         3. **Imports Inside Code**: All necessary imports must be included in the code you provide:
@@ -99,7 +99,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
            from typing import Optional, List
            ```
 
-        4. **Pydantic for Structured Observation**: When using `action_provider.browser_observe` to extract structured data:
+        4. **Pydantic for Structured Observation**: When using `action_provider.observe` to extract structured data:
            ```python
            from pydantic import BaseModel, Field
 
@@ -110,7 +110,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
            # CRITICAL: Call model_rebuild() after defining nested models
            PageInfo.model_rebuild()
 
-           result = await action_provider.browser_observe(
+           result = await action_provider.observe(
                "Extract page information",
                response_format=PageInfo
            )
@@ -178,7 +178,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "The first step is to navigate to the website specified in the user's request, which is playwright.dev.",
-                  "code": "await action_provider.browser_navigate('https://playwright.dev/')"
+                  "code": "await action_provider.navigate('https://playwright.dev/')"
                 }
               }]
             }
@@ -198,7 +198,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "Great, I'm on the page. Now I'll extract the heading and paragraph text into a structured object for clarity. I'll define a Pydantic model right here in the sandbox.",
-                  "code": "from pydantic import BaseModel, Field\n\nclass PageContent(BaseModel):\n    heading: str = Field(description=\"The main H1 heading of the page\")\n    first_paragraph: str = Field(description=\"The text of the first paragraph under the heading\")\n\nPageContent.model_rebuild()\n\npage_info = await action_provider.browser_observe(\n    \"Extract the main heading and the first paragraph.\",\n    response_format=PageContent\n)\n\nprint(page_info.model_dump_json(indent=2))"
+                  "code": "from pydantic import BaseModel, Field\n\nclass PageContent(BaseModel):\n    heading: str = Field(description=\"The main H1 heading of the page\")\n    first_paragraph: str = Field(description=\"The text of the first paragraph under the heading\")\n\nPageContent.model_rebuild()\n\npage_info = await action_provider.observe(\n    \"Extract the main heading and the first paragraph.\",\n    response_format=PageContent\n)\n\nprint(page_info.model_dump_json(indent=2))"
                 }
               }]
             }
@@ -233,7 +233,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "I need to navigate to example.com to get the title.",
-                  "code": "await action_provider.browser_navigate('https://example.com/')"
+                  "code": "await action_provider.navigate('https://example.com/')"
                 }
               }]
             }
@@ -248,7 +248,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "I need to get the title. I will use Pydantic, but I'll deliberately forget to call `model_rebuild()` to demonstrate error handling.",
-                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# MISTAKE: I forgot to call PageTitle.model_rebuild()\n\ntitle_info = await action_provider.browser_observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info)"
+                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# MISTAKE: I forgot to call PageTitle.model_rebuild()\n\ntitle_info = await action_provider.observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info)"
                 }
               }]
             }
@@ -269,7 +269,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "The error message is very clear. I forgot to call `model_rebuild()` on my Pydantic class. I will add that line and retry.",
-                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# CORRECTED: I've added the required model_rebuild() call.\nPageTitle.model_rebuild()\n\ntitle_info = await action_provider.browser_observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info.title)"
+                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# CORRECTED: I've added the required model_rebuild() call.\nPageTitle.model_rebuild()\n\ntitle_info = await action_provider.observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info.title)"
                 }
               }]
             }
@@ -295,7 +295,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "This is a multi-step task. First, I'll extract all products. I know I'll need to parse prices that might be strings (e.g., '$25.99'), so I'll define a helper function to clean them. This function will persist in the sandbox for later.",
-                  "code": "import re\nfrom pydantic import BaseModel, Field\nfrom typing import List\n\ndef parse_price(price_str: str) -> float:\n    nums = re.findall(r'[\\d.]+', price_str)\n    return float(nums[0]) if nums else 0.0\n\nclass Product(BaseModel):\n    name: str\n    price_text: str = Field(alias=\"price\")\n\nclass ProductList(BaseModel):\n    products: List[Product]\n\nProductList.model_rebuild()\n\nglobal all_products_data\nall_products_data = await action_provider.browser_observe(\n    \"Extract all products with their name and price text\",\n    response_format=ProductList\n)\nprint(f\"Extracted {len(all_products_data.products)} products.\")"
+                  "code": "import re\nfrom pydantic import BaseModel, Field\nfrom typing import List\n\ndef parse_price(price_str: str) -> float:\n    nums = re.findall(r'[\\d.]+', price_str)\n    return float(nums[0]) if nums else 0.0\n\nclass Product(BaseModel):\n    name: str\n    price_text: str = Field(alias=\"price\")\n\nclass ProductList(BaseModel):\n    products: List[Product]\n\nProductList.model_rebuild()\n\nglobal all_products_data\nall_products_data = await action_provider.observe(\n    \"Extract all products with their name and price text\",\n    response_format=ProductList\n)\nprint(f\"Extracted {len(all_products_data.products)} products.\")"
                 }
               }]
             }
@@ -427,21 +427,32 @@ def _build_initial_plan_rules_and_examples(
     strategy_instruction += textwrap.dedent(
         """\n
         ---
-        ### Strategic Principles for Web Automation
-        To create a robust and efficient plan, follow these core principles:
-        1.  **Trust the Agent's Autonomy**: The `browser_act` tool is autonomous. Give it high-level goals. Instead of writing separate steps for "click username field", "type username", "click password field", "type password", and "click login", you should create a single step: `await action_provider.browser_act("Log in with username 'test' and password 'pass123'")`. The agent will handle the intermediate steps.
-        2.  **Clear and Descriptive Actions**: Write browser actions that clearly describe what you want to achieve. Be specific about the expected outcome as part of the instruction itself. For example: `await action_provider.browser_act("Click the 'Add to Cart' button to add the item to the cart")`.
-        3.  **Use `browser_observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `browser_observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
-        4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
-        5.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
-        6.  **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The actor automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
-        7.  **Default Search Engine:** Prefer DuckDuckGo (https://duckduckgo.com) for searches unless the user specifies otherwise.
-        8.  **Prefer .deb for Linux App Installations**: When installing apps, prefer .deb packages over other formats. `.deb` files are the most common and trusted format for Linux app installations. Then, use `dpkg` to install the app with full permissions.
-        9.  **Desktop Mode**: You have control over a virtual desktop through the browser tools, and have access to apps like terminal, shell, browser, etc. You are also able to search for apps to be used in the desktop. Use screenshot to observe the desktop.
-        10. **Browser Downloads**: The browser downloads directory is `/tmp/unify/assistant/browser/install`.
-        11. **Write General, Parameterized Functions**: Your functions should be reusable tools, not single-use scripts. Pass specific values (like search terms, filenames, or counts) as parameters.
-        12. **Name for the Action, Not the Data**: Function names must describe the *process*, not the specific values being processed. Avoid hardcoding data like numbers or names into function names. This makes your plan robust and easy to modify later.
-        13. **Handle Ambiguous or "Non-Goals"**: If the user's goal is not a specific, actionable task (e.g., it's vague, "I don't know," or an instruction like "I will guide you"), your responsibility is to generate a simple, empty plan that allows the user to provide the first real instruction via interjection.
+        ### 🧠 Strategic Principles for Automation
+        You are operating in a unique environment that gives you control over **both a web browser and a Linux desktop terminal**. To succeed, you must leverage both.
+
+        1.  **Dual Environments**: You can see and interact with two main components:
+            - A **Chromium web browser** for all internet-related tasks.
+            - An **`xterm` terminal** for all command-line operations.
+
+        2.  **Workflow Integration**: The most powerful solutions often involve using both environments together. A common workflow is to use the browser to find and download a file, then use the terminal to install or process that file.
+
+        3.  **OS-Awareness**: The terminal is a standard Debian Linux environment.
+            - Use `apt-get` for package management (e.g., `apt-get update && apt-get install -y <package>`).
+            - Use `dpkg -i <file.deb>` to install downloaded Debian packages.
+            - The default download directory for the browser is `/tmp/unify/assistant/browser/install`. You must use this full path when accessing downloaded files from the terminal.
+
+        4.  **Command Chaining**: For multi-step terminal operations, chain commands with `&&` within a single `act` call to ensure they execute in the correct sequence and context (e.g., `cd /tmp/downloads && ./install.sh`).
+
+        5.  **Trust the Agent's Autonomy**: The `act` tool is autonomous. Give it high-level goals. Instead of writing separate steps for "click username field", "type username", "click password field", "type password", and "click login", you should create a single step: `await action_provider.act("Log in with username 'test' and password 'pass123'")`. The agent will handle the intermediate steps.
+        6.  **Clear and Descriptive Actions**: Write browser actions that clearly describe what you want to achieve. Be specific about the expected outcome as part of the instruction itself. For example: `await action_provider.act("Click the 'Add to Cart' button to add the item to the cart")`.
+        7.  **Use `observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
+        8.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
+        9.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
+        10. **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The actor automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
+        11. **Default Search Engine:** Prefer DuckDuckGo (https://duckduckgo.com) for searches unless the user specifies otherwise.
+        12. **Write General, Parameterized Functions**: Your functions should be reusable tools, not single-use scripts. Pass specific values (like search terms, filenames, or counts) as parameters.
+        13. **Name for the Action, Not the Data**: Function names must describe the *process*, not the specific values being processed. Avoid hardcoding data like numbers or names into function names. This makes your plan robust and easy to modify later.
+        14. **Handle Ambiguous or "Non-Goals"**: If the user's goal is not a specific, actionable task (e.g., it's vague, "I don't know," or an instruction like "I will guide you"), your responsibility is to generate a simple, empty plan that allows the user to provide the first real instruction via interjection.
 
         | ❌ Bad (Too Specific & Brittle)        | ✅ Good (Generic & Reusable)                    |
         | ------------------------------------ | --------------------------------------------- |
@@ -511,7 +522,7 @@ def _build_initial_plan_rules_and_examples(
             # ✅ IMPLEMENT if confident (simple, predictable actions)
             async def navigate_to_shop():
                 \"\"\"Navigate to the shop homepage.\"\"\"
-                await action_provider.browser_navigate("[https://shop.example.com](https://shop.example.com)")
+                await action_provider.navigate("https://shop.example.com")
 
             # ✅ STUB if uncertain (complex extractions, unknown layouts)
             async def extract_shipping_options():
@@ -526,7 +537,7 @@ def _build_initial_plan_rules_and_examples(
             # ❌ WRONG: Stub with a side-effect
             async def my_stub():
                 "\"\"\"This is a bad stub.\"\"\""
-                await action_provider.browser_navigate("...")  # NEVER DO THIS
+                await action_provider.navigate("...")  # NEVER DO THIS
                 raise NotImplementedError("Implement me")
 
             # ✅ CORRECT: A pure stub
@@ -565,10 +576,10 @@ def _build_initial_plan_rules_and_examples(
         8.  **Await Keyword**: ALWAYS await async action_provider methods.
             ```python
             # ❌ WRONG: Missing await
-            action_provider.browser_navigate("https://example.com")
+            action_provider.navigate("https://example.com")
 
             # ✅ CORRECT: With await
-            await action_provider.browser_navigate("https://example.com")
+            await action_provider.navigate("https://example.com")
             ```
 
         9.  **Structured Output with Pydantic - THE COMPLETE PATTERN:**
@@ -594,7 +605,7 @@ def _build_initial_plan_rules_and_examples(
                 ProductList.model_rebuild()
 
                 # Step 5: Use with response_format
-                result = await action_provider.browser_observe(
+                result = await action_provider.observe(
                     "Extract all products with details",
                     response_format=ProductList
                 )
@@ -642,7 +653,7 @@ def _build_initial_plan_rules_and_examples(
 
             # ✅ CORRECT: Use it directly as a global
             async def my_func():
-                await action_provider.browser_navigate("...")
+                await action_provider.navigate("...")
             ```
 
          12. **Requesting Clarification:**
@@ -700,8 +711,8 @@ def _build_initial_plan_rules_and_examples(
             print(f"Searching for product: {{product_name}}")
 
             # RULE 8: Await all async action_provider methods
-            await action_provider.browser_navigate("[https://shop.example.com](https://shop.example.com)")
-            await action_provider.browser_act(
+            await action_provider.navigate("https://shop.example.com")
+            await action_provider.act(
                 f"Type '{{product_name}}' in the search box and press Enter to load search results with products"
             )
 
@@ -735,7 +746,7 @@ def _build_initial_plan_rules_and_examples(
 
             # RULE 10: Error handling with re-raise
             try:
-                await action_provider.browser_act(
+                await action_provider.act(
                     f"Set price filter from ${{min_price}} to ${{max_price}} to filter products by price range"
                 )
             except Exception as e:
@@ -766,7 +777,7 @@ def _build_initial_plan_rules_and_examples(
             CartStatus.model_rebuild()
 
             # RULE 9: Use response_format for structured output
-            cart_info = await action_provider.browser_observe(
+            cart_info = await action_provider.observe(
                 "What is the current cart status including item count and total price?",
                 response_format=CartStatus
             )
@@ -911,7 +922,7 @@ def _build_initial_plan_rules_and_examples(
 
             # Primary approach: Use the website's export feature
             try:
-                await action_provider.browser_act(
+                await action_provider.act(
                     "Click on 'Export Data' button and select JSON format to start the download or display data"
                 )
 
@@ -923,7 +934,7 @@ def _build_initial_plan_rules_and_examples(
 
                 ExportedData.model_rebuild()
 
-                data = await action_provider.browser_observe(
+                data = await action_provider.observe(
                     "Extract the exported customer data",
                     response_format=ExportedData
                 )
@@ -948,7 +959,7 @@ def _build_initial_plan_rules_and_examples(
                     # RULE 9: Always rebuild outermost model
                     CustomerTable.model_rebuild()
 
-                    table_data = await action_provider.browser_observe(
+                    table_data = await action_provider.observe(
                         "Extract all customer information from the visible table",
                         response_format=CustomerTable
                     )
@@ -976,7 +987,7 @@ def _build_initial_plan_rules_and_examples(
             print("Starting customer data processing workflow")
 
             # Navigate to the system
-            await action_provider.browser_navigate("[https://crm.example.com](https://crm.example.com)")
+            await action_provider.navigate("https://crm.example.com")
 
             # Login (would typically be implemented or stubbed based on confidence)
             await login_to_system("admin", "password123")
@@ -1001,8 +1012,8 @@ def _build_initial_plan_rules_and_examples(
         async def search_for_product() -> str:
             \"\"\"Navigates to an e-commerce site and searches for a specific product.\"\"\"
             print("Navigating to store and searching for 'blue sneakers'.")
-            await action_provider.browser_navigate("https://fakestore.example.com")
-            await action_provider.browser_act(
+            await action_provider.navigate("https://fakestore.example.com")
+            await action_provider.act(
                 "Type 'blue sneakers' into the search bar and click the search button to show products related to 'blue sneakers'"
             )
             print("Search complete.")
@@ -1030,8 +1041,8 @@ def _build_initial_plan_rules_and_examples(
             #     price: float
             #     review_count: int
             #
-            # await action_provider.browser_navigate(product_url)
-            # details = await action_provider.browser_observe(
+            # await action_provider.navigate(product_url)
+            # details = await action_provider.observe(
             #     "Extract the price and number of reviews for this product.",
             #     response_format=ProductDetails
             # )
@@ -1087,14 +1098,14 @@ def _build_initial_plan_rules_and_examples(
 
             # --- Primary Approach: Use the website's feature ---
             try:
-                await action_provider.browser_act(
+                await action_provider.act(
                     "Click the currency selector and choose 'EUR' to display the price in Euros (€)"
                 )
 
                 class PriceInfo(BaseModel):
                     price_eur: float = Field(description="The price in Euros.")
 
-                observed_price = await action_provider.browser_observe(
+                observed_price = await action_provider.observe(
                     "What is the product price in Euros?",
                     response_format=PriceInfo
                 )
@@ -1147,7 +1158,7 @@ def _build_initial_plan_rules_and_examples(
 
             SalesData.model_rebuild()
 
-            result = await action_provider.browser_observe(
+            result = await action_provider.observe(
                 "Extract all sales records from the table including product name, quantity, unit price, and date",
                 response_format=SalesData
             )
@@ -1198,7 +1209,7 @@ def _build_initial_plan_rules_and_examples(
             Main plan to extract and analyze sales data.
             \"\"\"
             # Navigate to the sales report page
-            await action_provider.browser_navigate("https://example.com/sales-report")
+            await action_provider.navigate("https://example.com/sales-report")
 
             # The result of this step will be cached by the actor
             raw_data = await extract_sales_data_from_page()
@@ -1210,7 +1221,7 @@ def _build_initial_plan_rules_and_examples(
 
             # Use the analysis results for further actions
             if analysis_results['best_product']:
-                await action_provider.browser_act(
+                await action_provider.act(
                     f"Search for more information about {{analysis_results['best_product']}} to load the product detail page"
                 )
 
@@ -1256,9 +1267,9 @@ def _build_dynamic_implement_rules_and_examples(
         ---
         ### Strategic Principles for Web Automation
         To create a robust and efficient plan, follow these core principles:
-        1.  **Trust the Agent's Autonomy**: The `browser_act` tool is autonomous. Give it high-level goals. Instead of writing separate steps for "click username field", "type username", "click password field", "type password", and "click login", you should create a single step: `await action_provider.browser_act("Log in with username 'test' and password 'pass123'")`. The agent will handle the intermediate steps.
-        2.  **Clear and Descriptive Actions**: Write browser actions that clearly describe what you want to achieve. Be specific about the expected outcome as part of the instruction itself. For example: `await action_provider.browser_act("Click the 'Add to Cart' button to add the item to the cart")`.
-        3.  **Use `browser_observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `browser_observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
+        1.  **Trust the Agent's Autonomy**: The `act` tool is autonomous. Give it high-level goals. Instead of writing separate steps for "click username field", "type username", "click password field", "type password", and "click login", you should create a single step: `await action_provider.act("Log in with username 'test' and password 'pass123'")`. The agent will handle the intermediate steps.
+        2.  **Clear and Descriptive Actions**: Write browser actions that clearly describe what you want to achieve. Be specific about the expected outcome as part of the instruction itself. For example: `await action_provider.act("Click the 'Add to Cart' button to add the item to the cart")`.
+        3.  **Use `observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
         4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
         5.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
         6.  **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The actor automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
@@ -1335,10 +1346,10 @@ def _build_dynamic_implement_rules_and_examples(
         5.  **Await Keyword:** ALWAYS await async action_provider methods.
             ```python
             # ❌ WRONG: Missing await
-            result = action_provider.browser_observe("Get data")
+            result = action_provider.observe("Get data")
 
             # ✅ CORRECT: With await
-            result = await action_provider.browser_observe("Get data")
+            result = await action_provider.observe("Get data")
             ```
 
         6.  **Structured Output with Pydantic - THE COMPLETE PATTERN:**
@@ -1364,7 +1375,7 @@ def _build_dynamic_implement_rules_and_examples(
                 ProductList.model_rebuild()
 
                 # Step 5: Use with response_format
-                result = await action_provider.browser_observe(
+                result = await action_provider.observe(
                     "Extract all products with details",
                     response_format=ProductList
                 )
@@ -1416,8 +1427,8 @@ def _build_dynamic_implement_rules_and_examples(
 
             # ✅ CORRECT: Use directly as if it exists globally
             async def my_func():
-                result = await action_provider.browser_navigate("https://example.com")
-                data = await action_provider.browser_observe("Get page title")
+                result = await action_provider.navigate("https://example.com")
+                data = await action_provider.observe("Get page title")
             ```
 
         9. **Requesting Clarification:**
@@ -1599,8 +1610,8 @@ def _build_dynamic_implement_rules_and_examples(
             ProductListings.model_rebuild()
 
             try:
-                # Use browser_observe with structured output
-                result = await action_provider.browser_observe(
+                # Use observe with structured output
+                result = await action_provider.observe(
                     "Extract all products from this search results page. For each product, get the name, "
                     "numeric price (without currency), currency symbol/code, rating if shown, review count if shown, "
                     "stock availability, and image URL if visible. Also note the total number of results if displayed.",
@@ -1656,14 +1667,14 @@ def _build_dynamic_implement_rules_and_examples(
 
             try:
                 # Primary approach: Fill out the payment form
-                await action_provider.browser_act(
+                await action_provider.act(
                     f"Fill out the payment form with card ending in {{payment_info['card_number'][-4:]}}, "
                     f"CVV {{payment_info['cvv']}}, expiry {{payment_info['expiry']}}, and billing zip {{payment_info['zip']}}. "
                     f"Then click the 'Place Order' or 'Complete Purchase' button to see the order confirmation page with order number"
                 )
 
                 # Extract confirmation details
-                confirmation = await action_provider.browser_observe(
+                confirmation = await action_provider.observe(
                     "Extract the order confirmation number, total amount charged, expected delivery date, and confirmation email address",
                     response_format=OrderConfirmation
                 )
@@ -1684,7 +1695,7 @@ def _build_dynamic_implement_rules_and_examples(
                 try:
                     print("Attempting PayPal checkout as fallback...")
 
-                    await action_provider.browser_act(
+                    await action_provider.act(
                         "Click on 'PayPal' or 'Pay with PayPal' option to redirect to PayPal login or show PayPal frame"
                     )
 
@@ -1747,7 +1758,7 @@ def _build_dynamic_implement_rules_and_examples(
             PricingData.model_rebuild()
 
             # Step 1: Extract pricing data from the current page
-            pricing_data = await action_provider.browser_observe(
+            pricing_data = await action_provider.observe(
                 f"Extract all competitor pricing information for {{product_name}}. "
                 "Include store name, price, shipping cost if shown, availability status, and rating if available.",
                 response_format=PricingData
@@ -1760,7 +1771,7 @@ def _build_dynamic_implement_rules_and_examples(
 
             # Step 3: Use the analysis to make a decision
             if analysis_result['recommendation'] == 'match_lowest':
-                await action_provider.browser_act(
+                await action_provider.act(
                     f"Update our price to {{analysis_result['suggested_price']}} and confirm the price update is successful"
                 )
 
@@ -2534,7 +2545,7 @@ def build_interjection_prompt(
         "patches": [
             {{
                 "function_name": "submit_job_application",
-                "new_code": "async def submit_job_application() -> dict:\\n    ...\\n    # New step inserted here\\n    await action_provider.browser_act(\\\"Click on 'Salary Information' to check the range\\\")\\n    # Original logic continues...\\n    result = await action_provider.browser_act(\\\"Click Submit Application\\\")"
+                "new_code": "async def submit_job_application() -> dict:\\n    ...\\n    # New step inserted here\\n    await action_provider.act(\\\"Click on 'Salary Information' to check the range\\\")\\n    # Original logic continues...\\n    result = await action_provider.act(\\\"Click Submit Application\\\")"
             }}
         ]
     }}
@@ -2550,7 +2561,7 @@ def build_interjection_prompt(
         "patches": [
             {{
                 "function_name": "main_plan",
-                "new_code": "async def main_plan():\\n    \\\"\\\"\\\"Main entry point...\\\"\\\"\\\"\\n    # Previous steps would be here...\\n    await action_provider.browser_navigate(\\\"https://linkedin.com\\\")"
+                "new_code": "async def main_plan():\\n    \\\"\\\"\\\"Main entry point...\\\"\\\"\\\"\\n    # Previous steps would be here...\\n    await action_provider.navigate(\\\"https://linkedin.com\\\")"
             }}
         ]
     }}
@@ -2594,7 +2605,7 @@ def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
         f"""
         ### 🎯 CRITICAL RULES FOR SCRIPTING
         1.  **Sequence of Calls**: Your code must be a simple sequence of `await` calls on the `action_provider`. Do not define new functions.
-        2.  **Await Keyword**: You MUST `await` all `async` tool calls (like `browser_navigate`, `browser_act`, `browser_observe`).
+        2.  **Await Keyword**: You MUST `await` all `async` tool calls (like `navigate`, `act`, `observe`).
         3.  **Action Provider**: Use the `action_provider` object directly as if it's a global variable. Do not import or define it.
 
         ### Tools Reference
@@ -2608,18 +2619,18 @@ def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
         # ---
         # Example 1: The agent navigated to the wrong page ('/settings') instead of the user's profile.
         # Goal: Get back to the correct user profile page.
-            await action_provider.browser_navigate("https://example.com/user/123/profile")
+            await action_provider.navigate("https://example.com/user/123/profile")
 
         # ---
         # Example 2: The agent opened an unwanted "Share" popup that is now obscuring the page content.
         # Goal: Close the popup to restore view of the underlying page.
-        await action_provider.browser_act("Click the 'X' or 'Close' button on the 'Share this article' popup")
+        await action_provider.act("Click the 'X' or 'Close' button on the 'Share this article' popup")
 
         # ---
         # Example 3: The agent typed the wrong address into a form field.
         # Goal: Clear the incorrect text from the 'Street Address' field.
         # Note: The next implementation will handle typing the correct text. This script ONLY restores the state.
-        await action_provider.browser_act("Clear the text in the 'Street Address' field")
+        await action_provider.act("Clear the text in the 'Street Address' field")
 
     """,
     )
@@ -2673,10 +2684,10 @@ def build_course_correction_prompt(
             - If a popup or modal appeared that needs to be closed, set `correction_needed` to `true` and write a script to close it.
         3.  **If correction is needed, write `correction_code`.**
             - This must be a simple, self-contained Python script.
-            - Use `action_provider.browser_navigate` or `action_provider.browser_act`.
+            - Use `action_provider.navigate` or `action_provider.act`.
             - **Goal:** Get from the "Current" state back to the "Last Known Good" state.
-            - **Example:** If the agent is on the wrong page, the script might be `await action_provider.browser_navigate('{last_verified_url}')`.
-            - **Example:** If a popup is open, the script might be `await action_provider.browser_act("Click the 'Close' button on the popup")`.
+            - **Example:** If the agent is on the wrong page, the script might be `await action_provider.navigate('{last_verified_url}')`.
+            - **Example:** If a popup is open, the script might be `await action_provider.act("Click the 'Close' button on the popup")`.
             - **Keep it simple!** Do not try to re-run the failed function. Only restore the state.
 
         ---
@@ -2827,8 +2838,8 @@ def build_precondition_prompt(
 
         **Your Task:**
         1.  Analyze the function's code, its interactions, and the entry screenshot.
-        2.  If the first action is `browser_navigate`, your primary goal is to populate the `precondition.url` field.
-        3.  If the first action is `browser_act` or `browser_observe`, your primary goal is to populate the `precondition.description` field with a clear, verifiable description of the page state seen in the screenshot.
+        2.  If the first action is `navigate`, your primary goal is to populate the `precondition.url` field.
+        3.  If the first action is `act` or `observe`, your primary goal is to populate the `precondition.description` field with a clear, verifiable description of the page state seen in the screenshot.
         4.  If the function does not interact with the browser at all, the status should be "not_applicable".
 
         Respond with ONLY the JSON object matching the `PreconditionDecision` schema.
@@ -2904,7 +2915,7 @@ def build_proactive_correction_prompt(
         ### Your Task
         Write a `correction_code` snippet to get from the "Current" state to the "Target" state.
         - **Goal:** Your script should perform the necessary actions (e.g., clicking a button, filling a field, navigating) to satisfy the target precondition's `description`.
-        - **Example:** If the current page is a dashboard and the target is "The 'Create New User' dialog must be open," your script should be `await action_provider.browser_act("Click the 'Create New User' button to open the Create New User dialog")`.
+        - **Example:** If the current page is a dashboard and the target is "The 'Create New User' dialog must be open," your script should be `await action_provider.act("Click the 'Create New User' button to open the Create New User dialog")`.
         - **Keep it simple!** Only write the code needed to achieve the precondition.
 
         {scripting_rules}

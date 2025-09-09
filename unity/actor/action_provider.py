@@ -88,10 +88,10 @@ class ActionProvider:
     def _setup_browser_methods(self):
         """Dynamically create tool methods and assign backend docstrings."""
         methods_to_proxy = {
-            "browser_act": self.browser.backend.act,
-            "browser_observe": self.browser.backend.observe,
-            "browser_query": self.browser.backend.query,
-            "browser_navigate": self.browser.backend.navigate,
+            "act": self.browser.backend.act,
+            "observe": self.browser.backend.observe,
+            "query": self.browser.backend.query,
+            "navigate": self.browser.backend.navigate,
         }
 
         for method_name, backend_method in methods_to_proxy.items():
