@@ -89,6 +89,12 @@ class EventManager:
                     )
                     await self.writers["call"].drain()
                 else:
+                    if event["event"]["event_name"] == "PhoneCallInitiatedEvent":
+                        self.update_topics_to_subs(
+                            event["event"]["payload"]["target_number"],
+                            event["event"]["payload"]["target_number"],
+                            event["event"]["payload"]["target_number"],
+                        )
                     if event["topic"] == "startup":
                         self.update_topics_to_subs(
                             event["event"]["payload"]["user_number"],
