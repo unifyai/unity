@@ -1737,7 +1737,47 @@ class DoclingParser(GenericParser[Document]):
             pass
 
     def _extract_enhanced_metadata(self, document: Document):
-        """Extract enhanced metadata using LLM with intelligent text selection and retry logic."""
+        """
+        Extract **structured, retrieval-ready** metadata via a token-aware LLM flow.
+
+        Overview
+        --------
+        Calls an LLM (o4-mini) with a strict, Pydantic-validated JSON schema to
+        produce metadata suitable for downstream retrieval (classification, topics,
+        entities, tags, confidence). The routine is **token-aware** and clips or
+        samples text to respect the summariser’s context budget while maximising
+        usable signal.
+
+        Token Budgets (env-configurable)
+        --------------------------------
+        SUMMARY_ENCODING
+            tiktoken encoding used for summariser accounting (default: "o200k_base").
+        SUMMARY_MAX_TOKENS
+            Upper bound for prompt+text per call (default: 100000).
+        SUMMARY_REDUCE_STEP
+            Backoff step when token errors occur (default: 5000).
+        SUMMARY_MIN_TOKENS
+            Minimum floor during backoff (default: 4000).
+
+        Source Selection (priority)
+        ---------------------------
+        1) Full document text (token-aware clipped); if it exceeds budget, also
+        try a **head/middle/tail** token-sampled variant.
+        2) Document summary, optionally augmented with a token-aware subset of
+        section summaries (no fixed counts).
+        3) A token-aware concatenation of available section summaries (no fixed counts).
+        4) A token-aware sample of paragraph text/summary from early sections (no fixed counts).
+        5) Raw `document.content` fallback, if present.
+
+        Behaviour
+        ---------
+        • Each candidate source is clipped to the current **prompt-aware** budget.
+        • On token errors, the routine retries with a reduced budget (backoff) up to
+        a small limit before moving on to the next source.
+        • On success, the JSON is validated against `DocumentMetadataExtraction` and
+        `document.metadata` is populated in place.
+        • If all sources fail, the function returns without mutating metadata.
+        """
         try:
             import unify
 
@@ -1746,22 +1786,40 @@ class DoclingParser(GenericParser[Document]):
                 cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             )
 
-            # Token accounting (align with summariser defaults)
+            # Token accounting (align with main summariser defaults; no fixed caps)
             METADATA_ENCODING = os.environ.get("SUMMARY_ENCODING", "o200k_base")
-            METADATA_MAX_TOKENS = int(os.environ.get("SUMMARY_MAX_TOKENS", "60000"))
-            METADATA_REDUCE_STEP = int(os.environ.get("SUMMARY_REDUCE_STEP", "5000"))
-            METADATA_MIN_TOKENS = int(os.environ.get("SUMMARY_MIN_TOKENS", "45000"))
+            try:
+                METADATA_MAX_TOKENS = int(
+                    os.environ.get("SUMMARY_MAX_TOKENS", "100000"),
+                )
+            except Exception:
+                METADATA_MAX_TOKENS = 100000
+            try:
+                METADATA_REDUCE_STEP = int(
+                    os.environ.get("SUMMARY_REDUCE_STEP", "5000"),
+                )
+            except Exception:
+                METADATA_REDUCE_STEP = 5000
+            try:
+                METADATA_MIN_TOKENS = int(os.environ.get("SUMMARY_MIN_TOKENS", "4000"))
+            except Exception:
+                METADATA_MIN_TOKENS = 4000
+
             MAX_RETRY_ATTEMPTS = 3
 
-            # Compute a *token* budget for text (prompt-aware)
+            # Prompt and prompt-aware budget
             from unity.file_manager.parser.prompt_builders import (
                 build_metadata_extraction_prompt,
             )
 
             prompt = build_metadata_extraction_prompt()
             prompt_tokens = count_tokens(prompt, METADATA_ENCODING)
-            budget_for_text = max(METADATA_MAX_TOKENS - prompt_tokens, 256)
 
+            def _budget_for_text(current_total_budget: int) -> int:
+                """Return usable token budget for the **text** after accounting for prompt."""
+                return max(current_total_budget - prompt_tokens, 256)
+
+            # ---------- token helpers (token-accurate slicing; char fallback) ----------
             def _first_tokens(text: str, n: int, enc: str) -> str:
                 try:
                     import tiktoken
@@ -1770,7 +1828,6 @@ class DoclingParser(GenericParser[Document]):
                     toks = e.encode(text)
                     return e.decode(toks[: max(n, 0)])
                 except Exception:
-                    # char-based fallback
                     return text[: n * 4]
 
             def _last_tokens(text: str, n: int, enc: str) -> str:
@@ -1796,162 +1853,335 @@ class DoclingParser(GenericParser[Document]):
                     end = min(start + n, L)
                     return e.decode(toks[start:end])
                 except Exception:
-                    # char-based heuristic
                     approx = n * 4
                     s = max((len(text) // 2) - (approx // 2), 0)
                     return text[s : s + approx]
 
-            def _safe_generate_text(prompt: str, text: str) -> str:
-                """Token-aware generate with prompt+text clipping and backoff."""
-                prompt_tokens = count_tokens(prompt, METADATA_ENCODING)
-                budget_for_text = max(METADATA_MAX_TOKENS - prompt_tokens, 256)
-                clipped_text = clip_text_to_token_limit(
-                    text,
-                    budget_for_text,
-                    METADATA_ENCODING,
+            # ---------- composition helpers (no fixed counts) --------------------------
+            def _append_token_safe(
+                base: str,
+                addition: str,
+                enc: str,
+                limit: int,
+            ) -> tuple[str, bool]:
+                """
+                Append `addition` to `base` if it fits within `limit` tokens (encoding `enc`).
+                If it would exceed the limit, try a clipped version of `addition`.
+                Returns (new_text, did_append_anything).
+                """
+                if not has_meaningful_text(addition):
+                    return base, False
+                # Fast path: try full addition
+                combined = (
+                    (base + ("\n\n" if base else "") + addition) if base else addition
                 )
-                return client.copy().generate(prompt + clipped_text)
+                if count_tokens(combined, enc) <= limit:
+                    return combined, True
+                # Try clipped addition
+                remaining = max(limit - count_tokens(base, enc), 0)
+                if remaining <= 0:
+                    return base, False
+                clipped = clip_text_to_token_limit(addition, remaining, enc)
+                if has_meaningful_text(clipped):
+                    combined = (
+                        (base + ("\n\n" if base else "") + clipped) if base else clipped
+                    )
+                    return combined, True
+                return base, False
 
-            # Define text sources in priority order (we will clip token-aware later)
-            text_sources = []
+            def _gather_section_summaries(enc: str, limit: int) -> str:
+                """
+                Accumulate section summaries until the token limit is reached.
+                No fixed number of sections is assumed.
+                """
+                if not getattr(document, "sections", None):
+                    return ""
+                out = ""
+                for idx, section in enumerate(document.sections, 1):
+                    block = ""
+                    title = (getattr(section, "title", "") or "").strip()
+                    if has_meaningful_text(title):
+                        block = f"Section {idx}: {title}"
+                    summ = (getattr(section, "summary", "") or "").strip()
+                    if has_meaningful_text(summ):
+                        block = block + ("\n" if block else "") + summ
+                    if not has_meaningful_text(block):
+                        continue
+                    new_out, appended = _append_token_safe(out, block, enc, limit)
+                    if not appended:
+                        break
+                    out = new_out
+                return out
 
-            # Priority 1: Full document text (if available and not too large)
-            if hasattr(document, "full_text") and document.full_text:
-                # Always offer the *full* text source; _safe_generate_text will clip token-aware.
-                text_sources.append(("full_text", document.full_text))
-                # Additionally add a token-aware head/middle/tail sample when text exceeds budget.
+            def _gather_paragraph_samples(enc: str, limit: int) -> str:
+                """
+                Accumulate paragraph summaries/text across early sections in order,
+                stopping when token limit is reached. No fixed counts.
+                """
+                if not getattr(document, "sections", None):
+                    return ""
+                out = ""
+                for s_idx, section in enumerate(document.sections, 1):
+                    title = (getattr(section, "title", "") or "").strip()
+                    header = (
+                        f"Section {s_idx}: {title}"
+                        if has_meaningful_text(title)
+                        else f"Section {s_idx}"
+                    )
+                    block, appended = _append_token_safe(out, header, enc, limit)
+                    if appended:
+                        out = block
+                    if not getattr(section, "paragraphs", None):
+                        continue
+                    for para in section.paragraphs:
+                        src = (
+                            getattr(para, "summary", "")
+                            or getattr(para, "text", "")
+                            or ""
+                        ).strip()
+                        if not has_meaningful_text(src):
+                            continue
+                        out2, appended = _append_token_safe(out, src, enc, limit)
+                        if not appended:
+                            return out
+                        out = out2
+                return out
+
+            # ---------- safe LLM call with backoff -------------------------------------
+            def _safe_generate_json(
+                prompt_str: str,
+                text: str,
+                total_budget: int,
+            ) -> str:
+                usable = _budget_for_text(total_budget)
+                clipped = clip_text_to_token_limit(text, usable, METADATA_ENCODING)
+                return client.copy().generate(prompt_str + clipped)
+
+            # ---------- Build candidate sources (in priority order) ---------------------
+            text_sources: list[tuple[str, str] | tuple[str, callable]] = []
+
+            # 1) Full document text (+ token-sampled variant when oversized)
+            full_text = getattr(document, "full_text", "") or ""
+            if has_meaningful_text(full_text):
+                text_sources.append(("full_text", full_text))
                 if not is_within_token_limit(
-                    document.full_text,
-                    budget_for_text,
+                    full_text,
+                    _budget_for_text(METADATA_MAX_TOKENS),
                     METADATA_ENCODING,
                 ):
-                    each = max(budget_for_text // 3, 128)
-                    head = _first_tokens(document.full_text, each, METADATA_ENCODING)
-                    middle = _middle_tokens(document.full_text, each, METADATA_ENCODING)
-                    tail = _last_tokens(document.full_text, each, METADATA_ENCODING)
-                    combined = (
-                        f"{head}\n\n[...Document middle section...]\n\n"
-                        f"{middle}\n\n[...Document end section...]\n\n{tail}"
+                    # split budget across head/middle/tail portions
+                    each = max(_budget_for_text(METADATA_MAX_TOKENS) // 3, 128)
+                    sampled = (
+                        f"{_first_tokens(full_text, each, METADATA_ENCODING)}\n\n"
+                        "[...Document middle section...]\n\n"
+                        f"{_middle_tokens(full_text, each, METADATA_ENCODING)}\n\n"
+                        "[...Document end section...]\n\n"
+                        f"{_last_tokens(full_text, each, METADATA_ENCODING)}"
                     )
-                    text_sources.append(("full_text_sampled", combined))
+                    text_sources.append(("full_text_sampled", sampled))
 
-            # Priority 2: Document summary (if available)
-            if document.summary and len(document.summary) > 100:
-                summary_text = document.summary
-                # Add some section summaries for context
-                if document.sections:
-                    for section in document.sections[:2]:
-                        if section.summary:
-                            summary_text += f"\n\nSection: {section.title or 'Content'}\n{section.summary}"
-                text_sources.append(("document_summary", summary_text))
+            # 2) Document summary optionally augmented by a token-aware subset of section summaries
+            doc_summary = (getattr(document, "summary", "") or "").strip()
+            if has_meaningful_text(doc_summary):
 
-            # Priority 3: All section summaries
-            if document.sections:
-                section_summaries = []
-                for i, section in enumerate(document.sections):
-                    if section.summary:
-                        section_summaries.append(
-                            f"Section {i+1}: {section.title or 'Content'}\n{section.summary}",
-                        )
-                if section_summaries:
-                    text_sources.append(
-                        ("section_summaries", "\n\n".join(section_summaries[:5])),
+                def _doc_summary_augmented() -> str:
+                    # Reserve 3/4 for summary, 1/4 for extras (no constants exposed; ratio-based)
+                    total = _budget_for_text(METADATA_MAX_TOKENS)
+                    main_budget = max(int(total * 0.75), 256)
+                    aux_budget = max(total - main_budget, 128)
+                    main = clip_text_to_token_limit(
+                        doc_summary,
+                        main_budget,
+                        METADATA_ENCODING,
                     )
+                    aux = _gather_section_summaries(METADATA_ENCODING, aux_budget)
+                    return main if not has_meaningful_text(aux) else f"{main}\n\n{aux}"
 
-            # Priority 4: First few paragraphs from each section
-            if document.sections:
-                paragraph_samples = []
-                for i, section in enumerate(document.sections[:3]):
-                    if section.paragraphs:
-                        section_text = f"Section {i+1}: {section.title or 'Content'}\n"
-                        # Get first 2 paragraphs from each section
-                        for j, para in enumerate(section.paragraphs[:2]):
-                            para_text = para.summary or para.text
-                            section_text += f"{para_text[:500]}\n"
-                        paragraph_samples.append(section_text)
-                if paragraph_samples:
-                    text_sources.append(
-                        ("paragraph_samples", "\n\n".join(paragraph_samples)),
-                    )
+                text_sources.append(("document_summary_aug", _doc_summary_augmented))
 
-            # Priority 5: Raw text fallback
-            if hasattr(document, "content") and document.content:
-                text_sources.append(("raw_content", document.content[:4000]))
+            # 3) Token-aware concatenation of available section summaries
+            def _all_section_summaries() -> str:
+                return _gather_section_summaries(
+                    METADATA_ENCODING,
+                    _budget_for_text(METADATA_MAX_TOKENS),
+                )
 
-            # Try each text source in priority order
-            last_error = None
-            for source_name, metadata_text in text_sources:
-                if (
-                    not has_meaningful_text(metadata_text)
-                    or len(metadata_text.strip()) < 50
-                ):
+            text_sources.append(("section_summaries", _all_section_summaries))
+
+            # 4) Token-aware paragraph sampling
+            def _paragraph_samples() -> str:
+                return _gather_paragraph_samples(
+                    METADATA_ENCODING,
+                    _budget_for_text(METADATA_MAX_TOKENS),
+                )
+
+            text_sources.append(("paragraph_samples", _paragraph_samples))
+
+            # 5) Raw content fallback
+            raw_content = (getattr(document, "content", "") or "").strip()
+            if has_meaningful_text(raw_content):
+                text_sources.append(("raw_content", raw_content))
+
+            # ---------- Try sources with progressive backoff ----------------------------
+            current_budget = METADATA_MAX_TOKENS
+            last_error: Exception | None = None
+
+            for name, src in text_sources:
+                # Resolve callables lazily to honour current budget
+                src_text = src() if callable(src) else src
+                if not has_meaningful_text(src_text):
                     continue
 
-                try:
-                    # Make the API call with retries for transient errors
-                    response = None
-                    for attempt in range(MAX_RETRY_ATTEMPTS):
-                        try:
-                            response = _safe_generate_text(prompt, metadata_text)
-                            break
-                        except Exception as api_error:
-                            # Backoff on token errors by reducing budget and clipping again
-                            if (
-                                "token" in str(api_error).lower()
-                                and attempt < MAX_RETRY_ATTEMPTS - 1
-                            ):
-                                # reduce budgets for next iteration
-                                new_budget = max(
-                                    METADATA_MAX_TOKENS
-                                    - (attempt + 1) * METADATA_REDUCE_STEP,
-                                    METADATA_MIN_TOKENS,
-                                )
-                                os.environ["SUMMARY_MAX_TOKENS"] = str(new_budget)
-                                continue
-                            raise
-
-                    if not response:
-                        continue
-
-                    # Parse and validate response
+                for attempt in range(MAX_RETRY_ATTEMPTS):
                     try:
-                        validated_metadata = (
-                            DocumentMetadataExtraction.model_validate_json(response)
+                        response = _safe_generate_json(prompt, src_text, current_budget)
+                        validated = DocumentMetadataExtraction.model_validate_json(
+                            response,
                         )
 
-                        # Successfully parsed - update document metadata
-                        document.metadata.document_type = (
-                            validated_metadata.document_type
-                        )
-                        document.metadata.category = validated_metadata.category
-                        document.metadata.key_topics = validated_metadata.key_topics
-                        document.metadata.named_entities = (
-                            validated_metadata.named_entities
-                        )
-                        document.metadata.content_tags = validated_metadata.content_tags
-                        document.metadata.confidence_score = (
-                            validated_metadata.confidence_score
-                        )
+                        # Populate metadata (in place)
+                        document.metadata.document_type = validated.document_type
+                        document.metadata.category = validated.category
+                        document.metadata.key_topics = validated.key_topics
+                        document.metadata.named_entities = validated.named_entities
+                        document.metadata.content_tags = validated.content_tags
+                        document.metadata.confidence_score = validated.confidence_score
 
-                        return  # Success - exit the method
+                        # Defensive normalisation of large lists (metadata, not embeddings)
+                        if isinstance(document.metadata.key_topics, list):
+                            document.metadata.key_topics = document.metadata.key_topics[
+                                :256
+                            ]
+                        if isinstance(document.metadata.content_tags, list):
+                            document.metadata.content_tags = (
+                                document.metadata.content_tags[:256]
+                            )
 
-                    except Exception as parse_error:
+                        return  # success
 
-                        last_error = parse_error
-                        continue
+                    except Exception as err:
+                        last_error = err
+                        # Token-related backoff; then retry
+                        if (
+                            "token" in str(err).lower()
+                            and current_budget > METADATA_MIN_TOKENS
+                            and attempt < MAX_RETRY_ATTEMPTS - 1
+                        ):
+                            current_budget = max(
+                                current_budget - METADATA_REDUCE_STEP,
+                                METADATA_MIN_TOKENS,
+                            )
+                            continue
+                        # Otherwise, break and try next source
+                        break
 
-                except Exception as extraction_error:
+            # If all sources fail, leave metadata unchanged (caller may fallback or ignore)
+            if last_error:
+                pass
 
-                    last_error = extraction_error
-                    continue
-
-            # If we get here, all sources failed
-
-        except Exception as e:
+        except Exception:
+            # Silent failure – do not mutate metadata on unexpected errors
             pass
 
     def _generate_summaries(self, document: Document):
-        """Generate hierarchical summaries using parallel map-reduce approach."""
+        """
+        Generate **hierarchical, token-aware** summaries (paragraph → section → document)
+        using an LLM pipeline with parallel map-reduce and robust fallbacks.
+
+        Overview
+        --------
+        This routine orchestrates a three-tier summarisation pipeline:
+        1) Paragraph summaries (fine-grained, parallel)
+        2) Section summaries synthesised from paragraph summaries (parallel)
+        3) Document summary synthesised from section summaries (single pass)
+
+        All steps are **token-aware** and will chunk/clip inputs so they respect both:
+        • The long-context summariser model limits (o4-mini via `SUMMARY_*`)
+        • The downstream embedding model limits (`EMBEDDING_*`) — final outputs are
+            clipped to ensure they are embeddable without additional processing.
+
+        Environment Variables (tunable)
+        --------------------------------
+        SUMMARY_ENCODING
+            tiktoken encoding used for the **summariser** model context accounting.
+            Default: "o200k_base" (compatible with o4/gpt-4o/gpt-4o-mini).
+
+        SUMMARY_MAX_TOKENS
+            Upper bound on total tokens (prompt + text) sent to the summariser
+            per call before chunking begins. Large by default to leverage o4-mini.
+            Default (int): 100000
+
+        SUMMARY_REDUCE_STEP
+            When a call exceeds the token budget (e.g., model/tool error), the routine
+            retries with `max_tokens - SUMMARY_REDUCE_STEP`. Repeat until success or
+            `SUMMARY_MIN_TOKENS` is reached. Default (int): 5000
+
+        SUMMARY_MIN_TOKENS
+            Lower bound for retry reductions; below this we fall back to token-aware
+            chunking or safe clipping. Default (int): 4000
+
+        EMBEDDING_ENCODING
+            tiktoken encoding used by the **embedding** model (e.g., text-embedding-3-*).
+            Default: "cl100k_base".
+
+        EMBEDDING_MAX_INPUT_TOKENS
+            Hard cap for any single summary (paragraph, section, or document) so it
+            can be embedded directly without reprocessing. A small safety margin
+            under the model’s published limit is recommended. Default (int): 6000.
+
+        Key Properties
+        ---------------
+        • Token-aware chunking:
+            Long inputs are split on sentence/fragment boundaries. Adjacent chunks
+            include a small **overlap** (20% by default) to preserve context continuity.
+        • Progressive back-off:
+            If a single-shot request exceeds the budget or the model rejects it with a
+            token-related error, the routine progressively reduces the token budget
+            and retries, before switching to chunked map-reduce.
+        • Parallel execution (with sequential fallback):
+            Paragraph and section stages use `unify.map` for concurrency; if the
+            pool is unavailable, execution falls back to a sequential loop.
+        • Embedding-safe outputs:
+            Every paragraph, section, and the final document summary is **clipped**
+            to `EMBEDDING_MAX_INPUT_TOKENS` using `clip_text_to_token_limit(...)`.
+        • Robust error handling:
+            Any exception in the pipeline triggers a structured fallback to
+            `_generate_basic_summaries(...)`, which is also token-aware.
+
+        Inputs
+        ------
+        document : Document
+            A parsed document with hierarchical structure (sections → paragraphs).
+            The function reads from:
+            • paragraph.text
+            • section.title / section.paragraphs[*].summary
+            • document.full_text, document.metadata (for context)
+            and writes to:
+            • paragraph.summary
+            • section.summary
+            • document.summary
+
+        Side Effects
+        ------------
+        Mutates `document` in place by populating `summary` fields at all levels.
+
+        Returns
+        -------
+        None
+            Results are attached to the provided `document`.
+
+        Notes
+        -----
+        • Prompts used:
+            - `build_paragraph_summary_prompt()`
+            - `build_section_summary_prompt()`
+            - `build_document_summary_prompt()`
+            - `build_chunked_text_summary_prompt(chunk_number, total_chunks)`
+        • Overlap ratio for chunking is fixed at 0.2 for stable behaviour; you may
+        expose it via env/config if needed.
+        • The routine aggressively normalises/filters empty/whitespace inputs to
+        avoid generating degenerate summaries.
+        """
 
         try:
             import unify
@@ -1973,19 +2203,42 @@ class DoclingParser(GenericParser[Document]):
             # - o4 / gpt-4o / gpt-4o-mini → o200k_base
             # - text-embedding-3-* → cl100k_base (used elsewhere for embeddings)
             SUMMARISER_MODEL_ENCODING = os.environ.get("SUMMARY_ENCODING", "o200k_base")
-            INITIAL_MAX_TOKENS = int(os.environ.get("SUMMARY_MAX_TOKENS", "60000"))
-            TOKEN_REDUCTION_STEP = int(os.environ.get("SUMMARY_REDUCE_STEP", "5000"))
-            MIN_TOKEN_LIMIT = int(os.environ.get("SUMMARY_MIN_TOKENS", "45000"))
-            MAX_RETRY_ATTEMPTS = 3
+            # Use large default budgets to leverage o4-mini's long context, while remaining configurable.
+            try:
+                INITIAL_MAX_TOKENS = int(os.environ.get("SUMMARY_MAX_TOKENS", "100000"))
+            except Exception:
+                INITIAL_MAX_TOKENS = 100000
+            try:
+                TOKEN_REDUCTION_STEP = int(
+                    os.environ.get("SUMMARY_REDUCE_STEP", "5000"),
+                )
+            except Exception:
+                TOKEN_REDUCTION_STEP = 5000
+            try:
+                MIN_TOKEN_LIMIT = int(os.environ.get("SUMMARY_MIN_TOKENS", "4000"))
+            except Exception:
+                MIN_TOKEN_LIMIT = 4000
+
+            # Embedding constraints for produced summaries
+            EMBEDDING_ENCODING = os.environ.get("EMBEDDING_ENCODING", "cl100k_base")
+            try:
+                EMBEDDING_MAX_INPUT_TOKENS = int(
+                    os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"),
+                )
+            except Exception:
+                EMBEDDING_MAX_INPUT_TOKENS = 6000
 
             # Chunk overlap ratio for context preservation
             CHUNK_OVERLAP_RATIO = 0.2
+
+            # Maximum number of retry attempts
+            MAX_RETRY_ATTEMPTS = 3
 
             def _safe_map(name: str, items: list[dict], fn):
                 """Run unify.map with fallback to sequential when the pool errors."""
                 try:
                     return unify.map(fn, items, name=name) if items else []
-                except Exception:
+                except Exception as e:
                     return [fn(**it) for it in items]
 
             def _semantic_chunk_text_by_tokens(
@@ -2263,7 +2516,7 @@ class DoclingParser(GenericParser[Document]):
                                 .generate(prompt_builder() + combined)
                                 .strip()
                             )
-                        except Exception:
+                        except Exception as e:
                             return combined
                 else:
                     return chunk_summaries[0]
@@ -2289,8 +2542,6 @@ class DoclingParser(GenericParser[Document]):
                         )
                         paragraph_refs.append((section_idx, para_idx))
 
-            total_paragraphs = len(paragraphs_to_process)
-
             # Define the paragraph summary runner
             def _summarize_paragraph(**para_data):
                 """Summarize a single paragraph."""
@@ -2308,11 +2559,20 @@ class DoclingParser(GenericParser[Document]):
                     fn=_summarize_paragraph,
                 )
 
-                # Guard against length mismatches
-                for i, ((section_idx, para_idx)) in enumerate(paragraph_refs):
-                    if i >= len(para_summaries):
-                        break
-                    summary = para_summaries[i] or ""
+                # Update the document with the summaries
+                for (section_idx, para_idx), summary in zip(
+                    paragraph_refs,
+                    para_summaries,
+                ):
+                    # Ensure each paragraph summary fits the embedding model budget
+                    clipped = clip_text_to_token_limit(
+                        summary or "",
+                        EMBEDDING_MAX_INPUT_TOKENS,
+                        EMBEDDING_ENCODING,
+                    )
+                    document.sections[section_idx].paragraphs[
+                        para_idx
+                    ].summary = clipped
 
             # LEVEL 2: Parallel Section summaries
 
@@ -2359,8 +2619,6 @@ class DoclingParser(GenericParser[Document]):
                         p.text for p in section.paragraphs
                     )
 
-            total_sections = len(sections_to_process)
-
             # Define the section summary runner
             def _summarize_section(**section_data):
                 """Summarize a single section."""
@@ -2379,10 +2637,13 @@ class DoclingParser(GenericParser[Document]):
                 )
 
                 # Update the document with the summaries
-                for i, section_idx in enumerate(section_refs):
-                    if i >= len(section_summaries):
-                        break
-                    document.sections[section_idx].summary = section_summaries[i] or ""
+                for section_idx, summary in zip(section_refs, section_summaries):
+                    clipped = clip_text_to_token_limit(
+                        summary or "",
+                        EMBEDDING_MAX_INPUT_TOKENS,
+                        EMBEDDING_ENCODING,
+                    )
+                    document.sections[section_idx].summary = clipped
 
             # LEVEL 3: Document summary (from section summaries)
             if document.summary is None and document.sections:
@@ -2395,6 +2656,7 @@ class DoclingParser(GenericParser[Document]):
                         # Use title if no summary available
                         section_summaries.append(f"Section {idx + 1}: {section.title}")
 
+                final_doc_summary = document.full_text[:EMBEDDING_MAX_INPUT_TOKENS]
                 if section_summaries:
                     combined_sections = "\n\n".join(section_summaries)
 
@@ -2405,6 +2667,7 @@ class DoclingParser(GenericParser[Document]):
 
                     # Generate document summary from section summaries
                     doc_prompt = build_document_summary_prompt()
+
                     # Ensure the combined text fits within token budget with prompt
                     prompt_tokens = count_tokens(doc_prompt, SUMMARISER_MODEL_ENCODING)
                     budget = max(INITIAL_MAX_TOKENS - prompt_tokens, 256)
@@ -2414,79 +2677,210 @@ class DoclingParser(GenericParser[Document]):
                         SUMMARISER_MODEL_ENCODING,
                     )
                     try:
-                        document.summary = (
+                        final_doc_summary = (
                             client.copy().generate(doc_prompt + clipped).strip()
                         )
-                    except Exception:
+                        # Clip document-level summary to embedding budget as well
+                        final_doc_summary = clip_text_to_token_limit(
+                            final_doc_summary or "",
+                            EMBEDDING_MAX_INPUT_TOKENS,
+                            EMBEDDING_ENCODING,
+                        )
+                    except Exception as e:
                         # Fallback – use chunking path
-                        document.summary = _chunk_text_if_needed(
+                        final_doc_summary = _chunk_text_if_needed(
                             doc_context + combined_sections,
                             lambda: doc_prompt,
                         )
+
+                document.summary = final_doc_summary
 
             print("Summary generation completed")
 
         except Exception as e:
             # Fallback to basic summaries
+            print("Summary generation failed, falling back to basic summaries")
             self._generate_basic_summaries(document)
 
-    def _generate_basic_summaries(self, document: Document):
-        """Generate basic summaries as fallback when LLM summarization fails."""
+    def _generate_basic_summaries(self, document: Document) -> None:
+        """
+        Generate **token-aware** fallback summaries when LLM summarisation is unavailable.
+
+        Goals
+        -----
+        • Produce meaningful summaries for paragraphs → sections → document.
+        • Ensure all outputs are embeddable by the downstream embedding model.
+        • Avoid hard-coded magic numbers; use env-tunable limits and token utilities.
+
+        Env Vars (tunable)
+        -------------------
+        EMBEDDING_ENCODING
+            tiktoken encoding used by the embedding model (default: "cl100k_base").
+            Examples: "cl100k_base" for text-embedding-3-* models.
+        EMBEDDING_MAX_INPUT_TOKENS
+            Maximum input tokens the embedding model should receive for **one** text.
+            Default is 6000 (keeps a small safety margin under ~8.1k).
+
+        Behaviour
+        ---------
+        1) Paragraph summaries: whitespace-normalised copies of the paragraph text.
+        2) Section summaries: bullet list of paragraph summaries, clipped *per section*
+           to a fair share of the overall embedding budget.
+        3) Document summary: join of section summaries, clipped to the full budget.
+        4) Defensive last-resort: ensure `document.summary` is always a non-empty string.
+        """
+        import os
+
         try:
-            # Basic paragraph summaries - first 200 chars
-            for section in document.sections:
-                for para in section.paragraphs:
-                    if para.summary is None and has_meaningful_text(para.text or ""):
-                        para.summary = (
-                            para.text[:200] + "..."
-                            if len(para.text) > 200
-                            else para.text
+            # Token limits for the embedding model (env-tunable; sensible defaults)
+            embed_encoding = os.environ.get("EMBEDDING_ENCODING", "cl100k_base")
+            # Leave a safety margin so headers/joiners never push us over model limits
+            max_doc_tokens = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"))
+
+            sections = document.sections or []
+
+            # ────────────────────────────────────────────────────────────────────
+            # 1) Paragraph-level summaries (no hard truncation here)
+            #    Keep summaries compact & normalised; token clipping happens at higher levels
+            # ────────────────────────────────────────────────────────────────────
+            for section in sections:
+                for para in section.paragraphs or []:
+                    if para.summary is not None:
+                        continue
+                    raw = (para.text or "").strip()
+                    if not has_meaningful_text(raw):
+                        continue
+                    # Whitespace-normalised text keeps length predictable for later clipping
+                    para.summary = " ".join(raw.split())
+
+            # ────────────────────────────────────────────────────────────────────
+            # 2) Section-level summaries
+            #    Aggregate bullet points from paragraph summaries and clip to *per-section* budget
+            # ────────────────────────────────────────────────────────────────────
+            sec_count = max(1, len(sections))
+            # Fair share of the total embedding budget per section, with a small minimum
+            per_section_cap = max(256, max_doc_tokens // sec_count)
+
+            for section in sections:
+                if section.summary is None:
+                    # Build from paragraph summaries (or paragraph text when summary missing)
+                    bullets: list[str] = []
+                    for p in section.paragraphs or []:
+                        bit = (p.summary or p.text or "").strip()
+                        if has_meaningful_text(bit):
+                            bullets.append(f"• {bit}")
+
+                    # If nothing to summarise, try to at least retain a title
+                    if not bullets and has_meaningful_text(section.title):
+                        bullets.append(section.title.strip())
+
+                    if bullets:
+                        sec_text = "\n".join(bullets)
+                        if has_meaningful_text(section.title):
+                            # Prepend title; downstream clipping will enforce the cap
+                            sec_text = f"{section.title.strip()}\n{sec_text}"
+
+                        # Clip to per-section share so each section remains embeddable
+                        if not is_within_token_limit(
+                            sec_text,
+                            per_section_cap,
+                            embed_encoding,
+                        ):
+                            sec_text = clip_text_to_token_limit(
+                                sec_text,
+                                per_section_cap,
+                                embed_encoding,
+                            )
+                        section.summary = sec_text
+                else:
+                    # If section already has a summary, still enforce the per-section cap
+                    if not is_within_token_limit(
+                        section.summary,
+                        per_section_cap,
+                        embed_encoding,
+                    ):
+                        section.summary = clip_text_to_token_limit(
+                            section.summary,
+                            per_section_cap,
+                            embed_encoding,
                         )
 
-            # Basic section summaries - combine paragraph starts
-            for section in document.sections:
-                if (
-                    section.summary is None
-                    and section.paragraphs
-                    and any(
-                        has_meaningful_text(p.summary or p.text or "")
-                        for p in section.paragraphs
-                    )
-                ):
-                    summary_parts = []
-                    for i, para in enumerate(
-                        section.paragraphs[:3],
-                    ):  # First 3 paragraphs
-                        text = para.summary or para.text[:100]
-                        summary_parts.append(text)
-                    section.summary = " ".join(summary_parts)
+            # ────────────────────────────────────────────────────────────────────
+            # 3) Document-level summary
+            #    Concatenate section summaries and clip to the full budget
+            # ────────────────────────────────────────────────────────────────────
+            if document.summary is None:
+                doc_parts: list[str] = []
+                for s in sections:
+                    text = (s.summary or "").strip()
+                    if has_meaningful_text(text):
+                        doc_parts.append(text)
 
-            # Basic document summary - combine section titles and starts
-            if (
-                document.summary is None
-                and document.sections
-                and any(
-                    has_meaningful_text(s.summary or s.title or "")
-                    for s in document.sections
-                )
-            ):
-                summary_parts = []
-                for section in document.sections[:5]:  # First 5 sections
-                    if section.title:
-                        summary_parts.append(
-                            f"{section.title}: {(section.summary or '')[:100]}",
+                combined = "\n\n".join(doc_parts)
+                if not has_meaningful_text(combined):
+                    # Fall back to full_text if sections carry no usable content
+                    combined = (document.full_text or "").strip()
+
+                if has_meaningful_text(combined):
+                    if not is_within_token_limit(
+                        combined,
+                        max_doc_tokens,
+                        embed_encoding,
+                    ):
+                        combined = clip_text_to_token_limit(
+                            combined,
+                            max_doc_tokens,
+                            embed_encoding,
                         )
-                    elif section.summary:
-                        summary_parts.append(section.summary[:100])
-                document.summary = " ".join(summary_parts)
+                    document.summary = combined
+
+            # ────────────────────────────────────────────────────────────────────
+            # 4) Final guard – never return an empty/None document summary
+            # ────────────────────────────────────────────────────────────────────
+            if not has_meaningful_text(document.summary):
+                raw = (document.full_text or "").strip()
+                if has_meaningful_text(raw):
+                    try:
+                        document.summary = (
+                            raw
+                            if is_within_token_limit(
+                                raw,
+                                max_doc_tokens,
+                                embed_encoding,
+                            )
+                            else clip_text_to_token_limit(
+                                raw,
+                                max_doc_tokens,
+                                embed_encoding,
+                            )
+                        )
+                    except Exception:
+                        # As a last resort, a small slice to guarantee non-empty output
+                        document.summary = raw[:500].rstrip() + (
+                            "…" if len(raw) > 500 else ""
+                        )
+                else:
+                    document.summary = "Document parsing completed."
 
         except Exception:
-            # Ultimate fallback
-            document.summary = (
-                document.full_text[:500]
-                if document.full_text
-                else "Document parsing completed."
-            )
+            # Defensive last resort – do not raise from fallback path
+            raw = (getattr(document, "full_text", None) or "").strip()
+            try:
+                embed_encoding = os.environ.get("EMBEDDING_ENCODING", "cl100k_base")
+                max_doc_tokens = int(
+                    os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"),
+                )
+                document.summary = (
+                    clip_text_to_token_limit(raw, max_doc_tokens, embed_encoding)
+                    if raw
+                    else "Document parsing completed."
+                )
+            except Exception:
+                document.summary = (
+                    raw[:500].rstrip() + ("…" if len(raw) > 500 else "")
+                    if raw
+                    else "Document parsing completed."
+                )
 
     def _update_statistics(self, document: Document):
         """Update document statistics."""
