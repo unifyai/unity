@@ -111,12 +111,11 @@ def _build_communication_rules_section(is_call: bool) -> str:
             "- Don't call unless needed or requested by the user.",
             "- If you need to ask questions, you should send a message with ToolUseAction.",
             "- For example, if the user sends you an sms asking about something, then it's expected that you will reply with an sms through the ToolUseAction.",
-            '- In the above example, there should be ALWAYS be an explicit mention of something like "DIRECT <SMS/WHATSAPP/EMAIL/CALL>:" prefixing the contents in the ToolUseAction based on the communication channel.',
-            '- If it is a third-party SMS, WhatsApp or Email (i.e. to be sent to someone other than the current user), then you should also mention something like "THIRD PARTY <SMS/WHATSAPP/EMAIL/CALL>" alongside the contents in the ToolUseAction.',
+            '- In the above example, there should be ALWAYS be an explicit mention of something like "DIRECT <SMS/WHATSAPP/EMAIL/CALL>: <contents of the interaction>" in the ToolUseAction based on the communication channel.',
+            '- If it is a third-party SMS, WhatsApp or Email (i.e. to be sent to someone other than the current user), then you should also mention something like "THIRD PARTY <SMS/WHATSAPP/EMAIL/CALL>: <contents of the interaction>" in the ToolUseAction.',
             "- The same logic applies even to cross-channel communication, i.e. if the user sends you an sms asking to send an email, then again decision about DIRECT/THIRD PARTY should be the same as if they asked to send an sms instead.",
             "- For cross-channel communication, you need to also send an acknowledgement of the action to the user, for example in the above case, you also need to send an sms acknowledgement of having sent the email, include that in the ToolUseAction as well.",
             "- Similarly, if it was an email asking you to send an sms, then you should send an email acknowledgement of having sent the sms.",
-            "- But these follow-up messages should be sent only once, be sure to mention that in the ToolUseAction as well, make sure you're as descriptive/verbose as possible about what needs to be done.",
         ]
     lines += [
         "- Say hello to the user during the start of the conversation only, don't need to say hello everytime.",
