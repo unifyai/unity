@@ -31,6 +31,80 @@ unify.set_client_direct_mode(True)
 
 
 # ---------------------------------------------------------------------------
+# Default logging hygiene
+# ---------------------------------------------------------------------------
+
+
+def _truthy(env: str, default: bool = True) -> bool:
+    v = os.getenv(env)
+    if v is None:
+        return default
+    return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _configure_default_logging() -> None:
+    """Apply safe, idempotent default logging rules.
+
+    Defaults:
+      - Show `unity` logs at INFO.
+      - Hide noisy third-party HTTP clients (httpx/urllib3/openai) unless opted-in.
+      - By default, include-only project logs (unity*) unless overridden via env.
+
+    Env flags (all optional):
+      - UNITY_SILENCE_HTTPX=true|false (default true)
+      - UNITY_SILENCE_URLLIB3=true|false (default true)
+      - UNITY_SILENCE_OPENAI=true|false (default true)
+      - UNITY_LOG_ONLY_PROJECT=true|false (default true)
+      - UNITY_LOG_INCLUDE_PREFIXES="unity,unify_requests" (used when UNITY_LOG_ONLY_PROJECT=true)
+    """
+    if getattr(_configure_default_logging, "_done", False):
+        return
+
+    try:
+        import logging
+
+        # 1) Keep our project logs visible
+        logging.getLogger("unity").setLevel(logging.INFO)
+
+        # 2) Mute common HTTP client libraries by default
+        if _truthy("UNITY_SILENCE_HTTPX", True):
+            logging.getLogger("httpx").setLevel(logging.WARNING)
+        if _truthy("UNITY_SILENCE_URLLIB3", True):
+            logging.getLogger("urllib3").setLevel(logging.WARNING)
+        if _truthy("UNITY_SILENCE_OPENAI", True):
+            logging.getLogger("openai").setLevel(logging.WARNING)
+
+        # 3) Optional include-only filter (default: enabled per request)
+        if _truthy("UNITY_LOG_ONLY_PROJECT", True):
+            allow_raw = os.getenv("UNITY_LOG_INCLUDE_PREFIXES", "unity")
+            allow = tuple(s.strip() for s in allow_raw.split(",") if s.strip())
+
+            class _OnlyProject(logging.Filter):
+                def filter(self, record: "logging.LogRecord") -> bool:  # type: ignore[name-defined]
+                    name = record.name or ""
+                    # exact match or child logger of any allowed prefix
+                    return any(name == p or name.startswith(p + ".") for p in allow)
+
+            root = logging.getLogger()
+            # Attach to root so future handlers are also filtered
+            root.addFilter(_OnlyProject())
+            # And to any already-present handlers to be thorough
+            for h in list(root.handlers):
+                try:
+                    h.addFilter(_OnlyProject())
+                except Exception:
+                    pass
+    except Exception:
+        # Never let logging setup crash imports
+        pass
+
+    _configure_default_logging._done = True  # type: ignore[attr-defined]
+
+
+_configure_default_logging()
+
+
+# ---------------------------------------------------------------------------
 # Lazy runtime initialisation
 # ---------------------------------------------------------------------------
 
