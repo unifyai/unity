@@ -207,7 +207,8 @@ class ConversationManager:
             await pubsub.psubscribe("app:comms:*")
             while True:
                 msg = await pubsub.get_message(timeout=2, ignore_subscribe_messages=True)
-                print(msg)
+                
+                if msg is not None: print(msg)
 
                 # there are still pending messages and no scheduled responses or currently running responses
                 if msg is None:
@@ -240,8 +241,8 @@ class ConversationManager:
                             target_path = Path(__file__).parent.resolve() / "medium_scripts" / "call.py"
                             self.call_proc = run_script(
                                 str(target_path),
-                                "console",
-                                "+12697784020",
+                                "dev",
+                                self.user_number,
                                 self.assistant_number,
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",

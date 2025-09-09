@@ -37,8 +37,6 @@ from unity.conversation_manager.events import *
 from unity.conversation_manager.utils import (
     dispatch_agent,
     publish_event,
-    close_connection,
-    create_connection,
 )
 
 event_broker = get_event_broker()
@@ -163,6 +161,8 @@ async def entrypoint(ctx: agents.JobContext):
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
                 print("All tasks cancelled successfully")
+            except asyncio.CancelledError:
+                pass
             except Exception as e:
                 print(f"Error during task cancellation: {e}")
 
@@ -342,23 +342,21 @@ if __name__ == "__main__":
         assistant_number = sys.argv[3]
         tts_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
         voice_id = sys.argv[5]
-        meet_id = sys.argv[6] if sys.argv[6] != "None" else ""
         outbound = sys.argv[7]
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint
     os.environ["CALL_FROM_NUMBER"] = from_number
     os.environ["TTS_PROVIDER"] = tts_provider
-    os.environ["MEET_ID"] = meet_id
     if voice_id != "None":
         os.environ["VOICE_ID"] = voice_id
     # os.environ["CALL_TO_NUMBER"] = assistant_number
     os.environ["OUTBOUND"] = outbound
 
-    agent_name = f"unity_{assistant_number}" if meet_id == "" else meet_id
+    agent_name = f"unity_{assistant_number}"
 
     # dispatch agent
-    if sys.argv[1] == "dev" and not meet_id:
+    if sys.argv[1] == "dev":
         dispatch_agent(agent_name)
 
     agents.cli.run_app(
