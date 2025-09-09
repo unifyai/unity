@@ -8,6 +8,7 @@ import secrets
 import string
 import traceback
 from enum import Enum
+from typing import TypedDict
 from pydantic import BaseModel
 import time
 from typing import (
@@ -30,6 +31,7 @@ from ..constants import LOGGER
 from dataclasses import dataclass
 from ..events.event_bus import Event, EVENT_BUS
 from contextvars import ContextVar
+from contextlib import suppress
 
 
 def short_id(length=4):
@@ -710,9 +712,7 @@ def _chat_context_repr(
 # ── small helper: publish to the EventBus (if configured) ──────────────
 async def _to_event_bus(
     messages: Union[Dict, List[Dict]],
-    loop_id: str,
-    lineage: list[str],
-    log_label: str,
+    loop_cfg: _AsyncToolLoopConfig,
 ) -> None:
     """
     Emit *messages* to the shared EventBus (if configured).
@@ -731,9 +731,9 @@ async def _to_event_bus(
                 type="ToolLoop",
                 payload={
                     "message": message,
-                    "method": loop_id,
-                    "hierarchy": list(lineage),
-                    "hierarchy_label": log_label,
+                    "method": loop_cfg.loop_id,
+                    "hierarchy": list(loop_cfg.lineage),
+                    "hierarchy_label": loop_cfg.label,
                 },
             ),
         )
@@ -886,7 +886,1247 @@ def _build_helper_ack_content(name: str, args_json: Any) -> str:
     return ack_content
 
 
+class _AsyncToolLoopMessageDispatcher:
+    def __init__(
+        self,
+        client: unify.AsyncUnify,
+        cfg: _AsyncToolLoopConfig,
+        timer: _TimeoutTimer,
+    ):
+        self._client = client
+        self._cfg = cfg
+        self._timer = timer
+
+    async def append_msgs(
+        self,
+        msgs: list[dict],
+    ) -> None:
+        self._client.append_messages(msgs)
+        await _to_event_bus(msgs, self._cfg)
+        self._timer.reset()
+
+
+# ── small helper: add completion tool message pair ──────────────
+async def _emit_completion_pair(
+    result: str,
+    call_id: str,
+    msg_dispatcher: _AsyncToolLoopMessageDispatcher,
+) -> dict:
+    """
+    Append a synthetic assistant→tool pair that carries the *final*
+    outcome for `call_id`.  Returns the tool-message so callers can
+    reuse it for logging / event-bus.
+    """
+    dummy_id = f"{call_id}_status"
+
+    assistant_stub = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": dummy_id,
+                "type": "function",
+                "function": {
+                    "name": f"check_status_{call_id}",
+                    "arguments": "{}",
+                },
+            },
+        ],
+        "content": "",
+    }
+    tool_msg = {
+        "role": "tool",
+        "tool_call_id": dummy_id,
+        "name": f"check_status_{call_id}",
+        "content": result,
+    }
+
+    await msg_dispatcher.append_msgs([assistant_stub, tool_msg])
+    return tool_msg
+
+
+# ── small helper: keep assistant→tool chronology DRY ────────────────────
+async def _insert_after_assistant(
+    assistant_meta: dict,
+    parent_msg: dict,
+    tool_msg: dict,
+    client,
+    msg_dispatcher: _AsyncToolLoopMessageDispatcher,
+) -> None:
+    """
+    Append *tool_msg* and move it directly after *parent_msg*, while
+    updating the per-assistant `results_count` bookkeeping.
+    """
+    meta = assistant_meta.setdefault(
+        id(parent_msg),
+        {"results_count": 0},
+    )
+    await msg_dispatcher.append_msgs([tool_msg])
+    insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
+    client.messages.insert(insert_pos, client.messages.pop())
+    meta["results_count"] += 1
+
+
+# ── *single* authoritative implementation of "task finished" handling ──
+async def _process_completed_task(
+    task: asyncio.Task,
+    consecutive_failures: _AsyncToolLoopToolFailureTracker,
+    tools_data: _ToolsData,
+    outer_handle_container,
+    assistant_meta,
+    client,
+    msg_dispatcher,
+    logger,
+) -> bool:
+    """
+    Deal with a finished tool *task* exactly once:
+
+    1.  Pop bookkeeping (``pending`` / ``task_info``).
+    2.  Serialise *success* or *exception* into ``result``.
+    3.  Patch or insert the correct **tool** message so the transcript
+        stays perfectly chronological.
+    4.  Emit the event-bus hook (if configured).
+    5.  Record the payload in ``completed_results`` for later
+        `_continue_<id>` helpers.
+    6.  Enforce the *max_consecutive_failures* safety valve.
+    """
+
+    def _at_tail(msg: dict) -> bool:
+        """True when *msg* is the very last entry in client.messages."""
+        return bool(client.messages) and client.messages[-1] is msg
+
+    tools_data.pending.discard(task)
+    info: ToolCallMetadata = tools_data.info.pop(task)
+    name = info["name"]
+    call_id = info["call_id"]
+    fn = info["call_dict"]["function"]["name"]
+    arg = info["call_dict"]["function"]["arguments"]
+
+    # 2️⃣  obtain result -------------------------------------------------
+    try:
+        raw = task.result()
+
+        # ───────────────────────────────────────────────────────────────
+        #  NEW:  the tool *did not really finish* – it returned *another*
+        #        AsyncToolLoopHandle.  We:
+        #        (1) schedule `handle.result()` as a *new* task,
+        #        (2) keep the **same** `call_id` so the continue/-cancel
+        #            helpers keep working,
+        #        (3) create / patch one placeholder "still running…"
+        #            tool-message in the transcript.
+        # ───────────────────────────────────────────────────────────────
+        # treat ANY AsyncToolLoopHandle (or subclass) as a nested loop
+        from unity.common.llm_helpers import SteerableToolHandle
+
+        if isinstance(raw, SteerableToolHandle):
+            # If the nested handle explicitly requests pass-through behaviour
+            # expose it directly to the outer caller *immediately*.
+            if (
+                getattr(raw, "__passthrough__", False)
+                and outer_handle_container
+                and outer_handle_container[0] is not None
+            ):
+                outer_handle_container[0]._adopt(raw)
+            # ── upgrade interject / clarification flags from handle ─────
+            if hasattr(raw, "interject"):
+                info["is_interjectable"] = True
+
+            h_up_q = getattr(raw, "clarification_up_q", info.get("clar_up_queue"))
+            h_down_q = getattr(raw, "clarification_down_q", info.get("clar_down_queue"))
+
+            if (h_up_q is not None) ^ (h_down_q is not None):
+                raise AttributeError(
+                    f"Handle returned by tool {info['name']!r} exposes only "
+                    "one of 'clarification_up_q' / 'clarification_down_q'. "
+                    "Both queues are required (or neither).",
+                )
+
+            # 1️⃣ spawn the nested waiter
+            #
+            # ⤷ `handle.result` can now be **sync OR async**:
+            #    • async ⇒ use the coroutine directly,
+            #    • sync  ⇒ run it in a worker-thread so the event-loop never blocks.
+            if inspect.iscoroutinefunction(raw.result):
+                nested_coro = raw.result()  # already a coroutine
+            else:
+                nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
+
+            nested_task = asyncio.create_task(nested_coro)
+            tools_data.pending.add(nested_task)
+
+            # 2️⃣ insert / update a single placeholder
+            ph = info.get("tool_reply_msg")
+            if ph is None:
+                ph = {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": info["name"],
+                    "content": ("Nested async tool loop started… waiting for result."),
+                }
+                await _insert_after_assistant(
+                    assistant_meta,
+                    info["assistant_msg"],
+                    ph,
+                    client,
+                    msg_dispatcher,
+                )
+                info["tool_reply_msg"] = ph  # remember on *parent*
+            else:
+                ph["content"] = "Nested async tool loop started… waiting for result."
+
+            # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
+            tools_data.info[nested_task] = {
+                **info,
+                "handle": raw,
+                "is_interjectable": hasattr(raw, "interject"),
+                "tool_reply_msg": ph,
+                "clar_up_queue": h_up_q,
+                "clar_down_queue": h_down_q,
+            }
+            if h_up_q is not None:
+                tools_data.clarification_channels[call_id] = (h_up_q, h_down_q)
+            return False  # ⬅️  no LLM turn required
+
+        # ───────────────────────────────────────────────────────────────
+        #  Normal (non-handle) result – unchanged path
+        # ───────────────────────────────────────────────────────────────
+        # ── finished successfully – promote any embedded images ─────────
+        images: list[str] = []
+        _collect_images(raw, images)
+
+        text_repr = _dumps(_strip_image_keys(raw), indent=4)
+
+        if images:
+            content_blocks: list = []
+            if text_repr and text_repr != "{}":
+                content_blocks.append({"type": "text", "text": text_repr})
+            content_blocks.extend(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                }
+                for b64 in images
+            )
+            result = content_blocks
+        else:
+            result = text_repr
+
+        consecutive_failures.reset_failures()
+    except Exception:
+        consecutive_failures.increment_failures()
+        result = traceback.format_exc()
+        if logger.log_steps:
+            logger.error(
+                f"Error: {name} failed "
+                f"(attempt {consecutive_failures.current_failures}/{consecutive_failures.max_failures}):\n{result}",
+                prefix="❌",
+            )
+            # Additional debug context: show the exact tool schema and arguments
+            # that were presented to the LLM for this failed call. This helps
+            # diagnose docstrings/argspec mismatches that cause tool misuse.
+            try:
+                debug_payload = {
+                    "tool_name": name,
+                    "call_id": call_id,
+                    "llm_function_schema": info.get("tool_schema"),
+                    "llm_arguments": info.get("llm_arguments"),
+                    "raw_arguments_json": info.get("raw_arguments_json"),
+                }
+                logger.error(
+                    f"FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
+                    prefix="🧩",
+                )
+            except Exception:
+                pass
+
+    # 3️⃣  remember so later `_continue_*` helpers can answer instantly
+    tools_data.completed_results[call_id] = result
+
+    # 4️⃣  update / insert tool-result message --------------------------
+    asst_msg = info["assistant_msg"]
+    continue_msg = info.get("continue_msg")
+    clarify_ph = info.get("clarify_placeholder")
+    tool_reply_msg = info.get("tool_reply_msg")
+
+    if continue_msg is not None:
+        if _at_tail(continue_msg):  # ✅ safe to overwrite
+            continue_msg["content"] = result
+            continue_msg["name"] = (
+                f"{fn}({arg}) completed successfully, "
+                "the return values are in the `content` field below."
+            )
+            tool_msg = continue_msg
+        else:  # 🆕 keep history stable
+            tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+
+    elif clarify_ph is not None:
+        if _at_tail(clarify_ph):
+            clarify_ph["content"] = result
+            tool_msg = clarify_ph
+        else:
+            tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+
+    elif tool_reply_msg is not None:
+        if _at_tail(tool_reply_msg):
+            tool_reply_msg["content"] = result
+            tool_msg = tool_reply_msg
+        else:
+            tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+
+    else:
+        tool_msg = {
+            "role": "tool",
+            "tool_call_id": call_id,
+            "name": name,
+            "content": result,
+        }
+        await _insert_after_assistant(
+            assistant_meta,
+            asst_msg,
+            tool_msg,
+            client,
+            msg_dispatcher,
+        )
+
+    # ── optional console logging for every finished tool call ────────────
+    #     (mirrors the assistant-message logging above)
+    if logger.log_steps:
+        # Create a clean version of tool_msg for logging (strip image data)
+        tool_msg_for_logging = tool_msg.copy()
+        if isinstance(tool_msg_for_logging.get("content"), list):
+            # Filter out image_url items and keep only text content
+            tool_msg_for_logging["content"] = [
+                item
+                for item in tool_msg_for_logging["content"]
+                if item.get("type") != "image_url"
+            ]
+        logger.info(
+            f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
+            prefix="🛠️",
+        )
+
+    # 6️⃣  failure guard -------------------------------------------------
+    if consecutive_failures.has_exceeded_failures():
+        if logger.log_steps:
+            logger.error(f"Aborting: too many tool failures.", prefix="🚨")
+        raise RuntimeError(
+            "Aborted after too many consecutive tool failures.",
+        )
+
+    # successful (or failed) *final* result → LLM may need to react
+    return True
+
+
+# Helper: propagate a stop request to any nested SteerableToolHandle returned
+# by base tools. This ensures outer stop/cancel signals reach inner loops.
+async def _propagate_stop_to_nested_handles(
+    task_info,
+    reason: Optional[str] = None,
+) -> None:
+    try:
+        for _t, _inf in list(task_info.items()):
+            h = _inf.get("handle")
+            if h is not None and hasattr(h, "stop"):
+                try:
+                    await _forward_handle_call(
+                        h,
+                        "stop",
+                        {"reason": reason} if reason is not None else {},
+                        fallback_positional_keys=["reason"],
+                    )
+                except Exception:
+                    # Best effort – never let propagation failure crash the loop
+                    pass
+    except Exception:
+        pass
+
+
+async def _propagate_stop_once(
+    task_info,
+    stop_forward_once,
+    reason: Optional[str],
+) -> bool:
+    if stop_forward_once:
+        return stop_forward_once
+    await _propagate_stop_to_nested_handles(task_info, reason)
+    return True
+
+
+# Helper: insert a tool-acknowledgement message for helper tools
+async def _acknowledge_helper_call(
+    asst_msg: dict,
+    call_id: str,
+    name: str,
+    args_json: Any,
+    *,
+    assistant_meta,
+    client,
+    msg_dispatcher,
+) -> None:
+    tool_msg = {
+        "role": "tool",
+        "tool_call_id": call_id,
+        "name": name,
+        "content": _build_helper_ack_content(name, args_json),
+    }
+    await _insert_after_assistant(
+        assistant_meta,
+        asst_msg,
+        tool_msg,
+        client,
+        msg_dispatcher,
+    )
+
+
+# Helper: schedule a base tool call (shared by main path and backfill)
+async def _schedule_base_tool_call(
+    asst_msg: dict,
+    *,
+    name: str,
+    args_json: Any,
+    call_id: str,
+    call_idx: int,
+    tools_data,
+    parent_chat_context,
+    propagate_chat_context,
+    assistant_meta,
+    client,
+) -> None:
+    # Base tool must exist
+    if name not in tools_data.norm_tools:
+        return
+
+    fn = tools_data.norm_tools[name].fn
+
+    # Enforce hidden per-tool total call quota: should be pre-pruned from
+    # the assistant message, but guard here as well and simply skip.
+    with suppress(Exception):
+        lim = tools_data.norm_tools[name].max_total_calls
+        if lim is not None and tools_data.call_counts.get(name, 0) >= lim:
+            return
+
+    # Build extra kwargs (chat context, interject/clarification/pause)
+    extra_kwargs: dict = {}
+    if propagate_chat_context:
+        cur_msgs = [m for m in client.messages if not m.get("_ctx_header")]
+        ctx_repr = _chat_context_repr(parent_chat_context, cur_msgs)
+        extra_kwargs["parent_chat_context"] = ctx_repr
+
+    sig = inspect.signature(fn)
+    params = sig.parameters
+    has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+    sig_accepts_interject_q = "interject_queue" in params or has_varkw
+    sig_accepts_pause_event = "pause_event" in params or has_varkw
+    sig_accepts_clar_qs = (
+        "clarification_up_q" in params and "clarification_down_q" in params
+    ) or has_varkw
+
+    pause_ev: Optional[asyncio.Event] = None
+    if sig_accepts_pause_event:
+        pause_ev = asyncio.Event()
+        pause_ev.set()  # start running
+        extra_kwargs["pause_event"] = pause_ev
+
+    clar_up_q: Optional[asyncio.Queue[str]] = None
+    clar_down_q: Optional[asyncio.Queue[str]] = None
+    if sig_accepts_clar_qs:
+        clar_up_q = asyncio.Queue()
+        clar_down_q = asyncio.Queue()
+        extra_kwargs["clarification_up_q"] = clar_up_q
+        extra_kwargs["clarification_down_q"] = clar_down_q
+
+    sub_q: Optional[asyncio.Queue[str]] = None
+    if sig_accepts_interject_q:
+        sub_q = asyncio.Queue()
+        extra_kwargs["interject_queue"] = sub_q
+
+    # Parse args
+    try:
+        call_args = (
+            json.loads(args_json) if isinstance(args_json, str) else (args_json or {})
+        )
+    except Exception:
+        call_args = {}
+
+    # Filter extras to match fn signature
+    sig = inspect.signature(fn)
+    params = sig.parameters
+    has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    filtered_extras = {
+        k: v for k, v in extra_kwargs.items() if k in params or has_varkw
+    }
+
+    # Forward ALL call args verbatim. Let the callee raise if unsupported.
+    allowed_call_args = call_args
+    merged_kwargs = {**allowed_call_args, **filtered_extras}
+
+    # Build coroutine
+    if asyncio.iscoroutinefunction(fn):
+        coro = fn(**merged_kwargs)
+    else:
+        coro = asyncio.to_thread(fn, **merged_kwargs)
+
+    call_dict = {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": args_json},
+    }
+
+    t = asyncio.create_task(coro, name=f"ToolCall_{name}")
+    tools_data.pending.add(t)
+    tools_data.info[t] = ToolCallMetadata(
+        name=name,
+        handle=None,
+        call_id=call_id,
+        tool_reply_msg=None,
+        continue_msg=None,
+        assistant_msg=asst_msg,
+        call_dict=call_dict,
+        call_idx=call_idx,
+        is_interjectable=sig_accepts_interject_q,
+        interject_queue=sub_q,
+        chat_context=extra_kwargs.get("parent_chat_context"),
+        clar_up_queue=clar_up_q,
+        clar_down_queue=clar_down_q,
+        pause_event=pause_ev,
+        # Debug helpers for failure logging
+        tool_schema=method_to_schema(fn, name),
+        llm_arguments=allowed_call_args,
+        raw_arguments_json=args_json,
+    )
+
+    # Increment hidden quota counter only once scheduling succeeds
+    with suppress(Exception):
+        tools_data.call_counts[name] = tools_data.call_counts.get(name, 0) + 1
+
+    if clar_up_q is not None:
+        tools_data.clarification_channels[call_id] = (
+            clar_up_q,
+            clar_down_q,
+        )
+
+    # Ensure assistant meta exists for deterministic insertion ordering
+    assistant_meta.setdefault(id(asst_msg), {"results_count": 0})
+
+
+# Ensure placeholder tool messages exist for pending tasks. If assistant_msg
+# is provided, only affects tasks spawned by that assistant turn; otherwise
+# applies to all pending tasks. Returns the list of call_ids for which a
+# placeholder was created.
+async def _ensure_placeholders_for_pending(
+    assistant_msg: Optional[dict] = None,
+    *,
+    content: Optional[str] = None,
+    tools_data: _ToolsData,
+    assistant_meta,
+    client,
+    msg_dispatcher,
+) -> list[str]:
+    created: list[str] = []
+    placeholder_content = (
+        content
+        if content is not None
+        else "Pending… tool call accepted. Working on it."
+    )
+    for _t in list(tools_data.pending):
+        _inf = tools_data.info.get(_t)
+        if not _inf:
+            continue
+        if assistant_msg is not None and _inf.get("assistant_msg") is not assistant_msg:
+            continue
+        if (
+            _inf.get("tool_reply_msg")
+            or _inf.get("continue_msg")
+            or _inf.get("clarify_placeholder")
+        ):
+            continue
+
+        placeholder = {
+            "role": "tool",
+            "tool_call_id": _inf["call_id"],
+            "name": _inf["name"],
+            "content": placeholder_content,
+        }
+        await _insert_after_assistant(
+            assistant_meta,
+            _inf["assistant_msg"],
+            placeholder,
+            client,
+            msg_dispatcher,
+        )
+        _inf["tool_reply_msg"] = placeholder
+        created.append(_inf["call_id"])
+
+    return created
+
+
+# Helper: schedule a subset of tool_calls on a past assistant message and
+# insert placeholders immediately. Skips already-scheduled/finished ids.
+async def _schedule_missing_for_message(
+    asst_msg: dict,
+    only_ids: set[str],
+    *,
+    tools_data: _ToolsData,
+    parent_chat_context,
+    propagate_chat_context,
+    assistant_meta,
+    client,
+    msg_dispatcher,
+) -> list[str]:
+    scheduled: list[str] = []
+    try:
+        tool_calls = asst_msg.get("tool_calls") or []
+        for idx, call in enumerate(tool_calls):
+            cid = call.get("id")
+            if cid not in only_ids:
+                continue
+
+            # Skip if already pending or completed
+            if any(inf.get("call_id") == cid for _t, inf in tools_data.info.items()):
+                continue
+            if cid in tools_data.completed_results:
+                continue
+
+            name = call["function"]["name"]
+            args_json = call["function"].get("arguments", "{}")
+
+            # Handle dynamic helpers similarly to main path
+            if _is_helper_tool(name):
+                # Do not execute helpers during backfill, only acknowledge
+                try:
+                    await _acknowledge_helper_call(
+                        asst_msg,
+                        cid,
+                        name,
+                        args_json,
+                        assistant_meta=assistant_meta,
+                        client=client,
+                        msg_dispatcher=msg_dispatcher,
+                    )
+                except Exception:
+                    pass
+                scheduled.append(cid)
+                continue
+
+            # Base tool: locate function
+            if name not in tools_data.norm_tools:
+                scheduled.append(cid)
+                continue
+
+            await _schedule_base_tool_call(
+                asst_msg,
+                name=name,
+                args_json=args_json,
+                call_id=cid,
+                call_idx=idx,
+                tools_data=tools_data,
+                parent_chat_context=parent_chat_context,
+                propagate_chat_context=propagate_chat_context,
+                assistant_meta=assistant_meta,
+                client=client,
+            )
+            scheduled.append(cid)
+    except Exception:
+        pass
+    # Ensure placeholders are present for backfilled items
+    with suppress(Exception):
+        await _ensure_placeholders_for_pending(
+            assistant_msg=asst_msg,
+            tools_data=tools_data,
+            assistant_meta=assistant_meta,
+            client=client,
+            msg_dispatcher=msg_dispatcher,
+        )
+    return scheduled
+
+
+def _check_valid_response_format(response_format: Any):
+    # Require a Pydantic model class – anything else is a configuration error.
+    if not (
+        isinstance(response_format, type) and issubclass(response_format, BaseModel)
+    ):
+        raise TypeError(
+            "response_format must be a Pydantic BaseModel subclass (e.g. MySchema).",
+        )
+
+    return response_format.model_json_schema()
+
+
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
+
+
+class _AsyncToolLoopConfig:
+    def __init__(self, loop_id, lineage, parent_lineage):
+        self._loop_id = loop_id if loop_id is not None else short_id()
+        self._lineage = (
+            list(lineage) if lineage is not None else [*parent_lineage, self._loop_id]
+        )
+        self._label = (
+            "->".join(self._lineage) if self._lineage else (self._loop_id or "")
+        )
+
+    @property
+    def loop_id(self):
+        return self._loop_id
+
+    @property
+    def lineage(self):
+        return self._lineage
+
+    @property
+    def label(self):
+        return self._label
+
+
+class _AsyncToolLoopLogger:
+    def __init__(self, cfg: _AsyncToolLoopConfig, log_steps: bool | str) -> None:
+        self._label = cfg.label
+        self._log_steps = log_steps
+
+    @property
+    def log_steps(self):
+        return self._log_steps
+
+    @property
+    def log_label(self):
+        return self._label
+
+    def info(self, msg, prefix=""):
+        txt = f"{prefix} [{self._label}] {msg}"
+        LOGGER.info(txt)
+
+    def error(self, msg, prefix=""):
+        txt = f"{prefix} [{self._label}] {msg}"
+        LOGGER.error(txt)
+
+
+class _TimeoutTimer:
+    def __init__(
+        self,
+        timeout: Optional[int],
+        max_steps: Optional[int],
+        raise_on_limit: bool,
+        client,
+    ):
+        self._timeout = timeout
+        self._client = client
+        self._max_steps = max_steps
+        self._raise_on_limit = raise_on_limit
+        self.reset()
+
+    def remaining_time(self) -> Optional[float]:
+        if self._timeout is None:
+            return None
+
+        return self._timeout - (time.perf_counter() - self.last_activity_ts)
+
+    def reset(self):
+        """Refresh the rolling timeout."""
+        self.last_activity_ts = time.perf_counter()
+        self.last_msg_count = (
+            0 if not self._client.messages else len(self._client.messages)
+        )
+
+    def has_exceeded_time(self) -> bool:
+        """
+        Return whether we exceeded the timeout threshold, raises Exception if raise_on_limit is set
+        """
+        if self._timeout is None:
+            return False
+
+        ret = time.perf_counter() - self.last_activity_ts > self._timeout
+        if self._raise_on_limit and ret:
+            raise asyncio.TimeoutError(
+                f"Loop exceeded {self._timeout}s wall-clock limit",
+            )
+        return ret
+
+    def has_exceeded_msgs(self) -> bool:
+        """
+        Return whether we exceeded the messages threshold, raises Exception if raise_on_limit is set
+        """
+        if self._max_steps is None:
+            return False
+
+        ret = len(self._client.messages) >= self._max_steps
+        if self._raise_on_limit and ret:
+            raise RuntimeError(
+                f"Conversation exceeded max_steps={self._max_steps} "
+                f"(len(client.messages)={len(self._client.messages)})",
+            )
+        return ret
+
+
+class _ToolsData:
+    def __init__(self, tools):
+        self.norm_tools = _normalise_tools(tools)
+        self.pending: Set[asyncio.Task] = set()
+        self.info: Dict[asyncio.Task, ToolCallMetadata] = {}
+        # Per-tool hidden total-call quotas (counted per loop instance)
+        self.call_counts: Dict[str, int] = {}
+        self.clarification_channels: Dict[
+            str,
+            Tuple[asyncio.Queue[str], asyncio.Queue[str]],
+        ] = {}
+        self.completed_results: Dict[str, str] = {}
+
+    def _quota_count(self, task_name: str) -> int:
+        return self.call_counts.get(task_name, 0)
+
+    def _can_offer_tool(self, task_name: str) -> bool:
+        limit = self.norm_tools[task_name].max_concurrent
+        return limit is None or self.active_count(task_name) < limit
+
+    def active_count(self, task_name: str) -> int:
+        return sum(1 for _t, _inf in self.info.items() if _inf["name"] == task_name)
+
+    def quota_ok(self, task_name: str) -> bool:
+        limit = self.norm_tools[task_name].max_total_calls
+        return limit is None or self._quota_count(task_name) < limit
+
+    def concurrency_ok(self, task_name: str) -> bool:
+        return task_name not in self.norm_tools or self._can_offer_tool(task_name)
+
+    # Remove any tool_calls in an assistant message that would exceed the
+    # hidden per-tool total-call quota. Operates in-place on asst_msg.
+    def prune_over_quota_tool_calls(self, asst_msg: dict) -> None:
+        with suppress(Exception):
+            tool_calls = asst_msg.get("tool_calls") or []
+            if not isinstance(tool_calls, list) or not tool_calls:
+                return
+
+            # Compute remaining budget per base tool (in this loop instance)
+            remaining: Dict[str, int] = {}
+            for name, spec in self.norm_tools.items():
+                lim = spec.max_total_calls
+                if lim is None:
+                    continue
+                remaining[name] = max(0, lim - self._quota_count(name))
+
+            kept: list = []
+            for call in tool_calls:
+                try:
+                    fn_name = call.get("function", {}).get("name")
+                except Exception:
+                    fn_name = None
+
+                # Only enforce quota on base tools that define a limit
+                if fn_name in remaining:
+                    if remaining[fn_name] > 0:
+                        kept.append(call)
+                        remaining[fn_name] -= 1
+                    else:
+                        # drop this over-quota call silently
+                        continue
+                else:
+                    kept.append(call)
+
+            # In-place update only if changed
+            if len(kept) != len(tool_calls):
+                asst_msg["tool_calls"] = kept
+
+
+# TODO this is not really required, but this just simplifies the extraction of the logic from the loop.
+class _AsyncToolLoopToolFailureTracker:
+    def __init__(self, max_consecutive_failures: int):
+        self._consecutive_failures = 0
+        self._max_consecutive_failures = max_consecutive_failures
+
+    @property
+    def current_failures(self):
+        return self._consecutive_failures
+
+    @property
+    def max_failures(self):
+        return self._max_consecutive_failures
+
+    def has_exceeded_failures(self) -> bool:
+        return self._consecutive_failures >= self._max_consecutive_failures
+
+    def increment_failures(self):
+        self._consecutive_failures += 1
+
+    def reset_failures(self):
+        self._consecutive_failures = 0
+
+
+class ToolCallMetadata(TypedDict):
+    # TODO: most of these are not always used
+    # Ideally, not needed to be passed explicitly
+    name: str
+    call_id: str
+    call_dict: dict
+    call_idx: int
+    chat_context: str
+    assistant_msg: dict
+    tool_reply_msg: Optional[dict]
+    continue_msg: Optional[dict]
+    is_interjectable: bool
+    handle: Optional[Any]
+    interject_queue: Optional[asyncio.Queue[str]]
+    clar_up_queue: Optional[asyncio.Queue[str]]
+    clar_down_queue: Optional[asyncio.Queue[str]]
+    pause_event: Optional[asyncio.Event]
+    tool_schema: dict
+    llm_arguments: dict
+    raw_arguments_json: str
+
+
+class DynamicToolFactory:
+    def __init__(self, tools_data: _ToolsData):
+        self.dynamic_tools = {}
+        self.tools_data = tools_data
+
+    # helper: register a freshly-minted coroutine as a *temporary* tool
+    def _register_tool(
+        self,
+        func_name: str,
+        doc: str,
+        fn: Callable,
+    ) -> None:
+        # prefer the function's own docstring if it exists, else fall back
+        existing = inspect.getdoc(fn)
+        fn.__doc__ = existing.strip() if existing else doc
+        fn.__name__ = func_name[:64]
+        fn.__qualname__ = func_name[:64]
+        self.dynamic_tools[func_name.lstrip("_")] = fn
+
+    def _process_task(self, task: asyncio.Task):
+        info = self.tools_data.info[task]
+        handle = info.get("handle")
+        ev = info.get("pause_event")
+        handle_available = handle is not None
+
+        # ── DYNAMIC capability refresh (handle may change) ─────
+        if handle_available:
+            # 1. interjection
+            info["is_interjectable"] = hasattr(handle, "interject")
+
+            # 2. clarification queues
+            h_up_q = getattr(
+                handle,
+                "clarification_up_q",
+                info.get("clar_up_queue"),
+            )
+            h_dn_q = getattr(
+                handle,
+                "clarification_down_q",
+                info.get("clar_down_queue"),
+            )
+
+            if (h_up_q is not None) ^ (h_dn_q is not None):
+                raise AttributeError(
+                    f"Handle of call {info['call_id']} now exposes only one "
+                    "of clarification queues; both or neither required.",
+                )
+
+            # update bookkeeping & channel map
+            prev_up_q = info.get("clar_up_queue")
+            if h_up_q is not prev_up_q:
+                # remove old mapping if any
+                self.tools_data.clarification_channels.pop(info["call_id"], None)
+                if h_up_q is not None:
+                    self.tools_data.clarification_channels[info["call_id"]] = (
+                        h_up_q,
+                        h_dn_q,
+                    )
+            info["clar_up_queue"] = h_up_q
+            info["clar_down_queue"] = h_dn_q
+
+        _call_id: str = info["call_id"]
+        # Create a sanitized version of the call_id for use in function names.
+        _safe_call_id: str = _call_id.replace("-", "_").split("_")[-1]
+        _fn_name: str = info["name"]
+        _arg_json: str = info["call_dict"]["function"]["arguments"]
+        try:
+            _arg_dict = json.loads(_arg_json)
+            _arg_repr = ", ".join(f"{k}={v!r}" for k, v in _arg_dict.items())
+        except Exception:
+            _arg_repr = _arg_json  # fallback: raw JSON string
+
+        # concise, informative, single‑line docs  ----------------------
+        _continue_doc = f"Continue waiting for {_fn_name}({_arg_repr})."
+        _stop_doc = (
+            f"Stop pending call {_fn_name}({_arg_repr}). "
+            "Accepts any arguments supported by the underlying handle's `stop` method (e.g. `reason`)."
+        )
+
+        # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
+        # Skip if the task is blocked waiting for clarification; there's
+        # nothing to "continue" until the user answers.
+        if not info.get("waiting_for_clarification"):
+
+            async def _continue() -> Dict[str, str]:
+                return {"status": "continue", "call_id": _call_id}
+
+            self._register_tool(
+                func_name=f"continue_{_fn_name}_{_safe_call_id}",
+                doc=_continue_doc,
+                fn=_continue,
+            )
+
+        # ––– 2. stop helper –––––––––––––––––––––––––––––––––––––
+        async def _stop(
+            **_kw,
+        ) -> Dict[str, str]:
+            # Forward stop intent to the running handle with any extra kwargs
+            if handle is not None and hasattr(handle, "stop"):
+                await _forward_handle_call(
+                    handle,
+                    "stop",
+                    _kw,
+                    fallback_positional_keys=["reason"],
+                )
+            if not task.done():
+                task.cancel()  # kill the waiter coroutine
+            self.tools_data.pending.discard(task)
+            self.tools_data.info.pop(task, None)
+            return {"status": "stopped", "call_id": _call_id, **_kw}
+
+        self._register_tool(
+            func_name=f"stop_{_fn_name}_{_safe_call_id}",
+            doc=_stop_doc,
+            fn=_stop,
+        )
+        # Expose full argspec of handle.stop in the helper schema
+        with suppress(Exception):
+            if handle is not None and hasattr(handle, "stop"):
+                _adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
+
+        # ––– 3. interject helper (optional) ––––––––––––––––––––––
+        if info.get("is_interjectable"):
+            _interject_doc = (
+                f"Inject additional instructions for {_fn_name}({_arg_repr}). "
+                "Accepts any arguments supported by the underlying handle's `interject` method (e.g. `content`)."
+            )
+
+            if handle is not None:
+
+                async def _interject(**_kw) -> Dict[str, str]:
+                    # nested async-tool loop: delegate to its public API with full argspec
+                    with suppress(Exception):
+                        await _forward_handle_call(
+                            handle,
+                            "interject",
+                            _kw,
+                            fallback_positional_keys=["content", "message"],
+                        )
+                    return {
+                        "status": "interjected",
+                        "call_id": _call_id,
+                        **{k: v for k, v in _kw.items()},
+                    }
+
+                # Expose the downstream handle's signature to the LLM
+                with suppress(Exception):
+                    _adopt_signature_and_annotations(
+                        getattr(handle, "interject"),
+                        _interject,
+                    )
+
+            else:
+
+                async def _interject(content: str) -> Dict[str, str]:
+                    # regular tool: push onto its private queue
+                    await info["interject_queue"].put(content)
+                    return {
+                        "status": "interjected",
+                        "call_id": _call_id,
+                        "content": content,
+                    }
+
+            self._register_tool(
+                func_name=f"interject_{_fn_name}_{_safe_call_id}",
+                doc=_interject_doc,
+                fn=_interject,
+            )
+
+        # ––– 4. clarification-answer helper (optional) ––––––––––
+        if info.get("clar_up_queue") is not None:
+            _clarify_doc = (
+                f"Provide an answer to the clarification which was requested by the (currently pending) tool "
+                f"{_fn_name}({_arg_repr}). Takes a single argument `answer`."
+            )
+
+            async def _clarify(answer: str) -> Dict[str, str]:  # type: ignore[valid-type]
+                return {
+                    "status": "clar_answer",
+                    "call_id": _call_id,
+                    "answer": answer,
+                }
+
+            self._register_tool(
+                func_name=f"clarify_{_fn_name}_{_safe_call_id}",
+                doc=_clarify_doc,
+                fn=_clarify,
+            )
+
+        # ––– 5. pause helper –––––––––––––––––––––––––––––––––––––––––––
+        can_pause = (handle is not None and hasattr(handle, "pause")) or ev
+
+        if can_pause:
+            _pause_doc = f"Pause the pending call {_fn_name}({_arg_repr})."
+
+            if handle_available and hasattr(handle, "pause"):
+
+                async def _pause(**_kw) -> Dict[str, str]:
+                    with suppress(Exception):
+                        await _forward_handle_call(handle, "pause", _kw)
+                    return {"status": "paused", "call_id": _call_id, **_kw}
+
+                # Reflect downstream signature/annotations
+                with suppress(Exception):
+                    _adopt_signature_and_annotations(
+                        getattr(handle, "pause"),
+                        _pause,
+                    )
+
+            else:
+
+                async def _pause() -> Dict[str, str]:
+                    if handle_available and hasattr(handle, "pause"):
+                        await _maybe_await(handle.pause())
+                    elif ev is not None:
+                        ev.clear()
+                    return {"status": "paused", "call_id": _call_id}
+
+            self._register_tool(
+                func_name=f"pause_{_fn_name}_{_safe_call_id}",
+                doc=_pause_doc,
+                fn=_pause,
+            )
+
+        can_resume = (handle_available and hasattr(handle, "resume")) or ev
+        # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
+        if can_resume:
+            _resume_doc = f"Resume the previously paused call {_fn_name}({_arg_repr})."
+
+            if handle_available and hasattr(handle, "resume"):
+
+                async def _resume(**_kw) -> Dict[str, str]:
+                    with suppress(Exception):
+                        await _forward_handle_call(handle, "resume", _kw)
+                    return {"status": "resumed", "call_id": _call_id, **_kw}
+
+                with suppress(Exception):
+                    _adopt_signature_and_annotations(
+                        getattr(handle, "resume"),
+                        _resume,
+                    )
+
+            else:
+
+                async def _resume() -> Dict[str, str]:
+                    if handle_available and hasattr(handle, "resume"):
+                        await _maybe_await(handle.resume())
+                    elif ev is not None:
+                        ev.set()
+                    return {"status": "resumed", "call_id": _call_id}
+
+            self._register_tool(
+                func_name=f"resume_{_fn_name}_{_safe_call_id}",
+                doc=_resume_doc,
+                fn=_resume,
+            )
+
+        # 7.  expose *all* other public methods of the handle
+        if handle_available:
+
+            public_methods = _discover_custom_public_methods(handle)
+
+            # ── honour handle.valid_tools, if present ──────────────
+            if hasattr(handle, "valid_tools"):
+                allowed: set[str] = set(getattr(handle, "valid_tools", []))
+                public_methods = {
+                    name: bound
+                    for name, bound in public_methods.items()
+                    if name in allowed
+                }
+
+            # Identify write-only helpers declared by the handle
+            write_only_set: set[str] = set()
+            with suppress(Exception):
+                wo = getattr(handle, "write_only_methods", None)
+                if wo is not None:
+                    write_only_set |= set(wo)
+
+            with suppress(Exception):
+                wo2 = getattr(handle, "write_only_tools", None)
+                if wo2 is not None:
+                    write_only_set |= set(wo2)
+
+            for meth_name, bound in public_methods.items():
+                # use the same name we're about to give fn.__name__
+                func_name = f"{meth_name}_{_fn_name}_{_safe_call_id}"
+                helper_key = func_name
+
+                # Skip if we already generated one this turn (possible when
+                # the loop revisits the same pending task).
+                if helper_key in self.dynamic_tools:
+                    continue
+
+                # Write-only helpers: fire-and-forget operations
+                if meth_name in write_only_set:
+
+                    async def _invoke_handle_method(
+                        _method_name=meth_name,
+                        **_kw,
+                    ):
+                        # Robust forwarding incl. kwargs normalisation and fallbacks
+                        with suppress(Exception):
+                            await _forward_handle_call(
+                                handle,
+                                _method_name,
+                                _kw,
+                            )
+                        # Write-only: no result propagation
+                        return {"call_id": _call_id, "status": "ack"}
+
+                else:
+
+                    async def _invoke_handle_method(
+                        _method_name=meth_name,
+                        **_kw,
+                    ):  # default args → capture current method name
+                        """
+                        Auto-generated wrapper that calls the corresponding
+                        method on the live handle and **waits** for the return
+                        value (sync or async).
+                        """
+                        # Use shared forwarding to support flexible args and fallbacks
+                        res = await _forward_handle_call(
+                            handle,
+                            _method_name,
+                            _kw,
+                        )
+                        return {"call_id": _call_id, "result": res}
+
+                # override the wrapper's signature to match the real method
+                _invoke_handle_method.__signature__ = inspect.signature(bound)
+
+                self._register_tool(
+                    func_name=func_name,
+                    doc=(
+                        (
+                            f"Perform `{meth_name}` on the running handle (id={_call_id}). "
+                            "Fire-and-forget write-only operation; returns immediately."
+                        )
+                        if meth_name in write_only_set
+                        else (
+                            f"Invoke `{meth_name}` on the running handle (id={_call_id}). "
+                            "Returns when that method finishes."
+                        )
+                    ),
+                    fn=_invoke_handle_method,
+                )
+                # Mark write-only helpers so scheduling can acknowledge and avoid tracking
+                if meth_name in write_only_set:
+                    with suppress(Exception):
+                        self.dynamic_tools[helper_key].__write_only__ = True  # type: ignore[attr-defined]
+
+    def generate(self):
+        for task in list(self.tools_data.pending):
+            self._process_task(task)
 
 
 async def _async_tool_use_loop_inner(
@@ -1026,11 +2266,9 @@ async def _async_tool_use_loop_inner(
         been fed back into the conversation.
     """
     # unique id / lineage
-    loop_id = loop_id if loop_id is not None else short_id()
-    _parent_lineage = TOOL_LOOP_LINEAGE.get([])
-    _lineage = list(lineage) if lineage is not None else [*_parent_lineage, loop_id]
-    _token = TOOL_LOOP_LINEAGE.set(_lineage)
-    log_label = "->".join(_lineage) if _lineage else (loop_id or "")
+    cfg = _AsyncToolLoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
+    logger = _AsyncToolLoopLogger(cfg, log_steps)
+    _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
@@ -1040,18 +2278,7 @@ async def _async_tool_use_loop_inner(
     # `set_response_format` still happens at the end of the loop.
     if response_format is not None:
         try:
-            from pydantic import BaseModel  # local import
-
-            # Require a Pydantic model class – anything else is a configuration error.
-            if not (
-                isinstance(response_format, type)
-                and issubclass(response_format, BaseModel)
-            ):
-                raise TypeError(
-                    "response_format must be a Pydantic BaseModel subclass (e.g. MySchema).",
-                )
-
-            _schema = response_format.model_json_schema()
+            _schema = _check_valid_response_format(response_format)
             _hint = (
                 "\n\nNOTE: After completing all tool calls, your **final** assistant reply must be valid JSON that conforms to the following schema. Do NOT include any extra keys or commentary.\n"
                 + json.dumps(_schema, indent=2)
@@ -1059,34 +2286,27 @@ async def _async_tool_use_loop_inner(
 
             client.set_system_message((client.system_message or "") + _hint)
         except Exception as _exc:  # noqa: BLE001
-            LOGGER.error(f"response_format hint failed: {_exc!r}")
+            logger.error(f"response_format hint failed: {_exc!r}")
 
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
-    last_activity_ts: float = time.perf_counter()  # reset every time
-    last_msg_count: int = (
-        0 if not client.messages else len(client.messages)
-    )  # we add a message
-
-    def _reset_timeout_timer() -> None:
-        """Refresh the rolling timeout."""
-        nonlocal last_activity_ts, last_msg_count
-        last_activity_ts = time.perf_counter()
-        last_msg_count = 0 if not client.messages else len(client.messages)
-
-    async def _append_msgs(msgs: list[dict]) -> None:
-        client.append_messages(msgs)
-        await _to_event_bus(msgs, loop_id, _lineage, log_label)
-        _reset_timeout_timer()
+    timer: _TimeoutTimer = _TimeoutTimer(
+        timeout=timeout,
+        max_steps=max_steps,
+        raise_on_limit=raise_on_limit,
+        client=client,
+    )
+    _msg_dispatcher = _AsyncToolLoopMessageDispatcher(client, cfg, timer)
 
     if log_steps:
         if log_steps == "full":
             if parent_chat_context:
-                LOGGER.info(
-                    f"⬇️ [{log_label}] Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
+                logger.info(
+                    f"Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
+                    prefix="⬇️",
                 )
-            LOGGER.info(f"📋 [{log_label}] System Message: {client.system_message}\n")
-        LOGGER.info(f"🧑‍💻 [{log_label}] User Message: {message}\n")
+            logger.info(f"System Message: {client.system_message}\n", prefix="📋")
+        logger.info(f"User Message: {message}\n", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
@@ -1096,283 +2316,6 @@ async def _async_tool_use_loop_inner(
     # The special marker ``_ctx_header=True`` lets us later strip it when
     # propagating context further down (avoids duplication).
     # -----------------------------------------------------------------------
-
-    # ── small helper: keep assistant→tool chronology DRY ────────────────────
-    async def _insert_after_assistant(parent_msg: dict, tool_msg: dict) -> None:
-        """
-        Append *tool_msg* and move it directly after *parent_msg*, while
-        updating the per-assistant `results_count` bookkeeping.
-        """
-        meta = assistant_meta.setdefault(
-            id(parent_msg),
-            {"results_count": 0},
-        )
-        await _append_msgs([tool_msg])
-        insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
-        client.messages.insert(insert_pos, client.messages.pop())
-        meta["results_count"] += 1
-
-    # ── small helper: add completion tool message pair ──────────────
-    async def _emit_completion_pair(result: str, call_id: str) -> dict:
-        """
-        Append a synthetic assistant→tool pair that carries the *final*
-        outcome for `call_id`.  Returns the tool-message so callers can
-        reuse it for logging / event-bus.
-        """
-        dummy_id = f"{call_id}_status"
-
-        assistant_stub = {
-            "role": "assistant",
-            "tool_calls": [
-                {
-                    "id": dummy_id,
-                    "type": "function",
-                    "function": {
-                        "name": f"check_status_{call_id}",
-                        "arguments": "{}",
-                    },
-                },
-            ],
-            "content": "",
-        }
-        tool_msg = {
-            "role": "tool",
-            "tool_call_id": dummy_id,
-            "name": f"check_status_{call_id}",
-            "content": result,
-        }
-
-        await _append_msgs([assistant_stub, tool_msg])
-        return tool_msg
-
-    # ── *single* authoritative implementation of "task finished" handling ──
-    async def _process_completed_task(task: asyncio.Task) -> bool:
-        """
-        Deal with a finished tool *task* exactly once:
-
-        1.  Pop bookkeeping (``pending`` / ``task_info``).
-        2.  Serialise *success* or *exception* into ``result``.
-        3.  Patch or insert the correct **tool** message so the transcript
-            stays perfectly chronological.
-        4.  Emit the event-bus hook (if configured).
-        5.  Record the payload in ``completed_results`` for later
-            `_continue_<id>` helpers.
-        6.  Enforce the *max_consecutive_failures* safety valve.
-        """
-
-        def _at_tail(msg: dict) -> bool:
-            """True when *msg* is the very last entry in client.messages."""
-            return bool(client.messages) and client.messages[-1] is msg
-
-        nonlocal consecutive_failures
-
-        pending.discard(task)
-        info = task_info.pop(task)
-        name = info["name"]
-        call_id = info["call_id"]
-        fn = info["call_dict"]["function"]["name"]
-        arg = info["call_dict"]["function"]["arguments"]
-
-        # 2️⃣  obtain result -------------------------------------------------
-        try:
-            raw = task.result()
-
-            # ───────────────────────────────────────────────────────────────
-            #  NEW:  the tool *did not really finish* – it returned *another*
-            #        AsyncToolLoopHandle.  We:
-            #        (1) schedule `handle.result()` as a *new* task,
-            #        (2) keep the **same** `call_id` so the continue/-cancel
-            #            helpers keep working,
-            #        (3) create / patch one placeholder "still running…"
-            #            tool-message in the transcript.
-            # ───────────────────────────────────────────────────────────────
-            # treat ANY AsyncToolLoopHandle (or subclass) as a nested loop
-            from unity.common.llm_helpers import SteerableToolHandle
-
-            if isinstance(raw, SteerableToolHandle):
-                # If the nested handle explicitly requests pass-through behaviour
-                # expose it directly to the outer caller *immediately*.
-                if (
-                    getattr(raw, "__passthrough__", False)
-                    and outer_handle_container
-                    and outer_handle_container[0] is not None
-                ):
-                    outer_handle_container[0]._adopt(raw)
-                # ── upgrade interject / clarification flags from handle ─────
-                if hasattr(raw, "interject"):
-                    info["is_interjectable"] = True
-
-                h_up_q = getattr(raw, "clarification_up_q", info.get("clar_up_q"))
-                h_down_q = getattr(raw, "clarification_down_q", info.get("clar_down_q"))
-
-                if (h_up_q is not None) ^ (h_down_q is not None):
-                    raise AttributeError(
-                        f"Handle returned by tool {info['name']!r} exposes only "
-                        "one of 'clarification_up_q' / 'clarification_down_q'. "
-                        "Both queues are required (or neither).",
-                    )
-
-                # 1️⃣ spawn the nested waiter
-                #
-                # ⤷ `handle.result` can now be **sync OR async**:
-                #    • async ⇒ use the coroutine directly,
-                #    • sync  ⇒ run it in a worker-thread so the event-loop never blocks.
-                if inspect.iscoroutinefunction(raw.result):
-                    nested_coro = raw.result()  # already a coroutine
-                else:
-                    nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
-
-                nested_task = asyncio.create_task(nested_coro)
-                pending.add(nested_task)
-
-                # 2️⃣ insert / update a single placeholder
-                ph = info.get("tool_reply_msg")
-                if ph is None:
-                    ph = {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "name": info["name"],
-                        "content": (
-                            "Nested async tool loop started… waiting for result."
-                        ),
-                    }
-                    await _insert_after_assistant(info["assistant_msg"], ph)
-                    info["tool_reply_msg"] = ph  # remember on *parent*
-                else:
-                    ph["content"] = (
-                        "Nested async tool loop started… waiting for result."
-                    )
-
-                # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
-                task_info[nested_task] = {
-                    **info,
-                    "handle": raw,
-                    "is_interjectable": hasattr(raw, "interject"),
-                    "tool_reply_msg": ph,
-                    "clar_up_q": h_up_q,
-                    "clar_down_q": h_down_q,
-                }
-                if h_up_q is not None:
-                    clarification_channels[call_id] = (h_up_q, h_down_q)
-                return False  # ⬅️  no LLM turn required
-
-            # ───────────────────────────────────────────────────────────────
-            #  Normal (non-handle) result – unchanged path
-            # ───────────────────────────────────────────────────────────────
-            # ── finished successfully – promote any embedded images ─────────
-            images: list[str] = []
-            _collect_images(raw, images)
-
-            text_repr = _dumps(_strip_image_keys(raw), indent=4)
-
-            if images:
-                content_blocks: list = []
-                if text_repr and text_repr != "{}":
-                    content_blocks.append({"type": "text", "text": text_repr})
-                content_blocks.extend(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}"},
-                    }
-                    for b64 in images
-                )
-                result = content_blocks
-            else:
-                result = text_repr
-
-            consecutive_failures = 0
-        except Exception:
-            consecutive_failures += 1
-            result = traceback.format_exc()
-            if log_steps:
-                LOGGER.error(
-                    f"❌ [{log_label}] Error: {name} failed "
-                    f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
-                )
-                # Additional debug context: show the exact tool schema and arguments
-                # that were presented to the LLM for this failed call. This helps
-                # diagnose docstrings/argspec mismatches that cause tool misuse.
-                try:
-                    debug_payload = {
-                        "tool_name": name,
-                        "call_id": call_id,
-                        "llm_function_schema": info.get("tool_schema"),
-                        "llm_arguments": info.get("llm_arguments"),
-                        "raw_arguments_json": info.get("raw_arguments_json"),
-                    }
-                    LOGGER.error(
-                        f"🧩 [{log_label}] FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
-                    )
-                except Exception:
-                    pass
-
-        # 3️⃣  remember so later `_continue_*` helpers can answer instantly
-        completed_results[call_id] = result
-
-        # 4️⃣  update / insert tool-result message --------------------------
-        asst_msg = info["assistant_msg"]
-        continue_msg = info.get("continue_msg")
-        clarify_ph = info.get("clarify_placeholder")
-        tool_reply_msg = info.get("tool_reply_msg")
-
-        if continue_msg is not None:
-            if _at_tail(continue_msg):  # ✅ safe to overwrite
-                continue_msg["content"] = result
-                continue_msg["name"] = (
-                    f"{fn}({arg}) completed successfully, "
-                    "the return values are in the `content` field below."
-                )
-                tool_msg = continue_msg
-            else:  # 🆕 keep history stable
-                tool_msg = await _emit_completion_pair(result, call_id)
-
-        elif clarify_ph is not None:
-            if _at_tail(clarify_ph):
-                clarify_ph["content"] = result
-                tool_msg = clarify_ph
-            else:
-                tool_msg = await _emit_completion_pair(result, call_id)
-
-        elif tool_reply_msg is not None:
-            if _at_tail(tool_reply_msg):
-                tool_reply_msg["content"] = result
-                tool_msg = tool_reply_msg
-            else:
-                tool_msg = await _emit_completion_pair(result, call_id)
-
-        else:
-            tool_msg = {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "name": name,
-                "content": result,
-            }
-            await _insert_after_assistant(asst_msg, tool_msg)
-
-        # ── optional console logging for every finished tool call ────────────
-        #     (mirrors the assistant-message logging above)
-        if log_steps:
-            # Create a clean version of tool_msg for logging (strip image data)
-            tool_msg_for_logging = tool_msg.copy()
-            if isinstance(tool_msg_for_logging.get("content"), list):
-                # Filter out image_url items and keep only text content
-                tool_msg_for_logging["content"] = [
-                    item
-                    for item in tool_msg_for_logging["content"]
-                    if item.get("type") != "image_url"
-                ]
-            LOGGER.info(f"🛠️ [{loop_id}] {json.dumps(tool_msg_for_logging, indent=4)}\n")
-
-        # 6️⃣  failure guard -------------------------------------------------
-        if consecutive_failures >= max_consecutive_failures:
-            if log_steps:
-                LOGGER.error(f"🚨 [{log_label}] Aborting: too many tool failures.")
-            raise RuntimeError(
-                "Aborted after too many consecutive tool failures.",
-            )
-
-        # successful (or failed) *final* result → LLM may need to react
-        return True
 
     if parent_chat_context:
         sys_msg = {
@@ -1384,7 +2327,7 @@ async def _async_tool_use_loop_inner(
                 "Resolve the *next* user request in light of this."
             ),
         }
-        await _append_msgs([sys_msg])
+        await _msg_dispatcher.append_msgs([sys_msg])
 
     # ── initial prompt ───────────────────────────────────────────────────────
     # ── 0-b. Coerce tools → ToolSpec & helper lambdas ───────────────────────
@@ -1395,380 +2338,42 @@ async def _async_tool_use_loop_inner(
     #   by comparing the live count with max_concurrent.
     # -----------------------------------------------------------------------
 
-    norm_tools: Dict[str, ToolSpec] = _normalise_tools(tools)
-
-    def _active_count(t_name: str) -> int:
-        return sum(1 for _t, _inf in task_info.items() if _inf["name"] == t_name)
-
-    def _can_offer_tool(t_name: str) -> bool:
-        lim = norm_tools[t_name].max_concurrent
-        return lim is None or _active_count(t_name) < lim
-
-    # Per-tool hidden total-call quotas (counted per loop instance)
-    call_counts: Dict[str, int] = {}
-
-    def _quota_count(t_name: str) -> int:
-        return call_counts.get(t_name, 0)
-
-    def _quota_ok(t_name: str) -> bool:
-        lim = norm_tools[t_name].max_total_calls
-        return lim is None or _quota_count(t_name) < lim
-
-    # Ensure placeholder tool messages exist for pending tasks. If assistant_msg
-    # is provided, only affects tasks spawned by that assistant turn; otherwise
-    # applies to all pending tasks. Returns the list of call_ids for which a
-    # placeholder was created.
-    async def _ensure_placeholders_for_pending(
-        assistant_msg: Optional[dict] = None,
-        *,
-        content: Optional[str] = None,
-    ) -> list[str]:
-        created: list[str] = []
-        placeholder_content = (
-            content
-            if content is not None
-            else "Pending… tool call accepted. Working on it."
-        )
-        for _t in list(pending):
-            _inf = task_info.get(_t)
-            if not _inf:
-                continue
-            if (
-                assistant_msg is not None
-                and _inf.get("assistant_msg") is not assistant_msg
-            ):
-                continue
-            if (
-                _inf.get("tool_reply_msg")
-                or _inf.get("continue_msg")
-                or _inf.get("clarify_placeholder")
-            ):
-                continue
-
-            placeholder = {
-                "role": "tool",
-                "tool_call_id": _inf["call_id"],
-                "name": _inf["name"],
-                "content": placeholder_content,
-            }
-            await _insert_after_assistant(_inf["assistant_msg"], placeholder)
-            _inf["tool_reply_msg"] = placeholder
-            created.append(_inf["call_id"])
-
-        return created
-
-    # Remove any tool_calls in an assistant message that would exceed the
-    # hidden per-tool total-call quota. Operates in-place on asst_msg.
-    def _prune_over_quota_tool_calls(asst_msg: dict) -> None:
-        try:
-            tool_calls = asst_msg.get("tool_calls") or []
-            if not isinstance(tool_calls, list) or not tool_calls:
-                return
-
-            # Compute remaining budget per base tool (in this loop instance)
-            remaining: Dict[str, int] = {}
-            for name, spec in norm_tools.items():
-                lim = spec.max_total_calls
-                if lim is None:
-                    continue
-                remaining[name] = max(0, lim - call_counts.get(name, 0))
-
-            kept: list = []
-            for call in tool_calls:
-                try:
-                    fn_name = call.get("function", {}).get("name")
-                except Exception:
-                    fn_name = None
-
-                # Only enforce quota on base tools that define a limit
-                if fn_name in remaining:
-                    if remaining[fn_name] > 0:
-                        kept.append(call)
-                        remaining[fn_name] -= 1
-                    else:
-                        # drop this over-quota call silently
-                        continue
-                else:
-                    kept.append(call)
-
-            # In-place update only if changed
-            if len(kept) != len(tool_calls):
-                asst_msg["tool_calls"] = kept
-        except Exception:
-            # Defensive: never let pruning break the loop
-            pass
-
-    # Helper: insert a tool-acknowledgement message for helper tools
-    async def _acknowledge_helper_call(
-        asst_msg: dict,
-        call_id: str,
-        name: str,
-        args_json: Any,
-    ) -> None:
-        tool_msg = {
-            "role": "tool",
-            "tool_call_id": call_id,
-            "name": name,
-            "content": _build_helper_ack_content(name, args_json),
-        }
-        await _insert_after_assistant(asst_msg, tool_msg)
-
-    # Helper: schedule a base tool call (shared by main path and backfill)
-    async def _schedule_base_tool_call(
-        asst_msg: dict,
-        *,
-        name: str,
-        args_json: Any,
-        call_id: str,
-        call_idx: int,
-    ) -> None:
-        # Base tool must exist
-        if name not in norm_tools:
-            return
-
-        fn = norm_tools[name].fn
-
-        # Enforce hidden per-tool total call quota: should be pre-pruned from
-        # the assistant message, but guard here as well and simply skip.
-        try:
-            lim = norm_tools[name].max_total_calls
-            if lim is not None and call_counts.get(name, 0) >= lim:
-                return
-        except Exception:
-            pass
-
-        # Build extra kwargs (chat context, interject/clarification/pause)
-        extra_kwargs: dict = {}
-        if propagate_chat_context:
-            cur_msgs = [m for m in client.messages if not m.get("_ctx_header")]
-            ctx_repr = _chat_context_repr(parent_chat_context, cur_msgs)
-            extra_kwargs["parent_chat_context"] = ctx_repr
-
-        sig = inspect.signature(fn)
-        params = sig.parameters
-        has_varkw = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-        )
-
-        sig_accepts_interject_q = "interject_queue" in params or has_varkw
-        sig_accepts_pause_event = "pause_event" in params or has_varkw
-        sig_accepts_clar_qs = (
-            "clarification_up_q" in params and "clarification_down_q" in params
-        ) or has_varkw
-
-        pause_ev: Optional[asyncio.Event] = None
-        if sig_accepts_pause_event:
-            pause_ev = asyncio.Event()
-            pause_ev.set()  # start running
-            extra_kwargs["pause_event"] = pause_ev
-
-        clar_up_q: Optional[asyncio.Queue[str]] = None
-        clar_down_q: Optional[asyncio.Queue[str]] = None
-        if sig_accepts_clar_qs:
-            clar_up_q = asyncio.Queue()
-            clar_down_q = asyncio.Queue()
-            extra_kwargs["clarification_up_q"] = clar_up_q
-            extra_kwargs["clarification_down_q"] = clar_down_q
-
-        sub_q: Optional[asyncio.Queue[str]] = None
-        if sig_accepts_interject_q:
-            sub_q = asyncio.Queue()
-            extra_kwargs["interject_queue"] = sub_q
-
-        # Parse args
-        try:
-            call_args = (
-                json.loads(args_json)
-                if isinstance(args_json, str)
-                else (args_json or {})
-            )
-        except Exception:
-            call_args = {}
-
-        # Filter extras to match fn signature
-        sig = inspect.signature(fn)
-        params = sig.parameters
-        has_varkw = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-        )
-        filtered_extras = {
-            k: v for k, v in extra_kwargs.items() if k in params or has_varkw
-        }
-
-        # Forward ALL call args verbatim. Let the callee raise if unsupported.
-        allowed_call_args = call_args
-        merged_kwargs = {**allowed_call_args, **filtered_extras}
-
-        # Build coroutine
-        if asyncio.iscoroutinefunction(fn):
-            coro = fn(**merged_kwargs)
-        else:
-            coro = asyncio.to_thread(fn, **merged_kwargs)
-
-        call_dict = {
-            "id": call_id,
-            "type": "function",
-            "function": {"name": name, "arguments": args_json},
-        }
-
-        t = asyncio.create_task(coro, name=f"ToolCall_{name}")
-        pending.add(t)
-        task_info[t] = {
-            "name": name,
-            "call_id": call_id,
-            "assistant_msg": asst_msg,
-            "call_dict": call_dict,
-            "call_idx": call_idx,
-            "is_interjectable": sig_accepts_interject_q,
-            "interject_q": sub_q,
-            "chat_ctx": extra_kwargs.get("parent_chat_context"),
-            "clar_up_q": clar_up_q,
-            "clar_down_q": clar_down_q,
-            "pause_event": pause_ev,
-            # Debug helpers for failure logging
-            "tool_schema": method_to_schema(fn, name),
-            "llm_arguments": allowed_call_args,
-            "raw_arguments_json": args_json,
-        }
-
-        # Increment hidden quota counter only once scheduling succeeds
-        try:
-            call_counts[name] = call_counts.get(name, 0) + 1
-        except Exception:
-            pass
-
-        if clar_up_q is not None:
-            clarification_channels[call_id] = (
-                clar_up_q,
-                clar_down_q,
-            )
-
-        # Ensure assistant meta exists for deterministic insertion ordering
-        assistant_meta.setdefault(id(asst_msg), {"results_count": 0})
-
-    # Helper: schedule a subset of tool_calls on a past assistant message and
-    # insert placeholders immediately. Skips already-scheduled/finished ids.
-    async def _schedule_missing_for_message(
-        asst_msg: dict,
-        only_ids: set[str],
-    ) -> list[str]:
-        scheduled: list[str] = []
-        try:
-            tool_calls = asst_msg.get("tool_calls") or []
-            for idx, call in enumerate(tool_calls):
-                cid = call.get("id")
-                if cid not in only_ids:
-                    continue
-
-                # Skip if already pending or completed
-                if any(inf.get("call_id") == cid for _t, inf in task_info.items()):
-                    continue
-                if cid in completed_results:
-                    continue
-
-                name = call["function"]["name"]
-                args_json = call["function"].get("arguments", "{}")
-
-                # Handle dynamic helpers similarly to main path
-                if _is_helper_tool(name):
-                    # Do not execute helpers during backfill, only acknowledge
-                    try:
-                        await _acknowledge_helper_call(asst_msg, cid, name, args_json)
-                    except Exception:
-                        pass
-                    scheduled.append(cid)
-                    continue
-
-                # Base tool: locate function
-                if name not in norm_tools:
-                    scheduled.append(cid)
-                    continue
-
-                await _schedule_base_tool_call(
-                    asst_msg,
-                    name=name,
-                    args_json=args_json,
-                    call_id=cid,
-                    call_idx=idx,
-                )
-                scheduled.append(cid)
-        except Exception:
-            pass
-        # Ensure placeholders are present for backfilled items
-        try:
-            await _ensure_placeholders_for_pending(
-                assistant_msg=asst_msg,
-            )
-        except Exception:
-            pass
-        return scheduled
-
     # Initialise loop state early so preflight backfill can schedule tasks
-    consecutive_failures = 0
-    pending: Set[asyncio.Task] = set()
-    # Note: removed unused total_tool_calls_made counter
-    task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
-    clarification_channels: Dict[
-        str,
-        Tuple[asyncio.Queue[str], asyncio.Queue[str]],
-    ] = {}
-    completed_results: Dict[str, str] = {}
+    tools_data: _ToolsData = _ToolsData(tools)
+    consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
-
     # Expose live task_info mapping on the current Task so outer handles/tests
     # can introspect currently running nested handles (used by ask/stop helpers).
-    try:
+    with suppress(Exception):
         _self_task = asyncio.current_task()
         if _self_task is not None:
-            setattr(_self_task, "task_info", task_info)  # type: ignore[attr-defined]
-    except Exception:
-        pass
-
-    # Helper: propagate a stop request to any nested SteerableToolHandle returned
-    # by base tools. This ensures outer stop/cancel signals reach inner loops.
-    async def _propagate_stop_to_nested_handles(reason: Optional[str] = None) -> None:
-        try:
-            for _t, _inf in list(task_info.items()):
-                h = _inf.get("handle")
-                if h is not None and hasattr(h, "stop"):
-                    try:
-                        await _forward_handle_call(
-                            h,
-                            "stop",
-                            {"reason": reason} if reason is not None else {},
-                            fallback_positional_keys=["reason"],
-                        )
-                    except Exception:
-                        # Best effort – never let propagation failure crash the loop
-                        pass
-        except Exception:
-            pass
+            setattr(_self_task, "task_info", tools_data.info)  # type: ignore[attr-defined]
 
     # Ensure we forward stop to nested handles at most once, even if multiple
     # branches detect cancellation/stop around the same time.
     _stop_forwarded_once: bool = False
 
-    async def _propagate_stop_once(reason: Optional[str]) -> None:
-        nonlocal _stop_forwarded_once
-        if _stop_forwarded_once:
-            return
-        await _propagate_stop_to_nested_handles(reason)
-        _stop_forwarded_once = True
-
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
-    try:
+    with suppress(Exception):
         unreplied = _find_unreplied_assistant_entries(client)
         if unreplied:
             # backfill for all such assistant messages (oldest → newest)
             for entry in unreplied:
                 amsg = entry["assistant_msg"]
                 # Before scheduling, drop any over-quota tool calls in this message
-                _prune_over_quota_tool_calls(amsg)
+                tools_data.prune_over_quota_tool_calls(amsg)
                 missing_ids = set(entry["missing"])
-                await _schedule_missing_for_message(amsg, missing_ids)
-    except Exception:
-        pass
+                await _schedule_missing_for_message(
+                    amsg,
+                    missing_ids,
+                    tools_data=tools_data,
+                    parent_chat_context=parent_chat_context,
+                    propagate_chat_context=propagate_chat_context,
+                    assistant_meta=assistant_meta,
+                    client=client,
+                    msg_dispatcher=_msg_dispatcher,
+                )
 
     # ── initial **user** message
     if isinstance(message, dict):
@@ -1776,7 +2381,7 @@ async def _async_tool_use_loop_inner(
     else:
         initial_user_msg = {"role": "user", "content": message}
 
-    await _append_msgs([initial_user_msg])
+    await _msg_dispatcher.append_msgs([initial_user_msg])
 
     # ── helper: graceful early-exit when limits are hit ────────────────────
     async def _handle_limit_reached(reason: str) -> str:
@@ -1787,25 +2392,23 @@ async def _async_tool_use_loop_inner(
           • cancel waiter coroutines
           • append a short assistant notice
         """
-        for t in list(pending):
-            h = task_info.get(t, {}).get("handle")
-            try:
+        for t in list(tools_data.pending):
+            h = tools_data.info.get(t, {}).get("handle")
+            with suppress(Exception):
                 if h is not None and hasattr(h, "stop"):
                     await _maybe_await(h.stop())
-            except Exception:
-                pass
             if not t.done():
                 t.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
-        pending.clear()
+        await asyncio.gather(*tools_data.pending, return_exceptions=True)
+        tools_data.pending.clear()
 
         notice = {
             "role": "assistant",
             "content": f"🔚 Terminating early: {reason}",
         }
-        await _append_msgs([notice])
+        await _msg_dispatcher.append_msgs([notice])
         if log_steps:
-            LOGGER.info(f"⏹️ [{log_label}] Early exit – {reason}")
+            logger.info(f"Early exit – {reason}", prefix="⏹️")
         return notice["content"]
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
@@ -1826,7 +2429,7 @@ async def _async_tool_use_loop_inner(
                 # Give any pending tool tasks a chance to finish OR wait until the
                 # loop is resumed / cancelled.  Every coroutine is wrapped in an
                 # asyncio.Task so `asyncio.wait()` is happy.
-                if pending:
+                if tools_data.pending:
                     pause_waiter = asyncio.create_task(
                         pause_event.wait(),
                         name="PauseEventWait",
@@ -1839,7 +2442,7 @@ async def _async_tool_use_loop_inner(
                         stop_event.wait(),
                         name="StopEventWait",
                     )
-                    waiters = pending | {
+                    waiters = tools_data.pending | {
                         pause_waiter,
                         cancel_waiter,
                         graceful_stop_waiter,
@@ -1858,20 +2461,33 @@ async def _async_tool_use_loop_inner(
                             await asyncio.gather(w, return_exceptions=True)
 
                     # tool finished?
-                    for t in done & pending:
-                        await _process_completed_task(t)
+                    for t in done & tools_data.pending:
+                        await _process_completed_task(
+                            task=t,
+                            consecutive_failures=consecutive_failures,
+                            tools_data=tools_data,
+                            outer_handle_container=outer_handle_container,
+                            assistant_meta=assistant_meta,
+                            client=client,
+                            msg_dispatcher=_msg_dispatcher,
+                            logger=logger,
+                        )
                     if cancel_event.is_set():
                         # Forward stop to any nested handles before aborting
-                        try:
-                            await _propagate_stop_once("outer-loop cancelled")
-                        except Exception:
-                            pass
+                        with suppress(Exception):
+                            _stop_forwarded_once = await _propagate_stop_once(
+                                tools_data.info,
+                                _stop_forwarded_once,
+                                "outer-loop cancelled",
+                            )
                         raise asyncio.CancelledError
                     if stop_event.is_set() and persist:
-                        try:
-                            await _propagate_stop_once("outer-loop stopped")
-                        except Exception:
-                            pass
+                        with suppress(Exception):
+                            _stop_forwarded_once = await _propagate_stop_once(
+                                tools_data.info,
+                                _stop_forwarded_once,
+                                "outer-loop stopped",
+                            )
                         # Graceful stop requested during pause
                         return last_final_answer or ""
                     continue  # remain paused: do not allow the LLM to speak while paused
@@ -1901,48 +2517,40 @@ async def _async_tool_use_loop_inner(
 
                     # cancelled?
                     if cancel_event.is_set():
-                        try:
-                            await _propagate_stop_once("outer-loop cancelled")
-                        except Exception:
-                            pass
+                        with suppress(Exception):
+                            _stop_forwarded_once = await _propagate_stop_once(
+                                tools_data.info,
+                                _stop_forwarded_once,
+                                "outer-loop cancelled",
+                            )
                         raise asyncio.CancelledError
                     if stop_event.is_set() and persist:
-                        try:
-                            await _propagate_stop_once("outer-loop stopped")
-                        except Exception:
-                            pass
+                        with suppress(Exception):
+                            _stop_forwarded_once = await _propagate_stop_once(
+                                tools_data.info,
+                                _stop_forwarded_once,
+                                "outer-loop stopped",
+                            )
                         return last_final_answer or ""
                         continue  # top-of-loop, still paused
 
             # 0-α. **Global timeout**
-            if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
-                if raise_on_limit:
-                    raise asyncio.TimeoutError(
-                        f"Loop exceeded {timeout}s wall-clock limit",
-                    )
-                else:
-                    return await _handle_limit_reached(
-                        f"timeout ({timeout}s) exceeded",
-                    )
+            if timer.has_exceeded_time():
+                return await _handle_limit_reached(
+                    f"timeout ({timeout}s) exceeded",
+                )
 
             # 0-β. **Chat history length**
-            if max_steps is not None and len(client.messages) >= max_steps:
-                if raise_on_limit:
-                    raise RuntimeError(
-                        f"Conversation exceeded max_steps={max_steps} "
-                        f"(len(client.messages)={len(client.messages)})",
-                    )
-                else:
-                    return await _handle_limit_reached(
-                        f"max_steps ({max_steps}) exceeded",
-                    )
+            if timer.has_exceeded_msgs():
+                return await _handle_limit_reached(
+                    f"max_steps ({max_steps}) exceeded",
+                )
 
             # 0-γ. Repair any outstanding assistant tool_calls missing replies
             #      before we allow new user interjections to be appended.
-            try:
-                unreplied = _find_unreplied_assistant_entries(client)
+            with suppress(Exception):
                 # Only consider the very latest assistant with missing replies first
-                if unreplied:
+                if unreplied := _find_unreplied_assistant_entries(client):
                     last_problem = unreplied[-1]
                     amsg = last_problem["assistant_msg"]
                     missing_ids = set(last_problem["missing"])
@@ -1951,9 +2559,13 @@ async def _async_tool_use_loop_inner(
                         backfilled = await _schedule_missing_for_message(
                             amsg,
                             missing_ids,
+                            tools_data=tools_data,
+                            parent_chat_context=parent_chat_context,
+                            propagate_chat_context=propagate_chat_context,
+                            assistant_meta=assistant_meta,
+                            client=client,
+                            msg_dispatcher=_msg_dispatcher,
                         )
-            except Exception:
-                pass
 
             # ── 0. Drain *all* queued interjections, allowed at any time ──
             # NOTE: We must do this *before* waiting on tool completion so a
@@ -2009,16 +2621,14 @@ async def _async_tool_use_loop_inner(
                     "any conflicting comments/requests across the different interjections."
                 )
                 interjection_msg = {"role": "system", "content": sys_content}
-                await _append_msgs([interjection_msg])
+                await _msg_dispatcher.append_msgs([interjection_msg])
 
                 # Append this interjection to the user-visible history for future context
-                try:
+                with suppress(Exception):
                     if outer_handle:
                         outer_handle._user_visible_history.append(
                             {"role": "user", "content": extra},
                         )
-                except Exception:
-                    pass
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
             # If a child just asked for clarification we also want to give
@@ -2028,7 +2638,7 @@ async def _async_tool_use_loop_inner(
             #       • any tool task finishes
             #       • ``cancel_event`` flips
             #       • a *new* interjection appears
-            if pending and not llm_turn_required:
+            if tools_data.pending and not llm_turn_required:
                 interject_w = asyncio.create_task(
                     interject_queue.get(),
                     name="InterjectQueueGet",
@@ -2042,41 +2652,32 @@ async def _async_tool_use_loop_inner(
                     name="StopEventWait",
                 )
                 clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
-                for _t in pending:
+                for _t in tools_data.pending:
                     # Only listen for *new* clarification questions.
                     # If the task is already awaiting an answer,
                     # `waiting_for_clarification` will be True.
-                    if task_info[_t].get("waiting_for_clarification"):
+                    if tools_data.info[_t].get("waiting_for_clarification"):
                         continue
 
-                    cuq = task_info[_t].get("clar_up_q")
+                    cuq = tools_data.info[_t].get("clar_up_queue")
                     if cuq is not None:
                         w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
                         clar_waiters[w] = _t
                 waiters = (
-                    pending
+                    tools_data.pending
                     | set(clar_waiters)
                     | {cancel_waiter, interject_w, graceful_stop_waiter}
                 )
 
                 # ── honour global *timeout* while we wait for tools ───────────
-                wait_timeout: Optional[float] = None
-                if timeout is not None:
-                    wait_timeout = timeout - (time.perf_counter() - last_activity_ts)
-                    # already exceeded?
-                    if wait_timeout <= 0:
-                        if raise_on_limit:
-                            raise asyncio.TimeoutError(
-                                f"Loop exceeded {timeout}s wall-clock limit",
-                            )
-                        else:
-                            return await _handle_limit_reached(
-                                f"timeout ({timeout}s) exceeded",
-                            )
+                if timer.has_exceeded_time():
+                    return await _handle_limit_reached(
+                        f"timeout ({timeout}s) exceeded",
+                    )
 
                 done, _ = await asyncio.wait(
                     waiters,
-                    timeout=wait_timeout,
+                    timeout=timer.remaining_time(),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
@@ -2111,16 +2712,20 @@ async def _async_tool_use_loop_inner(
                     continue  # → loop, will be processed in 0.
 
                 if cancel_waiter in done:
-                    try:
-                        await _propagate_stop_once("outer-loop cancelled")
-                    except Exception:
-                        pass
+                    with suppress(Exception):
+                        _stop_forwarded_once = await _propagate_stop_once(
+                            tools_data.info,
+                            _stop_forwarded_once,
+                            "outer-loop cancelled",
+                        )
                     raise asyncio.CancelledError  # cancellation wins
                 if graceful_stop_waiter in done and persist:
-                    try:
-                        await _propagate_stop_once("outer-loop stopped")
-                    except Exception:
-                        pass
+                    with suppress(Exception):
+                        _stop_forwarded_once = await _propagate_stop_once(
+                            tools_data.info,
+                            _stop_forwarded_once,
+                            "outer-loop stopped",
+                        )
                     return last_final_answer or ""
 
                 # ── clarification request bubbled up from a child tool ──────────────
@@ -2128,13 +2733,13 @@ async def _async_tool_use_loop_inner(
                     for cw in done & clar_waiters.keys():
                         question = cw.result()  # the text from the child
                         src_task = clar_waiters[cw]
-                        call_id = task_info[src_task]["call_id"]
+                        call_id = tools_data.info[src_task]["call_id"]
 
                         # 1️⃣ mark the task as waiting
-                        task_info[src_task]["waiting_for_clarification"] = True
+                        tools_data.info[src_task]["waiting_for_clarification"] = True
 
                         # 2️⃣ REUSE the existing placeholder if we already inserted one
-                        ph = task_info[src_task].get("tool_reply_msg")
+                        ph = tools_data.info[src_task].get("tool_reply_msg")
                         if ph is None:
                             # no placeholder yet → create one exactly once
                             ph = {
@@ -2144,10 +2749,13 @@ async def _async_tool_use_loop_inner(
                                 "content": "",  # will fill below
                             }
                             await _insert_after_assistant(
-                                task_info[src_task]["assistant_msg"],
+                                assistant_meta,
+                                tools_data.info[src_task]["assistant_msg"],
                                 ph,
+                                client,
+                                _msg_dispatcher,
                             )
-                            task_info[src_task]["tool_reply_msg"] = ph
+                            tools_data.info[src_task]["tool_reply_msg"] = ph
 
                         # 3️⃣ turn (or update) the placeholder into the request
                         ph["name"] = f"clarification_request_{call_id}"
@@ -2163,24 +2771,37 @@ async def _async_tool_use_loop_inner(
 
                 needs_turn = False
                 for task in done:  # finished tool(s)
-                    if await _process_completed_task(task):
+                    if await _process_completed_task(
+                        task=task,
+                        consecutive_failures=consecutive_failures,
+                        tools_data=tools_data,
+                        outer_handle_container=outer_handle_container,
+                        assistant_meta=assistant_meta,
+                        client=client,
+                        msg_dispatcher=_msg_dispatcher,
+                        logger=logger,
+                    ):
                         needs_turn = True
 
                 # Other tools may still be running.
-                if pending:
+                if tools_data.pending:
                     if needs_turn:  # only when something new
                         llm_turn_required = True
                     continue  # jump to top-of-loop
 
             # ── B: wait for remaining tools before asking the LLM again,
             # unless the model already deserves a turn
-            if pending and not llm_turn_required:
+            if tools_data.pending and not llm_turn_required:
                 # Ensure placeholders exist for any pending calls before the next assistant turn
                 await _ensure_placeholders_for_pending(
                     content=(
                         "Still running… you can use any of the available helper tools "
                         "to interact with this tool call while it is in progress."
                     ),
+                    tools_data=tools_data,
+                    assistant_meta=assistant_meta,
+                    client=client,
+                    msg_dispatcher=_msg_dispatcher,
                 )
                 continue  # still waiting for other tool tasks
 
@@ -2195,8 +2816,6 @@ async def _async_tool_use_loop_inner(
             # the token budget.
             # ------------------------------------------------------------------
 
-            dynamic_tools: Dict[str, Callable] = {}
-
             # ------------------------------------------------------------------
             # 1.  Build the *static* part of the toolkit **fresh on every turn**
             #     so that concurrency changes (tasks finishing, stopping, …)
@@ -2208,27 +2827,24 @@ async def _async_tool_use_loop_inner(
                 try:
                     tool_choice_mode, filtered = tool_policy(
                         step_index,
-                        {n: s.fn for n, s in norm_tools.items()},
+                        {n: s.fn for n, s in tools_data.norm_tools.items()},
                     )
                 except Exception as _e:  # never abort the loop on mis-behaving policies
-                    LOGGER.error(
+                    logger.error(
                         f"tool_policy raised on turn {step_index}: {_e!r}",
                     )
                     tool_choice_mode, filtered = "auto", {
-                        n: s.fn for n, s in norm_tools.items()
+                        n: s.fn for n, s in tools_data.norm_tools.items()
                     }
                 policy_tools_norm = _normalise_tools(filtered)
             else:
                 tool_choice_mode = "auto"
-                policy_tools_norm = norm_tools
-
-            def _concurrency_ok(tn: str) -> bool:
-                return tn not in norm_tools or _can_offer_tool(tn)
+                policy_tools_norm = tools_data.norm_tools
 
             visible_base_tools_schema = [
                 method_to_schema(spec.fn, name)
                 for name, spec in policy_tools_norm.items()
-                if _concurrency_ok(name) and _quota_ok(name)
+                if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
             ]
 
             # Inject `final_answer` tool automatically whenever a `response_format` is
@@ -2236,17 +2852,7 @@ async def _async_tool_use_loop_inner(
             # the provided Pydantic model.
             if response_format is not None:
                 try:
-                    from pydantic import BaseModel  # local import
-
-                    if not (
-                        isinstance(response_format, type)
-                        and issubclass(response_format, BaseModel)
-                    ):
-                        raise TypeError(
-                            "response_format must be a Pydantic BaseModel subclass.",
-                        )
-
-                    _answer_schema = response_format.model_json_schema()
+                    _answer_schema = _check_valid_response_format(response_format)
 
                     visible_base_tools_schema.append(
                         {
@@ -2267,380 +2873,13 @@ async def _async_tool_use_loop_inner(
                         },
                     )
                 except Exception as _injection_exc:  # noqa: BLE001
-                    LOGGER.error(
+                    logger.error(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
 
-            # helper: register a freshly-minted coroutine as a *temporary* tool
-            def _reg_tool(key: str, func_name: str, doc: str, fn: Callable) -> None:
-                # prefer the function's own docstring if it exists, else fall back
-                existing = inspect.getdoc(fn)
-                fn.__doc__ = existing.strip() if existing else doc
-                fn.__name__ = func_name[:64]
-                fn.__qualname__ = func_name[:64]
-                dynamic_tools[key.lstrip("_")] = fn
-
-            for _task in list(pending):
-                info = task_info[_task]
-                handle = info.get("handle")
-                ev = info.get("pause_event")
-
-                # ── DYNAMIC capability refresh (handle may change) ─────
-                if handle is not None:
-                    # 1. interjection
-                    info["is_interjectable"] = hasattr(handle, "interject")
-
-                    # 2. clarification queues
-                    h_up_q = getattr(
-                        handle,
-                        "clarification_up_q",
-                        info.get("clar_up_q"),
-                    )
-                    h_dn_q = getattr(
-                        handle,
-                        "clarification_down_q",
-                        info.get("clar_down_q"),
-                    )
-
-                    if (h_up_q is not None) ^ (h_dn_q is not None):
-                        raise AttributeError(
-                            f"Handle of call {info['call_id']} now exposes only one "
-                            "of clarification queues; both or neither required.",
-                        )
-
-                    # update bookkeeping & channel map
-                    prev_up_q = info.get("clar_up_q")
-                    if h_up_q is not prev_up_q:
-                        # remove old mapping if any
-                        clarification_channels.pop(info["call_id"], None)
-                        if h_up_q is not None:
-                            clarification_channels[info["call_id"]] = (
-                                h_up_q,
-                                h_dn_q,
-                            )
-                    info["clar_up_q"] = h_up_q
-                    info["clar_down_q"] = h_dn_q
-
-                _call_id: str = info["call_id"]
-                # Create a sanitized version of the call_id for use in function names.
-                _safe_call_id: str = _call_id.replace("-", "_").split("_")[-1]
-                _fn_name: str = info["name"]
-                _arg_json: str = info["call_dict"]["function"]["arguments"]
-                try:
-                    _arg_dict = json.loads(_arg_json)
-                    _arg_repr = ", ".join(f"{k}={v!r}" for k, v in _arg_dict.items())
-                except Exception:
-                    _arg_repr = _arg_json  # fallback: raw JSON string
-
-                # concise, informative, single‑line docs  ----------------------
-                _continue_doc = f"Continue waiting for {_fn_name}({_arg_repr})."
-                _stop_doc = (
-                    f"Stop pending call {_fn_name}({_arg_repr}). "
-                    "Accepts any arguments supported by the underlying handle's `stop` method (e.g. `reason`)."
-                )
-
-                # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
-                # Skip if the task is blocked waiting for clarification; there's
-                # nothing to "continue" until the user answers.
-                if not info.get("waiting_for_clarification"):
-
-                    async def _continue() -> Dict[str, str]:
-                        return {"status": "continue", "call_id": _call_id}
-
-                    _reg_tool(
-                        key=f"continue_{_fn_name}_{_safe_call_id}",
-                        func_name=f"continue_{_fn_name}_{_safe_call_id}",
-                        doc=_continue_doc,
-                        fn=_continue,
-                    )
-
-                # ––– 2. stop helper –––––––––––––––––––––––––––––––––––––
-                async def _stop(
-                    **_kw,
-                ) -> Dict[str, str]:
-                    # Forward stop intent to the running handle with any extra kwargs
-                    if handle is not None and hasattr(handle, "stop"):
-                        await _forward_handle_call(
-                            handle,
-                            "stop",
-                            _kw,
-                            fallback_positional_keys=["reason"],
-                        )
-                    if not _task.done():
-                        _task.cancel()  # kill the waiter coroutine
-                    pending.discard(_task)
-                    task_info.pop(_task, None)
-                    return {"status": "stopped", "call_id": _call_id, **_kw}
-
-                _reg_tool(
-                    key=f"stop_{_fn_name}_{_safe_call_id}",
-                    func_name=f"stop_{_fn_name}_{_safe_call_id}",
-                    doc=_stop_doc,
-                    fn=_stop,
-                )
-                # Expose full argspec of handle.stop in the helper schema
-                try:
-                    if handle is not None and hasattr(handle, "stop"):
-                        _adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
-                except Exception:
-                    pass
-
-                # ––– 3. interject helper (optional) ––––––––––––––––––––––
-                if info.get("is_interjectable"):
-                    _interject_doc = (
-                        f"Inject additional instructions for {_fn_name}({_arg_repr}). "
-                        "Accepts any arguments supported by the underlying handle's `interject` method (e.g. `content`)."
-                    )
-
-                    if handle is not None:
-
-                        async def _interject(**_kw) -> Dict[str, str]:
-                            # nested async-tool loop: delegate to its public API with full argspec
-                            try:
-                                await _forward_handle_call(
-                                    handle,
-                                    "interject",
-                                    _kw,
-                                    fallback_positional_keys=["content", "message"],
-                                )
-                            except Exception:
-                                pass
-                            return {
-                                "status": "interjected",
-                                "call_id": _call_id,
-                                **{k: v for k, v in _kw.items()},
-                            }
-
-                        # Expose the downstream handle's signature to the LLM
-                        try:
-                            _adopt_signature_and_annotations(
-                                getattr(handle, "interject"),
-                                _interject,
-                            )
-                        except Exception:
-                            pass
-
-                    else:
-
-                        async def _interject(content: str) -> Dict[str, str]:
-                            # regular tool: push onto its private queue
-                            await info["interject_q"].put(content)
-                            return {
-                                "status": "interjected",
-                                "call_id": _call_id,
-                                "content": content,
-                            }
-
-                    _reg_tool(
-                        key=f"interject_{_fn_name}_{_safe_call_id}",
-                        func_name=f"interject_{_fn_name}_{_safe_call_id}",
-                        doc=_interject_doc,
-                        fn=_interject,
-                    )
-
-                # ––– 4. clarification-answer helper (optional) ––––––––––
-                if info.get("clar_up_q") is not None:
-                    _clarify_doc = (
-                        f"Provide an answer to the clarification which was requested by the (currently pending) tool "
-                        f"{_fn_name}({_arg_repr}). Takes a single argument `answer`."
-                    )
-
-                    async def _clarify(answer: str) -> Dict[str, str]:  # type: ignore[valid-type]
-                        return {
-                            "status": "clar_answer",
-                            "call_id": _call_id,
-                            "answer": answer,
-                        }
-
-                    _reg_tool(
-                        key=f"clarify_{_fn_name}_{_safe_call_id}",
-                        func_name=f"clarify_{_fn_name}_{_safe_call_id}",
-                        doc=_clarify_doc,
-                        fn=_clarify,
-                    )
-
-                # ––– 5. pause helper –––––––––––––––––––––––––––––––––––––––––––
-                can_pause = (handle is not None and hasattr(handle, "pause")) or ev
-                can_resume = (handle is not None and hasattr(handle, "resume")) or ev
-
-                if can_pause:
-                    _pause_doc = f"Pause the pending call {_fn_name}({_arg_repr})."
-
-                    if handle is not None and hasattr(handle, "pause"):
-
-                        async def _pause(**_kw) -> Dict[str, str]:
-                            try:
-                                await _forward_handle_call(handle, "pause", _kw)
-                            except Exception:
-                                pass
-                            return {"status": "paused", "call_id": _call_id, **_kw}
-
-                        # Reflect downstream signature/annotations
-                        try:
-                            _adopt_signature_and_annotations(
-                                getattr(handle, "pause"),
-                                _pause,
-                            )
-                        except Exception:
-                            pass
-
-                    else:
-
-                        async def _pause() -> Dict[str, str]:
-                            if handle is not None and hasattr(handle, "pause"):
-                                await _maybe_await(handle.pause())
-                            elif ev is not None:
-                                ev.clear()
-                            return {"status": "paused", "call_id": _call_id}
-
-                    _reg_tool(
-                        key=f"pause_{_fn_name}_{_safe_call_id}",
-                        func_name=f"pause_{_fn_name}_{_safe_call_id}",
-                        doc=_pause_doc,
-                        fn=_pause,
-                    )
-
-                # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
-                if can_resume:
-                    _resume_doc = (
-                        f"Resume the previously paused call {_fn_name}({_arg_repr})."
-                    )
-
-                    if handle is not None and hasattr(handle, "resume"):
-
-                        async def _resume(**_kw) -> Dict[str, str]:
-                            try:
-                                await _forward_handle_call(handle, "resume", _kw)
-                            except Exception:
-                                pass
-                            return {"status": "resumed", "call_id": _call_id, **_kw}
-
-                        try:
-                            _adopt_signature_and_annotations(
-                                getattr(handle, "resume"),
-                                _resume,
-                            )
-                        except Exception:
-                            pass
-
-                    else:
-
-                        async def _resume() -> Dict[str, str]:
-                            if handle is not None and hasattr(handle, "resume"):
-                                await _maybe_await(handle.resume())
-                            elif ev is not None:
-                                ev.set()
-                            return {"status": "resumed", "call_id": _call_id}
-
-                    _reg_tool(
-                        key=f"resume_{_fn_name}_{_safe_call_id}",
-                        func_name=f"resume_{_fn_name}_{_safe_call_id}",
-                        doc=_resume_doc,
-                        fn=_resume,
-                    )
-
-                # 7.  expose *all* other public methods of the handle
-                if handle is not None:
-
-                    public_methods = _discover_custom_public_methods(handle)
-
-                    # ── honour handle.valid_tools, if present ──────────────
-                    if hasattr(handle, "valid_tools"):
-                        allowed: set[str] = set(getattr(handle, "valid_tools", []))
-                        public_methods = {
-                            name: bound
-                            for name, bound in public_methods.items()
-                            if name in allowed
-                        }
-
-                    # Identify write-only helpers declared by the handle
-                    write_only_set: set[str] = set()
-                    try:
-                        wo = getattr(handle, "write_only_methods", None)
-                        if wo is not None:
-                            write_only_set |= set(wo)
-                    except Exception:
-                        pass
-                    try:
-                        wo2 = getattr(handle, "write_only_tools", None)
-                        if wo2 is not None:
-                            write_only_set |= set(wo2)
-                    except Exception:
-                        pass
-
-                    for meth_name, bound in public_methods.items():
-                        # use the same name we're about to give fn.__name__
-                        func_name = f"{meth_name}_{_fn_name}_{_safe_call_id}"
-                        helper_key = func_name
-
-                        # Skip if we already generated one this turn (possible when
-                        # the loop revisits the same pending task).
-                        if helper_key in dynamic_tools:
-                            continue
-
-                        # Write-only helpers: fire-and-forget operations
-                        if meth_name in write_only_set:
-
-                            async def _invoke_handle_method(
-                                _method_name=meth_name,
-                                **_kw,
-                            ):
-                                # Robust forwarding incl. kwargs normalisation and fallbacks
-                                try:
-                                    await _forward_handle_call(
-                                        handle,
-                                        _method_name,
-                                        _kw,
-                                    )
-                                except Exception:
-                                    pass
-                                # Write-only: no result propagation
-                                return {"call_id": _call_id, "status": "ack"}
-
-                        else:
-
-                            async def _invoke_handle_method(
-                                _method_name=meth_name,
-                                **_kw,
-                            ):  # default args → capture current method name
-                                """
-                                Auto-generated wrapper that calls the corresponding
-                                method on the live handle and **waits** for the return
-                                value (sync or async).
-                                """
-                                # Use shared forwarding to support flexible args and fallbacks
-                                res = await _forward_handle_call(
-                                    handle,
-                                    _method_name,
-                                    _kw,
-                                )
-                                return {"call_id": _call_id, "result": res}
-
-                        # override the wrapper's signature to match the real method
-                        _invoke_handle_method.__signature__ = inspect.signature(bound)
-
-                        _reg_tool(
-                            key=helper_key,
-                            func_name=func_name,
-                            doc=(
-                                (
-                                    f"Perform `{meth_name}` on the running handle (id={_call_id}). "
-                                    "Fire-and-forget write-only operation; returns immediately."
-                                )
-                                if meth_name in write_only_set
-                                else (
-                                    f"Invoke `{meth_name}` on the running handle (id={_call_id}). "
-                                    "Returns when that method finishes."
-                                )
-                            ),
-                            fn=_invoke_handle_method,
-                        )
-                        # Mark write-only helpers so scheduling can acknowledge and avoid tracking
-                        if meth_name in write_only_set:
-                            try:
-                                dynamic_tools[helper_key].__write_only__ = True  # type: ignore[attr-defined]
-                            except Exception:
-                                pass
+            dynamic_tool_factory = DynamicToolFactory(tools_data)
+            dynamic_tool_factory.generate()
+            dynamic_tools = dynamic_tool_factory.dynamic_tools
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
@@ -2649,6 +2888,10 @@ async def _async_tool_use_loop_inner(
                     "Still running… you can use any of the available helper tools "
                     "to interact with this tool call while it is in progress."
                 ),
+                tools_data=tools_data,
+                assistant_meta=assistant_meta,
+                client=client,
+                msg_dispatcher=_msg_dispatcher,
             )
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
@@ -2662,7 +2905,7 @@ async def _async_tool_use_loop_inner(
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
-                LOGGER.info(f"🔄 [{log_label}] LLM thinking…")
+                logger.info(f"LLM thinking…", prefix="🔄")
 
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
@@ -2690,7 +2933,7 @@ async def _async_tool_use_loop_inner(
                 )
 
                 # ➋ …but ALSO watch the tool tasks that were still pending
-                pending_snapshot = set(pending)
+                pending_snapshot = set(tools_data.pending)
 
                 done, _ = await asyncio.wait(
                     pending_snapshot | {llm_task, interject_w, cancel_waiter},
@@ -2720,7 +2963,16 @@ async def _async_tool_use_loop_inner(
                     # — handle each newly-finished task exactly as branch A does
                     needs_turn = False
                     for task in done & pending_snapshot:
-                        if await _process_completed_task(task):
+                        if await _process_completed_task(
+                            task=task,
+                            consecutive_failures=consecutive_failures,
+                            tools_data=tools_data,
+                            outer_handle_container=outer_handle_container,
+                            assistant_meta=assistant_meta,
+                            client=client,
+                            msg_dispatcher=_msg_dispatcher,
+                            logger=logger,
+                        ):
                             needs_turn = True
 
                     # …then restart the main loop so the model sees the new info
@@ -2772,52 +3024,27 @@ async def _async_tool_use_loop_inner(
                     )
 
             msg = client.messages[-1]
-            await _to_event_bus(msg, loop_id, _lineage, log_label)
+            await _to_event_bus(msg, cfg)
 
             if log_steps:
                 try:
-                    LOGGER.info(f"🤖 [{log_label}] {json.dumps(msg, indent=4)}\n")
+                    logger.info(f"{json.dumps(msg, indent=4)}\n", prefix="🤖")
                 except Exception:
-                    LOGGER.info(
-                        f"🤖 [{log_label}] Assistant message appended (unserializable)",
+                    logger.info(
+                        f"Assistant message appended (unserializable)",
+                        prefix="🤖",
                     )
 
             # ── timeout guard (post-LLM) ───────────────────────────────
-            if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
-                if raise_on_limit:
-                    raise asyncio.TimeoutError(
-                        f"Loop exceeded {timeout}s wall-clock limit",
-                    )
-                else:
-                    return await _handle_limit_reached(
-                        f"timeout ({timeout}s) exceeded",
-                    )
+            if timer.has_exceeded_time():
+                return await _handle_limit_reached(
+                    f"timeout ({timeout}s) exceeded",
+                )
 
             # LLM has just spoken – reset the flag
             llm_turn_required = False
             # one full assistant turn completed
             step_index += 1
-
-            # ── De-duplicate tool calls (optional) ────────────────────────
-            if prune_tool_duplicates and msg.get("tool_calls"):
-                seen: Set[tuple[str, str]] = set()
-                unique_calls: list = []
-                for call in msg["tool_calls"]:
-                    sig = (call["function"]["name"], call["function"]["arguments"])
-                    if sig not in seen:
-                        seen.add(sig)
-                        unique_calls.append(call)
-                if len(unique_calls) != len(msg["tool_calls"]):
-                    # mutate in-place so history never contains duplicates
-                    msg["tool_calls"] = unique_calls
-
-                # After deduplication, prune any calls exceeding hidden quotas
-                _prune_over_quota_tool_calls(msg)
-
-            # Always ensure over-quota tool calls are removed regardless of
-            # deduplication settings, before any scheduling occurs.
-            if msg.get("tool_calls"):
-                _prune_over_quota_tool_calls(msg)
 
             # ── E.  Launch any new tool calls  ──────────────────────────────
             # NOTE: The model returned `tool_calls`.  For *each* call we:
@@ -2835,8 +3062,22 @@ async def _async_tool_use_loop_inner(
             # Finally we `continue` so control jumps back to *branch A*
             # where we wait for the **first** task / cancel / interjection.
             if msg["tool_calls"]:
+                # ── De-duplicate tool calls (optional) ────────────────────────
+                if prune_tool_duplicates:
+                    seen: Set[tuple[str, str]] = set()
+                    unique_calls: list = []
+                    for call in msg["tool_calls"]:
+                        sig = (call["function"]["name"], call["function"]["arguments"])
+                        if sig not in seen:
+                            seen.add(sig)
+                            unique_calls.append(call)
+                    if len(unique_calls) != len(msg["tool_calls"]):
+                        # mutate in-place so history never contains duplicates
+                        msg["tool_calls"] = unique_calls
 
-                pass  # removed: original_tool_calls collector no longer used
+                # Always ensure over-quota tool calls are removed regardless of
+                # deduplication settings, before any scheduling occurs.
+                tools_data.prune_over_quota_tool_calls(msg)
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
@@ -2859,7 +3100,13 @@ async def _async_tool_use_loop_inner(
                                 "name": "final_answer",
                                 "content": _dumps(payload, indent=4),
                             }
-                            await _insert_after_assistant(msg, tool_msg)
+                            await _insert_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
 
                             return json.dumps(payload)
                         except Exception as _exc:
@@ -2872,7 +3119,13 @@ async def _async_tool_use_loop_inner(
                                     + str(_exc)
                                 ),
                             }
-                            await _insert_after_assistant(msg, tool_msg)
+                            await _insert_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
                             continue
 
                     # ── Special-case dynamic helpers ──────────────────────
@@ -2885,22 +3138,26 @@ async def _async_tool_use_loop_inner(
                         tgt_task = next(
                             (
                                 t
-                                for t, inf in task_info.items()
+                                for t, inf in tools_data.info.items()
                                 if str(inf.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
                         )
 
-                        orig_fn = task_info[tgt_task]["name"] if tgt_task else "unknown"
+                        orig_fn = (
+                            tools_data.info[tgt_task]["name"] if tgt_task else "unknown"
+                        )
                         arg_json = (
-                            task_info[tgt_task]["call_dict"]["function"]["arguments"]
+                            tools_data.info[tgt_task]["call_dict"]["function"][
+                                "arguments"
+                            ]
                             if tgt_task
                             else "{}"
                         )
                         pretty_name = f"continue {orig_fn}({arg_json})"
 
                         if tgt_task:  # still running → insert generated placeholder now
-                            info = task_info[tgt_task]
+                            info = tools_data.info[tgt_task]
                             name = info["name"]
                             arg_json = info["call_dict"]["function"]["arguments"]
                             tool_reply_msg = {
@@ -2915,19 +3172,25 @@ async def _async_tool_use_loop_inner(
                                     f" • {name}({arg_json}) → cancel_{call['id']} / continue_{call['id']}"
                                 ),
                             }
-                            await _insert_after_assistant(msg, tool_reply_msg)
+                            await _insert_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_reply_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
                             info["continue_msg"] = tool_reply_msg
                         else:  # the original tool already finished
                             # Lookup finished result by matching call-id suffix
                             _full_id = next(
                                 (
                                     k
-                                    for k in completed_results.keys()
+                                    for k in tools_data.completed_results.keys()
                                     if k.endswith(call_id_suffix)
                                 ),
                                 None,
                             )
-                            finished = completed_results.get(
+                            finished = tools_data.completed_results.get(
                                 _full_id,
                                 _dumps(
                                     {"status": "not-found", "call_id": call_id_suffix},
@@ -2941,8 +3204,11 @@ async def _async_tool_use_loop_inner(
                                 "content": finished,
                             }
                             await _insert_after_assistant(
+                                assistant_meta,
                                 msg,
                                 tool_msg,
+                                client,
+                                _msg_dispatcher,
                             )
                         continue  # completed handling of this _continue
 
@@ -2956,19 +3222,19 @@ async def _async_tool_use_loop_inner(
                         task_to_cancel = next(
                             (
                                 t
-                                for t, info in task_info.items()
+                                for t, info in tools_data.info.items()
                                 if str(info.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
                         )
 
                         orig_fn = (
-                            task_info[task_to_cancel]["name"]
+                            tools_data.info[task_to_cancel]["name"]
                             if task_to_cancel
                             else "unknown"
                         )
                         arg_json = (
-                            task_info[task_to_cancel]["call_dict"]["function"][
+                            tools_data.info[task_to_cancel]["call_dict"]["function"][
                                 "arguments"
                             ]
                             if task_to_cancel
@@ -2984,7 +3250,9 @@ async def _async_tool_use_loop_inner(
 
                         # ── gracefully shut down any *nested* async-tool loop first ──────
                         if task_to_cancel:
-                            nested_handle = task_info[task_to_cancel].get("handle")
+                            nested_handle = tools_data.info[task_to_cancel].get(
+                                "handle",
+                            )
                             if nested_handle is not None:
                                 # public API call – propagates cancellation downwards
                                 await _forward_handle_call(
@@ -2998,8 +3266,8 @@ async def _async_tool_use_loop_inner(
                         if task_to_cancel and not task_to_cancel.done():
                             task_to_cancel.cancel()
                         if task_to_cancel:
-                            pending.discard(task_to_cancel)
-                            task_info.pop(task_to_cancel, None)
+                            tools_data.pending.discard(task_to_cancel)
+                            tools_data.info.pop(task_to_cancel, None)
 
                         tool_msg = {
                             "role": "tool",
@@ -3009,7 +3277,13 @@ async def _async_tool_use_loop_inner(
                                 f"The tool call [{call_id_suffix}] has been stopped successfully."
                             ),
                         }
-                        await _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
 
                         continue  # nothing else to schedule
 
@@ -3021,14 +3295,18 @@ async def _async_tool_use_loop_inner(
                         tgt_task = next(
                             (
                                 t
-                                for t, info in task_info.items()
+                                for t, info in tools_data.info.items()
                                 if call_id_suffix in info["call_id"]
                             ),
                             None,
                         )
-                        orig_fn = task_info[tgt_task]["name"] if tgt_task else "unknown"
+                        orig_fn = (
+                            tools_data.info[tgt_task]["name"] if tgt_task else "unknown"
+                        )
                         arg_json = (
-                            task_info[tgt_task]["call_dict"]["function"]["arguments"]
+                            tools_data.info[tgt_task]["call_dict"]["function"][
+                                "arguments"
+                            ]
                             if tgt_task
                             else "{}"
                         )
@@ -3041,8 +3319,8 @@ async def _async_tool_use_loop_inner(
                             payload = {}
 
                         if tgt_task:
-                            h = task_info[tgt_task].get("handle")
-                            ev = task_info[tgt_task].get("pause_event")
+                            h = tools_data.info[tgt_task].get("handle")
+                            ev = tools_data.info[tgt_task].get("pause_event")
                             if h is not None and hasattr(h, "pause"):
                                 await _forward_handle_call(h, "pause", payload)
                             elif ev is not None:
@@ -3054,7 +3332,13 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f"The tool call [{call_id_suffix}] has been paused successfully.",
                         }
-                        await _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
@@ -3065,14 +3349,18 @@ async def _async_tool_use_loop_inner(
                         tgt_task = next(
                             (
                                 t
-                                for t, info in task_info.items()
+                                for t, info in tools_data.info.items()
                                 if call_id_suffix in info["call_id"]
                             ),
                             None,
                         )
-                        orig_fn = task_info[tgt_task]["name"] if tgt_task else "unknown"
+                        orig_fn = (
+                            tools_data.info[tgt_task]["name"] if tgt_task else "unknown"
+                        )
                         arg_json = (
-                            task_info[tgt_task]["call_dict"]["function"]["arguments"]
+                            tools_data.info[tgt_task]["call_dict"]["function"][
+                                "arguments"
+                            ]
                             if tgt_task
                             else "{}"
                         )
@@ -3085,8 +3373,8 @@ async def _async_tool_use_loop_inner(
                             payload = {}
 
                         if tgt_task:
-                            h = task_info[tgt_task].get("handle")
-                            ev = task_info[tgt_task].get("pause_event")
+                            h = tools_data.info[tgt_task].get("handle")
+                            ev = tools_data.info[tgt_task].get("pause_event")
                             if h is not None and hasattr(h, "resume"):
                                 await _forward_handle_call(h, "resume", payload)
                             elif ev is not None:
@@ -3098,7 +3386,13 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f"The tool call [{call_id_suffix}] has been resumed successfully.",
                         }
-                        await _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
                         continue  # helper handled
 
                     if name.startswith("clarify_"):
@@ -3110,7 +3404,7 @@ async def _async_tool_use_loop_inner(
                         tgt_task = next(  # ← NEW
                             (
                                 t
-                                for t, inf in task_info.items()
+                                for t, inf in tools_data.info.items()
                                 if str(inf.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
@@ -3120,17 +3414,17 @@ async def _async_tool_use_loop_inner(
                         _clar_key = next(
                             (
                                 k
-                                for k in clarification_channels.keys()
+                                for k in tools_data.clarification_channels.keys()
                                 if k.endswith(call_id_suffix)
                             ),
                             None,
                         )
                         if _clar_key is not None:
-                            await clarification_channels[_clar_key][1].put(
+                            await tools_data.clarification_channels[_clar_key][1].put(
                                 ans,
                             )  # down-queue
                             # ✔️ the tool is un-blocked – start watching it again
-                            for _t, _inf in task_info.items():
+                            for _t, _inf in tools_data.info.items():
                                 if str(_inf.get("call_id", "")).endswith(
                                     call_id_suffix,
                                 ):
@@ -3145,9 +3439,17 @@ async def _async_tool_use_loop_inner(
                                 "⏳ Waiting for the original tool to finish…"
                             ),
                         }
-                        await _insert_after_assistant(msg, tool_reply_msg)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_reply_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
                         if tgt_task is not None:
-                            task_info[tgt_task]["clarify_placeholder"] = tool_reply_msg
+                            tools_data.info[tgt_task][
+                                "clarify_placeholder"
+                            ] = tool_reply_msg
                         continue
 
                     if name.startswith("interject_"):
@@ -3168,22 +3470,22 @@ async def _async_tool_use_loop_inner(
                         tgt_task = next(
                             (
                                 t
-                                for t, inf in task_info.items()
+                                for t, inf in tools_data.info.items()
                                 if str(inf.get("call_id", "")).endswith(call_id_suffix)
                             ),
                             None,
                         )
 
                         pretty_name = (
-                            f"interject {task_info[tgt_task]['name']}({new_text})"
+                            f"interject {tools_data.info[tgt_task]['name']}({new_text})"
                             if tgt_task
                             else name
                         )
 
                         # ― push guidance onto the private queue or forward to handle with full kwargs -------------
                         if tgt_task:
-                            iq = task_info[tgt_task]["interject_q"]
-                            h = task_info[tgt_task].get("handle")
+                            iq = tools_data.info[tgt_task]["interject_queue"]
+                            h = tools_data.info[tgt_task].get("handle")
 
                             if iq is not None:
                                 await iq.put(new_text)
@@ -3202,23 +3504,31 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f'Guidance "{new_text}" forwarded to the running tool.',
                         }
-                        await _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
 
                         continue  # nothing else to schedule
 
                     # Respect hidden per-tool total-call quotas (pre-pruned); guard
                     if (
-                        name in norm_tools
-                        and norm_tools[name].max_total_calls is not None
-                        and call_counts.get(name, 0) >= norm_tools[name].max_total_calls
+                        name in tools_data.norm_tools
+                        and tools_data.norm_tools[name].max_total_calls is not None
+                        and tools_data.call_counts.get(name, 0)
+                        >= tools_data.norm_tools[name].max_total_calls
                     ):
                         continue
 
                     # Respect *per-tool* concurrency limits  ────────────────
                     if (
-                        name in norm_tools
-                        and norm_tools[name].max_concurrent is not None
-                        and _active_count(name) >= norm_tools[name].max_concurrent
+                        name in tools_data.norm_tools
+                        and tools_data.norm_tools[name].max_concurrent is not None
+                        and tools_data.active_count(name)
+                        >= tools_data.norm_tools[name].max_concurrent
                     ):
                         # Concurrency cap reached → immediately insert a
                         # *tool-error* message and **do not** schedule.
@@ -3228,12 +3538,18 @@ async def _async_tool_use_loop_inner(
                             "name": name,
                             "content": (
                                 f"⚠️ Cannot start '{name}': "
-                                f"max_concurrent={norm_tools[name].max_concurrent} "
+                                f"max_concurrent={tools_data.norm_tools[name].max_concurrent} "
                                 "already reached. Wait for an existing call to "
                                 "finish or stop one before retrying."
                             ),
                         }
-                        await _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
                         continue
 
                     # first check any dynamic helpers we generated for long-running handles
@@ -3280,7 +3596,7 @@ async def _async_tool_use_loop_inner(
                         # If this dynamic helper is marked as write-only, acknowledge immediately
                         # and run fire-and-forget without tracking in pending/task_info.
                         if getattr(fn, "__write_only__", False):
-                            try:
+                            with suppress(Exception):
                                 tool_msg = {
                                     "role": "tool",
                                     "tool_call_id": call["id"],
@@ -3290,39 +3606,45 @@ async def _async_tool_use_loop_inner(
                                         call["function"]["arguments"],
                                     ),
                                 }
-                                await _insert_after_assistant(msg, tool_msg)
-                            except Exception:
-                                pass
-                            try:
+                                await _insert_after_assistant(
+                                    assistant_meta,
+                                    msg,
+                                    tool_msg,
+                                    client,
+                                    _msg_dispatcher,
+                                )
+                            with suppress(Exception):
                                 asyncio.create_task(coro, name=f"ToolCall_{name}")
-                            except Exception:
-                                pass
                             continue
 
                         # Scheduling dynamic helper call
 
                         t = asyncio.create_task(coro, name=f"ToolCall_{name}")
-                        pending.add(t)
-                        task_info[t] = {
-                            "name": name,
-                            "call_id": call["id"],
-                            "assistant_msg": msg,
-                            "call_dict": call_dict,
-                            "call_idx": idx,
-                            "is_interjectable": False,
-                            "interject_q": None,
-                            "chat_ctx": extra_kwargs.get("parent_chat_context"),
-                            "clar_up_q": None,
-                            "clar_down_q": None,
-                            "pause_event": None,
+                        tools_data.pending.add(t)
+
+                        tools_data.info[t] = ToolCallMetadata(
+                            name=name,
+                            handle=None,
+                            call_id=call["id"],
+                            tool_reply_msg=None,
+                            continue_msg=None,
+                            assistant_msg=msg,
+                            call_dict=call_dict,
+                            call_idx=idx,
+                            is_interjectable=False,
+                            interject_queue=None,
+                            clar_up_queue=None,
+                            clar_down_queue=None,
+                            chat_context=extra_kwargs.get("parent_chat_context"),
+                            pause_event=None,
                             # Debug helpers for failure logging
-                            "tool_schema": method_to_schema(
+                            tool_schema=method_to_schema(
                                 fn,
                                 include_class_name=include_class_in_dynamic_tool_names,
                             ),
-                            "llm_arguments": allowed_call_args,
-                            "raw_arguments_json": call["function"]["arguments"],
-                        }
+                            llm_arguments=allowed_call_args,
+                            raw_arguments_json=call["function"]["arguments"],
+                        )
                     else:
                         # Use shared helper for base tools
                         await _schedule_base_tool_call(
@@ -3331,6 +3653,11 @@ async def _async_tool_use_loop_inner(
                             args_json=call["function"]["arguments"],
                             call_id=call["id"],
                             call_idx=idx,
+                            tools_data=tools_data,
+                            parent_chat_context=parent_chat_context,
+                            propagate_chat_context=propagate_chat_context,
+                            assistant_meta=assistant_meta,
+                            client=client,
                         )
 
                 # metadata for orderly insertion
@@ -3344,9 +3671,13 @@ async def _async_tool_use_loop_inner(
                     await _ensure_placeholders_for_pending(
                         assistant_msg=msg,
                         content="Pending… tool call accepted. Working on it.",
+                        tools_data=tools_data,
+                        assistant_meta=assistant_meta,
+                        client=client,
+                        msg_dispatcher=_msg_dispatcher,
                     )
                 except Exception as _ph_exc:
-                    LOGGER.error(
+                    logger.error(
                         f"Failed to insert immediate placeholders: {_ph_exc!r}",
                     )
 
@@ -3358,48 +3689,35 @@ async def _async_tool_use_loop_inner(
             #     flight; loop back to wait for them.
             #   • `pending` empty        → the model just produced a plain
             #     assistant message; nothing more to do – return it.
-            if pending:  # still running – stop them proactively, then finish
+            if tools_data.pending:  # still running – stop them proactively, then finish
                 try:
-                    for t in list(pending):
-                        info_t = task_info.get(t, {})
+                    for t in list(tools_data.pending):
+                        info_t = tools_data.info.get(t, {})
                         nested_handle = info_t.get("handle")
-                        try:
+                        with suppress(Exception):
                             if nested_handle is not None and hasattr(
                                 nested_handle,
                                 "stop",
                             ):
                                 await _maybe_await(nested_handle.stop())
-                        except Exception:
-                            pass
                         if not t.done():
                             t.cancel()
-                    await asyncio.gather(*pending, return_exceptions=True)
+                    await asyncio.gather(*tools_data.pending, return_exceptions=True)
                 except Exception:
                     pass
                 finally:
-                    pending.clear()
+                    tools_data.pending.clear()
 
             # ── timeout guard (final turn) ──────────────────────────────────
-            if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
-                if raise_on_limit:
-                    raise asyncio.TimeoutError(
-                        f"Loop exceeded {timeout}s wall-clock limit",
-                    )
-                else:
-                    return await _handle_limit_reached(
-                        f"timeout ({timeout}s) exceeded",
-                    )
+            if timer.has_exceeded_time():
+                return await _handle_limit_reached(
+                    f"timeout ({timeout}s) exceeded",
+                )
 
-            if max_steps is not None and len(client.messages) >= max_steps:
-                if raise_on_limit:
-                    raise RuntimeError(
-                        f"Conversation exceeded max_steps={max_steps} "
-                        f"(len(client.messages)={len(client.messages)})",
-                    )
-                else:
-                    return await _handle_limit_reached(
-                        f"max_steps ({max_steps}) exceeded",
-                    )
+            if timer.has_exceeded_msgs():
+                return await _handle_limit_reached(
+                    f"max_steps ({max_steps}) exceeded",
+                )
 
             final_answer = msg["content"]
 
@@ -3454,19 +3772,19 @@ async def _async_tool_use_loop_inner(
         # resources cleanly.  Only after every task has finished/aborted do
         # we re-raise the same `CancelledError`, preserving expected asyncio
         # semantics for upstream callers.
-        try:
-            await _propagate_stop_once("outer-loop cancelled")
-        except Exception:
-            pass
-        for t in pending:
+        with suppress(Exception):
+            _stop_forwarded_once = await _propagate_stop_once(
+                tools_data.info,
+                _stop_forwarded_once,
+                "outer-loop cancelled",
+            )
+        for t in tools_data.pending:
             t.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        await asyncio.gather(*tools_data.pending, return_exceptions=True)
         raise
     finally:
-        try:
+        with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
-        except Exception:
-            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────

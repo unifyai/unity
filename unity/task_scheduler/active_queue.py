@@ -402,7 +402,12 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 + "\nInterjection:"
                 + f"\n{(message or '').strip()}"
             )
-            raw = await client.generate(user)
+            # Guard router latency to avoid indefinite hangs
+            # raw = await client.generate(user)
+            try:
+                raw = await asyncio.wait_for(client.generate(user), timeout=5.0)
+            except asyncio.TimeoutError:
+                raw = ""
         except Exception:
             raw = ""
 
