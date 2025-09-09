@@ -92,7 +92,6 @@ class Assistant(Agent):
     def __init__(
         self,
         from_number: str = "",
-        user_number: str = "",
         to_number: str = "",
         meet_id: str = None,
         outbound: bool = False,
@@ -102,7 +101,6 @@ class Assistant(Agent):
         # self.client = client
         self.current_tasks_status = None
         self.from_number = from_number
-        self.user_number = user_number
         self._call_received = not outbound
 
         # meet conference
@@ -122,7 +120,7 @@ class Assistant(Agent):
         # we will handle this through the events manager
         await publish_event(
             {
-                "topic": self.user_number,
+                "topic": self.from_number,
                 "to": "pending",
                 "event": PhoneUtteranceEvent(
                     role="User",
@@ -370,10 +368,8 @@ async def entrypoint(ctx: agents.JobContext):
             token=meet_token,
         )
 
-    user_number = os.environ.get("USER_NUMBER", "")
     assistant = Assistant(
         from_number=from_number,
-        user_number=user_number,
         meet_id=meet_id if meet_id else None,
         outbound=outbound,
     )
@@ -394,7 +390,7 @@ async def entrypoint(ctx: agents.JobContext):
     reader, writer = await create_connection("call")
     await publish_event(
         {
-            "topic": user_number,
+            "topic": from_number,
             "to": "pending",
             "event": PhoneCallStartedEvent().to_dict(),
         },
@@ -424,7 +420,7 @@ async def entrypoint(ctx: agents.JobContext):
                         publish_event(
                             {
                                 "to": "past",
-                                "topic": user_number,
+                                "topic": from_number,
                                 "event": PhoneUtteranceEvent(
                                     role="Assistant",
                                     content=phone_utterance,
