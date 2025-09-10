@@ -21,7 +21,9 @@ _LOCK = threading.RLock()
 _BROADER_CONTEXT: Optional[str] = None
 
 
-def get_broader_context() -> str:  # noqa: D401 – imperative helper name
+def get_broader_context(
+    contact_manager=None,
+) -> str:  # noqa: D401 – accept shared ContactManager
     """Return biographical context (assistant & user) **plus** recent activity.
 
     1. Fetch assistant (``contact_id == 0``) and user (``contact_id == 1``)
@@ -55,9 +57,7 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
 
         # ------------------------------------------------------------------
         # 1.  Gather assistant & user bios (robust to missing data) ---------
-        print("get_broader_context: Contact Manager")
-        cm = ContactManager()
-        print("get_broader_context: Contact Manager Initialized")
+        cm = contact_manager if contact_manager is not None else ContactManager()
         contacts = sorted(
             cm._filter_contacts(
                 filter="(contact_id == 0) or (contact_id == 1)",
