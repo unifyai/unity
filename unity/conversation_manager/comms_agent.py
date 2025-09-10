@@ -163,6 +163,7 @@ class CommsAgent:
         self.loop = asyncio.get_event_loop()
         self.transcript_manager = None
         self.contact_manager = None
+        self._cm_init_lock = threading.Lock()
         self.redis = None
         self.broader_context = ""
         self.project_name = project_name
@@ -171,6 +172,14 @@ class CommsAgent:
         # speaker tracking
         self.current_speaker = None
         self.speaker_buffer = deque(maxlen=50)
+
+    def _ensure_contact_manager(self):
+        """Thread-safe lazy init of shared ContactManager."""
+        with self._cm_init_lock:
+            if self.contact_manager is None:
+                from unity.contact_manager.contact_manager import ContactManager
+
+                self.contact_manager = ContactManager()
 
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
@@ -1188,7 +1197,12 @@ class CommsAgent:
                 return
 
             if self.transcript_manager is None:
-                self.transcript_manager = TranscriptManager()
+                print("handle_logging: Contact Manager")
+                self._ensure_contact_manager()
+                print("handle_logging: Contact Manager Initialized")
+                self.transcript_manager = TranscriptManager(
+                    contact_manager=self.contact_manager
+                )
                 self.transcript_manager._get_logger().session.headers[
                     "Authorization"
                 ] = f"Bearer {os.environ['UNIFY_KEY']}"
@@ -1263,7 +1277,12 @@ class CommsAgent:
         while True:
             try:
                 self.past_events = await self.get_bus_events()
-                self.broader_context = await asyncio.to_thread(get_broader_context)
+                print("handle_past_events: Contact Manager")
+                self._ensure_contact_manager()
+                print("handle_past_events: Contact Manager Initialized")
+                self.broader_context = await asyncio.to_thread(
+                    get_broader_context, self.contact_manager
+                )
             except Exception as e:
                 print(f"Error fetching bus events: {e}")
                 traceback.print_exc()

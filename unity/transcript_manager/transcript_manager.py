@@ -61,9 +61,7 @@ class TranscriptManager(BaseTranscriptManager):
         if contact_manager is not None:
             self._contact_manager = contact_manager
         else:
-            print("TranscriptManager: Contact Manager")
             self._contact_manager = ContactManager()
-            print("TranscriptManager: Contact Manager Initialized")
 
         # Tools exposed to the LLM. We wrap message-search/filter so that the
         # tool returns a compact string containing a single JSON table of all
