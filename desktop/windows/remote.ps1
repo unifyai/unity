@@ -43,17 +43,18 @@ try {
   Write-Warning "Could not start tvnserver via 'net start'. $_"
 }
 
-# Serve noVNC. Prefer consolidated web root prepared by installer
-$noVncWeb = "C:\\ProgramData\\noVNC";
-if (-not (Test-Path $noVncWeb)) {
-  $noVncWeb = "C:\\ProgramData\\chocolatey\\lib\\novnc\\tools\\web";
-  if (-not (Test-Path $noVncWeb)) {
-    $noVncWeb = "C:\\ProgramData\\chocolatey\\lib\\novnc\\tools";
-  }
+# Serve noVNC. Prefer consolidated web root prepared by installer, validate vnc.html exists
+$candidateRoots = @(
+  "C:\\ProgramData\\noVNC",
+  "C:\\ProgramData\\chocolatey\\lib\\novnc\\tools\\web",
+  "C:\\ProgramData\\chocolatey\\lib\\novnc\\tools"
+)
+$noVncWeb = $null
+foreach ($root in $candidateRoots) {
+  if (Test-Path (Join-Path $root 'vnc.html')) { $noVncWeb = $root; break }
 }
-
-if (-not (Test-Path $noVncWeb)) {
-  throw "noVNC web assets not found. Ensure novnc is installed and the web assets exist at C:\\ProgramData\\noVNC or Chocolatey novnc tools directory."
+if (-not $noVncWeb) {
+  throw "noVNC web assets not found (vnc.html missing). Re-run install.ps1 to populate C:\\ProgramData\\noVNC."
 }
 
 # Start websockify via Python module (per https://github.com/novnc/websockify and guide https://mannygyan.com/novnc/#toc-4)
@@ -66,9 +67,9 @@ if (-not $py -and -not $python) {
 Write-Host "Starting websockify on http://localhost:6080/vnc.html (proxying to localhost:5900)"
 $websockifyProc = $null
 if ($py) {
-  $websockifyProc = Start-Process -FilePath py -ArgumentList "-m websockify --web=$noVncWeb 6080 localhost:5900" -WindowStyle Hidden -PassThru
+  $websockifyProc = Start-Process -FilePath py -ArgumentList "-m websockify --web=$noVncWeb 6080 10.128.0.75:5900" -WindowStyle Hidden -PassThru
 } else {
-  $websockifyProc = Start-Process -FilePath python -ArgumentList "-m websockify --web=$noVncWeb 6080 localhost:5900" -WindowStyle Hidden -PassThru
+  $websockifyProc = Start-Process -FilePath python -ArgumentList "-m websockify --web=$noVncWeb 6080 10.128.0.75:5900" -WindowStyle Hidden -PassThru
 }
 
 # Start agent-service in foreground like Linux script and clean up on Ctrl+C

@@ -7,15 +7,56 @@ $ErrorActionPreference = 'Stop'
 
 function Install-TightVNC {
   if (-not (Get-Command tvnserver -ErrorAction SilentlyContinue)) {
-    choco install tightvnc -y --no-progress | Out-Host
+    choco install tightvnc -y --no-progress --installArguments 'SET_USEVNCAUTHENTICATION=1 VALUE_OF_USEVNCAUTHENTICATION=0' --force | Out-Host
+    Set-ItemProperty -Path "HKLM:\Software\TightVNC\Server" -Name "UseVncAuthentication" -Value 0
+    Set-ItemProperty -Path "HKLM:\Software\TightVNC\Server" -Name "UseControlAuthentication" -Value 0
   }
 }
 
 function Install-NoVNC {
-  if (-not (Test-Path "C:\\ProgramData\\noVNC")) {
-    choco install novnc -y --no-progress | Out-Host
-    New-Item -ItemType Directory -Force -Path "C:\\ProgramData\\noVNC" | Out-Null
+  $dest = "C:\\ProgramData\\noVNC"
+  if (-not (Test-Path $dest)) {
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
   }
+  $vncHtml = Join-Path $dest 'vnc.html'
+  if (Test-Path $vncHtml) {
+    Write-Host "noVNC already present at $dest"
+    return
+  }
+
+  Write-Host "Installing noVNC to $dest (mirroring Linux approach)..."
+  $tempBase = Join-Path $env:TEMP ("novnc_install_" + [Guid]::NewGuid().ToString())
+  New-Item -ItemType Directory -Force -Path $tempBase | Out-Null
+  $zipUrl = 'https://github.com/novnc/noVNC/archive/refs/heads/master.zip'
+  $zipPath = Join-Path $tempBase 'noVNC-master.zip'
+  try {
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+    Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $tempBase -Force
+    $extracted = Join-Path $tempBase 'noVNC-master'
+    if (-not (Test-Path $extracted)) { throw "Extracted folder not found at $extracted" }
+    Write-Host "Copying files to $dest ..."
+    Copy-Item -Path (Join-Path $extracted '*') -Destination $dest -Recurse -Force
+  } catch {
+    Write-Warning "noVNC download/extract failed. Falling back to Chocolatey. $_"
+    try {
+      choco install novnc -y --no-progress | Out-Host
+      $chocoWeb = "C:\\ProgramData\\chocolatey\\lib\\novnc\\tools\\web"
+      if (Test-Path (Join-Path $chocoWeb 'vnc.html')) {
+        Copy-Item -Path (Join-Path $chocoWeb '*') -Destination $dest -Recurse -Force
+      }
+    } catch {
+      Write-Warning "Chocolatey noVNC install also failed. $_"
+    }
+  } finally {
+    try { Remove-Item -Path $tempBase -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+    try { Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue } catch {}
+  }
+
+  if (-not (Test-Path (Join-Path $dest 'vnc.html'))) {
+    throw "noVNC installation did not produce vnc.html at $dest."
+  }
+  Write-Host "noVNC installed at $dest"
 }
 
 function Install-Websockify {
@@ -25,9 +66,9 @@ function Install-Websockify {
   if (-not $hasPy -and -not $hasPython) {
     choco install python -y --no-progress | Out-Host
   }
-  try { py -m pip install --user --upgrade pip | Out-Host } catch {}
+  try { py -m pip install --upgrade pip | Out-Host } catch {}
   try {
-    py -m pip install --user --upgrade websockify | Out-Host
+    py -m pip install --upgrade websockify | Out-Host
   } catch {
     try {
       python -m pip install --user --upgrade websockify | Out-Host
@@ -113,3 +154,5 @@ Install-NativeBuildPrereqs
 Install-AgentServiceDeps
 
 Write-Host "Install complete. Use desktop\\windows\\remote.ps1 to configure and start the services."
+
+# choco install -y tightvnc --installArguments 'SET_USEVNCAUTHENTICATION=1 VALUE_OF_USEVNCAUTHENTICATION=1 SET_PASSWORD=1 VALUE_OF_PASSWORD=changeme'
