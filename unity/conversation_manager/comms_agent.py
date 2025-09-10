@@ -176,7 +176,7 @@ class CommsAgent:
     def _ensure_contact_manager(self):
         """Thread-safe lazy init of shared ContactManager."""
         with self._cm_init_lock:
-            print("REACHED INSIDE LOCK")
+            print("Contact Manager Init Lock")
             if self.contact_manager is None:
                 from unity.contact_manager.contact_manager import ContactManager
 
