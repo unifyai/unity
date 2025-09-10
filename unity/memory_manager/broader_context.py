@@ -55,7 +55,9 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
 
         # ------------------------------------------------------------------
         # 1.  Gather assistant & user bios (robust to missing data) ---------
+        print("get_broader_context: Contact Manager")
         cm = ContactManager()
+        print("get_broader_context: Contact Manager Initialized")
         contacts = sorted(
             cm._filter_contacts(
                 filter="(contact_id == 0) or (contact_id == 1)",
