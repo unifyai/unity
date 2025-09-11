@@ -6,11 +6,6 @@ $ErrorActionPreference = 'Stop'
 
 
 function Install-TightVNC {
-  # Determine VNC password (TightVNC limit: 8 chars)
-  $vncPassword = $env:VNC_PASSWORD
-  if (-not $vncPassword) { $vncPassword = $env:UNIFY_KEY }
-  if (-not $vncPassword) { $vncPassword = 'changeme' }
-  if ($vncPassword.Length -gt 8) { $vncPassword = $vncPassword.Substring(0,8) }
 
   if (-not (Get-Command tvnserver -ErrorAction SilentlyContinue)) {
     Write-Host "Installing TightVNC..."
@@ -162,10 +157,11 @@ function Install-AgentServiceDeps {
   Push-Location $agentDir
   try {
     if (Test-Path 'package-lock.json') {
-      npm install | Out-Host
+      npm ci | Out-Host
       npx playwright@1.52.0 install --with-deps chromium | Out-Host
     } else {
       npm install | Out-Host
+      npx playwright@1.52.0 install --with-deps chromium | Out-Host
     }
   } finally {
     Pop-Location
@@ -181,5 +177,3 @@ Install-NativeBuildPrereqs
 Install-AgentServiceDeps
 
 Write-Host "Install complete. Use desktop\\windows\\remote.ps1 to configure and start the services."
-
-# choco install -y tightvnc --installArguments 'SET_USEVNCAUTHENTICATION=1 VALUE_OF_USEVNCAUTHENTICATION=1 SET_PASSWORD=1 VALUE_OF_PASSWORD=changeme'
