@@ -13,34 +13,38 @@ $ErrorActionPreference = 'Stop'
 if (-not $UnifyKey -and $env:UNIFY_KEY) {
   $UnifyKey = $env:UNIFY_KEY
 }
-# if ($UnifyKey) {
-#   $VncPassword = $UnifyKey
-# }
-# # TightVNC enforces 8-char max password
-# if ($VncPassword.Length -gt 8) {
-#   Write-Warning "VNC password exceeds 8 characters. Truncating to 8."
-#   $VncPassword = $VncPassword.Substring(0,8)
-# }
-# if (-not $VncPassword) {
-#   throw "VNC password is empty. Set -UnifyKey parameter or UNIFY_KEY environment variable."
-# }
+if ($UnifyKey) {
+  $VncPassword = $UnifyKey
+}
+# TightVNC enforces 8-char max password
+if ($VncPassword.Length -gt 8) {
+  Write-Warning "VNC password exceeds 8 characters. Truncating to 8."
+  $VncPassword = $VncPassword.Substring(0,8)
+}
+if (-not $VncPassword) {
+  throw "VNC password is empty. Set -UnifyKey parameter or UNIFY_KEY environment variable."
+}
 
 # Stop any existing TightVNC server to avoid port conflicts
 try { & net stop tvnserver | Out-Host } catch {}
 Start-Sleep -Milliseconds 500
 
-# Configure TightVNC password and start the server
-# try {
-#   Write-Host "Configuring TightVNC password..."
-#   & tvnserver -controlapp -passwd $VncPassword | Out-Host
-# } catch {
-#   Write-Warning "Failed to set VNC password via tvnserver controlapp. Ensure TightVNC is installed and on PATH. $_"
-# }
+# Resolve TightVNC executable path (app-mode)
+$tvnExe = "C:\\Program Files\\TightVNC\\tvnserver.exe"
+if (-not (Test-Path $tvnExe)) { $tvnExe = "C:\\Program Files (x86)\\TightVNC\\tvnserver.exe" }
+
+# Start TightVNC Server in app-mode, then reload settings from registry
 try {
-  Write-Host "Starting TightVNC Server..."
-  & net start tvnserver | Out-Host
+  Write-Host "Starting TightVNC Server in app-mode..."
+  Start-Process -FilePath $tvnExe -ArgumentList "-run" -PassThru | Out-Host
 } catch {
-  Write-Warning "Could not start tvnserver via 'net start'. $_"
+  Write-Warning "Could not start tvnserver in app-mode. $_"
+}
+try {
+  Write-Host "Reloading TightVNC settings from registry..."
+  & $tvnExe -controlapp -reload | Out-Host
+} catch {
+  Write-Warning "Failed to reload TightVNC settings. $_"
 }
 
 # Serve noVNC. Prefer consolidated web root prepared by installer, validate vnc.html exists
@@ -100,5 +104,5 @@ try {
   if ($websockifyProc) {
     try { Stop-Process -Id $websockifyProc.Id -Force -ErrorAction SilentlyContinue } catch {}
   }
-  try { & net stop tvnserver | Out-Host } catch {}
+  try { & $tvnExe -controlapp -shutdown | Out-Host } catch {}
 }
