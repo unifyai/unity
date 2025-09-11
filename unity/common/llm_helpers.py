@@ -7,8 +7,9 @@ import inspect
 import secrets
 import string
 import traceback
+import dataclasses
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import TypedDict
 from pydantic import BaseModel
 import time
 from typing import (
@@ -996,10 +997,10 @@ async def _process_completed_task(
 
     tools_data.pending.discard(task)
     info: ToolCallMetadata = tools_data.info.pop(task)
-    name = info["name"]
-    call_id = info["call_id"]
-    fn = info["call_dict"]["function"]["name"]
-    arg = info["call_dict"]["function"]["arguments"]
+    name = info.name
+    call_id = info.call_id
+    fn = info.call_dict["function"]["name"]
+    arg = info.call_dict["function"]["arguments"]
 
     # 2️⃣  obtain result -------------------------------------------------
     try:
@@ -1028,14 +1029,14 @@ async def _process_completed_task(
                 outer_handle_container[0]._adopt(raw)
             # ── upgrade interject / clarification flags from handle ─────
             if hasattr(raw, "interject"):
-                info["is_interjectable"] = True
+                info.is_interjectable = True
 
-            h_up_q = getattr(raw, "clarification_up_q", info.get("clar_up_queue"))
-            h_down_q = getattr(raw, "clarification_down_q", info.get("clar_down_queue"))
+            h_up_q = getattr(raw, "clarification_up_q", info.clar_up_queue)
+            h_down_q = getattr(raw, "clarification_down_q", info.clar_down_queue)
 
             if (h_up_q is not None) ^ (h_down_q is not None):
                 raise AttributeError(
-                    f"Handle returned by tool {info['name']!r} exposes only "
+                    f"Handle returned by tool {info.name!r} exposes only "
                     "one of 'clarification_up_q' / 'clarification_down_q'. "
                     "Both queues are required (or neither).",
                 )
@@ -1054,34 +1055,34 @@ async def _process_completed_task(
             tools_data.pending.add(nested_task)
 
             # 2️⃣ insert / update a single placeholder
-            ph = info.get("tool_reply_msg")
+            ph = info.tool_reply_msg
             if ph is None:
                 ph = {
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "name": info["name"],
+                    "name": info.name,
                     "content": ("Nested async tool loop started… waiting for result."),
                 }
                 await _insert_after_assistant(
                     assistant_meta,
-                    info["assistant_msg"],
+                    info.assistant_msg,
                     ph,
                     client,
                     msg_dispatcher,
                 )
-                info["tool_reply_msg"] = ph  # remember on *parent*
+                info.tool_reply_msg = ph  # remember on *parent*
             else:
                 ph["content"] = "Nested async tool loop started… waiting for result."
 
             # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
-            tools_data.info[nested_task] = {
-                **info,
-                "handle": raw,
-                "is_interjectable": hasattr(raw, "interject"),
-                "tool_reply_msg": ph,
-                "clar_up_queue": h_up_q,
-                "clar_down_queue": h_down_q,
-            }
+            tools_data.info[nested_task] = dataclasses.replace(
+                info,
+                handle=raw,
+                is_interjectable=hasattr(raw, "interject"),
+                tool_reply_msg=ph,
+                clar_up_queue=h_up_q,
+                clar_down_queue=h_down_q,
+            )
             if h_up_q is not None:
                 tools_data.clarification_channels[call_id] = (h_up_q, h_down_q)
             return False  # ⬅️  no LLM turn required
@@ -1127,9 +1128,9 @@ async def _process_completed_task(
                 debug_payload = {
                     "tool_name": name,
                     "call_id": call_id,
-                    "llm_function_schema": info.get("tool_schema"),
-                    "llm_arguments": info.get("llm_arguments"),
-                    "raw_arguments_json": info.get("raw_arguments_json"),
+                    "llm_function_schema": info.tool_schema,
+                    "llm_arguments": info.llm_arguments,
+                    "raw_arguments_json": info.raw_arguments_json,
                 }
                 logger.error(
                     f"FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
@@ -1142,10 +1143,10 @@ async def _process_completed_task(
     tools_data.completed_results[call_id] = result
 
     # 4️⃣  update / insert tool-result message --------------------------
-    asst_msg = info["assistant_msg"]
-    continue_msg = info.get("continue_msg")
-    clarify_ph = info.get("clarify_placeholder")
-    tool_reply_msg = info.get("tool_reply_msg")
+    asst_msg = info.assistant_msg
+    continue_msg = info.continue_msg
+    clarify_ph = info.clarify_placeholder
+    tool_reply_msg = info.tool_reply_msg
 
     if continue_msg is not None:
         if _at_tail(continue_msg):  # ✅ safe to overwrite
@@ -1201,7 +1202,7 @@ async def _process_completed_task(
             ]
         logger.info(
             f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
-            prefix=f"🛠️  ToolCall Completed [{time.perf_counter() - info.get('scheduled_time', 0):.2f}s]",
+            prefix=f"🛠️  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
         )
 
     # 6️⃣  failure guard -------------------------------------------------
@@ -1377,10 +1378,7 @@ async def _schedule_base_tool_call(
     tools_data.pending.add(t)
     tools_data.info[t] = ToolCallMetadata(
         name=name,
-        handle=None,
         call_id=call_id,
-        tool_reply_msg=None,
-        continue_msg=None,
         assistant_msg=asst_msg,
         call_dict=call_dict,
         call_idx=call_idx,
@@ -1394,7 +1392,6 @@ async def _schedule_base_tool_call(
         tool_schema=method_to_schema(fn, name),
         llm_arguments=allowed_call_args,
         raw_arguments_json=args_json,
-        scheduled_time=time.perf_counter(),
     )
 
     if logger.log_steps:
@@ -1440,30 +1437,26 @@ async def _ensure_placeholders_for_pending(
         _inf = tools_data.info.get(_t)
         if not _inf:
             continue
-        if assistant_msg is not None and _inf.get("assistant_msg") is not assistant_msg:
+        if assistant_msg is not None and _inf.assistant_msg is not assistant_msg:
             continue
-        if (
-            _inf.get("tool_reply_msg")
-            or _inf.get("continue_msg")
-            or _inf.get("clarify_placeholder")
-        ):
+        if _inf.tool_reply_msg or _inf.continue_msg or _inf.clarify_placeholder:
             continue
 
         placeholder = {
             "role": "tool",
-            "tool_call_id": _inf["call_id"],
-            "name": _inf["name"],
+            "tool_call_id": _inf.call_id,
+            "name": _inf.name,
             "content": placeholder_content,
         }
         await _insert_after_assistant(
             assistant_meta,
-            _inf["assistant_msg"],
+            _inf.assistant_msg,
             placeholder,
             client,
             msg_dispatcher,
         )
-        _inf["tool_reply_msg"] = placeholder
-        created.append(_inf["call_id"])
+        _inf.tool_reply_msg = placeholder
+        created.append(_inf.call_id)
 
     return created
 
@@ -1491,7 +1484,7 @@ async def _schedule_missing_for_message(
                 continue
 
             # Skip if already pending or completed
-            if any(inf.get("call_id") == cid for _t, inf in tools_data.info.items()):
+            if any(inf.call_id == cid for _t, inf in tools_data.info.items()):
                 continue
             if cid in tools_data.completed_results:
                 continue
@@ -1688,7 +1681,7 @@ class _ToolsData:
         return limit is None or self.active_count(task_name) < limit
 
     def active_count(self, task_name: str) -> int:
-        return sum(1 for _t, _inf in self.info.items() if _inf["name"] == task_name)
+        return sum(1 for _t, _inf in self.info.items() if _inf.name == task_name)
 
     def quota_ok(self, task_name: str) -> bool:
         limit = self.norm_tools[task_name].max_total_calls
@@ -1760,27 +1753,28 @@ class _AsyncToolLoopToolFailureTracker:
         self._consecutive_failures = 0
 
 
-class ToolCallMetadata(TypedDict):
-    # TODO: most of these are not always used
-    # Ideally, not needed to be passed explicitly
+@dataclass
+class ToolCallMetadata:
     name: str
     call_id: str
     call_dict: dict
     call_idx: int
     chat_context: str
     assistant_msg: dict
-    tool_reply_msg: Optional[dict]
-    continue_msg: Optional[dict]
     is_interjectable: bool
-    handle: Optional[Any]
-    interject_queue: Optional[asyncio.Queue[str]]
-    clar_up_queue: Optional[asyncio.Queue[str]]
-    clar_down_queue: Optional[asyncio.Queue[str]]
-    pause_event: Optional[asyncio.Event]
     tool_schema: dict
     llm_arguments: dict
     raw_arguments_json: str
-    scheduled_time: float
+    waiting_for_clarification: bool = False
+    tool_reply_msg: dict | None = None
+    continue_msg: dict | None = None
+    clarify_placeholder: dict | None = None
+    handle: Any | None = None
+    interject_queue: asyncio.Queue[str] | None = None
+    clar_up_queue: asyncio.Queue[str] | None = None
+    clar_down_queue: asyncio.Queue[str] | None = None
+    pause_event: asyncio.Event | None = None
+    scheduled_time: float = field(default_factory=time.perf_counter)
 
 
 class DynamicToolFactory:
@@ -1804,51 +1798,51 @@ class DynamicToolFactory:
 
     def _process_task(self, task: asyncio.Task):
         info = self.tools_data.info[task]
-        handle = info.get("handle")
-        ev = info.get("pause_event")
+        handle = info.handle
+        ev = info.pause_event
         handle_available = handle is not None
 
         # ── DYNAMIC capability refresh (handle may change) ─────
         if handle_available:
             # 1. interjection
-            info["is_interjectable"] = hasattr(handle, "interject")
+            info.is_interjectable = hasattr(handle, "interject")
 
             # 2. clarification queues
             h_up_q = getattr(
                 handle,
                 "clarification_up_q",
-                info.get("clar_up_queue"),
+                info.clar_up_queue,
             )
             h_dn_q = getattr(
                 handle,
                 "clarification_down_q",
-                info.get("clar_down_queue"),
+                info.clar_down_queue,
             )
 
             if (h_up_q is not None) ^ (h_dn_q is not None):
                 raise AttributeError(
-                    f"Handle of call {info['call_id']} now exposes only one "
+                    f"Handle of call {info.call_id} now exposes only one "
                     "of clarification queues; both or neither required.",
                 )
 
             # update bookkeeping & channel map
-            prev_up_q = info.get("clar_up_queue")
+            prev_up_q = info.clar_up_queue
             if h_up_q is not prev_up_q:
                 # remove old mapping if any
-                self.tools_data.clarification_channels.pop(info["call_id"], None)
+                self.tools_data.clarification_channels.pop(info.call_id, None)
                 if h_up_q is not None:
-                    self.tools_data.clarification_channels[info["call_id"]] = (
+                    self.tools_data.clarification_channels[info.call_id] = (
                         h_up_q,
                         h_dn_q,
                     )
-            info["clar_up_queue"] = h_up_q
-            info["clar_down_queue"] = h_dn_q
+            info.clar_up_queue = h_up_q
+            info.clar_down_queue = h_dn_q
 
-        _call_id: str = info["call_id"]
+        _call_id: str = info.call_id
         # Create a sanitized version of the call_id for use in function names.
         _safe_call_id: str = _call_id.replace("-", "_").split("_")[-1]
-        _fn_name: str = info["name"]
-        _arg_json: str = info["call_dict"]["function"]["arguments"]
+        _fn_name: str = info.name
+        _arg_json: str = info.call_dict["function"]["arguments"]
         try:
             _arg_dict = json.loads(_arg_json)
             _arg_repr = ", ".join(f"{k}={v!r}" for k, v in _arg_dict.items())
@@ -1865,7 +1859,7 @@ class DynamicToolFactory:
         # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
         # Skip if the task is blocked waiting for clarification; there's
         # nothing to "continue" until the user answers.
-        if not info.get("waiting_for_clarification"):
+        if not info.waiting_for_clarification:
 
             async def _continue() -> Dict[str, str]:
                 return {"status": "continue", "call_id": _call_id}
@@ -1905,7 +1899,7 @@ class DynamicToolFactory:
                 _adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
 
         # ––– 3. interject helper (optional) ––––––––––––––––––––––
-        if info.get("is_interjectable"):
+        if info.is_interjectable:
             _interject_doc = (
                 f"Inject additional instructions for {_fn_name}({_arg_repr}). "
                 "Accepts any arguments supported by the underlying handle's `interject` method (e.g. `content`)."
@@ -1939,7 +1933,7 @@ class DynamicToolFactory:
 
                 async def _interject(content: str) -> Dict[str, str]:
                     # regular tool: push onto its private queue
-                    await info["interject_queue"].put(content)
+                    await info.interject_queue.put(content)
                     return {
                         "status": "interjected",
                         "call_id": _call_id,
@@ -1953,7 +1947,7 @@ class DynamicToolFactory:
             )
 
         # ––– 4. clarification-answer helper (optional) ––––––––––
-        if info.get("clar_up_queue") is not None:
+        if info.clar_up_queue is not None:
             _clarify_doc = (
                 f"Provide an answer to the clarification which was requested by the (currently pending) tool "
                 f"{_fn_name}({_arg_repr}). Takes a single argument `answer`."
@@ -2405,10 +2399,10 @@ async def _async_tool_use_loop_inner(
           • append a short assistant notice
         """
         for t in list(tools_data.pending):
-            h = tools_data.info.get(t, {}).get("handle")
             with suppress(Exception):
-                if h is not None and hasattr(h, "stop"):
-                    await _maybe_await(h.stop())
+                inf = tools_data.info.get(t)
+                if inf is not None and inf.handle is not None and hasattr(inf.handle, "stop"):  # type: ignore[attr-defined]
+                    await _maybe_await(inf.handle.stop())
             if not t.done():
                 t.cancel()
         await asyncio.gather(*tools_data.pending, return_exceptions=True)
@@ -2669,10 +2663,10 @@ async def _async_tool_use_loop_inner(
                     # Only listen for *new* clarification questions.
                     # If the task is already awaiting an answer,
                     # `waiting_for_clarification` will be True.
-                    if tools_data.info[_t].get("waiting_for_clarification"):
+                    if tools_data.info[_t].waiting_for_clarification:
                         continue
 
-                    cuq = tools_data.info[_t].get("clar_up_queue")
+                    cuq = tools_data.info[_t].clar_up_queue
                     if cuq is not None:
                         w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
                         clar_waiters[w] = _t
@@ -2746,13 +2740,13 @@ async def _async_tool_use_loop_inner(
                     for cw in done & clar_waiters.keys():
                         question = cw.result()  # the text from the child
                         src_task = clar_waiters[cw]
-                        call_id = tools_data.info[src_task]["call_id"]
+                        call_id = tools_data.info[src_task].call_id
 
                         # 1️⃣ mark the task as waiting
-                        tools_data.info[src_task]["waiting_for_clarification"] = True
+                        tools_data.info[src_task].waiting_for_clarification = True
 
                         # 2️⃣ REUSE the existing placeholder if we already inserted one
-                        ph = tools_data.info[src_task].get("tool_reply_msg")
+                        ph = tools_data.info[src_task].tool_reply_msg
                         if ph is None:
                             # no placeholder yet → create one exactly once
                             ph = {
@@ -2763,12 +2757,12 @@ async def _async_tool_use_loop_inner(
                             }
                             await _insert_after_assistant(
                                 assistant_meta,
-                                tools_data.info[src_task]["assistant_msg"],
+                                tools_data.info[src_task].assistant_msg,
                                 ph,
                                 client,
                                 _msg_dispatcher,
                             )
-                            tools_data.info[src_task]["tool_reply_msg"] = ph
+                            tools_data.info[src_task].tool_reply_msg = ph
 
                         # 3️⃣ turn (or update) the placeholder into the request
                         ph["name"] = f"clarification_request_{call_id}"
@@ -3152,18 +3146,16 @@ async def _async_tool_use_loop_inner(
                             (
                                 t
                                 for t, inf in tools_data.info.items()
-                                if str(inf.get("call_id", "")).endswith(call_id_suffix)
+                                if str(inf.call_id).endswith(call_id_suffix)
                             ),
                             None,
                         )
 
                         orig_fn = (
-                            tools_data.info[tgt_task]["name"] if tgt_task else "unknown"
+                            tools_data.info[tgt_task].name if tgt_task else "unknown"
                         )
                         arg_json = (
-                            tools_data.info[tgt_task]["call_dict"]["function"][
-                                "arguments"
-                            ]
+                            tools_data.info[tgt_task].call_dict["function"]["arguments"]
                             if tgt_task
                             else "{}"
                         )
@@ -3171,8 +3163,8 @@ async def _async_tool_use_loop_inner(
 
                         if tgt_task:  # still running → insert generated placeholder now
                             info = tools_data.info[tgt_task]
-                            name = info["name"]
-                            arg_json = info["call_dict"]["function"]["arguments"]
+                            name = info.name
+                            arg_json = info.call_dict["function"]["arguments"]
                             tool_reply_msg = {
                                 "role": "tool",
                                 "tool_call_id": call["id"],
@@ -3192,7 +3184,7 @@ async def _async_tool_use_loop_inner(
                                 client,
                                 _msg_dispatcher,
                             )
-                            info["continue_msg"] = tool_reply_msg
+                            info.continue_msg = tool_reply_msg
                         else:  # the original tool already finished
                             # Lookup finished result by matching call-id suffix
                             _full_id = next(
@@ -3236,18 +3228,18 @@ async def _async_tool_use_loop_inner(
                             (
                                 t
                                 for t, info in tools_data.info.items()
-                                if str(info.get("call_id", "")).endswith(call_id_suffix)
+                                if str(info.call_id).endswith(call_id_suffix)
                             ),
                             None,
                         )
 
                         orig_fn = (
-                            tools_data.info[task_to_cancel]["name"]
+                            tools_data.info[task_to_cancel].name
                             if task_to_cancel
                             else "unknown"
                         )
                         arg_json = (
-                            tools_data.info[task_to_cancel]["call_dict"]["function"][
+                            tools_data.info[task_to_cancel].call_dict["function"][
                                 "arguments"
                             ]
                             if task_to_cancel
@@ -3263,9 +3255,7 @@ async def _async_tool_use_loop_inner(
 
                         # ── gracefully shut down any *nested* async-tool loop first ──────
                         if task_to_cancel:
-                            nested_handle = tools_data.info[task_to_cancel].get(
-                                "handle",
-                            )
+                            nested_handle = tools_data.info[task_to_cancel].handle
                             if nested_handle is not None:
                                 # public API call – propagates cancellation downwards
                                 await _forward_handle_call(
@@ -3309,17 +3299,15 @@ async def _async_tool_use_loop_inner(
                             (
                                 t
                                 for t, info in tools_data.info.items()
-                                if call_id_suffix in info["call_id"]
+                                if call_id_suffix in info.call_id
                             ),
                             None,
                         )
                         orig_fn = (
-                            tools_data.info[tgt_task]["name"] if tgt_task else "unknown"
+                            tools_data.info[tgt_task].name if tgt_task else "unknown"
                         )
                         arg_json = (
-                            tools_data.info[tgt_task]["call_dict"]["function"][
-                                "arguments"
-                            ]
+                            tools_data.info[tgt_task].call_dict["function"]["arguments"]
                             if tgt_task
                             else "{}"
                         )
@@ -3332,8 +3320,8 @@ async def _async_tool_use_loop_inner(
                             payload = {}
 
                         if tgt_task:
-                            h = tools_data.info[tgt_task].get("handle")
-                            ev = tools_data.info[tgt_task].get("pause_event")
+                            h = tools_data.info[tgt_task].handle
+                            ev = tools_data.info[tgt_task].pause_event
                             if h is not None and hasattr(h, "pause"):
                                 await _forward_handle_call(h, "pause", payload)
                             elif ev is not None:
@@ -3363,17 +3351,15 @@ async def _async_tool_use_loop_inner(
                             (
                                 t
                                 for t, info in tools_data.info.items()
-                                if call_id_suffix in info["call_id"]
+                                if call_id_suffix in info.call_id
                             ),
                             None,
                         )
                         orig_fn = (
-                            tools_data.info[tgt_task]["name"] if tgt_task else "unknown"
+                            tools_data.info[tgt_task].name if tgt_task else "unknown"
                         )
                         arg_json = (
-                            tools_data.info[tgt_task]["call_dict"]["function"][
-                                "arguments"
-                            ]
+                            tools_data.info[tgt_task].call_dict["function"]["arguments"]
                             if tgt_task
                             else "{}"
                         )
@@ -3386,8 +3372,8 @@ async def _async_tool_use_loop_inner(
                             payload = {}
 
                         if tgt_task:
-                            h = tools_data.info[tgt_task].get("handle")
-                            ev = tools_data.info[tgt_task].get("pause_event")
+                            h = tools_data.info[tgt_task].handle
+                            ev = tools_data.info[tgt_task].pause_event
                             if h is not None and hasattr(h, "resume"):
                                 await _forward_handle_call(h, "resume", payload)
                             elif ev is not None:
@@ -3418,7 +3404,7 @@ async def _async_tool_use_loop_inner(
                             (
                                 t
                                 for t, inf in tools_data.info.items()
-                                if str(inf.get("call_id", "")).endswith(call_id_suffix)
+                                if str(inf.call_id).endswith(call_id_suffix)
                             ),
                             None,
                         )
@@ -3438,10 +3424,10 @@ async def _async_tool_use_loop_inner(
                             )  # down-queue
                             # ✔️ the tool is un-blocked – start watching it again
                             for _t, _inf in tools_data.info.items():
-                                if str(_inf.get("call_id", "")).endswith(
+                                if str(_inf.call_id).endswith(
                                     call_id_suffix,
                                 ):
-                                    _inf["waiting_for_clarification"] = False
+                                    _inf.waiting_for_clarification = False
                                     break
                         tool_reply_msg = {
                             "role": "tool",
@@ -3460,9 +3446,9 @@ async def _async_tool_use_loop_inner(
                             _msg_dispatcher,
                         )
                         if tgt_task is not None:
-                            tools_data.info[tgt_task][
-                                "clarify_placeholder"
-                            ] = tool_reply_msg
+                            tools_data.info[tgt_task].clarify_placeholder = (
+                                tool_reply_msg
+                            )
                         continue
 
                     if name.startswith("interject_"):
@@ -3490,15 +3476,15 @@ async def _async_tool_use_loop_inner(
                         )
 
                         pretty_name = (
-                            f"interject {tools_data.info[tgt_task]['name']}({new_text})"
+                            f"interject {tools_data.info[tgt_task].name}({new_text})"
                             if tgt_task
                             else name
                         )
 
                         # ― push guidance onto the private queue or forward to handle with full kwargs -------------
                         if tgt_task:
-                            iq = tools_data.info[tgt_task]["interject_queue"]
-                            h = tools_data.info[tgt_task].get("handle")
+                            iq = tools_data.info[tgt_task].interject_queue
+                            h = tools_data.info[tgt_task].handle
 
                             if iq is not None:
                                 await iq.put(new_text)
@@ -3637,17 +3623,11 @@ async def _async_tool_use_loop_inner(
 
                         tools_data.info[t] = ToolCallMetadata(
                             name=name,
-                            handle=None,
                             call_id=call["id"],
-                            tool_reply_msg=None,
-                            continue_msg=None,
                             assistant_msg=msg,
                             call_dict=call_dict,
                             call_idx=idx,
                             is_interjectable=False,
-                            interject_queue=None,
-                            clar_up_queue=None,
-                            clar_down_queue=None,
                             chat_context=extra_kwargs.get("parent_chat_context"),
                             pause_event=None,
                             # Debug helpers for failure logging
@@ -3657,7 +3637,6 @@ async def _async_tool_use_loop_inner(
                             ),
                             llm_arguments=allowed_call_args,
                             raw_arguments_json=call["function"]["arguments"],
-                            scheduled_time=time.perf_counter(),
                         )
                     else:
                         # Use shared helper for base tools
@@ -3707,12 +3686,15 @@ async def _async_tool_use_loop_inner(
             if tools_data.pending:  # still running – stop them proactively, then finish
                 try:
                     for t in list(tools_data.pending):
-                        info_t = tools_data.info.get(t, {})
-                        nested_handle = info_t.get("handle")
                         with suppress(Exception):
-                            if nested_handle is not None and hasattr(
-                                nested_handle,
-                                "stop",
+                            info_t = tools_data.info.get(t)
+                            if (
+                                info_t is not None
+                                and (nested_handle := info_t.handle) is not None
+                                and hasattr(
+                                    nested_handle,
+                                    "stop",
+                                )
                             ):
                                 await _maybe_await(nested_handle.stop())
                         if not t.done():
@@ -4010,7 +3992,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         recursive_tools: dict[str, Callable] = {}
 
         for _t, _inf in task_info.items():
-            h = _inf.get("handle")
+            h = _inf.handle
             if h is None or not isinstance(h, SteerableToolHandle):
                 continue
 
@@ -4164,7 +4146,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             items = task_info.items() if isinstance(task_info, dict) else []
             for _t, _inf in items:
                 try:
-                    h = _inf.get("handle")
+                    h = _inf.handle
                 except Exception:
                     h = None
                 if h is not None and hasattr(h, "pause"):
@@ -4195,7 +4177,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             items = task_info.items() if isinstance(task_info, dict) else []
             for _t, _inf in items:
                 try:
-                    h = _inf.get("handle")
+                    h = _inf.handle
                 except Exception:
                     h = None
                 if h is not None and hasattr(h, "resume"):
