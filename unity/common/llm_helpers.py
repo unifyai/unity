@@ -1138,8 +1138,6 @@ async def _schedule_missing_for_message(
                 parent_chat_context=parent_chat_context,
                 propagate_chat_context=propagate_chat_context,
                 assistant_meta=assistant_meta,
-                client=client,
-                logger=logger,
             )
             scheduled.append(cid)
     except Exception:
@@ -2477,9 +2475,7 @@ async def _async_tool_use_loop_inner(
                             consecutive_failures=consecutive_failures,
                             outer_handle_container=outer_handle_container,
                             assistant_meta=assistant_meta,
-                            client=client,
                             msg_dispatcher=_msg_dispatcher,
-                            logger=logger,
                         )
                     if cancel_event.is_set():
                         # Forward stop to any nested handles before aborting
@@ -2786,9 +2782,7 @@ async def _async_tool_use_loop_inner(
                         consecutive_failures=consecutive_failures,
                         outer_handle_container=outer_handle_container,
                         assistant_meta=assistant_meta,
-                        client=client,
                         msg_dispatcher=_msg_dispatcher,
-                        logger=logger,
                     ):
                         needs_turn = True
 
@@ -2977,9 +2971,7 @@ async def _async_tool_use_loop_inner(
                             consecutive_failures=consecutive_failures,
                             outer_handle_container=outer_handle_container,
                             assistant_meta=assistant_meta,
-                            client=client,
                             msg_dispatcher=_msg_dispatcher,
-                            logger=logger,
                         ):
                             needs_turn = True
 
