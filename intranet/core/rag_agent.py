@@ -314,13 +314,13 @@ class IntranetRAGAgent:
         Delegate to KnowledgeManager.ask with optional case-specific instructions.
         """
         try:
-            print(f"🔍 Processing query: {query_text[:100]}...")
-            print(f"👤 User: {user_id or 'anonymous'}, Conversation: {conversation_id}")
+            # print(f"🔍 Processing query: {query_text[:100]}...")
+            # print(f"👤 User: {user_id or 'anonymous'}, Conversation: {conversation_id}")
 
             if conversation_context is None:
                 conversation_context = self._get_conversation_context(conversation_id)
 
-            print("🔍 Calling KnowledgeManager.ask directly for retrieval")
+            # print("🔍 Calling KnowledgeManager.ask directly for retrieval")
 
             case_specific_instructions = build_intranet_ask_instructions(
                 generate_follow_up=generate_follow_up,
@@ -351,7 +351,7 @@ class IntranetRAGAgent:
             )
 
             self._update_conversation(conversation_id, query_text, response, user_id)
-            print(f"✅ Query processed successfully")
+            # print(f"✅ Query processed successfully")
             return response
 
         except Exception as e:
@@ -575,7 +575,7 @@ class IntranetRAGAgent:
         try:
             if MODELS_AVAILABLE:
                 # Use Pydantic model for validation
-                print("🔍 Validating response with Pydantic model...")
+                # print("🔍 Validating response with Pydantic model...")
 
                 # Try to create a validated response
                 response_model = RAGQueryResponse.from_unstructured_response(
@@ -590,7 +590,7 @@ class IntranetRAGAgent:
                     ),
                 )
 
-                print("✅ Response successfully validated with Pydantic")
+                # print("✅ Response successfully validated with Pydantic")
                 return response_model.to_legacy_format(generate_follow_up)
 
             else:
