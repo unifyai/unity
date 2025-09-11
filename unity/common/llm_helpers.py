@@ -3474,7 +3474,7 @@ async def _async_tool_use_loop_inner(
                             (
                                 t
                                 for t, inf in tools_data.info.items()
-                                if str(inf.get("call_id", "")).endswith(call_id_suffix)
+                                if str(inf.call_id).endswith(call_id_suffix)
                             ),
                             None,
                         )
