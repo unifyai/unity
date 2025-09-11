@@ -1125,7 +1125,7 @@ async def _schedule_missing_for_message(
                 continue
 
             # Base tool: locate function
-            if name not in tools_data.norm_tools:
+            if name not in tools_data.normalized:
                 scheduled.append(cid)
                 continue
 
@@ -1275,7 +1275,7 @@ class _ToolsData:
     def __init__(self, tools, *, client, logger: _AsyncToolLoopLogger):
         self._client = client
         self._logger = logger
-        self.norm_tools = _normalise_tools(tools)
+        self.normalized = _normalise_tools(tools)
         self.pending: Set[asyncio.Task] = set()
         self.info: Dict[asyncio.Task, ToolCallMetadata] = {}
         # Per-tool hidden total-call quotas (counted per loop instance)
@@ -1290,7 +1290,7 @@ class _ToolsData:
         return self.call_counts.get(task_name, 0)
 
     def _can_offer_tool(self, task_name: str) -> bool:
-        limit = self.norm_tools[task_name].max_concurrent
+        limit = self.normalized[task_name].max_concurrent
         return limit is None or self.active_count(task_name) < limit
 
     def _save_task(self, coro, metadata: ToolCallMetadata):
@@ -1301,11 +1301,11 @@ class _ToolsData:
         return sum(1 for _t, _inf in self.info.items() if _inf.name == task_name)
 
     def quota_ok(self, task_name: str) -> bool:
-        limit = self.norm_tools[task_name].max_total_calls
+        limit = self.normalized[task_name].max_total_calls
         return limit is None or self._quota_count(task_name) < limit
 
     def concurrency_ok(self, task_name: str) -> bool:
-        return task_name not in self.norm_tools or self._can_offer_tool(task_name)
+        return task_name not in self.normalized or self._can_offer_tool(task_name)
 
     # Remove any tool_calls in an assistant message that would exceed the
     # hidden per-tool total-call quota. Operates in-place on asst_msg.
@@ -1317,7 +1317,7 @@ class _ToolsData:
 
             # Compute remaining budget per base tool (in this loop instance)
             remaining: Dict[str, int] = {}
-            for name, spec in self.norm_tools.items():
+            for name, spec in self.normalized.items():
                 lim = spec.max_total_calls
                 if lim is None:
                     continue
@@ -1359,15 +1359,15 @@ class _ToolsData:
         assistant_meta,
     ) -> None:
         # Base tool must exist
-        if name not in self.norm_tools:
+        if name not in self.normalized:
             return
 
-        fn = self.norm_tools[name].fn
+        fn = self.normalized[name].fn
 
         # Enforce hidden per-tool total call quota: should be pre-pruned from
         # the assistant message, but guard here as well and simply skip.
         with suppress(Exception):
-            lim = self.norm_tools[name].max_total_calls
+            lim = self.normalized[name].max_total_calls
             if lim is not None and self.call_counts.get(name, 0) >= lim:
                 return
 
@@ -2339,7 +2339,7 @@ async def _async_tool_use_loop_inner(
     # ── initial prompt ───────────────────────────────────────────────────────
     # ── 0-b. Coerce tools → ToolSpec & helper lambdas ───────────────────────
     #
-    # • «norm_tools» holds the *canonical* mapping name → ToolSpec
+    # • «tools_data.normalized» holds the *canonical* mapping name → ToolSpec
     # • helper for the active-count of one tool (cheap O(#pending))
     # • helper that answers "may we launch / advertise *this* tool right now?"
     #   by comparing the live count with max_concurrent.
@@ -2830,19 +2830,19 @@ async def _async_tool_use_loop_inner(
                 try:
                     tool_choice_mode, filtered = tool_policy(
                         step_index,
-                        {n: s.fn for n, s in tools_data.norm_tools.items()},
+                        {n: s.fn for n, s in tools_data.normalized.items()},
                     )
                 except Exception as _e:  # never abort the loop on mis-behaving policies
                     logger.error(
                         f"tool_policy raised on turn {step_index}: {_e!r}",
                     )
                     tool_choice_mode, filtered = "auto", {
-                        n: s.fn for n, s in tools_data.norm_tools.items()
+                        n: s.fn for n, s in tools_data.normalized.items()
                     }
                 policy_tools_norm = _normalise_tools(filtered)
             else:
                 tool_choice_mode = "auto"
-                policy_tools_norm = tools_data.norm_tools
+                policy_tools_norm = tools_data.normalized
 
             visible_base_tools_schema = [
                 method_to_schema(spec.fn, name)
@@ -3508,19 +3508,19 @@ async def _async_tool_use_loop_inner(
 
                     # Respect hidden per-tool total-call quotas (pre-pruned); guard
                     if (
-                        name in tools_data.norm_tools
-                        and tools_data.norm_tools[name].max_total_calls is not None
+                        name in tools_data.normalized
+                        and tools_data.normalized[name].max_total_calls is not None
                         and tools_data.call_counts.get(name, 0)
-                        >= tools_data.norm_tools[name].max_total_calls
+                        >= tools_data.normalized[name].max_total_calls
                     ):
                         continue
 
                     # Respect *per-tool* concurrency limits  ────────────────
                     if (
-                        name in tools_data.norm_tools
-                        and tools_data.norm_tools[name].max_concurrent is not None
+                        name in tools_data.normalized
+                        and tools_data.normalized[name].max_concurrent is not None
                         and tools_data.active_count(name)
-                        >= tools_data.norm_tools[name].max_concurrent
+                        >= tools_data.normalized[name].max_concurrent
                     ):
                         # Concurrency cap reached → immediately insert a
                         # *tool-error* message and **do not** schedule.
@@ -3530,7 +3530,7 @@ async def _async_tool_use_loop_inner(
                             "name": name,
                             "content": (
                                 f"⚠️ Cannot start '{name}': "
-                                f"max_concurrent={tools_data.norm_tools[name].max_concurrent} "
+                                f"max_concurrent={tools_data.normalized[name].max_concurrent} "
                                 "already reached. Wait for an existing call to "
                                 "finish or stop one before retrying."
                             ),
