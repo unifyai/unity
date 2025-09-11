@@ -70,6 +70,10 @@ cloudflared tunnel login
 .\liveview.ps1
 ```
 
+2. View and control the desktop through the URL below. When prompted for password, input your Unify API key.
+
+`<cloudflared-url>/vnc.html?resize=scale&autoreconnect=1&autoconnect=1`
+
 ### Troubleshooting
 
 - Make sure `ANTHROPIC_API_KEY`, `UNIFY_BASE_URL` and `UNIFY_KEY` are in your `.env` file when starting the Docker container.
