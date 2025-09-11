@@ -1,29 +1,8 @@
 # Requires: Run as User. Configures TightVNC password and runs websockify to expose noVNC on http://localhost:6080/vnc.html
 # Assumes dependencies are already installed via desktop/windows/install.ps1
 
-param(
-  [string]$VncPassword = "changeme",
-  [string]$UnifyKey
-)
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
-# Derive VNC password from UNIFY_KEY if provided
-if (-not $UnifyKey -and $env:UNIFY_KEY) {
-  $UnifyKey = $env:UNIFY_KEY
-}
-if ($UnifyKey) {
-  $VncPassword = $UnifyKey
-}
-# TightVNC enforces 8-char max password
-if ($VncPassword.Length -gt 8) {
-  Write-Warning "VNC password exceeds 8 characters. Truncating to 8."
-  $VncPassword = $VncPassword.Substring(0,8)
-}
-if (-not $VncPassword) {
-  throw "VNC password is empty. Set -UnifyKey parameter or UNIFY_KEY environment variable."
-}
 
 # Stop any existing TightVNC server to avoid port conflicts
 try { & net stop tvnserver | Out-Host } catch {}
