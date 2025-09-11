@@ -225,6 +225,7 @@ class IntranetRAGAgent:
         self,
         enabled_tools: Optional[List[str]] = None,
         conv_context_length: int = 10,
+        sandbox_mode: bool = False,
     ):
         """
         Initialize the RAG agent.
@@ -232,10 +233,13 @@ class IntranetRAGAgent:
         Args:
             enabled_tools: List of tool categories to enable ('knowledge', 'search', etc.)
             conv_context_length: Number of previous messages to keep in context
+            sandbox_mode: Whether to return the SteerableToolHandle instance
+                          from the knowledge manager's public methods instead of the result
         """
         # Configuration
         self.conv_context_length = conv_context_length
         self.conversations = {}  # Store conversation history
+        self.sandbox_mode = sandbox_mode
 
         # FileManager for session-scoped files with document parser
         from unity.file_manager.parser import DoclingParser
@@ -333,6 +337,9 @@ class IntranetRAGAgent:
                 response_format=RAGLLMResponse,
             )
 
+            if self.sandbox_mode:
+                return ask_handle
+
             result = await ask_handle.result()
 
             response = self._structure_response(
@@ -383,7 +390,7 @@ class IntranetRAGAgent:
             case_specific_instructions = build_intranet_update_instructions()
 
             # Delegate to KnowledgeManager's update method
-            handle = await self.knowledge_manager.update(
+            update_handle = await self.knowledge_manager.update(
                 update_prompt,
                 _return_reasoning_steps=_return_reasoning_steps,
                 parent_chat_context=conversation_context,
@@ -393,7 +400,10 @@ class IntranetRAGAgent:
                 case_specific_instructions=case_specific_instructions,
             )
 
-            result = await handle.result()
+            if self.sandbox_mode:
+                return update_handle
+
+            result = await update_handle.result()
             return {"status": "ok", "result": result}
         except Exception as e:
             return {"status": "error", "error": str(e)}

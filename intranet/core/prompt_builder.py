@@ -123,8 +123,8 @@ def build_intranet_update_instructions() -> str:
      the already-identified rows or to apply strict non-semantic constraints.
 
    - When the `ask` flow runs semantic retrieval, prefer a **tiered escalation** with `_search` on the unified table:
-        1) `filter="content_type == 'paragraph'", k=10`  → precise hits
-        2) `filter="content_type == 'section'",   k=6`   → broaden if still unclear
+        1) `filter="content_type == 'paragraph'", k=8`  → precise hits
+        2) `filter="content_type == 'section'",   k=5`   → broaden if still unclear
         3) `filter="content_type == 'document'",  k=3`   → coarse fallback
      Proceed to the next tier **only** if the prior tier cannot confidently identify targets.
 
