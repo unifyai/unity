@@ -1686,6 +1686,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table: str,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
+        filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Semantic search within a single knowledge table using one or more source expressions.
@@ -1700,6 +1701,9 @@ class KnowledgeManager(BaseKnowledgeManager):
                 is provided the ranking uses a sum of cosine distances over all terms.
         k : int, default 10
                 Maximum number of rows to return.
+        filter : str | None, default ``None``
+                Row-level predicate (evaluated with column names as variables).
+                *None* returns all rows.
 
         Returns
         -------
@@ -1711,7 +1715,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         context = self._ctx_for_table(table)
 
-        rows: List[Dict[str, Any]] = fetch_top_k_by_references(context, references, k=k)
+        rows: List[Dict[str, Any]] = fetch_top_k_by_references(
+            context,
+            references,
+            k=k,
+            row_filter=filter,
+        )
         return backfill_rows(context, rows, k)
 
     @_km_log_tool_runtime
@@ -1726,6 +1735,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         right_where: Optional[str] = None,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
+        filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform a semantic search over the result of joining two tables.
@@ -1763,6 +1773,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         k : int, default 5
             Maximum number of rows to return.
 
+        filter : str | None, default ``None``
+                Row-level predicate (evaluated with column names as variables).
+                *None* returns all rows.
+
         Returns
         -------
         list[dict[str, Any]]
@@ -1791,6 +1805,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 dest_ctx,
                 references,
                 k=k,
+                row_filter=filter,
             )
             return backfill_rows(dest_ctx, rows, k)
         finally:
@@ -1807,6 +1822,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         joins: List[Dict[str, Any]],
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
+        filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform a semantic search over the result of chaining multiple joins.
@@ -1927,6 +1943,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 final_ctx,
                 references,
                 k=k,
+                row_filter=filter,
             )
             return backfill_rows(final_ctx, rows, k)
         finally:
