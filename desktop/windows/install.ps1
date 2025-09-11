@@ -6,10 +6,36 @@ $ErrorActionPreference = 'Stop'
 
 
 function Install-TightVNC {
+  # Determine VNC password (TightVNC limit: 8 chars)
+  $vncPassword = $env:VNC_PASSWORD
+  if (-not $vncPassword) { $vncPassword = $env:UNIFY_KEY }
+  if (-not $vncPassword) { $vncPassword = 'changeme' }
+  if ($vncPassword.Length -gt 8) { $vncPassword = $vncPassword.Substring(0,8) }
+
   if (-not (Get-Command tvnserver -ErrorAction SilentlyContinue)) {
-    choco install tightvnc -y --no-progress --installArguments 'SET_USEVNCAUTHENTICATION=1 VALUE_OF_USEVNCAUTHENTICATION=0' --force | Out-Host
-    Set-ItemProperty -Path "HKLM:\Software\TightVNC\Server" -Name "UseVncAuthentication" -Value 0
-    Set-ItemProperty -Path "HKLM:\Software\TightVNC\Server" -Name "UseControlAuthentication" -Value 0
+    Write-Host "Installing TightVNC..."
+    choco install tightvnc -y --no-progress | Out-Host
+  } else {
+    Write-Host "TightVNC already installed. Ensuring settings..."
+  }
+
+  # Enforce auth in registry and allow RFB connections
+  $regPaths = @('HKLM:\Software\TightVNC\Server','HKLM:\Software\WOW6432Node\TightVNC\Server')
+  foreach ($p in $regPaths) {
+    if (Test-Path $p) {
+      New-ItemProperty -Path $p -Name 'UseVncAuthentication' -PropertyType DWord -Value 1 -Force | Out-Null
+      New-ItemProperty -Path $p -Name 'AcceptRfbConnections' -PropertyType DWord -Value 1 -Force | Out-Null
+      New-ItemProperty -Path $p -Name 'QueryIfNoPassword' -PropertyType DWord -Value 0 -Force | Out-Null
+      New-ItemProperty -Path $p -Name 'RfbPort' -PropertyType DWord -Value 5900 -Force | Out-Null
+    }
+  }
+
+  # NOTE: TightVNC does not provide a CLI to set plaintext passwords.
+  # Ensure a password is configured via GUI once (or pre-hashed in registry) then use -reload.
+  $tvnExe = 'C:\\Program Files\\TightVNC\\tvnserver.exe'
+  if (-not (Test-Path $tvnExe)) { $tvnExe = 'C:\\Program Files (x86)\\TightVNC\\tvnserver.exe' }
+  if (Test-Path $tvnExe) {
+    try { & $tvnExe -configapp | Out-Host } catch {}
   }
 }
 
