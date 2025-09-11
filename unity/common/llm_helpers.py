@@ -1295,6 +1295,10 @@ class _ToolsData:
         limit = self.norm_tools[task_name].max_concurrent
         return limit is None or self.active_count(task_name) < limit
 
+    def _save_task(self, coro, metadata: ToolCallMetadata):
+        self.pending.add(coro)
+        self.info[coro] = metadata
+
     def active_count(self, task_name: str) -> int:
         return sum(1 for _t, _inf in self.info.items() if _inf.name == task_name)
 
@@ -1444,8 +1448,7 @@ class _ToolsData:
         }
 
         t = asyncio.create_task(coro, name=f"ToolCall_{name}")
-        self.pending.add(t)
-        self.info[t] = ToolCallMetadata(
+        metadata = ToolCallMetadata(
             name=name,
             call_id=call_id,
             assistant_msg=asst_msg,
@@ -1462,6 +1465,7 @@ class _ToolsData:
             llm_arguments=allowed_call_args,
             raw_arguments_json=args_json,
         )
+        self._save_task(t, metadata)
 
         if self._logger.log_steps:
             self._logger.info(
@@ -1565,7 +1569,6 @@ class _ToolsData:
                     nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
 
                 nested_task = asyncio.create_task(nested_coro)
-                self.pending.add(nested_task)
 
                 # 2️⃣ insert / update a single placeholder
                 ph = info.tool_reply_msg
@@ -1592,7 +1595,7 @@ class _ToolsData:
                     )
 
                 # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
-                self.info[nested_task] = dataclasses.replace(
+                metadata = dataclasses.replace(
                     info,
                     handle=raw,
                     is_interjectable=hasattr(raw, "interject"),
@@ -1600,6 +1603,7 @@ class _ToolsData:
                     clar_up_queue=h_up_q,
                     clar_down_queue=h_down_q,
                 )
+                self._save_task(nested_task, metadata)
                 if h_up_q is not None:
                     self.clarification_channels[call_id] = (h_up_q, h_down_q)
                 return False  # ⬅️  no LLM turn required
@@ -3619,11 +3623,8 @@ async def _async_tool_use_loop_inner(
                             continue
 
                         # Scheduling dynamic helper call
-
                         t = asyncio.create_task(coro, name=f"ToolCall_{name}")
-                        tools_data.pending.add(t)
-
-                        tools_data.info[t] = ToolCallMetadata(
+                        metadata = ToolCallMetadata(
                             name=name,
                             call_id=call["id"],
                             assistant_msg=msg,
@@ -3640,6 +3641,10 @@ async def _async_tool_use_loop_inner(
                             llm_arguments=allowed_call_args,
                             raw_arguments_json=call["function"]["arguments"],
                         )
+                        tools_data._save_task(
+                            coro=t,
+                            metadata=metadata,
+                        )
                     else:
                         # Use shared helper for base tools
                         await tools_data.schedule_base_tool_call(
@@ -3651,8 +3656,6 @@ async def _async_tool_use_loop_inner(
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
-                            client=client,
-                            logger=logger,
                         )
 
                 # metadata for orderly insertion
