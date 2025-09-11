@@ -1422,11 +1422,6 @@ class _ToolsData:
             call_args = {}
 
         # Filter extras to match fn signature
-        sig = inspect.signature(fn)
-        params = sig.parameters
-        has_varkw = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-        )
         filtered_extras = {
             k: v for k, v in extra_kwargs.items() if k in params or has_varkw
         }
