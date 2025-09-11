@@ -42,17 +42,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Honour LOG_LEVEL env var – if set to OFF/NONE/0 disable logging entirely
-if os.getenv("LOG_LEVEL", "INFO").upper() in {"OFF", "NONE", "0"}:
-    logging.disable(logging.CRITICAL)
+# # Honour LOG_LEVEL env var – if set to OFF/NONE/0 disable logging entirely
+# if os.getenv("LOG_LEVEL", "INFO").upper() in {"OFF", "NONE", "0"}:
+#     logging.disable(logging.CRITICAL)
 
-# Optional: silence INFO logs on stdout while retaining them in rag_agent.log
-if os.getenv("SILENT_CONSOLE", "false").lower() == "true":
-    logging.getLogger("UnifyAsyncLogger.EventBus").setLevel(logging.CRITICAL)
-    root_logger = logging.getLogger()
-    for _h in root_logger.handlers:
-        if isinstance(_h, logging.StreamHandler):
-            root_logger.removeHandler(_h)
+# # Optional: silence INFO logs on stdout while retaining them in rag_agent.log
+# if os.getenv("SILENT_CONSOLE", "false").lower() == "true":
+#     logging.getLogger("UnifyAsyncLogger.EventBus").setLevel(logging.CRITICAL)
+#     root_logger = logging.getLogger()
+#     for _h in root_logger.handlers:
+#         if isinstance(_h, logging.StreamHandler):
+#             root_logger.removeHandler(_h)
 
 # logging.getLogger("UnifyAsyncLogger").setLevel(logging.INFO)
 
@@ -271,7 +271,7 @@ async def _main_async() -> None:
     )
 
     # manager
-    rag_agent = IntranetRAGAgent()
+    rag_agent = IntranetRAGAgent(sandbox_mode=True)
     if args.traced:
         rag_agent = unify.traced(rag_agent)
 
