@@ -690,6 +690,134 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_active_task_done_aggregates_all_when_called_late(monkeypatch):
+    """
+    If called after multiple tasks completed, active_task_done should return
+    a JSON mapping containing all completions since never having been called.
+    """
+
+    # Immediate completion per task to avoid timing races
+    class _Immediate(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw.pop("duration", None)
+            super().__init__(steps=0, duration=None, *a, **kw)
+
+    monkeypatch.setattr(
+        "unity.actor.simulated.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    a, b, c = await _make_ordered_queue(ts, ["A_done", "B_done", "C_done"])  # type: ignore[misc]
+
+    # Run the entire queue to completion
+    h = await ts.execute(text=str(a))
+    await h.result()
+
+    # Access inner handle if wrapped
+    inner = getattr(h, "_inner", h)
+
+    # Call active_task_done the first time – should aggregate all completions
+    import json as _json
+
+    payload_str = await inner.active_task_done()
+    data = _json.loads(payload_str or "{}")
+    assert isinstance(data, dict)
+    assert set(data.keys()) == {"A_done", "B_done", "C_done"}
+    assert all(isinstance(v, str) for v in data.values())
+
+    # Second call after everything already consumed should be empty
+    payload_str2 = await inner.active_task_done()
+    data2 = _json.loads(payload_str2 or "{}")
+    assert data2 == {}
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_task_done_incremental(monkeypatch):
+    """
+    Consecutive calls to active_task_done should return only new completions
+    since the previous call.
+    """
+
+    # Step-based actor: one step to complete each task
+    class _StepOne(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 1
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _StepOne, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _StepOne,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    a_id, b_id = await _make_ordered_queue(ts, ["A_inc", "B_inc"])  # type: ignore[misc]
+
+    # Detect when B becomes active
+    b_active_evt: asyncio.Event = asyncio.Event()
+    orig_update_status = ts._update_task_status_instance
+
+    def spy_update_status(*, task_id: int, instance_id: int, new_status: str, activated_by=None):  # type: ignore[override]
+        res = orig_update_status(
+            task_id=task_id,
+            instance_id=instance_id,
+            new_status=new_status,
+            activated_by=activated_by,
+        )
+        try:
+            if task_id == b_id and str(new_status) == "active":
+                b_active_evt.set()
+        except Exception:
+            pass
+        return res
+
+    monkeypatch.setattr(
+        ts,
+        "_update_task_status_instance",
+        spy_update_status,
+        raising=True,
+    )
+
+    h = await ts.execute(text=str(a_id))
+    inner = getattr(h, "_inner", h)
+
+    # Complete A with a single step (pause triggers a step in simulated actor)
+    h.pause()
+
+    # First call should include only A
+    import json as _json
+
+    payload1 = await inner.active_task_done()
+    data1 = _json.loads(payload1 or "{}")
+    assert set(data1.keys()) == {"A_inc"}
+
+    # Ensure B is active, then complete it
+    await asyncio.wait_for(b_active_evt.wait(), timeout=5)
+    h.pause()
+
+    # Second call should include only B
+    payload2 = await inner.active_task_done()
+    data2 = _json.loads(payload2 or "{}")
+    assert set(data2.keys()) == {"B_inc"}
+
+    # Further calls after consumption should be empty
+    payload3 = await inner.active_task_done()
+    data3 = _json.loads(payload3 or "{}")
+    assert data3 == {}
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_execute_by_id_returns_active_queue_handle(monkeypatch):
     """Executing by id returns an ActiveQueue handle (composite queue wrapper)."""
 
