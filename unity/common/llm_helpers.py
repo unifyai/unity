@@ -1278,142 +1278,6 @@ async def _acknowledge_helper_call(
     )
 
 
-# Helper: schedule a base tool call (shared by main path and backfill)
-async def _schedule_base_tool_call(
-    asst_msg: dict,
-    *,
-    name: str,
-    args_json: Any,
-    call_id: str,
-    call_idx: int,
-    tools_data,
-    parent_chat_context,
-    propagate_chat_context,
-    assistant_meta,
-    client,
-    logger,
-) -> None:
-    # Base tool must exist
-    if name not in tools_data.norm_tools:
-        return
-
-    fn = tools_data.norm_tools[name].fn
-
-    # Enforce hidden per-tool total call quota: should be pre-pruned from
-    # the assistant message, but guard here as well and simply skip.
-    with suppress(Exception):
-        lim = tools_data.norm_tools[name].max_total_calls
-        if lim is not None and tools_data.call_counts.get(name, 0) >= lim:
-            return
-
-    # Build extra kwargs (chat context, interject/clarification/pause)
-    extra_kwargs: dict = {}
-    if propagate_chat_context:
-        cur_msgs = [m for m in client.messages if not m.get("_ctx_header")]
-        ctx_repr = _chat_context_repr(parent_chat_context, cur_msgs)
-        extra_kwargs["parent_chat_context"] = ctx_repr
-
-    sig = inspect.signature(fn)
-    params = sig.parameters
-    has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-
-    sig_accepts_interject_q = "interject_queue" in params or has_varkw
-    sig_accepts_pause_event = "pause_event" in params or has_varkw
-    sig_accepts_clar_qs = (
-        "clarification_up_q" in params and "clarification_down_q" in params
-    ) or has_varkw
-
-    pause_ev: Optional[asyncio.Event] = None
-    if sig_accepts_pause_event:
-        pause_ev = asyncio.Event()
-        pause_ev.set()  # start running
-        extra_kwargs["pause_event"] = pause_ev
-
-    clar_up_q: Optional[asyncio.Queue[str]] = None
-    clar_down_q: Optional[asyncio.Queue[str]] = None
-    if sig_accepts_clar_qs:
-        clar_up_q = asyncio.Queue()
-        clar_down_q = asyncio.Queue()
-        extra_kwargs["clarification_up_q"] = clar_up_q
-        extra_kwargs["clarification_down_q"] = clar_down_q
-
-    sub_q: Optional[asyncio.Queue[str]] = None
-    if sig_accepts_interject_q:
-        sub_q = asyncio.Queue()
-        extra_kwargs["interject_queue"] = sub_q
-
-    # Parse args
-    try:
-        call_args = (
-            json.loads(args_json) if isinstance(args_json, str) else (args_json or {})
-        )
-    except Exception:
-        call_args = {}
-
-    # Filter extras to match fn signature
-    sig = inspect.signature(fn)
-    params = sig.parameters
-    has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-    filtered_extras = {
-        k: v for k, v in extra_kwargs.items() if k in params or has_varkw
-    }
-
-    # Forward ALL call args verbatim. Let the callee raise if unsupported.
-    allowed_call_args = call_args
-    merged_kwargs = {**allowed_call_args, **filtered_extras}
-
-    # Build coroutine
-    if asyncio.iscoroutinefunction(fn):
-        coro = fn(**merged_kwargs)
-    else:
-        coro = asyncio.to_thread(fn, **merged_kwargs)
-
-    call_dict = {
-        "id": call_id,
-        "type": "function",
-        "function": {"name": name, "arguments": args_json},
-    }
-
-    t = asyncio.create_task(coro, name=f"ToolCall_{name}")
-    tools_data.pending.add(t)
-    tools_data.info[t] = ToolCallMetadata(
-        name=name,
-        call_id=call_id,
-        assistant_msg=asst_msg,
-        call_dict=call_dict,
-        call_idx=call_idx,
-        is_interjectable=sig_accepts_interject_q,
-        interject_queue=sub_q,
-        chat_context=extra_kwargs.get("parent_chat_context"),
-        clar_up_queue=clar_up_q,
-        clar_down_queue=clar_down_q,
-        pause_event=pause_ev,
-        # Debug helpers for failure logging
-        tool_schema=method_to_schema(fn, name),
-        llm_arguments=allowed_call_args,
-        raw_arguments_json=args_json,
-    )
-
-    if logger.log_steps:
-        logger.info(
-            f"{name} - {call_id}",
-            prefix=f"🛠️  ToolCall Scheduled",
-        )
-
-    # Increment hidden quota counter only once scheduling succeeds
-    with suppress(Exception):
-        tools_data.call_counts[name] = tools_data.call_counts.get(name, 0) + 1
-
-    if clar_up_q is not None:
-        tools_data.clarification_channels[call_id] = (
-            clar_up_q,
-            clar_down_q,
-        )
-
-    # Ensure assistant meta exists for deterministic insertion ordering
-    assistant_meta.setdefault(id(asst_msg), {"results_count": 0})
-
-
 # Ensure placeholder tool messages exist for pending tasks. If assistant_msg
 # is provided, only affects tasks spawned by that assistant turn; otherwise
 # applies to all pending tasks. Returns the list of call_ids for which a
@@ -1515,13 +1379,12 @@ async def _schedule_missing_for_message(
                 scheduled.append(cid)
                 continue
 
-            await _schedule_base_tool_call(
+            await tools_data.schedule_base_tool_call(
                 asst_msg,
                 name=name,
                 args_json=args_json,
                 call_id=cid,
                 call_idx=idx,
-                tools_data=tools_data,
                 parent_chat_context=parent_chat_context,
                 propagate_chat_context=propagate_chat_context,
                 assistant_meta=assistant_meta,
@@ -1727,6 +1590,147 @@ class _ToolsData:
             # In-place update only if changed
             if len(kept) != len(tool_calls):
                 asst_msg["tool_calls"] = kept
+
+    # Helper: schedule a base tool call (shared by main path and backfill)
+    async def schedule_base_tool_call(
+        self,
+        asst_msg: dict,
+        *,
+        name: str,
+        args_json: Any,
+        call_id: str,
+        call_idx: int,
+        parent_chat_context,
+        propagate_chat_context,
+        assistant_meta,
+        client,
+        logger,
+    ) -> None:
+        # Base tool must exist
+        if name not in self.norm_tools:
+            return
+
+        fn = self.norm_tools[name].fn
+
+        # Enforce hidden per-tool total call quota: should be pre-pruned from
+        # the assistant message, but guard here as well and simply skip.
+        with suppress(Exception):
+            lim = self.norm_tools[name].max_total_calls
+            if lim is not None and self.call_counts.get(name, 0) >= lim:
+                return
+
+        # Build extra kwargs (chat context, interject/clarification/pause)
+        extra_kwargs: dict = {}
+        if propagate_chat_context:
+            cur_msgs = [m for m in client.messages if not m.get("_ctx_header")]
+            ctx_repr = _chat_context_repr(parent_chat_context, cur_msgs)
+            extra_kwargs["parent_chat_context"] = ctx_repr
+
+        sig = inspect.signature(fn)
+        params = sig.parameters
+        has_varkw = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+
+        sig_accepts_interject_q = "interject_queue" in params or has_varkw
+        sig_accepts_pause_event = "pause_event" in params or has_varkw
+        sig_accepts_clar_qs = (
+            "clarification_up_q" in params and "clarification_down_q" in params
+        ) or has_varkw
+
+        pause_ev: Optional[asyncio.Event] = None
+        if sig_accepts_pause_event:
+            pause_ev = asyncio.Event()
+            pause_ev.set()  # start running
+            extra_kwargs["pause_event"] = pause_ev
+
+        clar_up_q: Optional[asyncio.Queue[str]] = None
+        clar_down_q: Optional[asyncio.Queue[str]] = None
+        if sig_accepts_clar_qs:
+            clar_up_q = asyncio.Queue()
+            clar_down_q = asyncio.Queue()
+            extra_kwargs["clarification_up_q"] = clar_up_q
+            extra_kwargs["clarification_down_q"] = clar_down_q
+
+        sub_q: Optional[asyncio.Queue[str]] = None
+        if sig_accepts_interject_q:
+            sub_q = asyncio.Queue()
+            extra_kwargs["interject_queue"] = sub_q
+
+        # Parse args
+        try:
+            call_args = (
+                json.loads(args_json)
+                if isinstance(args_json, str)
+                else (args_json or {})
+            )
+        except Exception:
+            call_args = {}
+
+        # Filter extras to match fn signature
+        sig = inspect.signature(fn)
+        params = sig.parameters
+        has_varkw = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        filtered_extras = {
+            k: v for k, v in extra_kwargs.items() if k in params or has_varkw
+        }
+
+        # Forward ALL call args verbatim. Let the callee raise if unsupported.
+        allowed_call_args = call_args
+        merged_kwargs = {**allowed_call_args, **filtered_extras}
+
+        # Build coroutine
+        if asyncio.iscoroutinefunction(fn):
+            coro = fn(**merged_kwargs)
+        else:
+            coro = asyncio.to_thread(fn, **merged_kwargs)
+
+        call_dict = {
+            "id": call_id,
+            "type": "function",
+            "function": {"name": name, "arguments": args_json},
+        }
+
+        t = asyncio.create_task(coro, name=f"ToolCall_{name}")
+        self.pending.add(t)
+        self.info[t] = ToolCallMetadata(
+            name=name,
+            call_id=call_id,
+            assistant_msg=asst_msg,
+            call_dict=call_dict,
+            call_idx=call_idx,
+            is_interjectable=sig_accepts_interject_q,
+            interject_queue=sub_q,
+            chat_context=extra_kwargs.get("parent_chat_context"),
+            clar_up_queue=clar_up_q,
+            clar_down_queue=clar_down_q,
+            pause_event=pause_ev,
+            # Debug helpers for failure logging
+            tool_schema=method_to_schema(fn, name),
+            llm_arguments=allowed_call_args,
+            raw_arguments_json=args_json,
+        )
+
+        if logger.log_steps:
+            logger.info(
+                f"{name} - {call_id}",
+                prefix=f"🛠️  ToolCall Scheduled",
+            )
+
+        # Increment hidden quota counter only once scheduling succeeds
+        with suppress(Exception):
+            self.call_counts[name] = self.call_counts.get(name, 0) + 1
+
+        if clar_up_q is not None:
+            self.clarification_channels[call_id] = (
+                clar_up_q,
+                clar_down_q,
+            )
+
+        # Ensure assistant meta exists for deterministic insertion ordering
+        assistant_meta.setdefault(id(asst_msg), {"results_count": 0})
 
 
 # TODO this is not really required, but this just simplifies the extraction of the logic from the loop.
@@ -3640,13 +3644,12 @@ async def _async_tool_use_loop_inner(
                         )
                     else:
                         # Use shared helper for base tools
-                        await _schedule_base_tool_call(
+                        await tools_data.schedule_base_tool_call(
                             msg,
                             name=name,
                             args_json=call["function"]["arguments"],
                             call_id=call["id"],
                             call_idx=idx,
-                            tools_data=tools_data,
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
