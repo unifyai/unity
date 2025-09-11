@@ -28,6 +28,16 @@ b. For production - WIP
 
 `TUNNEL_HOSTNAME=<prod_hostname> TUNNEL_NAME=<prod_appname> bash tunnel.sh`
 
+### Live Remote Viewing and Controls
+
+1. Tunnel the remote view.
+
+`bash liveview.sh`
+
+2. View and control the desktop through the URL below. When prompted for password, input your Unify API key.
+
+`<cloudflared-url>/vnc.html?resize=scale&autoreconnect=1&autoconnect=1`
+
 ### Troubleshooting
 
 - Make sure `ANTHROPIC_API_KEY`, `UNIFY_BASE_URL` and `UNIFY_KEY` are in your `.env` file when starting the Docker container.
