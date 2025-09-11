@@ -1274,7 +1274,9 @@ class _TimeoutTimer:
 
 
 class _ToolsData:
-    def __init__(self, tools):
+    def __init__(self, tools, *, client, logger: _AsyncToolLoopLogger):
+        self._client = client
+        self._logger = logger
         self.norm_tools = _normalise_tools(tools)
         self.pending: Set[asyncio.Task] = set()
         self.info: Dict[asyncio.Task, ToolCallMetadata] = {}
@@ -1353,8 +1355,6 @@ class _ToolsData:
         parent_chat_context,
         propagate_chat_context,
         assistant_meta,
-        client,
-        logger,
     ) -> None:
         # Base tool must exist
         if name not in self.norm_tools:
@@ -1372,7 +1372,7 @@ class _ToolsData:
         # Build extra kwargs (chat context, interject/clarification/pause)
         extra_kwargs: dict = {}
         if propagate_chat_context:
-            cur_msgs = [m for m in client.messages if not m.get("_ctx_header")]
+            cur_msgs = [m for m in self._client.messages if not m.get("_ctx_header")]
             ctx_repr = _chat_context_repr(parent_chat_context, cur_msgs)
             extra_kwargs["parent_chat_context"] = ctx_repr
 
@@ -1463,8 +1463,8 @@ class _ToolsData:
             raw_arguments_json=args_json,
         )
 
-        if logger.log_steps:
-            logger.info(
+        if self._logger.log_steps:
+            self._logger.info(
                 f"{name} - {call_id}",
                 prefix=f"🛠️  ToolCall Scheduled",
             )
@@ -1489,9 +1489,7 @@ class _ToolsData:
         consecutive_failures: _AsyncToolLoopToolFailureTracker,
         outer_handle_container,
         assistant_meta,
-        client,
         msg_dispatcher,
-        logger,
     ) -> bool:
         """
         Deal with a finished tool *task* exactly once:
@@ -1508,7 +1506,7 @@ class _ToolsData:
 
         def _at_tail(msg: dict) -> bool:
             """True when *msg* is the very last entry in client.messages."""
-            return bool(client.messages) and client.messages[-1] is msg
+            return bool(self._client.messages) and self._client.messages[-1] is msg
 
         self.pending.discard(task)
         info: ToolCallMetadata = self.info.pop(task)
@@ -1584,7 +1582,7 @@ class _ToolsData:
                         assistant_meta,
                         info.assistant_msg,
                         ph,
-                        client,
+                        self._client,
                         msg_dispatcher,
                     )
                     info.tool_reply_msg = ph  # remember on *parent*
@@ -1634,8 +1632,8 @@ class _ToolsData:
         except Exception:
             consecutive_failures.increment_failures()
             result = traceback.format_exc()
-            if logger.log_steps:
-                logger.error(
+            if self._logger.log_steps:
+                self._logger.error(
                     f"Error: {name} failed "
                     f"(attempt {consecutive_failures.current_failures}/{consecutive_failures.max_failures}):\n{result}",
                     prefix="❌",
@@ -1651,7 +1649,7 @@ class _ToolsData:
                         "llm_arguments": info.llm_arguments,
                         "raw_arguments_json": info.raw_arguments_json,
                     }
-                    logger.error(
+                    self._logger.error(
                         f"FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
                         prefix="🧩",
                     )
@@ -1703,13 +1701,13 @@ class _ToolsData:
                 assistant_meta,
                 asst_msg,
                 tool_msg,
-                client,
+                self._client,
                 msg_dispatcher,
             )
 
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
-        if logger.log_steps:
+        if self._logger.log_steps:
             # Create a clean version of tool_msg for logging (strip image data)
             tool_msg_for_logging = tool_msg.copy()
             if isinstance(tool_msg_for_logging.get("content"), list):
@@ -1719,15 +1717,15 @@ class _ToolsData:
                     for item in tool_msg_for_logging["content"]
                     if item.get("type") != "image_url"
                 ]
-            logger.info(
+            self._logger.info(
                 f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
                 prefix=f"🛠️  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
             )
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures.has_exceeded_failures():
-            if logger.log_steps:
-                logger.error(f"Aborting: too many tool failures.", prefix="🚨")
+            if self._logger.log_steps:
+                self._logger.error(f"Aborting: too many tool failures.", prefix="🚨")
             raise RuntimeError(
                 "Aborted after too many consecutive tool failures.",
             )
@@ -2351,7 +2349,7 @@ async def _async_tool_use_loop_inner(
     # -----------------------------------------------------------------------
 
     # Initialise loop state early so preflight backfill can schedule tasks
-    tools_data: _ToolsData = _ToolsData(tools)
+    tools_data: _ToolsData = _ToolsData(tools, client=client, logger=logger)
     consecutive_failures = _AsyncToolLoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
