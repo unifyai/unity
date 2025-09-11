@@ -967,256 +967,6 @@ async def _insert_after_assistant(
     meta["results_count"] += 1
 
 
-# ── *single* authoritative implementation of "task finished" handling ──
-async def _process_completed_task(
-    task: asyncio.Task,
-    consecutive_failures: _AsyncToolLoopToolFailureTracker,
-    tools_data: _ToolsData,
-    outer_handle_container,
-    assistant_meta,
-    client,
-    msg_dispatcher,
-    logger,
-) -> bool:
-    """
-    Deal with a finished tool *task* exactly once:
-
-    1.  Pop bookkeeping (``pending`` / ``task_info``).
-    2.  Serialise *success* or *exception* into ``result``.
-    3.  Patch or insert the correct **tool** message so the transcript
-        stays perfectly chronological.
-    4.  Emit the event-bus hook (if configured).
-    5.  Record the payload in ``completed_results`` for later
-        `_continue_<id>` helpers.
-    6.  Enforce the *max_consecutive_failures* safety valve.
-    """
-
-    def _at_tail(msg: dict) -> bool:
-        """True when *msg* is the very last entry in client.messages."""
-        return bool(client.messages) and client.messages[-1] is msg
-
-    tools_data.pending.discard(task)
-    info: ToolCallMetadata = tools_data.info.pop(task)
-    name = info.name
-    call_id = info.call_id
-    fn = info.call_dict["function"]["name"]
-    arg = info.call_dict["function"]["arguments"]
-
-    # 2️⃣  obtain result -------------------------------------------------
-    try:
-        raw = task.result()
-
-        # ───────────────────────────────────────────────────────────────
-        #  NEW:  the tool *did not really finish* – it returned *another*
-        #        AsyncToolLoopHandle.  We:
-        #        (1) schedule `handle.result()` as a *new* task,
-        #        (2) keep the **same** `call_id` so the continue/-cancel
-        #            helpers keep working,
-        #        (3) create / patch one placeholder "still running…"
-        #            tool-message in the transcript.
-        # ───────────────────────────────────────────────────────────────
-        # treat ANY AsyncToolLoopHandle (or subclass) as a nested loop
-        from unity.common.llm_helpers import SteerableToolHandle
-
-        if isinstance(raw, SteerableToolHandle):
-            # If the nested handle explicitly requests pass-through behaviour
-            # expose it directly to the outer caller *immediately*.
-            if (
-                getattr(raw, "__passthrough__", False)
-                and outer_handle_container
-                and outer_handle_container[0] is not None
-            ):
-                outer_handle_container[0]._adopt(raw)
-            # ── upgrade interject / clarification flags from handle ─────
-            if hasattr(raw, "interject"):
-                info.is_interjectable = True
-
-            h_up_q = getattr(raw, "clarification_up_q", info.clar_up_queue)
-            h_down_q = getattr(raw, "clarification_down_q", info.clar_down_queue)
-
-            if (h_up_q is not None) ^ (h_down_q is not None):
-                raise AttributeError(
-                    f"Handle returned by tool {info.name!r} exposes only "
-                    "one of 'clarification_up_q' / 'clarification_down_q'. "
-                    "Both queues are required (or neither).",
-                )
-
-            # 1️⃣ spawn the nested waiter
-            #
-            # ⤷ `handle.result` can now be **sync OR async**:
-            #    • async ⇒ use the coroutine directly,
-            #    • sync  ⇒ run it in a worker-thread so the event-loop never blocks.
-            if inspect.iscoroutinefunction(raw.result):
-                nested_coro = raw.result()  # already a coroutine
-            else:
-                nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
-
-            nested_task = asyncio.create_task(nested_coro)
-            tools_data.pending.add(nested_task)
-
-            # 2️⃣ insert / update a single placeholder
-            ph = info.tool_reply_msg
-            if ph is None:
-                ph = {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "name": info.name,
-                    "content": ("Nested async tool loop started… waiting for result."),
-                }
-                await _insert_after_assistant(
-                    assistant_meta,
-                    info.assistant_msg,
-                    ph,
-                    client,
-                    msg_dispatcher,
-                )
-                info.tool_reply_msg = ph  # remember on *parent*
-            else:
-                ph["content"] = "Nested async tool loop started… waiting for result."
-
-            # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
-            tools_data.info[nested_task] = dataclasses.replace(
-                info,
-                handle=raw,
-                is_interjectable=hasattr(raw, "interject"),
-                tool_reply_msg=ph,
-                clar_up_queue=h_up_q,
-                clar_down_queue=h_down_q,
-            )
-            if h_up_q is not None:
-                tools_data.clarification_channels[call_id] = (h_up_q, h_down_q)
-            return False  # ⬅️  no LLM turn required
-
-        # ───────────────────────────────────────────────────────────────
-        #  Normal (non-handle) result – unchanged path
-        # ───────────────────────────────────────────────────────────────
-        # ── finished successfully – promote any embedded images ─────────
-        images: list[str] = []
-        _collect_images(raw, images)
-
-        text_repr = _dumps(_strip_image_keys(raw), indent=4)
-
-        if images:
-            content_blocks: list = []
-            if text_repr and text_repr != "{}":
-                content_blocks.append({"type": "text", "text": text_repr})
-            content_blocks.extend(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64}"},
-                }
-                for b64 in images
-            )
-            result = content_blocks
-        else:
-            result = text_repr
-
-        consecutive_failures.reset_failures()
-    except Exception:
-        consecutive_failures.increment_failures()
-        result = traceback.format_exc()
-        if logger.log_steps:
-            logger.error(
-                f"Error: {name} failed "
-                f"(attempt {consecutive_failures.current_failures}/{consecutive_failures.max_failures}):\n{result}",
-                prefix="❌",
-            )
-            # Additional debug context: show the exact tool schema and arguments
-            # that were presented to the LLM for this failed call. This helps
-            # diagnose docstrings/argspec mismatches that cause tool misuse.
-            try:
-                debug_payload = {
-                    "tool_name": name,
-                    "call_id": call_id,
-                    "llm_function_schema": info.tool_schema,
-                    "llm_arguments": info.llm_arguments,
-                    "raw_arguments_json": info.raw_arguments_json,
-                }
-                logger.error(
-                    f"FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
-                    prefix="🧩",
-                )
-            except Exception:
-                pass
-
-    # 3️⃣  remember so later `_continue_*` helpers can answer instantly
-    tools_data.completed_results[call_id] = result
-
-    # 4️⃣  update / insert tool-result message --------------------------
-    asst_msg = info.assistant_msg
-    continue_msg = info.continue_msg
-    clarify_ph = info.clarify_placeholder
-    tool_reply_msg = info.tool_reply_msg
-
-    if continue_msg is not None:
-        if _at_tail(continue_msg):  # ✅ safe to overwrite
-            continue_msg["content"] = result
-            continue_msg["name"] = (
-                f"{fn}({arg}) completed successfully, "
-                "the return values are in the `content` field below."
-            )
-            tool_msg = continue_msg
-        else:  # 🆕 keep history stable
-            tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
-
-    elif clarify_ph is not None:
-        if _at_tail(clarify_ph):
-            clarify_ph["content"] = result
-            tool_msg = clarify_ph
-        else:
-            tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
-
-    elif tool_reply_msg is not None:
-        if _at_tail(tool_reply_msg):
-            tool_reply_msg["content"] = result
-            tool_msg = tool_reply_msg
-        else:
-            tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
-
-    else:
-        tool_msg = {
-            "role": "tool",
-            "tool_call_id": call_id,
-            "name": name,
-            "content": result,
-        }
-        await _insert_after_assistant(
-            assistant_meta,
-            asst_msg,
-            tool_msg,
-            client,
-            msg_dispatcher,
-        )
-
-    # ── optional console logging for every finished tool call ────────────
-    #     (mirrors the assistant-message logging above)
-    if logger.log_steps:
-        # Create a clean version of tool_msg for logging (strip image data)
-        tool_msg_for_logging = tool_msg.copy()
-        if isinstance(tool_msg_for_logging.get("content"), list):
-            # Filter out image_url items and keep only text content
-            tool_msg_for_logging["content"] = [
-                item
-                for item in tool_msg_for_logging["content"]
-                if item.get("type") != "image_url"
-            ]
-        logger.info(
-            f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
-            prefix=f"🛠️  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
-        )
-
-    # 6️⃣  failure guard -------------------------------------------------
-    if consecutive_failures.has_exceeded_failures():
-        if logger.log_steps:
-            logger.error(f"Aborting: too many tool failures.", prefix="🚨")
-        raise RuntimeError(
-            "Aborted after too many consecutive tool failures.",
-        )
-
-    # successful (or failed) *final* result → LLM may need to react
-    return True
-
-
 # Helper: propagate a stop request to any nested SteerableToolHandle returned
 # by base tools. This ensures outer stop/cancel signals reach inner loops.
 async def _propagate_stop_to_nested_handles(
@@ -1297,8 +1047,8 @@ async def _ensure_placeholders_for_pending(
         if content is not None
         else "Pending… tool call accepted. Working on it."
     )
-    for _t in list(tools_data.pending):
-        _inf = tools_data.info.get(_t)
+    for task in list(tools_data.pending):
+        _inf = tools_data.info.get(task)
         if not _inf:
             continue
         if assistant_msg is not None and _inf.assistant_msg is not assistant_msg:
@@ -1348,7 +1098,7 @@ async def _schedule_missing_for_message(
                 continue
 
             # Skip if already pending or completed
-            if any(inf.call_id == cid for _t, inf in tools_data.info.items()):
+            if any(task_info.call_id == cid for task_info in tools_data.info.values()):
                 continue
             if cid in tools_data.completed_results:
                 continue
@@ -1731,6 +1481,259 @@ class _ToolsData:
 
         # Ensure assistant meta exists for deterministic insertion ordering
         assistant_meta.setdefault(id(asst_msg), {"results_count": 0})
+
+    # ── *single* authoritative implementation of "task finished" handling ──
+    async def process_completed_task(
+        self,
+        task: asyncio.Task,
+        consecutive_failures: _AsyncToolLoopToolFailureTracker,
+        outer_handle_container,
+        assistant_meta,
+        client,
+        msg_dispatcher,
+        logger,
+    ) -> bool:
+        """
+        Deal with a finished tool *task* exactly once:
+
+        1.  Pop bookkeeping (``pending`` / ``task_info``).
+        2.  Serialise *success* or *exception* into ``result``.
+        3.  Patch or insert the correct **tool** message so the transcript
+            stays perfectly chronological.
+        4.  Emit the event-bus hook (if configured).
+        5.  Record the payload in ``completed_results`` for later
+            `_continue_<id>` helpers.
+        6.  Enforce the *max_consecutive_failures* safety valve.
+        """
+
+        def _at_tail(msg: dict) -> bool:
+            """True when *msg* is the very last entry in client.messages."""
+            return bool(client.messages) and client.messages[-1] is msg
+
+        self.pending.discard(task)
+        info: ToolCallMetadata = self.info.pop(task)
+        name = info.name
+        call_id = info.call_id
+        fn = info.call_dict["function"]["name"]
+        arg = info.call_dict["function"]["arguments"]
+
+        # 2️⃣  obtain result -------------------------------------------------
+        try:
+            raw = task.result()
+
+            # ───────────────────────────────────────────────────────────────
+            #  NEW:  the tool *did not really finish* – it returned *another*
+            #        AsyncToolLoopHandle.  We:
+            #        (1) schedule `handle.result()` as a *new* task,
+            #        (2) keep the **same** `call_id` so the continue/-cancel
+            #            helpers keep working,
+            #        (3) create / patch one placeholder "still running…"
+            #            tool-message in the transcript.
+            # ───────────────────────────────────────────────────────────────
+            # treat ANY AsyncToolLoopHandle (or subclass) as a nested loop
+            from unity.common.llm_helpers import SteerableToolHandle
+
+            if isinstance(raw, SteerableToolHandle):
+                # If the nested handle explicitly requests pass-through behaviour
+                # expose it directly to the outer caller *immediately*.
+                if (
+                    getattr(raw, "__passthrough__", False)
+                    and outer_handle_container
+                    and outer_handle_container[0] is not None
+                ):
+                    outer_handle_container[0]._adopt(raw)
+                # ── upgrade interject / clarification flags from handle ─────
+                if hasattr(raw, "interject"):
+                    info.is_interjectable = True
+
+                h_up_q = getattr(raw, "clarification_up_q", info.clar_up_queue)
+                h_down_q = getattr(raw, "clarification_down_q", info.clar_down_queue)
+
+                if (h_up_q is not None) ^ (h_down_q is not None):
+                    raise AttributeError(
+                        f"Handle returned by tool {info.name!r} exposes only "
+                        "one of 'clarification_up_q' / 'clarification_down_q'. "
+                        "Both queues are required (or neither).",
+                    )
+
+                # 1️⃣ spawn the nested waiter
+                #
+                # ⤷ `handle.result` can now be **sync OR async**:
+                #    • async ⇒ use the coroutine directly,
+                #    • sync  ⇒ run it in a worker-thread so the event-loop never blocks.
+                if inspect.iscoroutinefunction(raw.result):
+                    nested_coro = raw.result()  # already a coroutine
+                else:
+                    nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
+
+                nested_task = asyncio.create_task(nested_coro)
+                self.pending.add(nested_task)
+
+                # 2️⃣ insert / update a single placeholder
+                ph = info.tool_reply_msg
+                if ph is None:
+                    ph = {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": info.name,
+                        "content": (
+                            "Nested async tool loop started… waiting for result."
+                        ),
+                    }
+                    await _insert_after_assistant(
+                        assistant_meta,
+                        info.assistant_msg,
+                        ph,
+                        client,
+                        msg_dispatcher,
+                    )
+                    info.tool_reply_msg = ph  # remember on *parent*
+                else:
+                    ph["content"] = (
+                        "Nested async tool loop started… waiting for result."
+                    )
+
+                # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
+                self.info[nested_task] = dataclasses.replace(
+                    info,
+                    handle=raw,
+                    is_interjectable=hasattr(raw, "interject"),
+                    tool_reply_msg=ph,
+                    clar_up_queue=h_up_q,
+                    clar_down_queue=h_down_q,
+                )
+                if h_up_q is not None:
+                    self.clarification_channels[call_id] = (h_up_q, h_down_q)
+                return False  # ⬅️  no LLM turn required
+
+            # ───────────────────────────────────────────────────────────────
+            #  Normal (non-handle) result – unchanged path
+            # ───────────────────────────────────────────────────────────────
+            # ── finished successfully – promote any embedded images ─────────
+            images: list[str] = []
+            _collect_images(raw, images)
+
+            text_repr = _dumps(_strip_image_keys(raw), indent=4)
+
+            if images:
+                content_blocks: list = []
+                if text_repr and text_repr != "{}":
+                    content_blocks.append({"type": "text", "text": text_repr})
+                content_blocks.extend(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    }
+                    for b64 in images
+                )
+                result = content_blocks
+            else:
+                result = text_repr
+
+            consecutive_failures.reset_failures()
+        except Exception:
+            consecutive_failures.increment_failures()
+            result = traceback.format_exc()
+            if logger.log_steps:
+                logger.error(
+                    f"Error: {name} failed "
+                    f"(attempt {consecutive_failures.current_failures}/{consecutive_failures.max_failures}):\n{result}",
+                    prefix="❌",
+                )
+                # Additional debug context: show the exact tool schema and arguments
+                # that were presented to the LLM for this failed call. This helps
+                # diagnose docstrings/argspec mismatches that cause tool misuse.
+                try:
+                    debug_payload = {
+                        "tool_name": name,
+                        "call_id": call_id,
+                        "llm_function_schema": info.tool_schema,
+                        "llm_arguments": info.llm_arguments,
+                        "raw_arguments_json": info.raw_arguments_json,
+                    }
+                    logger.error(
+                        f"FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
+                        prefix="🧩",
+                    )
+                except Exception:
+                    pass
+
+        # 3️⃣  remember so later `_continue_*` helpers can answer instantly
+        self.completed_results[call_id] = result
+
+        # 4️⃣  update / insert tool-result message --------------------------
+        asst_msg = info.assistant_msg
+        continue_msg = info.continue_msg
+        clarify_ph = info.clarify_placeholder
+        tool_reply_msg = info.tool_reply_msg
+
+        if continue_msg is not None:
+            if _at_tail(continue_msg):  # ✅ safe to overwrite
+                continue_msg["content"] = result
+                continue_msg["name"] = (
+                    f"{fn}({arg}) completed successfully, "
+                    "the return values are in the `content` field below."
+                )
+                tool_msg = continue_msg
+            else:  # 🆕 keep history stable
+                tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+
+        elif clarify_ph is not None:
+            if _at_tail(clarify_ph):
+                clarify_ph["content"] = result
+                tool_msg = clarify_ph
+            else:
+                tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+
+        elif tool_reply_msg is not None:
+            if _at_tail(tool_reply_msg):
+                tool_reply_msg["content"] = result
+                tool_msg = tool_reply_msg
+            else:
+                tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+
+        else:
+            tool_msg = {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": name,
+                "content": result,
+            }
+            await _insert_after_assistant(
+                assistant_meta,
+                asst_msg,
+                tool_msg,
+                client,
+                msg_dispatcher,
+            )
+
+        # ── optional console logging for every finished tool call ────────────
+        #     (mirrors the assistant-message logging above)
+        if logger.log_steps:
+            # Create a clean version of tool_msg for logging (strip image data)
+            tool_msg_for_logging = tool_msg.copy()
+            if isinstance(tool_msg_for_logging.get("content"), list):
+                # Filter out image_url items and keep only text content
+                tool_msg_for_logging["content"] = [
+                    item
+                    for item in tool_msg_for_logging["content"]
+                    if item.get("type") != "image_url"
+                ]
+            logger.info(
+                f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
+                prefix=f"🛠️  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
+            )
+
+        # 6️⃣  failure guard -------------------------------------------------
+        if consecutive_failures.has_exceeded_failures():
+            if logger.log_steps:
+                logger.error(f"Aborting: too many tool failures.", prefix="🚨")
+            raise RuntimeError(
+                "Aborted after too many consecutive tool failures.",
+            )
+
+        # successful (or failed) *final* result → LLM may need to react
+        return True
 
 
 # TODO this is not really required, but this just simplifies the extraction of the logic from the loop.
@@ -2402,13 +2405,13 @@ async def _async_tool_use_loop_inner(
           • cancel waiter coroutines
           • append a short assistant notice
         """
-        for t in list(tools_data.pending):
+        for task in list(tools_data.pending):
             with suppress(Exception):
-                inf = tools_data.info.get(t)
+                inf = tools_data.info.get(task)
                 if inf is not None and inf.handle is not None and hasattr(inf.handle, "stop"):  # type: ignore[attr-defined]
                     await _maybe_await(inf.handle.stop())
-            if not t.done():
-                t.cancel()
+            if not task.done():
+                task.cancel()
         await asyncio.gather(*tools_data.pending, return_exceptions=True)
         tools_data.pending.clear()
 
@@ -2472,10 +2475,9 @@ async def _async_tool_use_loop_inner(
 
                     # tool finished?
                     for t in done & tools_data.pending:
-                        await _process_completed_task(
+                        await tools_data.process_completed_task(
                             task=t,
                             consecutive_failures=consecutive_failures,
-                            tools_data=tools_data,
                             outer_handle_container=outer_handle_container,
                             assistant_meta=assistant_meta,
                             client=client,
@@ -2782,10 +2784,9 @@ async def _async_tool_use_loop_inner(
 
                 needs_turn = False
                 for task in done:  # finished tool(s)
-                    if await _process_completed_task(
+                    if await tools_data.process_completed_task(
                         task=task,
                         consecutive_failures=consecutive_failures,
-                        tools_data=tools_data,
                         outer_handle_container=outer_handle_container,
                         assistant_meta=assistant_meta,
                         client=client,
@@ -2974,10 +2975,9 @@ async def _async_tool_use_loop_inner(
                     # — handle each newly-finished task exactly as branch A does
                     needs_turn = False
                     for task in done & pending_snapshot:
-                        if await _process_completed_task(
+                        if await tools_data.process_completed_task(
                             task=task,
                             consecutive_failures=consecutive_failures,
-                            tools_data=tools_data,
                             outer_handle_container=outer_handle_container,
                             assistant_meta=assistant_meta,
                             client=client,
