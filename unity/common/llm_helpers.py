@@ -1201,7 +1201,7 @@ async def _process_completed_task(
             ]
         logger.info(
             f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
-            prefix="🛠️",
+            prefix=f"🛠️  ToolCall Completed [{time.perf_counter() - info.get('scheduled_time', 0):.2f}s]",
         )
 
     # 6️⃣  failure guard -------------------------------------------------
@@ -1290,6 +1290,7 @@ async def _schedule_base_tool_call(
     propagate_chat_context,
     assistant_meta,
     client,
+    logger,
 ) -> None:
     # Base tool must exist
     if name not in tools_data.norm_tools:
@@ -1393,7 +1394,14 @@ async def _schedule_base_tool_call(
         tool_schema=method_to_schema(fn, name),
         llm_arguments=allowed_call_args,
         raw_arguments_json=args_json,
+        scheduled_time=time.perf_counter(),
     )
+
+    if logger.log_steps:
+        logger.info(
+            f"{name} - {call_id}",
+            prefix=f"🛠️  ToolCall Scheduled",
+        )
 
     # Increment hidden quota counter only once scheduling succeeds
     with suppress(Exception):
@@ -1472,6 +1480,7 @@ async def _schedule_missing_for_message(
     assistant_meta,
     client,
     msg_dispatcher,
+    logger,
 ) -> list[str]:
     scheduled: list[str] = []
     try:
@@ -1524,6 +1533,7 @@ async def _schedule_missing_for_message(
                 propagate_chat_context=propagate_chat_context,
                 assistant_meta=assistant_meta,
                 client=client,
+                logger=logger,
             )
             scheduled.append(cid)
     except Exception:
@@ -1770,6 +1780,7 @@ class ToolCallMetadata(TypedDict):
     tool_schema: dict
     llm_arguments: dict
     raw_arguments_json: str
+    scheduled_time: float
 
 
 class DynamicToolFactory:
@@ -2373,6 +2384,7 @@ async def _async_tool_use_loop_inner(
                     assistant_meta=assistant_meta,
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
+                    logger=logger,
                 )
 
     # ── initial **user** message
@@ -2565,6 +2577,7 @@ async def _async_tool_use_loop_inner(
                             assistant_meta=assistant_meta,
                             client=client,
                             msg_dispatcher=_msg_dispatcher,
+                            logger=logger,
                         )
 
             # ── 0. Drain *all* queued interjections, allowed at any time ──
@@ -3644,6 +3657,7 @@ async def _async_tool_use_loop_inner(
                             ),
                             llm_arguments=allowed_call_args,
                             raw_arguments_json=call["function"]["arguments"],
+                            scheduled_time=time.perf_counter(),
                         )
                     else:
                         # Use shared helper for base tools
@@ -3658,6 +3672,7 @@ async def _async_tool_use_loop_inner(
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
                             client=client,
+                            logger=logger,
                         )
 
                 # metadata for orderly insertion
