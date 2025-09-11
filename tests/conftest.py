@@ -20,6 +20,7 @@ import sys
 import types
 import importlib
 from typing import Any, Dict, List, Optional
+from pytest_metadata.plugin import metadata_key
 import httpx
 import asyncio
 import pytest
@@ -342,6 +343,8 @@ def pytest_configure(config):
         config.option.log_cli_level = None
         config.option.showcapture = "no"
         config.option.capture = "no"
+
+    config.stash[metadata_key]["Settings"] = SETTINGS.model_dump()
 
 
 # Skip tests marked with requires_real_unify when using the unify stub
