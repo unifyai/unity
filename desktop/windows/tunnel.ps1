@@ -1,11 +1,18 @@
+param(
+  [string]$Hostname,
+  [string]$TunnelName,
+  [int]$LocalPort
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-param(
-  [string]$Hostname = $env:TUNNEL_HOSTNAME,
-  [string]$TunnelName = $(if ($env:TUNNEL_NAME) { $env:TUNNEL_NAME } else { 'myapp' }),
-  [int]$LocalPort = 3000
-)
+# Apply defaults from env or hardcoded values
+if ([string]::IsNullOrWhiteSpace($Hostname)) { $Hostname = $env:TUNNEL_HOSTNAME }
+if ([string]::IsNullOrWhiteSpace($TunnelName)) {
+  if (-not [string]::IsNullOrWhiteSpace($env:TUNNEL_NAME)) { $TunnelName = $env:TUNNEL_NAME } else { $TunnelName = 'myapp' }
+}
+if (-not $LocalPort -or $LocalPort -eq 0) { $LocalPort = 3000 }
 
 function Ensure-Cloudflared {
   $cf = Get-Command cloudflared -ErrorAction SilentlyContinue
@@ -65,48 +72,48 @@ if (-not (Test-Path $cfDir)) {
   New-Item -ItemType Directory -Force -Path $cfDir | Out-Null
 }
 
-if (-not $Hostname) {
-  Write-Host "[tunnel] INFO: No hostname provided. Starting ad-hoc tunnel to http://localhost:$LocalPort ..."
-  & cloudflared tunnel --url "http://localhost:$LocalPort"
-  exit $LASTEXITCODE
-}
+# if ([string]::IsNullOrWhiteSpace($Hostname)) {
+Write-Host "[tunnel] INFO: No hostname provided. Starting ad-hoc tunnel to http://localhost:$LocalPort ..."
+cloudflared tunnel --url "http://localhost:$LocalPort"
+#   exit $LASTEXITCODE
+# }
 
-if (-not (Test-Path (Join-Path $cfDir 'cert.pem'))) {
-  Write-Host "[tunnel] ERROR: cloudflared is not logged in. Run: cloudflared tunnel login" -ForegroundColor Red
-  exit 1
-}
+# if (-not (Test-Path (Join-Path $cfDir 'cert.pem'))) {
+#   Write-Host "[tunnel] ERROR: cloudflared is not logged in. Run: cloudflared tunnel login" -ForegroundColor Red
+#   exit 1
+# }
 
-# Create tunnel if missing
-$tunnelExists = $false
-try {
-  & cloudflared tunnel info "$TunnelName" | Out-Null
-  if ($LASTEXITCODE -eq 0) { $tunnelExists = $true }
-} catch {}
+# # Create tunnel if missing
+# $tunnelExists = $false
+# try {
+#   & cloudflared tunnel info "$TunnelName" | Out-Null
+#   if ($LASTEXITCODE -eq 0) { $tunnelExists = $true }
+# } catch {}
 
-$credentialsFile = $null
-if (-not $tunnelExists) {
-  Write-Host "[tunnel] Creating tunnel '$TunnelName'..."
-  $createOut = & cloudflared tunnel create "$TunnelName" 2>&1
-  $pattern = [Regex]::Escape($cfDir) + "\\[a-f0-9-]+\.json"
-  $match = [Regex]::Match($createOut, $pattern)
-  if ($match.Success) { $credentialsFile = $match.Value }
-  if (-not $credentialsFile) {
-    $credentialsFile = Get-CredentialsFilePath -CloudflaredDir $cfDir
-  }
-} else {
-  $credentialsFile = Get-CredentialsFilePath -CloudflaredDir $cfDir
-}
+# $credentialsFile = $null
+# if (-not $tunnelExists) {
+#   Write-Host "[tunnel] Creating tunnel '$TunnelName'..."
+#   $createOut = & cloudflared tunnel create "$TunnelName" 2>&1
+#   $pattern = [Regex]::Escape($cfDir) + "\\[a-f0-9-]+\.json"
+#   $match = [Regex]::Match($createOut, $pattern)
+#   if ($match.Success) { $credentialsFile = $match.Value }
+#   if (-not $credentialsFile) {
+#     $credentialsFile = Get-CredentialsFilePath -CloudflaredDir $cfDir
+#   }
+# } else {
+#   $credentialsFile = Get-CredentialsFilePath -CloudflaredDir $cfDir
+# }
 
-if (-not $credentialsFile -or -not (Test-Path $credentialsFile)) {
-  Write-Host "[tunnel] ERROR: Could not find tunnel credentials JSON in $cfDir" -ForegroundColor Red
-  exit 1
-}
+# if (-not $credentialsFile -or -not (Test-Path $credentialsFile)) {
+#   Write-Host "[tunnel] ERROR: Could not find tunnel credentials JSON in $cfDir" -ForegroundColor Red
+#   exit 1
+# }
 
-$configPath = Write-ConfigYaml -CloudflaredDir $cfDir -TunnelName $TunnelName -CredentialsFile $credentialsFile -Hostname $Hostname -LocalPort $LocalPort
+# $configPath = Write-ConfigYaml -CloudflaredDir $cfDir -TunnelName $TunnelName -CredentialsFile $credentialsFile -Hostname $Hostname -LocalPort $LocalPort
 
-try {
-  & cloudflared tunnel route dns "$TunnelName" "$Hostname" | Out-Host
-} catch {}
+# try {
+#   & cloudflared tunnel route dns "$TunnelName" "$Hostname" | Out-Host
+# } catch {}
 
-Write-Host "[tunnel] Running tunnel '$TunnelName' for https://$Hostname → http://localhost:$LocalPort"
-& cloudflared tunnel run "$TunnelName"
+# Write-Host "[tunnel] Running tunnel '$TunnelName' for https://$Hostname → http://localhost:$LocalPort"
+# & cloudflared tunnel run "$TunnelName"

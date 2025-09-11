@@ -50,7 +50,7 @@ function Install-NoVNC {
     return
   }
 
-  Write-Host "Installing noVNC to $dest (mirroring Linux approach)..."
+  Write-Host "Installing noVNC to $dest"
   $tempBase = Join-Path $env:TEMP ("novnc_install_" + [Guid]::NewGuid().ToString())
   New-Item -ItemType Directory -Force -Path $tempBase | Out-Null
   $zipUrl = 'https://github.com/novnc/noVNC/archive/refs/heads/master.zip'

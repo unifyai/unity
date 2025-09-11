@@ -1,4 +1,4 @@
-# Requires: Run as Administrator. Configures TightVNC password and runs websockify to expose noVNC on http://localhost:6080/vnc.html
+# Requires: Run as User. Configures TightVNC password and runs websockify to expose noVNC on http://localhost:6080/vnc.html
 # Assumes dependencies are already installed via desktop/windows/install.ps1
 
 param(
@@ -76,7 +76,7 @@ if ($py) {
   $websockifyProc = Start-Process -FilePath python -ArgumentList "-m websockify --web=$noVncWeb 6080 10.128.0.75:5900" -WindowStyle Hidden -PassThru
 }
 
-# Start agent-service in foreground like Linux script and clean up on Ctrl+C
+# Start agent-service in foreground and clean up on Ctrl+C
 Write-Host "Remote desktop available at http://localhost:6080/vnc.html"
 
 try {
