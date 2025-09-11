@@ -162,7 +162,8 @@ function Install-AgentServiceDeps {
   Push-Location $agentDir
   try {
     if (Test-Path 'package-lock.json') {
-      npm ci | Out-Host
+      npm install | Out-Host
+      npx playwright@1.52.0 install --with-deps chromium | Out-Host
     } else {
       npm install | Out-Host
     }
