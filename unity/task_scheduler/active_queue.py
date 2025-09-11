@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Dict, Callable, Optional, List, Any, TYPE_CHECKING
+import json
 import os
 
 import unify
@@ -34,6 +35,12 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         self._final_result: Optional[str] = None
         # Track tasks that completed successfully within this queue run
         self._completed_tasks: list[tuple[int, str]] = []
+        # Detailed completion events including each task's individual result text
+        self._completion_events: list[Dict[str, Any]] = []
+        # Cursor for the last position consumed by active_task_done()
+        self._completion_cursor: int = 0
+        # Waiters to awaken when a new task completes (or queue ends)
+        self._completion_waiters: list[asyncio.Future] = []
         # Sticky pass-through flag: enabled only when the queue truly contains a
         # single task at creation time; once disabled it never re-enables for the
         # lifetime of this ActiveQueue instance.
@@ -158,6 +165,22 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                             self._completed_tasks.append(
                                 (int(self._current_task_id), str(name)),
                             )
+                            # Record a detailed completion event for active_task_done()
+                            self._completion_events.append(
+                                {
+                                    "task_id": int(self._current_task_id),
+                                    "name": str(name),
+                                    "result": text,
+                                },
+                            )
+                            # Wake any waiters that are awaiting the next completion
+                            for fut in list(self._completion_waiters):
+                                if not fut.done():
+                                    try:
+                                        fut.set_result(True)
+                                    except Exception:
+                                        pass
+                            self._completion_waiters.clear()
                     except Exception:
                         pass
                 if was_stopped:
@@ -232,6 +255,14 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     pass
         finally:
             self._done_evt.set()
+            # Ensure any waiters do not hang if the queue finishes without further completions
+            for fut in list(self._completion_waiters):
+                if not fut.done():
+                    try:
+                        fut.set_result(False)
+                    except Exception:
+                        pass
+            self._completion_waiters.clear()
 
     # ----- Steerable surface proxies -----
     async def interject(self, message: str) -> None:  # type: ignore[override]
@@ -541,6 +572,55 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             ]
             return "Completed the following tasks: " + ", ".join(summary_items) + "."
         return ""
+
+    async def active_task_done(self) -> str:
+        """
+        Await until the next task in the queue completes (or return immediately
+        if tasks have already completed since the last call) and return a JSON
+        string mapping task names to their individual result strings for all
+        tasks completed since the previous call to this method.
+
+        Behaviour
+        ---------
+        - If called repeatedly, each call returns only the completions that
+          occurred since the last call (cumulative cursor semantics).
+        - If called after multiple tasks have already completed, the call
+          returns immediately with all completions since the prior call.
+        - If the queue has already finished and no new completions happened
+          since the last call, returns an empty JSON object "{}".
+        """
+
+        # Fast path: return immediately if there are unseen completions
+        if self._completion_cursor < len(self._completion_events):
+            slice_events = self._completion_events[self._completion_cursor :]
+            self._completion_cursor = len(self._completion_events)
+            payload = {e["name"]: e.get("result", "") for e in slice_events}
+            try:
+                return json.dumps(payload, ensure_ascii=False)
+            except Exception:
+                return str(payload)
+
+        # If queue already finished and nothing new, return empty
+        if self._done_evt.is_set():
+            return "{}"
+
+        # Otherwise wait for the next completion (or queue termination)
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._completion_waiters.append(fut)
+        try:
+            await fut
+        except Exception:
+            # Defensive: proceed to aggregate whatever is available
+            pass
+
+        # Aggregate any newly completed tasks (may be empty on terminal wake)
+        slice_events = self._completion_events[self._completion_cursor :]
+        self._completion_cursor = len(self._completion_events)
+        payload = {e["name"]: e.get("result", "") for e in slice_events}
+        try:
+            return json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            return str(payload)
 
     async def ask(
         self,
