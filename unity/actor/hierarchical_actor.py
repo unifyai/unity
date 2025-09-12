@@ -1171,7 +1171,7 @@ class HierarchicalPlan(BaseActiveTask):
             "gemini-2.5-pro@vertex-ai",
         )
         self.summarization_client: unify.AsyncUnify = unify.AsyncUnify(
-            "gemini-2.5-pro@vertex-ai",
+            "gemini-2.5-flash@vertex-ai",
         )
         self.course_correction_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
@@ -1944,6 +1944,7 @@ class HierarchicalPlan(BaseActiveTask):
                 monolithic_code=monolithic_code,
                 generalization_request=decision.generalization_context,
                 action_log="\n".join(self.action_log),
+                current_url=await self.actor.action_provider.browser.get_current_url(),
                 tools=self.actor.tools,
             )
 
@@ -1966,14 +1967,6 @@ class HierarchicalPlan(BaseActiveTask):
                 self.goal = new_goal
             else:
                 self.goal = f"Incrementally taught and generalized plan:\n- {modification_reason}"
-
-            deduced_precondition = refactor_decision.deduced_precondition
-            if deduced_precondition.status == "ok":
-                await self.actor._verify_and_correct_state(
-                    plan=self,
-                    target_precondition=deduced_precondition.model_dump(),
-                    context_label="refactor_and_generalize_reset",
-                )
 
             self.action_log.append("Replacing old plan with newly refactored version.")
             self.plan_source_code = self.actor._sanitize_code(
@@ -2012,9 +2005,12 @@ class HierarchicalPlan(BaseActiveTask):
             self.interaction_stack.clear()
             self.call_stack.clear()
             self.runtime.path_context.clear()
-
             self.interaction_stack.append([])
-
+            self.action_log.append(
+                "CACHE INVALIDATION: Clearing entire cache after refactoring to ensure a clean state for the new, generalized plan.",
+            )
+            logger.info("Clearing idempotency cache due to refactor_and_generalize.")
+            self.idempotency_cache.clear()
             self._execution_task = asyncio.create_task(
                 self._initialize_and_run(mode="fresh_after_refactor"),
             )
@@ -2267,7 +2263,7 @@ class HierarchicalPlan(BaseActiveTask):
             except Exception as e:
                 return f"Error querying browser: {e}"
 
-        tools = {"query_browser": query_tool}
+        tools = {"query": query_tool}
         handle = start_async_tool_use_loop(
             client=self.ask_client,
             message=question,
