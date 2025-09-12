@@ -3010,9 +3010,12 @@ async def _async_tool_use_loop_inner(
 
                 # 3️⃣ LLM finished normally
                 if llm_task.exception():
-                    raise Exception(
-                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}, exception: {llm_task.exception()}",
-                    )
+                    try:
+                        llm_task.result()
+                    except Exception as e:
+                        raise Exception(
+                            f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
+                        ) from e
 
             else:
                 # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
