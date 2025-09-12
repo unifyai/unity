@@ -1093,6 +1093,7 @@ class HierarchicalPlan(BaseActiveTask):
         parent_chat_context: Optional[str] = None,
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
+        persist: bool = True,
     ):
         """
         Initializes the Hierarchical Plan active task.
@@ -1105,11 +1106,13 @@ class HierarchicalPlan(BaseActiveTask):
             parent_chat_context: The chat context from a parent process, if any.
             max_escalations: Max number of strategic replans before pausing.
             max_local_retries: Max number of tactical retries for a function.
+            persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
         """
         self.actor = actor
         self.goal = goal
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
+        self.persist = persist
 
         self.idempotency_cache: Dict[tuple, Any] = {}
         self.live_handles: Dict[str, SteerableToolHandle] = {}
@@ -1133,6 +1136,11 @@ class HierarchicalPlan(BaseActiveTask):
         self._interject_lock = asyncio.Lock()
         self._completion_event = asyncio.Event()
         self.skipped_functions: set = set()
+
+        if self.persist:
+            self._done_events = asyncio.Queue()
+            self._summary_results = asyncio.Queue()
+            self._last_done_log_index = 0
 
         self._child_tasks: set[asyncio.Task] = set()
 
@@ -1274,11 +1282,34 @@ class HierarchicalPlan(BaseActiveTask):
         try:
             result = main_task.result()
             self._final_result_str = str(result)
-            self.action_log.append(
-                f"Main plan execution concluded with result: {result}. Awaiting next instruction.",
-            )
-            self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
-            return
+
+            if self.persist:
+                self.action_log.append(
+                    f"Main plan execution concluded with result: {result}. Awaiting next instruction.",
+                )
+
+                if hasattr(self, "_done_events") and not self._done_events.empty():
+                    try:
+                        event_to_signal = self._done_events.get_nowait()
+                        new_log_entries = self.action_log[self._last_done_log_index :]
+                        self._last_done_log_index = len(self.action_log)
+
+                        summary = await self._summarize_log_chunk(new_log_entries)
+                        await self._summary_results.put(summary)
+
+                        event_to_signal.set()
+                    except asyncio.QueueEmpty:
+                        pass
+
+                self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
+                return
+            else:
+                self.action_log.append(
+                    f"Main plan execution finished with result: {result}.",
+                )
+                self._set_state(_HierarchicalPlanState.COMPLETED)
+                self._set_final_result(str(result))
+                return
 
         except Exception as e:
             if not isinstance(e, asyncio.CancelledError):
@@ -2107,21 +2138,28 @@ class HierarchicalPlan(BaseActiveTask):
     async def stop(self, final_result: str | None = None) -> str:
         """
         Stops the plan's execution permanently.
+        In persist mode, this is a graceful shutdown. Otherwise, it is a hard cancel.
 
         Returns:
             A status message.
         """
-        if not self._is_complete:
+        if self._is_complete:
+            return f"Plan already in terminal state: {self._state.name}."
+
+        result_str = final_result or "Plan was stopped by user."
+        self.action_log.append(f"stop() called. Final result: '{result_str}'")
+        self._cleanup_temp_file()
+
+        if self.persist:
+            self._set_state(_HierarchicalPlanState.COMPLETED)
+            self._set_final_result(result_str)
+        else:
             self._set_state(_HierarchicalPlanState.STOPPED)
-            result_str = final_result or "Plan was stopped."
             if self._execution_task and not self._execution_task.done():
                 self._execution_task.cancel()
-
-            self.action_log.append("Plan stopped by user.")
-            self._cleanup_temp_file()
             self._set_final_result(result_str)
-            return result_str
-        return f"Plan already in terminal state: {self._state.name}."
+
+        return result_str
 
     async def pause(self) -> str:
         """
@@ -2375,6 +2413,7 @@ class HierarchicalActor(BaseActor):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        persist: bool = False,
         **kwargs,
     ) -> HierarchicalPlan:
         """
@@ -2385,6 +2424,7 @@ class HierarchicalActor(BaseActor):
             parent_chat_context: Chat context from a parent process.
             clarification_up_q: Queue for sending clarification questions.
             clarification_down_q: Queue for receiving clarification answers.
+            persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
 
         Returns:
             An active handle to the running HierarchicalPlan.
@@ -2397,6 +2437,7 @@ class HierarchicalActor(BaseActor):
             clarification_down_q=clarification_down_q,
             max_escalations=self.max_escalations,
             max_local_retries=self.max_local_retries,
+            persist=persist,
         )
         self._plan_handles.add(plan_handle)
         return plan_handle
