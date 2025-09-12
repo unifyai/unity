@@ -45,3 +45,25 @@ fi
 sudo chmod -R a+rX /opt/novnc
 
 echo "mac install: websockify (pip) and noVNC (git) installed. Web root at /opt/novnc."
+
+# Install Node-based tooling and agent-service dependencies (assumes Node/npm installed)
+if ! command -v npm >/dev/null 2>&1; then
+  echo "Error: npm not found on PATH. Please install Node.js (includes npm)." >&2
+  exit 1
+fi
+
+echo "Installing global TypeScript tooling (ts-node, typescript)..."
+npm install -g ts-node typescript
+
+echo "Installing agent-service npm dependencies..."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+pushd "$PROJECT_ROOT/agent-service" >/dev/null
+if [ -f package-lock.json ]; then
+  npm ci
+  npx playwright@1.52.0 install --with-deps chromium
+else
+  npm install
+  npx playwright@1.52.0 install --with-deps chromium
+fi
+popd >/dev/null
