@@ -2698,16 +2698,19 @@ def build_refactor_prompt(
     monolithic_code: str,
     generalization_request: str,
     action_log: str,
+    current_url: str,
     *,
     tools: Dict[str, Callable],
 ) -> str:
     """
-    Builds the prompt for refactoring a monolithic plan into modular functions.
+    Builds the prompt for refactoring a monolithic plan into modular functions,
+    including intelligent state correction in the new main_plan.
 
     Args:
         monolithic_code: The source code of the current single-function plan.
         generalization_request: The user's request to generalize the logic.
-        action_log: The full execution trace for deducing the precondition.
+        action_log: The full execution trace for deducing the start state.
+        current_url: The browser's URL at the time of interjection.
         tools: The available tools for the actor.
 
     Returns:
@@ -2723,29 +2726,77 @@ def build_refactor_prompt(
 
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer and a strategic analyst.
-        Your task is to perform two critical actions:
-        1. Refactor the provided monolithic Python script into a set of reusable helper functions.
-        2. Analyze the complete execution `action_log` to determine the correct starting state (precondition) for the entire process.
+        You are an expert Python programmer who refactors monolithic scripts into modular, reusable code. You must be mindful of the agent's state when generating the new plan.
 
-        **User's Generalization Request:**
-        "{generalization_request}"
-
-        **Full Execution Action Log (Source of Truth for Precondition):**
+        ### Full Context
+        - **User's Generalization Request:** "{generalization_request}"
+        - **Browser's Current URL:** `{current_url}`
+        - **Full Execution Action Log (for context):**
         ```
         {action_log}
         ```
-
-        **Current Monolithic Code to Refactor:**
+        - **Current Monolithic Code to Refactor:**
         ```python
         {monolithic_code}
         ```
 
-        **Your Task & Instructions:**
-        1.  **Analyze the Action Log:** Read the entire log to understand the sequence of events. Identify the very first navigation or action that set up the initial state for the process.
-        2.  **Determine Precondition:** Based on your analysis, define the `deduced_precondition`. This should be the state the browser must be in before the refactored plan can run (e.g., on the homepage at a specific URL, with a clear visual description).
-        3.  **Refactor the Code:** Rewrite the monolithic code into a modular script with a `main_plan` and helper functions. The new `main_plan` should ONLY execute the logic for the new generalization request.
-        4.  **Format Output:** Your response MUST be a JSON object that strictly adheres to the `RefactorDecision` schema, containing both the `refactored_code` and the `deduced_precondition`.
+        ---
+        ### Your Task: A Two-Part Refactoring Process
+
+        **Part 1: Refactor the Logic into Reusable Helper Functions**
+        - Analyze the monolithic code and identify the core, repeatable processes.
+        - Group these steps into logical, well-documented helper functions with clear parameters. These functions are the "skills" the agent has learned (e.g., `login()`, `search_for_item(item_name: str)`, `add_to_cart()`).
+        - Ensure these helper functions are generic and do not contain hardcoded values that should be parameters.
+
+        **Part 2: Write an Intelligent `main_plan` Orchestrator**
+        - Create a new `async def main_plan()` function.
+        - Its purpose is to execute the user's immediate `generalization_request` by calling the helper functions you just created.
+        - **CRITICAL STATE-AWARE LOGIC:**
+            1.  **Analyze the Start State:** Look at the `action_log` to determine what the initial state of the *original* taught process was (e.g., it started on the homepage at "https://shop.example.com").
+            2.  **Compare with Current State:** Compare that required start state with the `Browser's Current URL`. They will likely be different.
+            3.  **Bridge the Gap:** Your `main_plan` must **bridge this state gap**. The very first step in your `main_plan` must be an `action_provider` call to get the browser from its current state to the necessary starting state for your helper functions. This is your "course correction" step.
+            4.  **Execute the Goal:** After the state-setting step, `main_plan` should then call your helper functions in the correct order to fulfill the user's request.
+
+        ---
+        ### Example of the Expected Output
+
+        **Scenario:**
+        - **Taught Process:** The user guided the agent to go to an e-commerce site, search for "laptops", and add the first result to the cart. The plan ended on the product detail page for a specific laptop.
+        - **Current URL:** `https://shop.example.com/products/laptop-xyz`
+        - **Generalization Request:** "Great. Now do the same for 'keyboards'."
+
+        **Your Correct Output (a single Python code block):**
+        ```python
+        # Part 1: The refactored helper functions (the "skills")
+        @verify
+        async def search_for_item(item_name: str):
+            \"\"\"Searches for a given item on the site.\"\"\"
+            # This skill assumes the browser is on the homepage to find the search bar.
+            await action_provider.act(f"Type '{{item_name}}' into the search bar and press Enter")
+
+        @verify
+        async def add_first_item_to_cart():
+            \"\"\"Clicks the 'Add to Cart' button for the first search result.\"\"\"
+            await action_provider.act("Click the 'Add to Cart' button for the first item in the list")
+
+        # Part 2: The intelligent `main_plan` orchestrator
+        @verify
+        async def main_plan():
+            \"\"\"
+            Orchestrates the process of searching for and adding 'keyboards' to the cart.
+            It handles resetting the browser state as its first step.
+            \"\"\"
+            # CRITICAL: The agent is on a product page, but `search_for_item`
+            # needs to be on the homepage. This is the state-bridging step.
+            print("State correction: Navigating back to the homepage to start a new search.")
+            await action_provider.navigate("https://shop.example.com/home")
+
+            # Now, execute the generalized workflow.
+            await search_for_item("keyboards")
+            await add_first_item_to_cart()
+            print("Successfully added keyboards to the cart.")
+
+        ```
 
         {rules_and_examples}
 
