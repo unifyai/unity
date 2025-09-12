@@ -204,6 +204,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         self,
         text: str,
         *,
+        isolated: Optional[bool] = None,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
@@ -245,6 +246,16 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         Implementations MUST return a *live* steerable handle whose public
         methods (pause, resume, interject, stop, result, …) continue to work
         after the adoption.
+
+        Parameters
+        ----------
+        isolated : bool | None, default ``None``
+            Optional override for routing semantics when a numeric task id is
+            supplied directly. When ``True``, the scheduler should execute the
+            task in isolation (detached from the queue). When ``False``, the
+            scheduler should use queue/chained semantics. When ``None``, routing
+            is left to the implementation (e.g., LLM decides for free‑form text;
+            numeric fast‑path may default to chained semantics).
 
         parent_chat_context, clarification_up_q, clarification_down_q
             Same purpose and semantics as in :pymeth:`ask`.
