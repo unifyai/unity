@@ -1582,14 +1582,52 @@ class HierarchicalPlan(BaseActiveTask):
             or f"Plan finished in state {self._state.name} without a result."
         )
 
-    def done(self) -> bool:
+    async def done(self) -> str:
         """
-        Checks if the plan has completed.
+        Waits until the plan has completed its current unit of work and is
+        paused waiting for the next instruction.
 
-        Returns:
-            True if the plan is in a terminal state, False otherwise.
+        Returns a concise summary of all actions performed since the last
+        time `done()` was called.
+
+        Raises:
+            RuntimeError: If the plan was not initialized with `persist=True`.
         """
-        return self._is_complete
+        if not self.persist:
+            raise RuntimeError(
+                "The .done() handle is only available when the plan is started with persist=True.",
+            )
+
+        completion_event = asyncio.Event()
+        await self._done_events.put(completion_event)
+
+        await completion_event.wait()
+
+        summary = await self._summary_results.get()
+        return summary
+
+    async def _summarize_log_chunk(self, log_chunk: list[str]) -> str:
+        """Uses an LLM to summarize a list of action log entries."""
+        if not log_chunk:
+            return "No new actions were taken."
+
+        log_text = "\n".join(log_chunk)
+
+        prompt = textwrap.dedent(
+            f"""
+            The following is a log of actions from an autonomous agent.
+            Summarize these actions concisely in a single sentence from the first-person perspective (e.g., "I navigated to the website and then searched for cookies.").
+            Focus on what was accomplished, not on internal states or verification steps.
+
+            ACTION LOG:
+            ---
+            {log_text}
+            ---
+        """,
+        )
+
+        summary = await llm_call(self.summarization_client, prompt)
+        return summary.strip()
 
     def _cleanup_temp_file(self):
         """
@@ -2129,9 +2167,7 @@ class HierarchicalPlan(BaseActiveTask):
 
         elif decision.action == "complete_task":
             self.action_log.append("Executing decision: complete_task.")
-            self._set_state(_HierarchicalPlanState.COMPLETED)
-            self._set_final_result(self._final_result_str or "Plan completed by user.")
-            return "Plan marked as complete by user."
+            return await self.stop(final_result="Plan completed by user instruction.")
 
         return "Error: Unknown or unsupported interjection action."
 
