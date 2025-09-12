@@ -430,6 +430,23 @@ def build_execute_prompt(
         "",
         "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
         "Do not ask the user questions in your final response. If no clarification tool is available in this outer loop, make a best‑guess attempt using sensible defaults and state your assumptions; if an inner tool asks questions, inform it that no clarification channel exists and provide defaults/best guesses.",
+        "",
+        "Decision policy (isolation vs chain)",
+        "------------------------------------",
+        "• Consider the broader chat context and the user's exact phrasing to infer execution scope (single task now vs the whole sequence now).",
+        "• When intent is ambiguous or unspecified, prefer starting the task **in isolation** (single‑task‑now) rather than chaining the queue.",
+        "• Isolation may require light queue maintenance: when the head is detached, the next task should inherit the queue's `start_at` and become `scheduled` (followers remain queued behind it).",
+        "• Choose queue/chain execution when the context clearly indicates running the sequence now (e.g., the user agreed to process all items in a batch).",
+        "• Do not use brittle heuristics or regex for this decision – reason from the conversation and your plan.",
+        "",
+        "Tool semantics (for your decision)",
+        "-----------------------------------",
+        (
+            f"• `{execute_isolated_by_id_fname}(task_id=…)` – isolation semantics: detach the selected task so followers keep their schedule; when detaching the head, the next task becomes the new head and inherits `start_at`."
+            if execute_isolated_by_id_fname
+            else ""
+        ),
+        f"• `{execute_by_id_fname}(task_id=…)` – queue semantics: start at the head of the chosen queue so followers remain attached and will run afterwards.",
         "\nCRITICAL EXECUTION WORKFLOW (plan → apply → execute):",
         f"0) Immediately create a reversible checkpoint: `{checkpoint_fname}(label='pre-execute')`. You MUST do this at the start of the session.",
         f"1) Inspect queues: `{list_queues_fname}()` → then `{get_queue_fname}(queue_id=None)` to view the default queue (head→tail).",
@@ -440,14 +457,10 @@ def build_execute_prompt(
         f"   – After each successful edit, immediately call `{checkpoint_fname}(label='post-edit')` to allow reverting if the user changes their mind. If the user requests a revert, call `{revert_checkpoint_fname}(checkpoint_id=<latest id>)` or `{reinstate_task_fname}(task_id=<id>, allow_active=false)` depending on context.",
         f"   – If you did not capture the last checkpoint id, call `{latest_checkpoint_fname}()` to retrieve it.",
         (
-            f"3) EXECUTE by calling `{execute_by_id_fname}(task_id=<head of the 'now' queue>)`. "
+            f"3) EXECUTE by choosing `{execute_isolated_by_id_fname}` or `{execute_by_id_fname}` based on the decision policy above. "
             "Do NOT modify `start_at` timestamps to force execution."
-        ),
-        (
-            f"   – If the user explicitly requests to run a task in isolation (detach it entirely from the queue), "
-            f"call `{execute_isolated_by_id_fname}(task_id=<id>)` instead."
             if execute_isolated_by_id_fname
-            else ""
+            else f"3) EXECUTE by calling `{execute_by_id_fname}(task_id=<head of the 'now' queue>)`. Do NOT modify `start_at` timestamps to force execution."
         ),
         f"4) Do not write status fields directly; lifecycle is managed by the scheduler.",
         "",
@@ -456,11 +469,11 @@ def build_execute_prompt(
         "A. If the request contains a *numeric task_id*:",
         f"   • **First** call `{ask_fname}` (or `{get_task_queue_fname}`) to confirm the task exists and learn the current order.",
         (
-            f"   • If the request says to run the task in isolation (detach it entirely), call `{execute_isolated_by_id_fname}(task_id=<id>)`."
+            f"   • Decide isolation vs chain using the conversation context. If ambiguous, prefer isolation → call `{execute_isolated_by_id_fname}(task_id=<id>)` when available."
             if execute_isolated_by_id_fname
-            else ""
+            else "   • Decide isolation vs chain using the conversation context."
         ),
-        f"   • Otherwise reorder explicitly with `{update_task_queue_fname}` if needed, then call `{execute_by_id_fname}` on the intended head.",
+        f"   • If you deliberately choose chain execution, reorder explicitly with `{update_task_queue_fname}` only when necessary, then call `{execute_by_id_fname}` on the intended head. Do not reorder purely to force execution when isolation suffices.",
     ]
 
     if request_clar_fname:
@@ -482,7 +495,11 @@ def build_execute_prompt(
             "B. If **no numeric id** is given:",
             f"   1. Call `{ask_fname}` with the free-form description to search for matching task(s).",
             "   2. Based on the result:",
-            f"      • **Exactly one** clear match → if a specific subset/order is intended, reorder with `{update_task_queue_fname}`; then `{execute_by_id_fname}` with that id (as head).",
+            (
+                f"      • **Exactly one** clear match → decide isolation vs chain using the conversation context. If ambiguous, prefer isolation (use `{execute_isolated_by_id_fname}` when available); otherwise, if a sequence is intended, reorder as needed and then `{execute_by_id_fname}`."
+                if execute_isolated_by_id_fname
+                else f"      • **Exactly one** clear match → decide isolation vs chain using the conversation context; if a sequence is intended, reorder as needed and then `{execute_by_id_fname}`."
+            ),
             f"      • **Multiple tasks forming a sequence** and the user wants them in order → reorder explicitly (if needed) so the intended head is first; then `{execute_by_id_fname}(task_id=<head>)`.",
             f"      • **No match** and it is obvious we should create the task → call `{create_task_fname}(name=<short title>, description=<free‑form user request>)`, then call `{ask_fname}` again to retrieve the new id, optionally reorder, then `{execute_by_id_fname}`.",
             "",
@@ -515,7 +532,11 @@ def build_execute_prompt(
     lines.extend(
         [
             "",
-            f"C. The Tasks list is updated implicitly by the system. To control execution scope, use `{get_task_queue_fname}` and `{update_task_queue_fname}` explicitly. Do NOT write status fields or override `start_at` to force execution. If a new task is clearly required, use `{create_task_fname}` (name + description only), then call `{ask_fname}` to find its id and `{execute_by_id_fname}` to start.",
+            (
+                f"C. The Tasks list is updated implicitly by the system. To control execution scope, use `{get_task_queue_fname}` and `{update_task_queue_fname}` explicitly. Do NOT write status fields or override `start_at` to force execution. If a new task is clearly required, use `{create_task_fname}` (name + description only), then call `{ask_fname}` to find its id and start using `{execute_isolated_by_id_fname}` or `{execute_by_id_fname}` per the decision policy above."
+                if execute_isolated_by_id_fname
+                else f"C. The Tasks list is updated implicitly by the system. To control execution scope, use `{get_task_queue_fname}` and `{update_task_queue_fname}` explicitly. Do NOT write status fields or override `start_at` to force execution. If a new task is clearly required, use `{create_task_fname}` (name + description only), then call `{ask_fname}` to find its id and `{execute_by_id_fname}` to start."
+            ),
             "",
             "Stopping semantics (required):",
             "--------------------------------",
