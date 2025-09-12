@@ -49,6 +49,26 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
     return "\n\n".join(handle_docs)
 
 
+def _build_shared_strategy_principles() -> str:
+    """
+    Builds the reusable block of strategic principles for automation prompts.
+    This ensures consistency across initial planning, dynamic implementation, and interjections.
+    """
+    return textwrap.dedent(
+        """
+        ### 🧠 Strategic Principles for Automation
+        To succeed, you must follow these core principles when writing or modifying code.
+
+        1.  **Trust the Agent's Autonomy**: The `act` tool is autonomous. Give it high-level goals describing the desired outcome. Instead of "click username field," then "type username," then "click login," a single step is better: `await action_provider.act("Log in with username 'test' and password 'pass123'")`.
+        2.  **Describe Visually and Functionally**: All browser tools operate on what is *visible*. Describe elements by their text, appearance, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes which you cannot see.
+        3.  **Use `observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `observe` with a Pantic `response_format`. This is the most reliable way to gather information before acting.
+        4.  **Isolate Core Logic**: When refactoring, identify the central, repeatable process. Omit one-time setup steps (like "open a new tab") from the generalized helper function. The goal is to create a function that represents a meaningful, reusable skill.
+        5.  **Write General, Parameterized Functions**: Functions should be reusable tools, not single-use scripts. Pass specific values (like search terms, filenames, or credentials) as parameters. Function names should describe the *process*, not the data (e.g., `process_user(username: str)` is better than `process_user_smith()`).
+        6.  **Use Fallbacks**: If a website's feature is unreliable (e.g., a buggy serving size calculator), create a fallback. First, try the website feature. If it fails, use the `reason` tool or pure Python to perform the calculation or transformation yourself. This makes your plan robust.
+        """,
+    )
+
+
 def _build_code_act_rules_and_examples(action_provider) -> str:
     """Builds the reusable block of core rules and examples for CodeActActor."""
     all_tools = {}
@@ -424,35 +444,13 @@ def _build_initial_plan_rules_and_examples(
     tool_reference = _build_tool_signatures(tools)
     handle_apis = _build_handle_apis(tools)
 
+    shared_principles = _build_shared_strategy_principles()
     strategy_instruction += textwrap.dedent(
-        """\n
+        f"""\n
         ---
-        ### 🧠 Strategic Principles for Automation
-        You are operating in a unique environment that gives you control over **both a web browser and a Linux desktop terminal**. To succeed, you must leverage both.
-
-        1.  **Dual Environments**: You can see and interact with two main components:
-            - A **Chromium web browser** for all internet-related tasks.
-            - An **`xterm` terminal** for all command-line operations.
-
-        2.  **Workflow Integration**: The most powerful solutions often involve using both environments together. A common workflow is to use the browser to find and download a file, then use the terminal to install or process that file.
-
-        3.  **OS-Awareness**: The terminal is a standard Debian Linux environment.
-            - Use `apt-get` for package management (e.g., `apt-get update && apt-get install -y <package>`).
-            - Use `dpkg -i <file.deb>` to install downloaded Debian packages.
-            - The default download directory for the browser is `/tmp/unify/assistant/browser/install`. You must use this full path when accessing downloaded files from the terminal.
-
-        4.  **Command Chaining**: For multi-step terminal operations, chain commands with `&&` within a single `act` call to ensure they execute in the correct sequence and context (e.g., `cd /tmp/downloads && ./install.sh`).
-
-        5.  **Trust the Agent's Autonomy**: The `act` tool is autonomous. Give it high-level goals. Instead of writing separate steps for "click username field", "type username", "click password field", "type password", and "click login", you should create a single step: `await action_provider.act("Log in with username 'test' and password 'pass123'")`. The agent will handle the intermediate steps.
-        6.  **Clear and Descriptive Actions**: Write browser actions that clearly describe what you want to achieve. Be specific about the expected outcome as part of the instruction itself. For example: `await action_provider.act("Click the 'Add to Cart' button to add the item to the cart")`.
-        7.  **Use `observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
-        8.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
-        9.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
-        10. **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The actor automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
-        11. **Default Search Engine:** Prefer DuckDuckGo (https://duckduckgo.com) for searches unless the user specifies otherwise.
-        12. **Write General, Parameterized Functions**: Your functions should be reusable tools, not single-use scripts. Pass specific values (like search terms, filenames, or counts) as parameters.
-        13. **Name for the Action, Not the Data**: Function names must describe the *process*, not the specific values being processed. Avoid hardcoding data like numbers or names into function names. This makes your plan robust and easy to modify later.
-        14. **Handle Ambiguous or "Non-Goals"**: If the user's goal is not a specific, actionable task (e.g., it's vague, "I don't know," or an instruction like "I will guide you"), your responsibility is to generate a simple, empty plan that allows the user to provide the first real instruction via interjection.
+        {shared_principles}
+        7. **Name for the Action, Not the Data**: Function names must describe the *process*, not the specific values being processed. Avoid hardcoding data like numbers or names into function names. This makes your plan robust and easy to modify later.
+        8. **Handle Ambiguous or "Non-Goals"**: If the user's goal is not a specific, actionable task (e.g., it's vague, "I don't know," or an instruction like "I will guide you"), your responsibility is to generate a simple, empty plan that allows the user to provide the first real instruction via interjection.
 
         | ❌ Bad (Too Specific & Brittle)        | ✅ Good (Generic & Reusable)                    |
         | ------------------------------------ | --------------------------------------------- |
@@ -1262,21 +1260,6 @@ def _build_dynamic_implement_rules_and_examples(
     tool_reference = _build_tool_signatures(tools)
     handle_apis = _build_handle_apis(tools)
 
-    strategy_instruction += textwrap.dedent(
-        """\n
-        ---
-        ### Strategic Principles for Web Automation
-        To create a robust and efficient plan, follow these core principles:
-        1.  **Trust the Agent's Autonomy**: The `act` tool is autonomous. Give it high-level goals. Instead of writing separate steps for "click username field", "type username", "click password field", "type password", and "click login", you should create a single step: `await action_provider.act("Log in with username 'test' and password 'pass123'")`. The agent will handle the intermediate steps.
-        2.  **Clear and Descriptive Actions**: Write browser actions that clearly describe what you want to achieve. Be specific about the expected outcome as part of the instruction itself. For example: `await action_provider.act("Click the 'Add to Cart' button to add the item to the cart")`.
-        3.  **Use `observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
-        4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
-        5.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
-        6.  **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The actor automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
-        ---
-        """,
-    )
-
     instructions_and_rules = textwrap.dedent(
         """
         ### 🎯 CRITICAL RULES FOR DYNAMIC FUNCTION IMPLEMENTATION
@@ -1882,16 +1865,11 @@ def build_initial_plan_prompt(
     """
     formatted_functions = _format_existing_functions(existing_functions)
 
-    strategy_instruction = (
-        "Decompose the problem into logical `async def` functions. Each function should represent a complete, "
-        "meaningful sub-task from a user's perspective (e.g., 'search_for_product_and_navigate_to_images' is better than "
-        "having separate functions for typing, pressing enter, and clicking the images tab)."
-    )
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
 
     rules_and_examples = _build_initial_plan_rules_and_examples(
         tools,
-        strategy_instruction,
+        "",
         tool_usage_instruction,
     )
 
@@ -2047,9 +2025,7 @@ def build_dynamic_implement_prompt(
     """,
     )
 
-    strategy_instruction = (
-        "Your task is to analyze the situation and decide on the best course of action."
-    )
+    strategy_instruction = _build_shared_strategy_principles()
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
     rules_and_examples = _build_dynamic_implement_rules_and_examples(
         tools,
