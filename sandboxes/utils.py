@@ -1140,7 +1140,7 @@ def steering_controls_hint(
         "/pause",
         "/resume",
         "/ask <q>",
-        "/freeform <text>",
+        "/freeform <text> (or plain text)",
     ]
     if voice_enabled:
         base_parts.append("/r (record voice)")
@@ -1929,26 +1929,20 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     except Exception as exc:
                         print(f"⚠️  Failed to send clarification: {exc}")
                 else:
-                    # Otherwise → interject (forward exactly as typed)
-                    print(f"interjecting: {txt}")
-                    run_in_loop(handle.interject(txt))
-                    print("✅ Interjection sent.")
-                    if enable_voice_steering:
-                        speak("Interjection sent")
-                        _wait_for_tts_end()
-                        print(
-                            steering_controls_hint(
-                                pending_clarification=(pending_clar_q is not None),
-                                voice_enabled=enable_voice_steering,
-                            ),
-                        )
-                    else:
-                        print(
-                            steering_controls_hint(
-                                pending_clarification=(pending_clar_q is not None),
-                                voice_enabled=enable_voice_steering,
-                            ),
-                        )
+                    # Otherwise → route plain text via freeform (LLM router decides ask/interject/pause/resume/stop/status)
+                    should_break = await _route_freeform_and_apply(
+                        handle,
+                        txt,
+                        enable_voice_steering,
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                        chat_context=chat_context,
+                        is_task_running=not handle.done(),
+                    )
+                    if should_break:
+                        break
         await asyncio.sleep(poll)
 
     # Task completed: cancel any ongoing TTS immediately and return result

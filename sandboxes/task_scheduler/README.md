@@ -55,11 +55,11 @@ Once the sandbox starts you will see a prompt and a small help table.  The most 
 ### Steering controls (during a running request)
 While an `ask`, `update` or `start` (execute) call is running, you can steer it in-flight. Type these commands (they only work while a request is active):
 
-- **/i <text> | /interject <text> | plain text**: Interject guidance that the tool-loop should incorporate immediately. If you don’t prefix with `/`, any plain text you type during a run is treated as an interjection.
+- **plain text | /freeform <text> | /i <text>**: Route free-form text via the steering router. The router decides whether it's an ask, interject, pause, resume, stop, or status.
 - **/pause | /p**: Pause the running call.
 - **/resume**: Resume a paused call.
 - **/ask <question> | /? <question>**: Ask a read-only side question about the currently running call; the answer prints inline without changing the main call’s state.
-- **/freeform <text>**: Route free-form text to the best steering command (ask/interject/pause/resume/stop/status).
+  - Plain text is now equivalent to typing `/freeform <text>`.
 - **/r | /record** (voice mode only): Record a voice utterance and route it via freeform. Recording auto-cancels if the task finishes mid-capture.
 - **/stop | /cancel | /s | /c**: Abort the running call.
 - **/status | /st**: Print whether the call is still running or already done.
