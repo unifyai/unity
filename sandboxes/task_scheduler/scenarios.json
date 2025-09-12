@@ -1,1 +1,9 @@
-{}
+{
+    "user command 0": "Could you please create four new tasks for next Monday, to start at 9am UK time? The first task is to research one of our competitors called Accounting Limited. The second task is to research another competitor called Accounting Inc. Then, could you please compile a report on the findings? And finally, could you please send this report over to our boss via email? And could you please do those in that order? Thanks.",
+    "user command 1": "Actually could you please start the research on accounting limited right now? As for the simulation, let's set the duration to 500 seconds and if the user asks for a progress update, say it's taking longer than expected, but it should be done by the end of the day.",
+    "user /freeform interjection 0 (after seeing '⏳ SimulatedActor Duration remaining: Xs')": "How is the task coming along?",
+    "user /freeform interjection 1": "Okay let's not bother then, let's do this next week as we originally planned.",
+    "user command 2": "Let's start the research on Accounting Inc now instead. As for the simulation, let's set the duration to 500 seconds and if the user asks for a progress update, say it's the internet is currently down, trying to restart the router but it doesn't seem to be working, will keep trying.",
+    "user /freeform interjection 2 (after seeing '⏳ SimulatedActor Duration remaining: Xs')": "How is the task coming along?",
+    "user /freeform interjection 3": "Okay let's not do it right now then, seems like the internet isn't going to work today."
+}
