@@ -3373,7 +3373,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Return {column_name: column_type} for the tasks table.
         """
-        return self._store.get_fields()
+        return self._store.fields
 
     def _list_columns(
         self,
