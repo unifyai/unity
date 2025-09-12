@@ -219,6 +219,7 @@ class CommsAgent:
                 self._send_email_to_third_party,
                 self._send_whatsapp_to_third_party,
                 self._join_meet,
+                self._implicit_contact_creation
             )
             return
 
@@ -1021,6 +1022,46 @@ class CommsAgent:
             parent_chat_context (list[dict]): The parent chat context.
         """
         return await send_whatsapp_message(description, parent_chat_context)
+
+    async def _implicit_contact_creation(
+        self,
+        description: str
+    ):
+        """
+        Creates a new contact implicitly.
+        This is used when some new individual is mentioned during the conversation.
+        If the individual has been mentioned before, then DO NOT create a new contact.
+        """
+        self._ensure_contact_manager()
+        contacts = [
+            contact.model_dump() for contact in self.contact_manager._filter_contacts()
+        ]
+        res = await client.beta.chat.completions.parse(
+            model="gpt-4.1",
+            messages=[
+                {"role": "system", "content": (
+                    "You've been provided with a list of contacts and a description of "
+                    "a new individual. Create a new contact with the information in the"
+                    " description if its not in the list already. If the new contact is"
+                    " not in the list, return a new contact with the information in the"
+                    " description. If the new contact is in the list, return the"
+                    " contact from the list."
+                )},
+                {"role": "user", "content": (
+                    f"Contacts: {contacts}\n"
+                    f"New Contact Description: {description}"
+                )},
+            ],
+            response_format=ImplicitContactOutput,
+        )
+        print("Response", res)
+        if res.choices[0].message.parsed.new_contact:
+            self.contact_manager._create_contact(
+                **res.choices[0].message.parsed.contact.model_dump()
+            )
+            return "Contact Created Successfully"
+        else:
+            return "Contact Already Exists"
 
     async def wait_for_seconds_or_next_event(self, time: int): ...
 

@@ -1,10 +1,6 @@
-from typing import List, Optional
-
+from typing import List, Literal, Optional, Union
 from pydantic import BaseModel, Field
-
-
-from typing import List, Literal, Union, Optional
-from pydantic import BaseModel, Field
+from unity.contact_manager.types.contact import Contact
 
 
 # -------- action variants --------
@@ -55,4 +51,19 @@ class AssistantOutput(BaseModel):
     actions: List[ActionModel] = Field(
         ...,
         description="Actions the assistant should perform",
+    )
+
+
+class NewContact(Contact):
+    model_config = {"extra": "forbid"}
+
+
+class ImplicitContactOutput(BaseModel):
+    new_contact: bool = Field(
+        ...,
+        description="Whether a new contact should be created",
+    )
+    contact: NewContact = Field(
+        ...,
+        description="The contact to create",
     )

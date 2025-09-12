@@ -110,12 +110,6 @@ def _build_communication_rules_section(is_call: bool) -> str:
             "- Include the channel to use in the query and use ToolUseAction to send messages to the user.",
             "- Don't call unless needed or requested by the user.",
             "- If you need to ask questions, you should send a message with ToolUseAction.",
-            "- For example, if the user sends you an sms asking about something, then it's expected that you will reply with an sms through the ToolUseAction.",
-            '- In the above example, there should be ALWAYS be an explicit mention of something like "DIRECT <SMS/WHATSAPP/EMAIL/CALL>: <contents of the interaction>" in the ToolUseAction based on the communication channel.',
-            '- If it is a third-party SMS, WhatsApp or Email (i.e. to be sent to someone other than the current user), then you should also mention something like "THIRD PARTY <SMS/WHATSAPP/EMAIL/CALL>: <contents of the interaction>" in the ToolUseAction.',
-            "- The same logic applies even to cross-channel communication, i.e. if the user sends you an sms asking to send an email, then again decision about DIRECT/THIRD PARTY should be the same as if they asked to send an sms instead.",
-            "- For cross-channel communication, you need to also send an acknowledgement of the action to the user, for example in the above case, you also need to send an sms acknowledgement of having sent the email, include that in the ToolUseAction as well.",
-            "- Similarly, if it was an email asking you to send an sms, then you should send an email acknowledgement of having sent the sms.",
         ]
     lines += [
         "- Say hello to the user during the start of the conversation only, don't need to say hello everytime.",
@@ -130,6 +124,13 @@ def _build_communication_rules_section(is_call: bool) -> str:
         "- Send the full SMS message in one go when possible, same goes for emails.",
         "- If the user asks for a call, you should initiate a call task using the ToolUseAction",
         "- Always ensure phone numbers have prefixed with +",
+        "- If the user sends you an sms asking about something, then it's expected that you will reply with an sms through the ToolUseAction.",
+        '- In the above example, there should be ALWAYS be an explicit mention of something like "DIRECT <SMS/WHATSAPP/EMAIL/CALL>: <contents of the interaction>" in the ToolUseAction based on the communication channel.',
+        '- If it is a third-party SMS, WhatsApp or Email (i.e. to be sent to someone other than the current user), then you should also mention something like "THIRD PARTY <SMS/WHATSAPP/EMAIL/CALL>: <contents of the interaction>" in the ToolUseAction.',
+        "- The same logic applies even to cross-channel communication, i.e. if the user sends you an sms asking to send an email, then again decision about DIRECT/THIRD PARTY should be the same as if they asked to send an sms instead.",
+        "- For cross-channel communication, you need to also send an acknowledgement of the action to the user, for example in the above case, you also need to send an sms acknowledgement of having sent the email, include that in the ToolUseAction as well.",
+        "- Similarly, if it was an email asking you to send an sms, then you should send an email acknowledgement of having sent the sms.",
+        "- If the user mentions a new individual asking you to call them or send them a message (AND that person hasn't been mentioned before), you should create a contact with whatever information you have about them, such as name, phone number, email address, bio, etc.",
     ]
 
     return "\n".join([title, underline] + lines)
