@@ -324,13 +324,12 @@ class TaskScheduler(BaseTaskScheduler):
         # Build a live tools dictionary so the prompt reflects reality
         tools = dict(self._ask_tools)
 
-        if clarification_up_q is not None or clarification_down_q is not None:
-            # Add clarification tool when queues are provided
-            self._maybe_add_clarification_tool(
-                tools,
-                clarification_up_q,
-                clarification_down_q,
-            )
+        # Add clarification tool when queues are provided
+        self._maybe_add_clarification_tool(
+            tools,
+            clarification_up_q,
+            clarification_down_q,
+        )
 
         # Inject the dynamic system prompt
         include_activity = (
@@ -397,13 +396,12 @@ class TaskScheduler(BaseTaskScheduler):
         # Build a live tools dictionary first (prompt needs it)
         tools = dict(self._update_tools)
 
-        if clarification_up_q is not None or clarification_down_q is not None:
-            # Add clarification tool when queues are provided
-            self._maybe_add_clarification_tool(
-                tools,
-                clarification_up_q,
-                clarification_down_q,
-            )
+        # Add clarification tool when queues are provided
+        self._maybe_add_clarification_tool(
+            tools,
+            clarification_up_q,
+            clarification_down_q,
+        )
 
         # Inject the dynamic system prompt
         include_activity = (
