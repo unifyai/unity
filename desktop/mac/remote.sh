@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This script enables macOS built-in screen sharing (VNC) and exposes it via noVNC on http://localhost:6080/vnc.html
-# Requirements: websockify (pip) and noVNC (git) installed; run desktop/mac/install.sh first to set up /opt/novnc
-
 # 1) Enable Screen Sharing (VNC) and set a VNC password
 # Note: Requires sudo privileges. Apple VNC passwords are limited to 8 characters.
 # If UNIFY_KEY provided, use first 8 chars. Otherwise use VNC_PASSWORD or default.
@@ -51,6 +48,13 @@ PID_FILE=/tmp/novnc_websockify.pid
 # 5a) Clean shutdown handler
 cleanup() {
   echo "\nShutting down noVNC/websockify..."
+  if [[ -n "${TS_PID:-}" ]] && kill -0 "${TS_PID}" 2>/dev/null; then
+    kill "${TS_PID}" 2>/dev/null || true
+    sleep 0.5
+    if kill -0 "${TS_PID}" 2>/dev/null; then
+      kill -9 "${TS_PID}" 2>/dev/null || true
+    fi
+  fi
   if [[ -f "${PID_FILE}" ]]; then
     WS_PID_FILE=$(cat "${PID_FILE}" 2>/dev/null || echo "")
     if [[ -n "${WS_PID_FILE}" ]] && kill -0 "${WS_PID_FILE}" 2>/dev/null; then
@@ -95,6 +99,11 @@ echo "websockify started with PID ${WS_PID}. Logs: /tmp/novnc_websockify.log"
 
 echo "Done. Open: http://localhost:${NOVNC_PORT}/vnc.html"
 
+# Start magnitude agent-service (ts-node) like linux/remote.sh
+echo "Starting magnitude agent-service..."
+npx ts-node agent-service/src/index.ts &
+TS_PID=$!
+
 # Keep the script in the foreground to handle clean shutdown on Ctrl+C
 echo "Press Ctrl+C to stop."
-wait ${WS_PID} || true
+wait "${TS_PID}" || true
