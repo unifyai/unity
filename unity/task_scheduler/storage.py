@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Union
 from enum import Enum
+from functools import cached_property
 
 import unify
 
@@ -51,7 +52,8 @@ class TasksStore:
             unify.create_fields(missing, context=self._ctx)
 
     # ------------------------------- Reads ---------------------------------
-    def get_fields(self) -> Dict[str, str]:
+    @cached_property
+    def fields(self) -> Dict[str, str]:
         try:
             fields = unify.get_fields(context=self._ctx) or {}
             return {
