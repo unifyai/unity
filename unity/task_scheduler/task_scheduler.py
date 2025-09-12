@@ -454,6 +454,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         text: str,
         *,
+        isolated: Optional[bool] = None,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
@@ -481,17 +482,41 @@ class TaskScheduler(BaseTaskScheduler):
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
-                return await self._execute_queue_internal(
-                    task_id=int(stripped),
-                    parent_chat_context=parent_chat_context,
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                )
+                # Honor explicit override when provided; default remains chained
+                if isolated is True:
+                    return await self._execute_internal(
+                        task_id=int(stripped),
+                        parent_chat_context=parent_chat_context,
+                        clarification_up_q=clarification_up_q,
+                        clarification_down_q=clarification_down_q,
+                        activated_by=ActivatedBy.explicit,
+                        detach=True,
+                    )
+                else:
+                    return await self._execute_queue_internal(
+                        task_id=int(stripped),
+                        parent_chat_context=parent_chat_context,
+                        clarification_up_q=clarification_up_q,
+                        clarification_down_q=clarification_down_q,
+                    )
             except (ValueError, RuntimeError):
                 # Fall back to the outer loop (will ask/clarify/create)
                 pass
 
         # Start LLM-driven outer loop which will resolve the task id and adopt the queue handle.
+        # When an explicit isolation preference is provided, append a short guiding sentence
+        # so the outer loop can route to the appropriate execution tool.
+        if isolated is True:
+            try:
+                freeform_text = f"{freeform_text}\n\nExecution preference: run this task in isolation (detach it from any queue)."
+            except Exception:
+                pass
+        elif isolated is False:
+            try:
+                freeform_text = f"{freeform_text}\n\nExecution preference: if this task is part of a queue, preserve the task queue and do not detach the task."
+            except Exception:
+                pass
+
         return self._start_execute_loop(
             freeform_text=freeform_text,
             parent_chat_context=parent_chat_context,

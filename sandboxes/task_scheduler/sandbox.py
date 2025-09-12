@@ -289,6 +289,7 @@ async def _dispatch_with_context(
     parent_chat_context: List[Dict[str, str]],
     clarifications_enabled: bool,
     enable_voice: bool,
+    isolated: Optional[bool] = None,
 ) -> Tuple[
     str,
     SteerableToolHandle,
@@ -547,6 +548,7 @@ async def _dispatch_with_context(
 
         handle = await ts.execute(
             core_text,
+            isolated=isolated,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clar_up_q,
             clarification_down_q=clar_down_q,
@@ -609,6 +611,14 @@ async def _dispatch_with_context(
 
 async def _main_async() -> None:
     parser = build_cli_parser("TaskScheduler sandbox")
+    # Isolation preference for execute requests
+    parser.add_argument(
+        "--isolated",
+        type=str,
+        choices=["true", "false"],
+        default=None,
+        help="Override execute routing: 'true' to run in isolation (detach), 'false' to preserve queue (chained).",
+    )
 
     # No automatic seeding – users can invoke 'us' / 'usv' commands to populate tasks when desired.
 
@@ -791,6 +801,13 @@ async def _main_async() -> None:
                 continue
 
             # ──────────────── remember the user's utterance ────────────────
+            # Convert CLI string to Optional[bool]
+            iso_pref: Optional[bool]
+            if args.isolated is None:
+                iso_pref = None
+            else:
+                iso_pref = True if args.isolated == "true" else False
+
             _kind, _handle, _clar_up, _clar_down = await _dispatch_with_context(
                 ts,
                 raw,
@@ -798,6 +815,7 @@ async def _main_async() -> None:
                 parent_chat_context=list(chat_history),
                 clarifications_enabled=not args.no_clarifications,
                 enable_voice=bool(args.voice),
+                isolated=iso_pref,
             )
             chat_history.append({"role": "user", "content": raw})
             if args.voice:

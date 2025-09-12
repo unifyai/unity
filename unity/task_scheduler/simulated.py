@@ -376,6 +376,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         self,
         text: str,
         *,
+        isolated: Optional[bool] = None,
         parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
