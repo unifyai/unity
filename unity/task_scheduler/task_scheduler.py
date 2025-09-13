@@ -2401,9 +2401,16 @@ class TaskScheduler(BaseTaskScheduler):
             except Exception:
                 pass
 
-        # Remove any other members currently in the target queue
+        # Remove any other members currently in the target queue (strict by queue_id)
         try:
-            current_members = [t.task_id for t in self._get_queue(queue_id=target_qid)]
+            _rows_all = self._filter_tasks()
+            current_members = [
+                int(r.get("task_id"))
+                for r in _rows_all
+                if r.get("schedule") is not None
+                and r.get("queue_id") == target_qid
+                and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+            ]
         except Exception:
             current_members = []
 
@@ -2417,9 +2424,16 @@ class TaskScheduler(BaseTaskScheduler):
                 sched.pop("prev_task", None)
                 sched.pop("next_task", None)
                 sched.pop("start_at", None)
+                # Explicitly detach from this queue by clearing queue_id
+                sched["queue_id"] = None
                 self._validated_write(
                     task_id=int(tid),
-                    entries={"schedule": sched or {"queue_id": target_qid}},
+                    entries={
+                        "schedule": sched or {"queue_id": None},
+                        # Ensure invariants: a detached task without start_at must not be 'scheduled'
+                        "status": Status.queued,
+                        "queue_id": None,
+                    },
                     err_prefix=f"While clearing removed task {tid} from queue {target_qid}:",
                 )
 
@@ -2679,7 +2693,7 @@ class TaskScheduler(BaseTaskScheduler):
         strategy: str = "preserve_order",
     ) -> ToolOutcome:
         """
-        Split the current default runnable queue into multiple smaller queues.
+        Split the current runnable queue into multiple smaller queues.
 
         Parameters
         ----------
@@ -2714,8 +2728,22 @@ class TaskScheduler(BaseTaskScheduler):
         This tool is designed for readability in the update loop when the user
         asks for sequences like "do [0,2] tomorrow and [1,3] the day after".
         """
-        # Current default queue before split
-        original = [t.task_id for t in self._get_queue(queue_id=None)]
+        # Determine the source queue id:
+        # - Prefer the queue that contains the first task listed in the first part
+        # - Fallback to legacy default queue (queue_id=None) when unavailable
+        source_qid: Optional[int] = None
+        try:
+            if parts and parts[0].get("task_ids"):
+                _head_tid = int(parts[0]["task_ids"][0])
+                _head_row = self._get_single_row_or_raise(_head_tid)
+                source_qid = _head_row.get("queue_id") or (
+                    (_head_row.get("schedule") or {}).get("queue_id")
+                )
+        except Exception:
+            source_qid = None
+
+        # Current queue snapshot (head→tail) for the identified source queue
+        original = [t.task_id for t in self._get_queue(queue_id=source_qid)]
         if not original:
             return {"outcome": "queue partitioned", "details": {"queues": []}}
 
@@ -2727,9 +2755,8 @@ class TaskScheduler(BaseTaskScheduler):
             rank = {tid: i for i, tid in enumerate(original)}
             return sorted(ids, key=lambda x: rank.get(x, 10**9))
 
-        queue_start_ts = None
-        # Remember original queue-level timestamp
-        head_row = self._head_row_for_queue(None)
+        queue_start_ts = None  # Remember original queue-level timestamp
+        head_row = self._head_row_for_queue(source_qid)
         if head_row is not None:
             queue_start_ts = (head_row.get("schedule") or {}).get("start_at")
 
@@ -2768,11 +2795,11 @@ class TaskScheduler(BaseTaskScheduler):
                 self._update_task_start_at(task_id=head_tid, new_start_at=qstart)
             created.append({"queue_id": qid, "task_ids": ordered})
 
-        # 2) Reduce the default queue to the first part (in chosen order)
+        # 2) Reduce the source queue to the first part (in chosen order)
         first_list = _ordered(list(first_ids))
         # Reorder default queue to include only these tasks: move out everything else already done
         if first_list:
-            self._set_queue(queue_id=None, order=first_list)
+            self._set_queue(queue_id=source_qid, order=first_list)
             # apply provided start_at or carry the original one
             fstart = parts[0].get("queue_start_at") if parts else None
             if fstart is not None:
