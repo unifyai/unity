@@ -1771,6 +1771,7 @@ class TaskScheduler(BaseTaskScheduler):
           queues that include ONLY the newly created tasks, in the exact
           head→tail order you specify. Fresh backend ``queue_id`` values are
           allocated for each such queue.
+        - ``queue_head`` is REQUIRED per queue (see examples below)
         - If any of these tasks are to be added into an *already existing* queue,
           then leave this task out of the ``queue_ordering`` and add to the queue
           later with the dedicated queue manipultation tools.
@@ -1781,15 +1782,16 @@ class TaskScheduler(BaseTaskScheduler):
             One dict per task mirroring the arguments of ``_create_task``.
             Typical usage is to provide just ``name`` and ``description`` for
             each task and rely on ``queue_ordering`` for ordering.
-        queue_ordering : list[list[int] | dict] | None
+        queue_ordering : list[dict] | None
             Optional declaration of one or more queues using RELATIVE indices
-            into the ``tasks`` list. Indices are 0‑based and must not be
-            confused with the backend‑managed numeric ``queue_id``.
-            Supported forms:
-            - ``[[0,1,2]]`` → single queue whose order is task0→task1→task2.
-            - ``[{"order": [0,2], "queue_start_at": "2035-06-16T09:00:00Z"},
-               {"order": [1]}]`` → two queues; the first adopts a start time on
-              its head; the second has no start time by default.
+            into the ``tasks`` list (0‑based; distinct from backend ``queue_id``).
+            Each item MUST be a dict of the form:
+            - ``{"order": [int, ...], "queue_head": {"start_at": <ISO|datetime>}}``
+              → create a queue with the given order and schedule the head.
+            - ``{"order": [int, ...], "queue_head": {"primed": true}}``
+              → create a queue with a primed head (no timestamp). At most one
+                queue in this call may request a primed head, and only when no
+                existing task is already primed.
 
         Returns
         -------
@@ -1802,7 +1804,12 @@ class TaskScheduler(BaseTaskScheduler):
         Notes
         -----
         - Relative indices in ``queue_ordering`` refer to the position of each
-          spec in the ``tasks`` argument. They are not persistent ids (not the `queue_id`).
+          spec in the ``tasks`` argument. They are not persistent ids (not the
+          ``queue_id``).
+        - For each declared queue you MUST provide a head policy via
+          ``queue_head``: either ``start_at`` (scheduled head) or ``primed``.
+          It is not permitted to omit both. Only one queue may request a primed
+          head and only when no existing task is already primed.
         - If you need to create tasks without establishing their order yet,
           you may omit ``queue_ordering`` and manipulate queues later via
           dedicated queue tools. When both creation and ordering are requested
@@ -1819,6 +1826,15 @@ class TaskScheduler(BaseTaskScheduler):
         # Pre‑validate names/descriptions to avoid partial creation on obvious duplicates
         seen_names: set[str] = set()
         seen_descs: set[str] = set()
+        # Capture whether a primed task existed BEFORE this batch, so we don't
+        # count any auto-primed rows created within this call when validating
+        # primed head policy.
+        try:
+            _primed_existed_before = bool(
+                self._filter_tasks(filter="status == 'primed'", limit=1),
+            )
+        except Exception:
+            _primed_existed_before = self._primed_task is not None
         for idx, spec in enumerate(tasks):
             name = spec.get("name")
             desc = spec.get("description")
@@ -1862,29 +1878,70 @@ class TaskScheduler(BaseTaskScheduler):
         queues_report: List[Dict[str, Any]] = []
 
         if queue_ordering:
-            # Normalise queue_ordering into a list of {order: [...], queue_start_at: ...}
+            # Normalise queue_ordering into a list of {order: [...], head_policy: {...}}
             normalised: List[Dict[str, Any]] = []
 
-            def _norm_one(item: Union[List[int], Dict[str, Any]]) -> Dict[str, Any]:
-                if isinstance(item, list):
-                    return {"order": list(item), "queue_start_at": None}
-                if isinstance(item, dict):
-                    order = item.get("order")
-                    if order is None:
-                        # Allow a friendlier synonym
-                        order = item.get("task_indices")
-                    assert isinstance(order, list), (
-                        "Each queue spec must contain an 'order' list of relative indices",
+            def _norm_one(item: Dict[str, Any]) -> Dict[str, Any]:
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        "Each queue specification must be a dict with keys 'order' and 'queue_head'.",
                     )
-                    return {
-                        "order": list(order),
-                        "queue_start_at": item.get("queue_start_at"),
-                    }
-                raise ValueError(
-                    "Invalid queue_ordering item; must be a list or a dict with 'order'.",
+                order = item.get("order")
+                assert isinstance(order, list) and order, (
+                    "Each queue spec must contain a non-empty 'order' list of relative indices",
                 )
+                heads = item.get("queue_head") or {}
+                if not isinstance(heads, dict):
+                    raise ValueError(
+                        "queue_head must be an object with either 'start_at' or 'primed'.",
+                    )
+                has_start = heads.get("start_at") is not None
+                has_primed = bool(heads.get("primed"))
+                if has_start == has_primed:
+                    raise ValueError(
+                        "queue_head must specify exactly one of {'start_at', 'primed'} per queue.",
+                    )
+                return {
+                    "order": list(order),
+                    "head_policy": {
+                        "start_at": heads.get("start_at"),
+                        "primed": has_primed,
+                    },
+                }
 
             normalised = [_norm_one(x) for x in queue_ordering]
+
+            # Enforce at most one primed head across all queues and none if one already exists
+            primed_requests = sum(
+                1 for q in normalised if q["head_policy"].get("primed")
+            )
+            if primed_requests > 1:
+                raise ValueError(
+                    "At most one queue may request a primed head in a single call.",
+                )
+            if _primed_existed_before and primed_requests == 1:
+                raise ValueError(
+                    "Cannot create a primed head when another task is already primed. Choose start_at or clear the primed task first.",
+                )
+
+            # If we plan to have a primed head and there was no primed task prior
+            # to this batch, demote any auto-primed rows among the newly created
+            # tasks to 'queued' before applying the requested head policy.
+            if primed_requests == 1 and not _primed_existed_before:
+                try:
+                    auto_primed_rows = self._filter_tasks(
+                        filter=f"task_id in {created_ids} and status == 'primed'",
+                    )
+                except Exception:
+                    auto_primed_rows = []
+                for r in auto_primed_rows or []:
+                    try:
+                        self._update_task_status(
+                            task_ids=r.get("task_id"),
+                            new_status="queued",
+                        )
+                    except Exception:
+                        pass
 
             used_indices: set[int] = set()
             for rel_qidx, qspec in enumerate(normalised):
@@ -1906,11 +1963,20 @@ class TaskScheduler(BaseTaskScheduler):
 
                 # Allocate a fresh numeric queue id and materialise the queue
                 qid = self._allocate_new_queue_id()
+                head_policy = qspec.get("head_policy", {})
+                start_at_value = head_policy.get("start_at")
                 self._set_queue(
                     queue_id=qid,
                     order=order_ids,
-                    queue_start_at=qspec.get("queue_start_at"),
+                    queue_start_at=start_at_value,
                 )
+                # If head should be primed, explicitly set its status to primed
+                if head_policy.get("primed"):
+                    if not order_ids:
+                        raise ValueError(
+                            "Queue 'order' must include at least one task to mark head as primed.",
+                        )
+                    self._update_task_status(task_ids=order_ids[0], new_status="primed")
                 queues_report.append(
                     {
                         "relative_queue_index": rel_qidx,
