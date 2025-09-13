@@ -1851,22 +1851,22 @@ class TaskScheduler(BaseTaskScheduler):
     def _allocate_new_queue_id(self) -> int:
         """Return a fresh integer queue identifier.
 
-        Strategy – scan all tasks for existing ``schedule.queue_id`` numeric
-        values and return ``max + 1`` (starting at 1).  Queues are implicit in
-        this scheduler: a queue exists as soon as at least one task carries its
-        ``queue_id``.
+        Strategy – scan all tasks for existing top‑level ``queue_id`` numeric
+        values and return ``max + 1`` (starting at 1). Queues are implicit in
+        this scheduler: a queue exists as soon as at least one task carries a
+        numeric ``queue_id``.
         """
         rows = self._filter_tasks()
         max_id = 0
         for r in rows:
-            sched = r.get("schedule") or {}
-            qid = sched.get("queue_id") if isinstance(sched, dict) else None
+            qid = r.get("queue_id")
             try:
                 if isinstance(qid, int):
                     max_id = max(max_id, qid)
             except Exception:
                 pass
-        return max_id + 1 if max_id >= 0 else 1
+        new_id = max_id + 1 if max_id >= 0 else 1
+        return new_id
 
     def _head_row_for_queue(self, queue_id: Optional[int]) -> Optional[TaskRow]:
         """Best-effort fetch of the head row for a given queue.
@@ -1884,7 +1884,7 @@ class TaskScheduler(BaseTaskScheduler):
         heads: list[TaskRow] = []
         for r in rows:
             sched = r.get("schedule") or {}
-            qid = sched.get("queue_id")
+            qid = r.get("queue_id")
             prev_id = sched.get("prev_task")
             if qid == queue_id and prev_id is None:
                 heads.append(r)
@@ -1926,7 +1926,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _list_queues(self) -> List[Dict[str, Any]]:
         """
-        List all runnable queues. There is no default queue; every queue must have a numeric queue_id.
+        List all runnable queues. There is no default queue; every queue must have a numeric ``queue_id``.
 
         Returns
         -------
@@ -1958,7 +1958,7 @@ class TaskScheduler(BaseTaskScheduler):
         for h in heads:
             sched = h.get("schedule") or {}
             start_at = sched.get("start_at")
-            qid = sched.get("queue_id")
+            qid = h.get("queue_id")
             if not isinstance(qid, int):
                 # Skip any legacy rows lacking a numeric queue_id
                 continue
@@ -2068,7 +2068,7 @@ class TaskScheduler(BaseTaskScheduler):
             r
             for r in all_rows
             if r.get("schedule") is not None
-            and (r.get("schedule") or {}).get("queue_id") == queue_id
+            and r.get("queue_id") == queue_id
             and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
         ]
         current_set: set[int] = {int(r.get("task_id")) for r in in_queue_rows}
@@ -2259,7 +2259,11 @@ class TaskScheduler(BaseTaskScheduler):
             }
             self._validated_write(
                 task_id=tid,
-                entries={"schedule": new_sched, "status": Status.queued},
+                entries={
+                    "schedule": new_sched,
+                    "status": Status.queued,
+                    "queue_id": target_qid,
+                },
                 err_prefix=f"While moving task {tid} to queue {target_qid}:",
             )
 
@@ -2409,6 +2413,7 @@ class TaskScheduler(BaseTaskScheduler):
                 entries={
                     "schedule": sched,
                     "status": self._to_status(row.get("status")),
+                    "queue_id": target_qid,
                 },
                 err_prefix=f"While preparing task {tid} for queue materialization:",
             )
@@ -2444,7 +2449,11 @@ class TaskScheduler(BaseTaskScheduler):
             )
             self._validated_write(
                 task_id=int(tid),
-                entries={"schedule": sched, "status": desired_status},
+                entries={
+                    "schedule": sched,
+                    "status": desired_status,
+                    "queue_id": target_qid,
+                },
                 err_prefix=f"While materializing queue {target_qid} (task {tid}):",
             )
 
@@ -2586,9 +2595,15 @@ class TaskScheduler(BaseTaskScheduler):
                 if (is_head and sch.get("start_at") is not None)
                 else Status.queued
             )
+            # If schedule carries queue_id (legacy callers), propagate to top-level
+            top_qid = sch.get("queue_id") if isinstance(sch, dict) else None
             self._validated_write(
                 task_id=int(tid),
-                entries={"schedule": sch, "status": desired_status},
+                entries={
+                    "schedule": sch,
+                    "status": desired_status,
+                    **({"queue_id": top_qid} if isinstance(top_qid, int) else {}),
+                },
                 err_prefix=f"While applying set_schedules_atomic (task {tid}):",
             )
 
