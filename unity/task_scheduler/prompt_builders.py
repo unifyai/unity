@@ -106,7 +106,7 @@ def build_ask_prompt(
             "",
             "─ Filtering (exact/boolean; not semantic) ─",
             f"• All queued high‑priority tasks: `{filter_tasks_fname}(filter=\"status == 'queued' and priority == 'high'\")`",
-            f"• Tasks due this month (if your backend supports datetime comparisons): `{filter_tasks_fname}(filter=\"deadline >= '2024-08-01T00:00:00' and deadline < '2024-09-01T00:00:00'\")`",
+            f"• Tasks due this month: `{filter_tasks_fname}(filter=\"deadline >= '2024-08-01T00:00:00' and deadline < '2024-09-01T00:00:00'\")`",
             f"• Current runnable queue (head→tail): `{get_task_queue_fname}()`",
             "",
             "Anti‑patterns to avoid",
