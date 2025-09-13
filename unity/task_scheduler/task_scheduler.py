@@ -552,6 +552,13 @@ class TaskScheduler(BaseTaskScheduler):
                     "details": {"checkpoint_id": None, "label": None},
                 }
 
+        # Bind to shared scheduler helpers to avoid duplication
+        validate_queue_plan = self.validate_queue_plan
+        apply_queue_plan = self.apply_queue_plan
+        checkpoint_queue_state = self.checkpoint_queue_state
+        revert_to_checkpoint = self.revert_to_checkpoint
+        get_latest_checkpoint = self.get_latest_checkpoint
+
         # Merge these helpers into the update toolset
         tools.update(
             methods_to_tool_dict(
@@ -2228,27 +2235,26 @@ class TaskScheduler(BaseTaskScheduler):
                 err_prefix=f"While moving task {tid} to queue {target_qid}:",
             )
 
-        # 2) Splice into the target queue when position is specified
-        if position in {"front", "back"}:
-            # Compose the new order using the current target queue snapshot
-            block = list(task_ids)
-            try:
-                existing_order = [
-                    t.task_id for t in self._get_queue(queue_id=target_qid)
-                ]
-            except Exception:
-                existing_order = []
-            # Remove any ids that are part of the moved block (defensive)
-            existing_order = [tid for tid in existing_order if tid not in block]
+        # 2) Materialize the target queue order via core primitive
+        try:
+            current_order = [t.task_id for t in self._get_queue(queue_id=target_qid)]
+        except Exception:
+            current_order = []
 
-            new_order = (
-                block + existing_order
-                if position == "front"
-                else existing_order + block
-            )
+        block = list(task_ids)
+        # Remove any ids that are part of the moved block (defensive)
+        current_order = [tid for tid in current_order if tid not in block]
 
-            if new_order:
-                self._reorder_queue(queue_id=target_qid, new_order=new_order)
+        if position == "front":
+            new_order = block + current_order
+        elif position == "back":
+            new_order = current_order + block
+        else:
+            # Keep target queue order unchanged, but ensure members are present
+            new_order = current_order + block
+
+        if new_order:
+            self._set_queue(queue_id=target_qid, order=new_order)
 
         # Auto-checkpoint after successful edit (best-effort)
         try:
@@ -2662,9 +2668,8 @@ class TaskScheduler(BaseTaskScheduler):
         for j, tids in groups.items():
             ordered = _ordered(tids)
             qid = self._allocate_new_queue_id()
-            # Move block to new queue (append), then reorder to exact order
-            self._move_tasks_to_queue(task_ids=ordered, queue_id=qid, position=None)
-            self._reorder_queue(queue_id=qid, new_order=ordered)
+            # Materialize the new queue in one step via core primitive
+            self._set_queue(queue_id=qid, order=ordered)
             # Apply queue_start_at if provided
             qstart = later_parts[j].get("queue_start_at")
             if qstart is not None and ordered:
@@ -2677,7 +2682,7 @@ class TaskScheduler(BaseTaskScheduler):
         first_list = _ordered(list(first_ids))
         # Reorder default queue to include only these tasks: move out everything else already done
         if first_list:
-            self._reorder_queue(queue_id=None, new_order=first_list)
+            self._set_queue(queue_id=None, order=first_list)
             # apply provided start_at or carry the original one
             fstart = parts[0].get("queue_start_at") if parts else None
             if fstart is not None:
@@ -2994,98 +2999,43 @@ class TaskScheduler(BaseTaskScheduler):
         new: List[int],
     ) -> ToolOutcome:
         """
-        **Re-link** the runnable queue so its order matches *new* **and**
-        make sure that exactly one task – the **head** – carries the queue-
-        level ``start_at`` field.
+        Update the default runnable queue to match ``new``.
 
-        Rationale
+        Behaviour
         ---------
-        The timestamp denotes the *earliest* moment **any** work in the queue
-        may begin. Logically that information belongs to the first task.
-        Whenever we promote another task to the front we therefore have to
-        transfer the timestamp alongside it and strip it from every other
-        node.
-
-        Parameters
-        ----------
-        original : list[int]
-            Snapshot of the queue before the change. Used to locate the
-            authoritative timestamp (if present) on the *former* head.
-        new : list[int]
-            Desired queue order (may include inserts; never removals).
-
-        Returns
-        -------
-        ToolOutcome
-            Tool outcome with any extra relevant details.
-
-        Raises
-        ------
-        AssertionError
-            On duplicates, attempted removals or other invariants breaches.
+        - Duplicates are rejected.
+        - Removals are not allowed (``original`` must be a subset of ``new``).
+        - Trigger-based tasks cannot be placed into a runnable queue.
+        - If membership is unchanged (set equality), delegate to ``_reorder_queue``.
+        - If membership changed (inserts), delegate to ``_set_queue`` to
+          materialize the exact order and preserve head ``start_at``.
         """
-        # Active tasks are allowed to appear in the queue while a queue is running.
-        # We preserve their lifecycle status (remain 'active') while updating links.
         # -------  sanity checks  -------
         assert len(set(original)) == len(
             original,
         ), f"'original' contains duplicates: {original}"
         assert len(set(new)) == len(new), f"'new' contains duplicates: {new}"
+        # Only inserts are permitted via this API
         assert set(original).issubset(
             set(new),
         ), f"update cannot remove existing tasks; cancel them first. Missing tasks: {set(original) - set(new)}"
 
-        # -------  gather existing logs and validate triggers  -------
+        # Reject placing trigger-based tasks into the runnable queue
         for tid in new:
-            row = self._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
-            if row.get("trigger") is not None:
+            rows = self._filter_tasks(filter=f"task_id == {tid}", limit=1)
+            if not rows:
+                raise ValueError(f"Unknown task id: {tid}")
+            if rows[0].get("trigger") is not None:
                 raise ValueError(
                     f"Task {tid} is trigger-based and cannot be placed in the queue.",
                 )
 
-        # Build a read-only map of current rows for ids in the new order
-        rows_by_id: Dict[int, TaskRow] = {
-            r["task_id"]: r for r in self._filter_tasks(filter=f"task_id in {new}")
-        }
+        if set(original) == set(new):
+            # Pure reorder within the same membership
+            return self._reorder_queue(queue_id=None, new_order=list(new))
 
-        # Compute invariant-preserving updates via QueueEngine (default queue)
-        updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
-            new_order=new,
-            rows_by_id=rows_by_id,
-            queue_id=None,
-        )
-
-        # Re-primed
-        prime_swap_needed = False
-        if self._primed_task is not None:
-            orig_primed_tid = self._primed_task["task_id"]
-            if orig_primed_tid in original:
-                assert (
-                    orig_primed_tid == original[0]
-                ), "Primed task should be at the front of the queue."
-                prime_swap_needed = new[0] != orig_primed_tid
-        else:
-            orig_primed_tid = None
-
-        # Persist
-        _task_id_to_task = dict()
-        for i, (tid, payload) in enumerate(updates_per_log.items()):
-            if prime_swap_needed:
-                if i == 0:
-                    payload = {**payload, "status": Status.primed}
-                elif tid == orig_primed_tid:
-                    payload = {**payload, "status": Status.queued}
-            if tid == orig_primed_tid:
-                self._primed_task = {**self._primed_task, **payload}
-            self._validated_write(
-                task_id=tid,
-                entries=payload,
-                err_prefix=f"While re-ordering the queue (task {tid}):",
-            )
-        return {
-            "outcome": "queue reordered",
-            "details": {"new_order": new},
-        }
+        # Membership changed (insert-only) → materialize exact order
+        return self._set_queue(queue_id=None, order=list(new))
 
     def _update_task_trigger(
         self,
@@ -3431,6 +3381,173 @@ class TaskScheduler(BaseTaskScheduler):
             reasoning_effort="high",
             service_tier="priority",
         )
+
+    # ------------------------------------------------------------------ #
+    #  Queue plan + checkpoints (shared helpers exposed as tools)        #
+    # ------------------------------------------------------------------ #
+
+    def validate_queue_plan(self, *, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
+        """Validate a proposed queue plan (dict or JSON string) and return the normalised structure."""
+        import json as _json
+
+        class _LaterGroup(BaseModel):
+            task_ids: List[int] = Field(min_length=1)
+            queue_start_at: Optional[str] = None
+
+        class _QueuePlan(BaseModel):
+            now: List[int] = Field(min_length=1)
+            later_groups: List[_LaterGroup] = Field(default_factory=list)
+            notes: Optional[str] = None
+
+        try:
+            parsed = _json.loads(plan) if isinstance(plan, str) else plan
+        except Exception as _e:  # noqa: N806
+            raise ValueError(f"Invalid plan: {_e}")
+        model = _QueuePlan.model_validate(parsed)
+        preview: Dict[str, Any] = {"now": model.now, "later": []}
+        for g in model.later_groups:
+            preview["later"].append(
+                {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at},
+            )
+        return {
+            "outcome": "validated",
+            "details": {"plan": model.model_dump(), "preview": preview},
+        }
+
+    def apply_queue_plan(self, *, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
+        """Apply a validated queue plan atomically using invariant-preserving tools and checkpoint."""
+        import json as _json
+
+        class _LaterGroup(BaseModel):
+            task_ids: List[int] = Field(min_length=1)
+            queue_start_at: Optional[str] = None
+
+        class _QueuePlan(BaseModel):
+            now: List[int] = Field(min_length=1)
+            later_groups: List[_LaterGroup] = Field(default_factory=list)
+            notes: Optional[str] = None
+
+        try:
+            parsed = _json.loads(plan) if isinstance(plan, str) else plan
+        except Exception as _e:
+            raise ValueError(f"Invalid plan: {_e}")
+        model = _QueuePlan.model_validate(parsed)
+        if model.later_groups:
+            parts = [{"task_ids": list(model.now)}] + [
+                {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at}
+                for g in model.later_groups
+            ]
+            self._partition_queue(parts=parts, strategy="preserve_order")
+        else:
+            if model.now:
+                self._reorder_queue(queue_id=None, new_order=list(model.now))
+        cp = self.checkpoint_queue_state(label="post-apply-plan")
+        return {
+            "outcome": "applied",
+            "details": {"checkpoint_id": cp["details"]["checkpoint_id"]},
+        }
+
+    def checkpoint_queue_state(self, *, label: Optional[str] = None) -> Dict[str, Any]:
+        """Create a session-scoped checkpoint snapshot of all runnable queues."""
+        snapshot: Dict[str, Any] = {"label": label, "queues": []}
+        try:
+            all_q = self._list_queues()
+        except Exception:
+            all_q = []
+        for q in all_q:
+            qid = q.get("queue_id")
+            start_at = q.get("start_at")
+            try:
+                order = [t.task_id for t in self._get_queue(queue_id=qid)]
+            except Exception:
+                order = []
+            snapshot["queues"].append(
+                {
+                    "queue_id": qid,
+                    "head_id": q.get("head_id"),
+                    "start_at": start_at,
+                    "order": order,
+                },
+            )
+
+        from ..common.llm_helpers import short_id as _short_id  # local import
+
+        cid = _short_id(8)
+        self._queue_checkpoints[cid] = snapshot
+        try:
+            if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
+                "1",
+                "true",
+                "yes",
+            }:
+                self._persist_checkpoint(cid, label, snapshot)
+        except Exception:
+            pass
+        return {"outcome": "checkpointed", "details": {"checkpoint_id": cid}}
+
+    def revert_to_checkpoint(self, *, checkpoint_id: str) -> Dict[str, Any]:
+        """Revert all queues to a previously created checkpoint."""
+        snap = self._queue_checkpoints.get(str(checkpoint_id))
+        if snap is None:
+            try:
+                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                }:
+                    snap = self._load_checkpoint(str(checkpoint_id))
+            except Exception:
+                snap = None
+        assert snap is not None, f"Unknown checkpoint_id={checkpoint_id}"
+        for q in snap.get("queues", []):
+            qid = q.get("queue_id")
+            order = list(q.get("order", []) or [])
+            if order:
+                self._reorder_queue(queue_id=qid, new_order=order)
+                start_at = q.get("start_at")
+                if start_at is not None:
+                    head_tid = int(order[0])
+                    try:
+                        head_row = self._get_single_row_or_raise(head_tid)
+                        sched = {**(head_row.get("schedule") or {})}
+                        sched["start_at"] = start_at
+                        self._validated_write(
+                            task_id=head_tid,
+                            entries={"schedule": sched, "status": Status.scheduled},
+                            err_prefix="While restoring queue start_at from checkpoint:",
+                        )
+                    except Exception:
+                        pass
+        return {"outcome": "reverted", "details": {"checkpoint_id": checkpoint_id}}
+
+    def get_latest_checkpoint(self) -> Dict[str, Any]:
+        """Return the most recently created checkpoint id and label (or persisted latest when enabled)."""
+        try:
+            keys = list(self._queue_checkpoints.keys())
+            if keys:
+                cid = keys[-1]
+                snap = self._queue_checkpoints.get(cid, {})
+                return {
+                    "outcome": "ok",
+                    "details": {"checkpoint_id": cid, "label": snap.get("label")},
+                }
+            if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
+                "1",
+                "true",
+                "yes",
+            }:
+                latest = self._get_latest_persisted_checkpoint()
+                if latest is not None:
+                    return {"outcome": "ok", "details": latest}
+            return {
+                "outcome": "none",
+                "details": {"checkpoint_id": None, "label": None},
+            }
+        except Exception:
+            return {
+                "outcome": "none",
+                "details": {"checkpoint_id": None, "label": None},
+            }
 
     @staticmethod
     def _to_status(value: Union[Status, str]) -> Status:
