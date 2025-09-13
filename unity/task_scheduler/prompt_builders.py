@@ -466,6 +466,11 @@ def build_execute_prompt(
         "",
         "Use the tools below, step-by-step, following these rules:",
         "",
+        "GENERAL SAFETY RULE (state refresh)",
+        "-----------------------------------",
+        f"• After ANY mutating tool call (including `{execute_by_id_fname}`, `{execute_isolated_by_id_fname}`, `{reorder_queue_fname}`, `{move_tasks_to_queue_fname}`, `{partition_queue_fname}`), you MUST re-query the affected queues using `{list_queues_fname}()` and `{get_queue_fname}(queue_id=…)` before issuing further queue edits or building a new_order list.",
+        f"• Never assume prior queue membership or order after detaching or moving tasks. Always refresh first.",
+        "",
         "A. If the request contains a *numeric task_id*:",
         f"   • **First** call `{ask_fname}` (or `{get_task_queue_fname}`) to confirm the task exists and learn the current order.",
         (
@@ -474,6 +479,11 @@ def build_execute_prompt(
             else "   • Decide isolation vs chain using the conversation context."
         ),
         f"   • If you deliberately choose chain execution, reorder explicitly with `{update_task_queue_fname}` only when necessary, then call `{execute_by_id_fname}` on the intended head. Do not reorder purely to force execution when isolation suffices.",
+        (
+            f"   • Important: if you used `{execute_isolated_by_id_fname}`, the task is DETACHED and is no longer a member of its former queue. Do not include it in `{reorder_queue_fname}` new_order arrays for that queue. Refresh the queue first to see current membership."
+            if execute_isolated_by_id_fname
+            else ""
+        ),
     ]
 
     if request_clar_fname:
@@ -501,6 +511,11 @@ def build_execute_prompt(
                 else f"      • **Exactly one** clear match → decide isolation vs chain using the conversation context; if a sequence is intended, reorder as needed and then `{execute_by_id_fname}`."
             ),
             f"      • **Multiple tasks forming a sequence** and the user wants them in order → reorder explicitly (if needed) so the intended head is first; then `{execute_by_id_fname}(task_id=<head>)`.",
+            (
+                f"      • If you chose `{execute_isolated_by_id_fname}`, remember the started task is detached. Do NOT attempt to reorder its former queue including that id; refresh queues and operate only on current members."
+                if execute_isolated_by_id_fname
+                else ""
+            ),
             f"      • **No match** and it is obvious we should create the task → call `{create_task_fname}(name=<short title>, description=<free‑form user request>)`, then call `{ask_fname}` again to retrieve the new id, optionally reorder, then `{execute_by_id_fname}`.",
             "",
             "   Naming guidance for creation:",
