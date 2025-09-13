@@ -798,9 +798,10 @@ class TaskScheduler(BaseTaskScheduler):
                 await asyncio.sleep(0)
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
+        _task_desc = task_row.get("description") or task_row.get("name") or ""
         handle = await ActiveTask.create(
             self._actor,
-            task_description=task_row["description"],
+            task_description=_task_desc,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
@@ -3686,8 +3687,15 @@ class TaskScheduler(BaseTaskScheduler):
 
     @staticmethod
     def _to_status(value: Union[Status, str]) -> Status:
-        """Canonicalise a status-like value to the Status enum."""
-        return value if isinstance(value, Status) else Status(value)
+        """Canonicalise a status-like value to the Status enum.
+
+        Tolerate missing values by treating None as 'queued'.
+        """
+        if isinstance(value, Status):
+            return value
+        if value is None:
+            return Status.queued
+        return Status(value)
 
     # Default tool-policy helpers
     @staticmethod

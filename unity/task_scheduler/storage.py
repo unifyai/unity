@@ -140,16 +140,14 @@ class TasksStore:
         # Preserve 'activated_by' unless the caller explicitly sets/clears it.
 
         def _norm(v: Any) -> Any:
-            # Preserve semantic values for enums: for StrEnum keep the string value;
-            # for plain Enum store the underlying `.value` (e.g. 'weekly', 'MO').
+            # Normalize enums to their underlying values
             if isinstance(v, Enum):
                 try:
                     from enum import StrEnum  # py311+
 
                     if isinstance(v, StrEnum):  # type: ignore[arg-type]
-                        return str(v)
+                        return v.value
                 except Exception:
-                    # StrEnum may not be available in older runtimes; fall through
                     pass
                 return v.value
             if isinstance(v, dict):
@@ -168,14 +166,13 @@ class TasksStore:
 
     def log(self, *, entries: Dict[str, Any], new: bool = True) -> unify.Log:
         def _norm(v: Any) -> Any:
-            # Preserve semantic values for enums: for StrEnum keep the string value;
-            # for plain Enum store the underlying `.value`.
+            # Normalize enums to their underlying values
             if isinstance(v, Enum):
                 try:
                     from enum import StrEnum  # py311+
 
                     if isinstance(v, StrEnum):  # type: ignore[arg-type]
-                        return str(v)
+                        return v.value
                 except Exception:
                     pass
                 return v.value
@@ -186,7 +183,8 @@ class TasksStore:
             return v
 
         norm_entries = _norm(entries)
-        return unify.log(context=self._ctx, new=new, **norm_entries)
+        # Use 'entries=' so auto-counted fields are applied and returned
+        return unify.log(context=self._ctx, entries=norm_entries, new=new)
 
     def delete(self, *, logs: Union[int, List[int]]) -> Dict[str, str]:
         return unify.delete_logs(context=self._ctx, logs=logs)
