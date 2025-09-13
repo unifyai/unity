@@ -55,12 +55,7 @@ def test_schedule_and_trigger_mutually_exclusive():
     ts = TaskScheduler()
 
     trig = Trigger(medium=Medium.SMS_MESSAGE)
-    tsq = TaskScheduler()
-    qid_tmp = tsq._allocate_new_queue_id()
-    sched = Schedule(
-        queue_id=qid_tmp,
-        start_at=datetime.now(timezone.utc) + timedelta(hours=1),
-    )
+    sched = Schedule(start_at=datetime.now(timezone.utc) + timedelta(hours=1))
 
     with pytest.raises(ValueError):
         ts._create_task(
@@ -86,7 +81,7 @@ def test_update_trigger_on_scheduled_task_raises():
     tid = ts._create_task(
         name="Morning maintenance window",
         description="Auto-patch servers tomorrow.",
-        schedule=Schedule(queue_id=qid, start_at=future),
+        schedule=Schedule(start_at=future),
     )["details"]["task_id"]
 
     with pytest.raises(ValueError):
@@ -159,7 +154,7 @@ def test_update_queue_rejects_trigger_tasks():
     ts._create_task(
         name="Prep deck",
         description="Slides.",
-        schedule=Schedule(queue_id=qid),
+        schedule=Schedule(),
     )
 
     # Trigger-based task

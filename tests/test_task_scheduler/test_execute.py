@@ -54,8 +54,10 @@ async def _make_ordered_queue(ts: TaskScheduler, names: List[str]) -> List[int]:
             ts._create_task(
                 name=name,
                 description=name,
-                schedule=Schedule(queue_id=qid),
-            )["details"]["task_id"],
+                schedule=Schedule(),
+            )[
+                "details"
+            ]["task_id"],
         )  # type: ignore[index]
 
     # Establish explicit order using the current queue snapshot as original

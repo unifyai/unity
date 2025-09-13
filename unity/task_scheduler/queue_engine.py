@@ -99,7 +99,6 @@ def plan_reorder_queue(
         sched_payload: Dict[str, Any] = {
             "prev_task": prev_tid,
             "next_task": next_tid,
-            "queue_id": queue_id,
         }
         if start_ts is not None:
             sched_payload["start_at"] = start_ts
