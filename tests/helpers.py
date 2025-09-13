@@ -14,7 +14,7 @@ PRECREATED_CONTEXTS: set[str] = set()
 
 # Settings for the testing environment
 class TestingSettings(BaseSettings):
-    UNIFY_TRACED: bool = True
+    UNIFY_TRACED: bool = False
     UNIFY_CACHE: bool = True
     UNIFY_DELETE_CONTEXT_ON_EXIT: bool = False
     UNIFY_OVERWRITE_PROJECT: bool = False
