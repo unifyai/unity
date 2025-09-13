@@ -193,6 +193,7 @@ def build_update_prompt(
     # Resolve canonical tool names dynamically (required)
     ask_fname = _tool_name(tools, "ask")
     create_task_fname = _tool_name(tools, "create_task")
+    create_tasks_fname = _tool_name(tools, "create_tasks")
     delete_task_fname = _tool_name(tools, "delete_task")
     cancel_tasks_fname = _tool_name(tools, "cancel_tasks")
     update_task_queue_fname = _tool_name(tools, "update_task_queue")
@@ -219,6 +220,7 @@ def build_update_prompt(
         {
             "ask": ask_fname,
             "create_task": create_task_fname,
+            "create_tasks": create_tasks_fname,
             "delete_task": delete_task_fname,
             "cancel_tasks": cancel_tasks_fname,
             "update_task_queue": update_task_queue_fname,
@@ -256,6 +258,17 @@ def build_update_prompt(
         "Queues and batches (multi-queue)",
         "--------------------------------",
     ]
+
+    # Encourage batched creation when creating several tasks
+    if create_tasks_fname:
+        usage_examples_lines.extend(
+            [
+                "",
+                "Multi-task creation (preferred)",
+                "-------------------------------",
+                f"• When creating several new tasks at once and you know their order/time, prefer `{create_tasks_fname}` over issuing multiple `{create_task_fname}` calls.",
+            ],
+        )
 
     if list_queues_fname and get_queue_fname and reorder_queue_fname:
         usage_examples_lines.extend(
@@ -296,6 +309,18 @@ def build_update_prompt(
             ],
         )
 
+    # Batched creation example
+    if create_tasks_fname:
+        usage_examples_lines.extend(
+            [
+                "",
+                "Batched creation (preferred when creating several tasks at once)",
+                "----------------------------------------------------------------",
+                f"• Create four tasks and order them in one call:",
+                f"  `{create_tasks_fname}(tasks=[{{'name':'A','description':'a'}}, {{'name':'B','description':'b'}}, {{'name':'C','description':'c'}}, {{'name':'D','description':'d'}}], queue_ordering=[{{'order':[0,1,2,3], 'queue_head':{{'start_at':'2035-06-16T08:00:00Z'}}}}])`.",
+            ],
+        )
+
     if set_schedules_atomic_fname:
         usage_examples_lines.extend(
             [
@@ -325,9 +350,13 @@ def build_update_prompt(
             "--------------------------------",
             f'• Set deadline for the "onboarding plan" task:\n  1 `{ask_fname}(text="Which task covers the onboarding plan?")`\n  2 `{update_task_deadline_fname}(task_id=<id>, new_deadline=\'2025-01-31T17:00:00Z\')`',
             (
-                f"• Materialize four tasks for next Monday 09:00 UK time in order A→B→C→D:\n  1 Create the tasks with names/descriptions only.\n  2 `{set_queue_fname}(queue_id=None, order=[A,B,C,D], queue_start_at='2035-06-16T08:00:00Z')`"
-                if set_queue_fname
-                else f"• Promote a task to the front of the queue:\n  1 Read the current order: `{get_task_queue_fname}()`\n  2 Build the new order and call `{update_task_queue_fname}(original=[...], new=[...])`"
+                f"• Create and order four tasks for next Monday 09:00 UK time in one call:\n  `{create_tasks_fname}(tasks=[{{'name':'A','description':'a'}}, {{'name':'B','description':'b'}}, {{'name':'C','description':'c'}}, {{'name':'D','description':'d'}}], queue_ordering=[{{'order':[0,1,2,3], 'queue_head':{{'start_at':'2035-06-16T08:00:00Z'}}}}])`"
+                if create_tasks_fname
+                else (
+                    f"• Materialize four tasks for next Monday 09:00 UK time in order A→B→C→D:\n  1 Create the tasks with names/descriptions only.\n  2 `{set_queue_fname}(queue_id=None, order=[A,B,C,D], queue_start_at='2035-06-16T08:00:00Z')`"
+                    if set_queue_fname
+                    else f"• Promote a task to the front of the queue:\n  1 Read the current order: `{get_task_queue_fname}()`\n  2 Build the new order and call `{update_task_queue_fname}(original=[...], new=[...])`"
+                )
             ),
             "",
             "Triggers vs Schedules",
