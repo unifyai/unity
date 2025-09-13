@@ -5,5 +5,9 @@
     "user /freeform interjection 1": "Okay let's not bother then, let's do this next week as we originally planned.",
     "user command 2": "Let's start the research on Accounting Inc now instead. As for the simulation, let's set the duration to 500 seconds and if the user asks for a progress update, say it's the internet is currently down, trying to restart the router but it doesn't seem to be working, will keep trying.",
     "user /freeform interjection 2 (after seeing '⏳ SimulatedActor Duration remaining: Xs')": "How is the task coming along?",
-    "user /freeform interjection 3": "Okay let's not do it right now then, seems like the internet isn't going to work today."
+    "user /freeform interjection 3": "Okay let's not do it right now then, seems like the internet isn't going to work today.",
+    "user command 3": "Actually screw it, let's get all of the tasks done right now. As for the simulation, let's have each task take 60 seconds, and for progress updates lets say that 'it iss going well, should be done soon'",
+    "user /freeform interjection 3 (after seeing '⏳ SimulatedActor Duration remaining: Xs')": "How is the task coming along?",
+    "user /freeform interjection 4 (after the first task has completed)": "Have you managed to get many of the tasks done?",
+    "user /freeform interjection 5 (after the first task has completed)": "Let's actually stop for now, and get the unfinished tasks done next week like we originally planned. Thanks!"
 }
