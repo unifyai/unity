@@ -14,10 +14,18 @@ from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
 
 async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
     ids: list[int] = []
+    qid = ts._allocate_new_queue_id()
     for n in names:
-        ids.append(ts._create_task(name=n, description=n)["details"]["task_id"])  # type: ignore[index]
-    original = [t.task_id for t in ts._get_task_queue()]
-    ts._update_task_queue(original=original, new=ids)
+        ids.append(
+            ts._create_task(
+                name=n,
+                description=n,
+                schedule={"queue_id": qid},
+            )[
+                "details"
+            ]["task_id"],
+        )  # type: ignore[index]
+    ts._set_queue(queue_id=qid, order=ids)
     ts._update_task_start_at(task_id=ids[0], new_start_at=datetime.now(timezone.utc))
     return ids
 
@@ -56,7 +64,10 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
 
     # Create a single task and start it (queue semantics by default)
     name1 = "Singleton A"
-    tid1 = ts._create_task(name=name1, description=name1)["details"]["task_id"]
+    qid = ts._allocate_new_queue_id()
+    tid1 = ts._create_task(name=name1, description=name1, schedule={"queue_id": qid})[
+        "details"
+    ]["task_id"]
     handle = await ts.execute(text=str(tid1))
 
     # 1) Passthrough path: queue length == 1 → inner sees raw question
@@ -68,11 +79,12 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
 
     # 2) Append a follower behind the active task – this grows the queue to >1
     name2 = "Follower B"
-    tid2 = ts._create_task(name=name2, description=name2)["details"]["task_id"]
+    tid2 = ts._create_task(name=name2, description=name2, schedule={"queue_id": qid})[
+        "details"
+    ]["task_id"]
 
     # Establish explicit order: [tid1, tid2]
-    original = [t.task_id for t in ts._get_task_queue(task_id=tid1)]
-    ts._update_task_queue(original=original, new=[tid1, tid2])
+    ts._set_queue(queue_id=qid, order=[tid1, tid2])
 
     # 3) Multi-task path: queue length > 1 → passthrough disabled, CHAIN preamble expected
     await handle.ask("Q2: what remains?")
@@ -219,7 +231,7 @@ async def test_execute_queue_by_numeric_id_completes_all(monkeypatch):
     x, y = await _make_ordered_queue(ts, ["X", "Y"])  # type: ignore[misc]
 
     # Ensure the queue order, then start by id
-    ts._update_task_queue(original=[x, y], new=[x, y])
+    # queue already materialised by helper
     h = await ts.execute(text=str(x))
     await h.result()
 

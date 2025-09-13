@@ -48,12 +48,18 @@ async def _make_ordered_queue(ts: TaskScheduler, names: List[str]) -> List[int]:
     Also assigns a queue-level start_at on the head.
     """
     ids: List[int] = []
+    qid = ts._allocate_new_queue_id()
     for name in names:
-        ids.append(ts._create_task(name=name, description=name)["details"]["task_id"])  # type: ignore[index]
+        ids.append(
+            ts._create_task(
+                name=name,
+                description=name,
+                schedule=Schedule(queue_id=qid),
+            )["details"]["task_id"],
+        )  # type: ignore[index]
 
     # Establish explicit order using the current queue snapshot as original
-    original = [t.task_id for t in ts._get_task_queue()]
-    ts._update_task_queue(original=original, new=ids)
+    ts._set_queue(queue_id=qid, order=ids)
 
     # Put a start_at timestamp on the head only
     ts._update_task_start_at(task_id=ids[0], new_start_at=datetime.now(timezone.utc))

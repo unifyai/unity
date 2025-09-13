@@ -62,11 +62,17 @@ async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
     Also assigns a queue-level start_at on the head to exercise timestamp moves.
     """
     ids: list[int] = []
+    qid = ts._allocate_new_queue_id()
     for name in names:
-        ids.append(ts._create_task(name=name, description=name)["details"]["task_id"])  # type: ignore[index]
+        ids.append(
+            ts._create_task(
+                name=name,
+                description=name,
+                schedule=Schedule(queue_id=qid),
+            )["details"]["task_id"],
+        )  # type: ignore[index]
 
-    original = [t.task_id for t in ts._get_task_queue()]
-    ts._update_task_queue(original=original, new=ids)
+    ts._set_queue(queue_id=qid, order=ids)
     ts._update_task_start_at(task_id=ids[0], new_start_at=datetime.now(timezone.utc))
     return ids
 
@@ -407,20 +413,21 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
 
     # Create a chain of three tasks scheduled for next week
     future = datetime.now(timezone.utc) + timedelta(days=7)
+    qid = ts._allocate_new_queue_id()
     head_id = ts._create_task(
         name="ChainHead",
         description="ch head",
-        schedule=Schedule(start_at=future),
+        schedule=Schedule(queue_id=qid, start_at=future),
     )["details"]["task_id"]
     mid_id = ts._create_task(
         name="ChainMid",
         description="ch mid",
-        schedule=Schedule(prev_task=head_id),
+        schedule=Schedule(queue_id=qid, prev_task=head_id),
     )["details"]["task_id"]
     tail_id = ts._create_task(
         name="ChainTail",
         description="ch tail",
-        schedule=Schedule(prev_task=mid_id),
+        schedule=Schedule(queue_id=qid, prev_task=mid_id),
     )["details"]["task_id"]
 
     # Capture the original head's start_at to compare later

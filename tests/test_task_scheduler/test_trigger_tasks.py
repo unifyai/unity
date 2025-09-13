@@ -55,7 +55,12 @@ def test_schedule_and_trigger_mutually_exclusive():
     ts = TaskScheduler()
 
     trig = Trigger(medium=Medium.SMS_MESSAGE)
-    sched = Schedule(start_at=datetime.now(timezone.utc) + timedelta(hours=1))
+    tsq = TaskScheduler()
+    qid_tmp = tsq._allocate_new_queue_id()
+    sched = Schedule(
+        queue_id=qid_tmp,
+        start_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
 
     with pytest.raises(ValueError):
         ts._create_task(
@@ -77,10 +82,11 @@ def test_update_trigger_on_scheduled_task_raises():
     ts = TaskScheduler()
 
     future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    qid = ts._allocate_new_queue_id()
     tid = ts._create_task(
         name="Morning maintenance window",
         description="Auto-patch servers tomorrow.",
-        schedule=Schedule(start_at=future),
+        schedule=Schedule(queue_id=qid, start_at=future),
     )["details"]["task_id"]
 
     with pytest.raises(ValueError):
@@ -149,9 +155,11 @@ def test_update_queue_rejects_trigger_tasks():
     ts = TaskScheduler()
 
     # Normal queued task
+    qid = ts._allocate_new_queue_id()
     ts._create_task(
         name="Prep deck",
         description="Slides.",
+        schedule=Schedule(queue_id=qid),
     )
 
     # Trigger-based task
@@ -162,7 +170,7 @@ def test_update_queue_rejects_trigger_tasks():
     )["details"]["task_id"]
 
     with pytest.raises(ValueError):
-        ts._update_task_queue(original=[0], new=[trig_tid, 0])
+        ts._set_queue(queue_id=qid, order=[trig_tid, 0])
 
 
 # --------------------------------------------------------------------------- #

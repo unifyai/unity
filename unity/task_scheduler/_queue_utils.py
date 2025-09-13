@@ -96,6 +96,7 @@ def attach_with_links(
     task_id: int,
     prev_task: Optional[int],
     next_task: Optional[int],
+    queue_id: Optional[int],
     head_start_at: Optional[str],
     err_prefix: str,
 ) -> None:
@@ -156,7 +157,12 @@ def attach_with_links(
             )
 
     # Build current task schedule and write via validated funnel
-    cur_sched: Dict[str, Any] = {"prev_task": prev_task, "next_task": next_task}
+    cur_sched: Dict[str, Any] = {
+        "prev_task": prev_task,
+        "next_task": next_task,
+    }
+    if queue_id is not None:
+        cur_sched["queue_id"] = int(queue_id)
     if prev_task is None and head_start_at is not None:
         cur_sched["start_at"] = head_start_at
     scheduler._validated_write(
