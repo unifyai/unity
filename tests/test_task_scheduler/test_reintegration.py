@@ -156,8 +156,8 @@ async def test_starting_middle_detaches_and_links_neighbors():
     original_start = (row_a.get("schedule") or {}).get("start_at")
     assert original_start
 
-    # Start the middle task explicitly (fast-path by id)
-    handle = await ts.execute(text=str(b))
+    # Start the middle task explicitly (fast-path by id) in isolation
+    handle = await ts.execute(text=str(b), isolated=True)
 
     # After detachment of B, A and C should be directly linked; B should have no schedule
     row_a2 = ts._filter_tasks(filter=f"task_id == {a}")[0]
@@ -221,8 +221,8 @@ async def test_reinstate_head_restores_head_and_start_at():
     ts = TaskScheduler()
     head_id, next_id = await _make_ordered_queue(ts, ["H", "N"])  # type: ignore[misc]
 
-    # Activate head in isolate (default) and then cancel
-    handle = await ts.execute(text=str(head_id))
+    # Activate head in isolation and then cancel
+    handle = await ts.execute(text=str(head_id), isolated=True)
     handle.stop(cancel=True)
     await handle.result()
 
@@ -249,8 +249,8 @@ async def test_reinstate_middle_restores_links():
     ts = TaskScheduler()
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
 
-    # Activate middle task (B) in isolate and cancel it
-    handle = await ts.execute(text=str(b))
+    # Activate middle task (B) in isolation and cancel it
+    handle = await ts.execute(text=str(b), isolated=True)
     handle.stop(cancel=True)
     await handle.result()
 
@@ -276,8 +276,8 @@ async def test_reinstate_with_deleted_next_fallback():
     ts = TaskScheduler()
     head_id, next_id, tail_id = await _make_ordered_queue(ts, ["X", "Y", "Z"])  # type: ignore[misc]
 
-    # Activate head and cancel
-    handle = await ts.execute(text=str(head_id))
+    # Activate head in isolation and cancel
+    handle = await ts.execute(text=str(head_id), isolated=True)
     handle.stop(cancel=True)
     await handle.result()
 
@@ -299,7 +299,7 @@ async def test_reinstate_refuses_when_trigger_present():
     ts = TaskScheduler()
     head_id, _ = await _make_ordered_queue(ts, ["TH", "TN"])  # type: ignore[misc]
 
-    handle = await ts.execute(text=str(head_id))
+    handle = await ts.execute(text=str(head_id), isolated=True)
     handle.stop()
     await handle.result()
 
@@ -317,7 +317,7 @@ async def test_reinstate_head_with_all_neighbors_deleted_fallback():
     head_id, next_id, tail_id = await _make_ordered_queue(ts, ["H2", "N2", "T2"])  # type: ignore[misc]
 
     # Activate head and cancel to record reintegration plan (captures original start_at)
-    handle = await ts.execute(text=str(head_id))
+    handle = await ts.execute(text=str(head_id), isolated=True)
     handle.stop()
     await handle.result()
 
@@ -393,8 +393,8 @@ async def test_reintegration_plan_clears_on_completion():
     ts = TaskScheduler()
     head_id, next_id = await _make_ordered_queue(ts, ["HC", "NC"])  # type: ignore[misc]
 
-    # Start head in isolate and allow it to complete naturally
-    handle = await ts.execute(text=str(head_id))
+    # Start head in isolation and allow it to complete naturally
+    handle = await ts.execute(text=str(head_id), isolated=True)
     # Awaiting result will mark the instance as completed internally
     await handle.result()
 
