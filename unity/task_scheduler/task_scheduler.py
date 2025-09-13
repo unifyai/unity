@@ -2218,6 +2218,16 @@ class TaskScheduler(BaseTaskScheduler):
         # Allocate queue id when requested
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
 
+        # Snapshot the current target queue order BEFORE modifying membership to
+        # avoid a transient multi-head state (which would make _get_queue assert
+        # and tempt fallback paths to drop existing members).
+        try:
+            existing_order: List[int] = [
+                t.task_id for t in self._get_queue(queue_id=target_qid)
+            ]
+        except Exception:
+            existing_order = []
+
         # 1) Detach each task from its current queue (fix predecessor/successor)
         def _get_row(tid: int) -> TaskRow:
             return self._get_single_row_or_raise(tid)
@@ -2268,22 +2278,16 @@ class TaskScheduler(BaseTaskScheduler):
             )
 
         # 2) Materialize the target queue order via core primitive
-        try:
-            current_order = [t.task_id for t in self._get_queue(queue_id=target_qid)]
-        except Exception:
-            current_order = []
-
         block = list(task_ids)
-        # Remove any ids that are part of the moved block (defensive)
-        current_order = [tid for tid in current_order if tid not in block]
-
+        # Compose new order from the pre-detach snapshot to preserve prior members
+        base_order = [tid for tid in existing_order if tid not in block]
         if position == "front":
-            new_order = block + current_order
+            new_order = block + base_order
         elif position == "back":
-            new_order = current_order + block
+            new_order = base_order + block
         else:
             # Keep target queue order unchanged, but ensure members are present
-            new_order = current_order + block
+            new_order = base_order + block
 
         if new_order:
             self._set_queue(queue_id=target_qid, order=new_order)
