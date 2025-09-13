@@ -269,21 +269,43 @@ def build_update_prompt(
     if partition_queue_fname:
         usage_examples_lines.extend(
             [
-                f"• Split the default queue into dated batches: `{partition_queue_fname}(parts=[{{'task_ids':[0,2], 'queue_start_at':'2025-07-01T09:00:00Z'}}, {{'task_ids':[1,3], 'queue_start_at':'2025-07-02T09:00:00Z'}}])`.",
+                f"• Split the default queue into dated batches: `{partition_queue_fname}(parts=[{{'task_ids':[0,2], 'queue_start_at':'2035-07-01T09:00:00Z'}}, {{'task_ids':[1,3], 'queue_start_at':'2035-07-02T09:00:00Z'}}])`.",
                 "  This is the most direct way to express: do subset A at time X and subset B at time Y.",
+            ],
+        )
+
+    # Atomic/edit helpers if present
+    set_queue_fname = _tool_name(tools, "set_queue")
+    set_schedules_atomic_fname = _tool_name(tools, "set_schedules_atomic")
+    explain_queue_fname = _tool_name(tools, "explain_queue")
+
+    if set_queue_fname:
+        usage_examples_lines.extend(
+            [
+                "",
+                "Atomic materialization (preferred)",
+                "---------------------------------",
+                f"• Declare an entire chain in one call: `{set_queue_fname}(queue_id=None, order=[0,1,2,3], queue_start_at='2035-06-16T08:00:00Z')`.",
+                "  Use this after creating tasks to avoid iterative move/reorder loops.",
+            ],
+        )
+
+    if set_schedules_atomic_fname:
+        usage_examples_lines.extend(
+            [
+                f"• Advanced: bulk adjacency edit with validation: `{set_schedules_atomic_fname}(schedules=[{{'task_id':0,'schedule':{{'queue_id':None,'prev_task':None,'next_task':1,'start_at':'2035-06-16T08:00:00Z'}}}}, {{'task_id':1,'schedule':{{'queue_id':None,'prev_task':0,'next_task':2}}}}])`.",
+            ],
+        )
+
+    if explain_queue_fname:
+        usage_examples_lines.extend(
+            [
+                f"• Diagnose a queue quickly: `{explain_queue_fname}(queue_id=None)` → shows head, order and start_at.",
             ],
         )
 
     usage_examples_lines.extend(
         [
-            "",
-            "Ask vs Clarification",
-            "----------------------",
-            f"• `{ask_fname}` is ONLY for inspecting/locating tasks that ALREADY EXIST in the task list (e.g., to find task_id, queue position, deadlines, triggers).",
-            f"• Do NOT use `{ask_fname}` to ask the human for details about NEW tasks being created/changed in this update request.",
-            f"• For human clarifications about prospective/new tasks (e.g., start time, timezone, naming, scope), call `{request_clar_fname}` when available.",
-            f"• Use `{update_task_queue_fname}` (legacy single-queue) or `{reorder_queue_fname}` (per-queue) to reorder runnable tasks explicitly – do not try to emulate queue effects via timestamps.",
-            f"• Use `{cancel_tasks_fname}` only on explicit cancellation requests (never cancel the active task implicitly).",
             "",
             "Schedule/Queue invariants (must-follow)",
             "---------------------------------------",
@@ -296,7 +318,11 @@ def build_update_prompt(
             "Realistic find‑then‑update flows",
             "--------------------------------",
             f'• Set deadline for the "onboarding plan" task:\n  1 `{ask_fname}(text="Which task covers the onboarding plan?")`\n  2 `{update_task_deadline_fname}(task_id=<id>, new_deadline=\'2025-01-31T17:00:00Z\')`',
-            f"• Promote a task to the front of the queue:\n  1 Read the current order: `{get_task_queue_fname}()`\n  2 Build the new order and call `{update_task_queue_fname}(original=[...], new=[...])`",
+            (
+                f"• Materialize four tasks for next Monday 09:00 UK time in order A→B→C→D:\n  1 Create the tasks with names/descriptions only.\n  2 `{set_queue_fname}(queue_id=None, order=[A,B,C,D], queue_start_at='2035-06-16T08:00:00Z')`"
+                if set_queue_fname
+                else f"• Promote a task to the front of the queue:\n  1 Read the current order: `{get_task_queue_fname}()`\n  2 Build the new order and call `{update_task_queue_fname}(original=[...], new=[...])`"
+            ),
             "",
             "Triggers vs Schedules",
             "----------------------",
