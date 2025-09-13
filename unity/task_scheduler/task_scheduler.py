@@ -1486,6 +1486,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         name: str,
         description: str,
+        queue_id: Optional[int] = None,
         status: Optional[Status] = None,
         schedule: ScheduleLike = None,
         trigger: TriggerLike = None,
@@ -1673,7 +1674,9 @@ class TaskScheduler(BaseTaskScheduler):
         #   otherwise, allocate a fresh queue id (head case).
         derived_qid = None
         try:
-            if schedule is not None:
+            if queue_id is not None:
+                derived_qid = int(queue_id)
+            elif schedule is not None:
                 prev_tid = self._sched_prev(schedule)
                 if prev_tid is not None:
                     try:
@@ -2376,7 +2379,13 @@ class TaskScheduler(BaseTaskScheduler):
         for r in rows:
             st = self._to_status(r.get("status"))
             assert st not in self._TERMINAL_STATUSES, f"Task {r['task_id']} is terminal"
-        self._ensure_not_active_task(order)
+        # Allow editing a queue that includes the currently active task; preserve its status below
+        active_tid: Optional[int] = None
+        try:
+            if self._active_task is not None:
+                active_tid = int(self._active_task.task_id)
+        except Exception:
+            active_tid = None
 
         # Allocate queue id when needed
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
@@ -2452,14 +2461,13 @@ class TaskScheduler(BaseTaskScheduler):
             sched["next_task"] = None
             # Remove start_at for now; we will reapply for head only
             sched.pop("start_at", None)
+            # Preserve 'active' status on the currently running task by omitting a status write
+            prep_entries: Dict[str, Any] = {"schedule": sched, "queue_id": target_qid}
+            if active_tid is None or int(tid) != int(active_tid):
+                prep_entries["status"] = Status.queued  # temporary neutral state
             self._validated_write(
                 task_id=int(tid),
-                entries={
-                    "schedule": sched,
-                    # Temporary neutral state so invariants pass without start_at
-                    "status": Status.queued,
-                    "queue_id": target_qid,
-                },
+                entries=prep_entries,
                 err_prefix=f"While preparing task {tid} for queue materialization:",
             )
 
@@ -2479,19 +2487,18 @@ class TaskScheduler(BaseTaskScheduler):
                 elif existing_head_start is not None:
                     sched["start_at"] = existing_head_start
 
-            # Derive status
-            desired_status = (
-                Status.scheduled
-                if (idx == 0 and ("start_at" in sched))
-                else Status.queued
-            )
+            # Derive status for non-active tasks only; keep the active task as 'active'
+            write_entries: Dict[str, Any] = {"schedule": sched, "queue_id": target_qid}
+            if active_tid is None or int(tid) != int(active_tid):
+                desired_status = (
+                    Status.scheduled
+                    if (idx == 0 and ("start_at" in sched))
+                    else Status.queued
+                )
+                write_entries["status"] = desired_status
             self._validated_write(
                 task_id=int(tid),
-                entries={
-                    "schedule": sched,
-                    "status": desired_status,
-                    "queue_id": target_qid,
-                },
+                entries=write_entries,
                 err_prefix=f"While materializing queue {target_qid} (task {tid}):",
             )
 

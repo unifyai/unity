@@ -20,8 +20,8 @@ async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
             ts._create_task(
                 name=n,
                 description=n,
-                schedule={"queue_id": qid},
-            )[
+                queue_id=qid,
+            )[  # type: ignore[misc]
                 "details"
             ]["task_id"],
         )  # type: ignore[index]
@@ -65,9 +65,9 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
     # Create a single task and start it (queue semantics by default)
     name1 = "Singleton A"
     qid = ts._allocate_new_queue_id()
-    tid1 = ts._create_task(name=name1, description=name1, schedule={"queue_id": qid})[
-        "details"
-    ]["task_id"]
+    tid1 = ts._create_task(name=name1, description=name1, queue_id=qid)["details"][
+        "task_id"
+    ]
     handle = await ts.execute(text=str(tid1))
 
     # 1) Passthrough path: queue length == 1 → inner sees raw question
@@ -79,9 +79,9 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
 
     # 2) Append a follower behind the active task – this grows the queue to >1
     name2 = "Follower B"
-    tid2 = ts._create_task(name=name2, description=name2, schedule={"queue_id": qid})[
-        "details"
-    ]["task_id"]
+    tid2 = ts._create_task(name=name2, description=name2, queue_id=qid)["details"][
+        "task_id"
+    ]
 
     # Establish explicit order: [tid1, tid2]
     ts._set_queue(queue_id=qid, order=[tid1, tid2])

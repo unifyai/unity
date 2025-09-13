@@ -127,7 +127,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         if not getattr(self, "_passthrough_enabled", False):
             return False
         # If at any point the queue grows beyond a single task, flip sticky off.
-        if self._current_queue_size() > 1:
+        size = self._current_queue_size()
+        if size > 1:
             self._passthrough_enabled = False
             return False
         return True
@@ -635,6 +636,16 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         question.
         """
 
+        # Fast-path: when queue remains a true singleton, delegate directly
+        if self._should_passthrough():
+            try:
+                return await self._current_handle.ask(
+                    question,
+                    _return_reasoning_steps=_return_reasoning_steps,
+                )
+            except TypeError:
+                return await self._current_handle.ask(question)
+
         def _safe_dump(value):
             try:
                 import json as _json  # local import
@@ -772,16 +783,6 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             )
         except Exception:
             queue_preamble = None
-
-        # Passthrough when the queue remains a true singleton at call time
-        if self._should_passthrough():
-            try:
-                return await self._current_handle.ask(
-                    question,
-                    _return_reasoning_steps=_return_reasoning_steps,
-                )
-            except TypeError:
-                return await self._current_handle.ask(question)
 
         composed_question = (
             f"{queue_preamble}\n\nUSER QUESTION:\n{question}"
