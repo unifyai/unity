@@ -151,6 +151,7 @@ class ReintegrationManager:
             task_id=tid,
             prev_task=final_prev,
             next_task=final_next,
+            head_queue_id=qid,
             head_start_at=(cur_sched.get("start_at") if final_prev is None else None),
             err_prefix=f"While reinstating task {tid}:",
         )

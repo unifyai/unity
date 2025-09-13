@@ -253,7 +253,10 @@ class TaskScheduler(BaseTaskScheduler):
         self._store = TasksStore(self._ctx)
         self._store.ensure_context(
             unique_keys={"task_id": "int", "instance_id": "int"},
-            auto_counting={"task_id": None, "instance_id": "task_id"},
+            auto_counting={
+                "task_id": None,
+                "instance_id": "task_id",
+            },
             description=(
                 "List of all tasks with their name, description, status, "
                 "schedule, deadline, repeat pattern, priority **and** "
@@ -1664,6 +1667,44 @@ class TaskScheduler(BaseTaskScheduler):
         # handle these cases (e.g., immediate eligibility) without raising.
 
         # ------------------  assemble payload  ------------------ #
+        # Ensure queue_id presence for queued/scheduled tasks:
+        # - If schedule provided but queue_id missing, inherit from prev/next neighbour when possible;
+        #   otherwise, allocate a fresh queue id (head case).
+        derived_qid = None
+        try:
+            if schedule is not None:
+                # If schedule is a dict-like convertible, read fields
+                prev_tid = self._sched_prev(schedule)
+                try:
+                    derived_qid = schedule.queue_id  # type: ignore[attr-defined]
+                except Exception:
+                    try:
+                        derived_qid = (schedule or {}).get("queue_id")  # type: ignore[assignment]
+                    except Exception:
+                        derived_qid = None
+                if derived_qid is None:
+                    if prev_tid is not None:
+                        try:
+                            prev_row = self._get_single_row_or_raise(int(prev_tid))
+                            derived_qid = (prev_row.get("schedule") or {}).get(
+                                "queue_id",
+                            )
+                        except Exception:
+                            derived_qid = None
+                    if derived_qid is None:
+                        # Head or standalone scheduled/queued task → allocate new queue id
+                        derived_qid = self._allocate_new_queue_id()
+                        # Write back onto schedule object/dict for consistency
+                        try:
+                            if hasattr(schedule, "queue_id"):
+                                schedule.queue_id = int(derived_qid)  # type: ignore[attr-defined]
+                            else:
+                                schedule["queue_id"] = int(derived_qid)  # type: ignore[index]
+                        except Exception:
+                            pass
+        except Exception:
+            derived_qid = None
+
         task_details = Task(
             name=name,
             description=description,
@@ -1674,6 +1715,7 @@ class TaskScheduler(BaseTaskScheduler):
             repeat=repeat,
             priority=priority,
             response_policy=response_policy,
+            queue_id=derived_qid,
         ).to_post_json()
 
         # ------------------  write log immediately  ------------------ #
@@ -1901,14 +1943,14 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _list_queues(self) -> List[Dict[str, Any]]:
         """
-        List all runnable queues.
+        List all runnable queues. There is no default queue; every queue must have a numeric queue_id.
 
         Returns
         -------
         list[dict]
             One entry per queue head with keys:
-            - ``queue_id`` (int | None): identifier; ``None`` denotes the default queue.
-            - ``queue_label`` (str): human‑readable label ("default" or "Q<N>").
+            - ``queue_id`` (int): identifier of the queue.
+            - ``queue_label`` (str): human‑readable label ("Q<N>").
             - ``head_id`` (int): task id of the head.
             - ``size`` (int): number of runnable tasks in the queue.
             - ``start_at`` (str | None): ISO timestamp from the head's schedule.
@@ -1934,11 +1976,14 @@ class TaskScheduler(BaseTaskScheduler):
             sched = h.get("schedule") or {}
             start_at = sched.get("start_at")
             qid = sched.get("queue_id")
+            if not isinstance(qid, int):
+                # Skip any legacy rows lacking a numeric queue_id
+                continue
             chain = self._walk_queue(h)
             out.append(
                 {
                     "queue_id": qid,
-                    "queue_label": ("default" if qid is None else f"Q{qid}"),
+                    "queue_label": f"Q{qid}",
                     "head_id": h.get("task_id"),
                     "size": len(chain),
                     "start_at": start_at,
@@ -2810,6 +2855,24 @@ class TaskScheduler(BaseTaskScheduler):
                 # Defensive: do not block writes on guard failure paths; the invariant validator will still run
                 pass
 
+        # Keep top-level queue_id in sync with schedule.queue_id when schedule provided
+        if "schedule" in entries:
+            try:
+                _sched = (
+                    prospective_schedule.model_dump()
+                    if hasattr(prospective_schedule, "model_dump")
+                    else dict(prospective_schedule)
+                )
+            except Exception:
+                _sched = prospective_schedule
+            try:
+                qid_sync = (_sched or {}).get("queue_id")
+            except Exception:
+                qid_sync = None
+            if qid_sync is not None:
+                # set/overwrite queue_id to match schedule
+                entries = {**entries, "queue_id": int(qid_sync)}
+
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         result = self._write_log_entries(logs=log_id, entries=entries)
 
@@ -2841,6 +2904,7 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         prev_task: Optional[int],
         next_task: Optional[int],
+        head_queue_id: Optional[int],
         head_start_at: Optional[str],
         err_prefix: str,
     ) -> None:
@@ -2849,6 +2913,7 @@ class TaskScheduler(BaseTaskScheduler):
             task_id=task_id,
             prev_task=prev_task,
             next_task=next_task,
+            head_queue_id=head_queue_id,
             head_start_at=head_start_at,
             err_prefix=err_prefix,
         )

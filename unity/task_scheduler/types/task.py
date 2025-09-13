@@ -13,6 +13,16 @@ UNASSIGNED = -1
 
 
 class Task(BaseModel):
+    # Top-level queue identifier for tasks that are members of a runnable queue.
+    # When a task is queued/scheduled, this must be populated and match
+    # schedule.queue_id. Tasks without a schedule may leave this empty.
+    queue_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Identifier of the runnable queue this task belongs to. Matches "
+            "schedule.queue_id for queued/scheduled tasks."
+        ),
+    )
     task_id: int = Field(
         default=UNASSIGNED,
         description="Unique identifier for the task",
@@ -110,4 +120,7 @@ class Task(BaseModel):
             exclude.add("task_id")
         if self.instance_id == UNASSIGNED:
             exclude.add("instance_id")
+        # Allow backend auto-increment for queue_id by omitting it when unset
+        if self.queue_id is None:
+            exclude.add("queue_id")
         return self.model_dump(mode="json", exclude=exclude)
