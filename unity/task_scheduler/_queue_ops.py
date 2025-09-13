@@ -218,11 +218,9 @@ def detach_from_queue_for_activation(
     # Always record a reintegration plan for precise restore on defer stop,
     # regardless of execution scope. This enables queue execution with later
     # reinstatement to the original position when requested.
-    # Capture current queue_id (if any) to target the correct queue on reinstatement
+    # Capture current queue_id from the row (top-level), never from schedule
     try:
-        queue_id = None
-        if isinstance(sched, dict):
-            queue_id = sched.get("queue_id")
+        queue_id = task_row.get("queue_id")
     except Exception:
         queue_id = None
 

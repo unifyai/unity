@@ -1681,9 +1681,7 @@ class TaskScheduler(BaseTaskScheduler):
                 if prev_tid is not None:
                     try:
                         prev_row = self._get_single_row_or_raise(int(prev_tid))
-                        derived_qid = prev_row.get("queue_id") or (
-                            (prev_row.get("schedule") or {}).get("queue_id")
-                        )
+                        derived_qid = prev_row.get("queue_id")
                     except Exception:
                         derived_qid = None
                 if derived_qid is None:
@@ -1892,9 +1890,6 @@ class TaskScheduler(BaseTaskScheduler):
             prev_id = sched.get("prev_task")
             if qid == queue_id and prev_id is None:
                 heads.append(r)
-            if queue_id is None and qid is None and prev_id is None:
-                # explicit path for default queue
-                pass
         if not heads:
             return None
         assert (
@@ -2269,7 +2264,6 @@ class TaskScheduler(BaseTaskScheduler):
             new_sched: Dict[str, Any] = {
                 "prev_task": None,
                 "next_task": None,
-                "queue_id": target_qid,
             }
             self._validated_write(
                 task_id=tid,
@@ -2430,7 +2424,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         to_remove = [tid for tid in current_members if tid not in order]
         if to_remove:
-            # Detach removed tasks: clear prev/next and keep queue_id unchanged or None
+            # Detach removed tasks: clear prev/next on schedule; set top-level queue_id=None
             for tid in to_remove:
                 row = self._get_single_row_or_raise(int(tid))
                 sched = {**(row.get("schedule") or {})}
@@ -2438,12 +2432,10 @@ class TaskScheduler(BaseTaskScheduler):
                 sched.pop("prev_task", None)
                 sched.pop("next_task", None)
                 sched.pop("start_at", None)
-                # Explicitly detach from this queue by clearing queue_id
-                sched["queue_id"] = None
                 self._validated_write(
                     task_id=int(tid),
                     entries={
-                        "schedule": sched or {"queue_id": None},
+                        "schedule": sched or {},
                         # Ensure invariants: a detached task without start_at must not be 'scheduled'
                         "status": Status.queued,
                         "queue_id": None,
@@ -2455,7 +2447,6 @@ class TaskScheduler(BaseTaskScheduler):
         for tid in order:
             row = self._get_single_row_or_raise(int(tid))
             sched = {**(row.get("schedule") or {})}
-            sched["queue_id"] = target_qid
             # neutralize prev/next; set precisely below
             sched["prev_task"] = None
             sched["next_task"] = None
@@ -2476,7 +2467,6 @@ class TaskScheduler(BaseTaskScheduler):
             prev_tid = None if idx == 0 else order[idx - 1]
             next_tid = None if idx == len(order) - 1 else order[idx + 1]
             sched = {
-                "queue_id": target_qid,
                 "prev_task": prev_tid,
                 "next_task": next_tid,
             }
@@ -2605,6 +2595,8 @@ class TaskScheduler(BaseTaskScheduler):
         for item in schedules:
             tid = int(item.get("task_id"))
             sch = dict(item.get("schedule") or {})
+            # Ignore any nested queue_id inside schedule; rely on top-level queue_id
+            sch.pop("queue_id", None)
             by_id[tid] = sch
 
         # Fetch rows
@@ -2620,7 +2612,15 @@ class TaskScheduler(BaseTaskScheduler):
         # Cross-queue guard and adjacency graph
         graph: Dict[int, List[int]] = {tid: [] for tid in by_id.keys()}
         for tid, sch in by_id.items():
-            qid = sch.get("queue_id")
+            # Use the provided top-level queue_id if present; otherwise derive from storage
+            qid = None
+            try:
+                for it in schedules:
+                    if int(it.get("task_id")) == int(tid):
+                        qid = it.get("queue_id")
+                        break
+            except Exception:
+                qid = None
             for nbr_key in ("prev_task", "next_task"):
                 nbr = sch.get(nbr_key)
                 if nbr is None:
@@ -2629,7 +2629,17 @@ class TaskScheduler(BaseTaskScheduler):
                 # ensure referenced schedule present; fallback to storage view
                 nbr_row = self._get_single_row_or_raise(nbr)
                 nbr_sched = dict((nbr_row.get("schedule") or {}))
-                nbr_qid = by_id.get(nbr, {}).get("queue_id", nbr_sched.get("queue_id"))
+                nbr_qid = None
+                # prefer top-level for neighbour if provided in the batch
+                try:
+                    for it in schedules:
+                        if int(it.get("task_id")) == int(nbr):
+                            nbr_qid = it.get("queue_id")
+                            break
+                except Exception:
+                    nbr_qid = None
+                if nbr_qid is None:
+                    nbr_qid = nbr_row.get("queue_id")
                 if nbr_qid != qid:
                     raise ValueError(
                         f"Cross-queue link rejected: task {tid} (qid={qid}) → {nbr_key}={nbr} (qid={nbr_qid}).",
@@ -2668,14 +2678,27 @@ class TaskScheduler(BaseTaskScheduler):
                 if (is_head and sch.get("start_at") is not None)
                 else Status.queued
             )
-            # If schedule carries queue_id (legacy callers), propagate to top-level
-            top_qid = sch.get("queue_id") if isinstance(sch, dict) else None
+            # Top-level queue_id must be provided explicitly per item or preserved from current row
+            top_qid = None
+            try:
+                for it in schedules:
+                    if int(it.get("task_id")) == int(tid):
+                        top_qid = it.get("queue_id")
+                        break
+            except Exception:
+                top_qid = None
+            if top_qid is None:
+                try:
+                    current_row = self._get_single_row_or_raise(int(tid))
+                    top_qid = current_row.get("queue_id")
+                except Exception:
+                    top_qid = None
             self._validated_write(
                 task_id=int(tid),
                 entries={
                     "schedule": sch,
                     "status": desired_status,
-                    **({"queue_id": top_qid} if isinstance(top_qid, int) else {}),
+                    **({"queue_id": int(top_qid)} if isinstance(top_qid, int) else {}),
                 },
                 err_prefix=f"While applying set_schedules_atomic (task {tid}):",
             )
@@ -2748,9 +2771,7 @@ class TaskScheduler(BaseTaskScheduler):
             if parts and parts[0].get("task_ids"):
                 _head_tid = int(parts[0]["task_ids"][0])
                 _head_row = self._get_single_row_or_raise(_head_tid)
-                source_qid = _head_row.get("queue_id") or (
-                    (_head_row.get("schedule") or {}).get("queue_id")
-                )
+                source_qid = _head_row.get("queue_id")
         except Exception:
             source_qid = None
 
@@ -2922,9 +2943,7 @@ class TaskScheduler(BaseTaskScheduler):
                     if not rows:
                         return None
                     srow = rows[0]
-                    return srow.get("queue_id") or (srow.get("schedule") or {}).get(
-                        "queue_id",
-                    )
+                    return srow.get("queue_id")
 
                 # Only enforce when linkage exists
                 for _nbr, _tid in (("prev_task", prev_tid), ("next_task", next_tid)):

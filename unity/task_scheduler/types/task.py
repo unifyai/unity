@@ -14,8 +14,8 @@ UNASSIGNED = -1
 
 class Task(BaseModel):
     # Top-level queue identifier for tasks that are members of a runnable queue.
-    # When a task is queued/scheduled, this must be populated and match
-    # schedule.queue_id. Tasks without a schedule may leave this empty.
+    # When a task is queued/scheduled, this must be populated. The schedule
+    # object never carries a queue_id field; use this top-level column solely.
     queue_id: Optional[int] = Field(
         default=None,
         description=(
