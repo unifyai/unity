@@ -95,8 +95,8 @@ async def test_starting_head_promotes_next_to_scheduled_with_start_at():
     original_start = (row_a.get("schedule") or {}).get("start_at")
     assert original_start
 
-    # Start head explicitly (fast-path by id)
-    handle = await ts.execute(text=str(a))
+    # Start head explicitly (fast-path by id) in isolation
+    handle = await ts.execute(text=str(a), isolated=True)
 
     # After detachment, B becomes the new head and should inherit start_at and be scheduled
     row_b2 = ts._filter_tasks(filter=f"task_id == {b}")[0]
