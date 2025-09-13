@@ -353,7 +353,6 @@ def attach_with_links(
     task_id: int,
     prev_task: Optional[int],
     next_task: Optional[int],
-    head_queue_id: Optional[int],
     head_start_at: Optional[str],
     err_prefix: str,
 ) -> None:
@@ -363,7 +362,6 @@ def attach_with_links(
         task_id=task_id,
         prev_task=prev_task,
         next_task=next_task,
-        queue_id=head_queue_id,
         head_start_at=head_start_at,
         err_prefix=err_prefix,
     )

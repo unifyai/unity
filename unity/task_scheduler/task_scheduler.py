@@ -1668,40 +1668,23 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ------------------  assemble payload  ------------------ #
         # Ensure queue_id presence for queued/scheduled tasks:
-        # - If schedule provided but queue_id missing, inherit from prev/next neighbour when possible;
+        # - If schedule provided, inherit queue_id from predecessor when possible;
         #   otherwise, allocate a fresh queue id (head case).
         derived_qid = None
         try:
             if schedule is not None:
-                # If schedule is a dict-like convertible, read fields
                 prev_tid = self._sched_prev(schedule)
-                try:
-                    derived_qid = schedule.queue_id  # type: ignore[attr-defined]
-                except Exception:
+                if prev_tid is not None:
                     try:
-                        derived_qid = (schedule or {}).get("queue_id")  # type: ignore[assignment]
+                        prev_row = self._get_single_row_or_raise(int(prev_tid))
+                        derived_qid = prev_row.get("queue_id") or (
+                            (prev_row.get("schedule") or {}).get("queue_id")
+                        )
                     except Exception:
                         derived_qid = None
                 if derived_qid is None:
-                    if prev_tid is not None:
-                        try:
-                            prev_row = self._get_single_row_or_raise(int(prev_tid))
-                            derived_qid = (prev_row.get("schedule") or {}).get(
-                                "queue_id",
-                            )
-                        except Exception:
-                            derived_qid = None
-                    if derived_qid is None:
-                        # Head or standalone scheduled/queued task → allocate new queue id
-                        derived_qid = self._allocate_new_queue_id()
-                        # Write back onto schedule object/dict for consistency
-                        try:
-                            if hasattr(schedule, "queue_id"):
-                                schedule.queue_id = int(derived_qid)  # type: ignore[attr-defined]
-                            else:
-                                schedule["queue_id"] = int(derived_qid)  # type: ignore[index]
-                        except Exception:
-                            pass
+                    # Head or standalone scheduled/queued task → allocate new queue id
+                    derived_qid = self._allocate_new_queue_id()
         except Exception:
             derived_qid = None
 
@@ -2827,7 +2810,7 @@ class TaskScheduler(BaseTaskScheduler):
             except Exception:
                 _sched = prospective_schedule
             try:
-                qid = (_sched or {}).get("queue_id")
+                qid = entries.get("queue_id") if isinstance(entries, dict) else None
                 prev_tid = (_sched or {}).get("prev_task")
                 next_tid = (_sched or {}).get("next_task")
 
@@ -2837,8 +2820,10 @@ class TaskScheduler(BaseTaskScheduler):
                     rows = self._filter_tasks(filter=f"task_id == {int(tid)}", limit=1)
                     if not rows:
                         return None
-                    s = rows[0].get("schedule") or {}
-                    return s.get("queue_id")
+                    srow = rows[0]
+                    return srow.get("queue_id") or (srow.get("schedule") or {}).get(
+                        "queue_id",
+                    )
 
                 # Only enforce when linkage exists
                 for _nbr, _tid in (("prev_task", prev_tid), ("next_task", next_tid)):
@@ -2855,23 +2840,17 @@ class TaskScheduler(BaseTaskScheduler):
                 # Defensive: do not block writes on guard failure paths; the invariant validator will still run
                 pass
 
-        # Keep top-level queue_id in sync with schedule.queue_id when schedule provided
-        if "schedule" in entries:
+        # If caller supplied a queue_id alongside schedule, it becomes the source of truth
+        if (
+            "schedule" in entries
+            and "queue_id" in entries
+            and entries["queue_id"] is not None
+        ):
+            # ensure type
             try:
-                _sched = (
-                    prospective_schedule.model_dump()
-                    if hasattr(prospective_schedule, "model_dump")
-                    else dict(prospective_schedule)
-                )
+                entries["queue_id"] = int(entries["queue_id"])
             except Exception:
-                _sched = prospective_schedule
-            try:
-                qid_sync = (_sched or {}).get("queue_id")
-            except Exception:
-                qid_sync = None
-            if qid_sync is not None:
-                # set/overwrite queue_id to match schedule
-                entries = {**entries, "queue_id": int(qid_sync)}
+                pass
 
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         result = self._write_log_entries(logs=log_id, entries=entries)
@@ -2904,7 +2883,6 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         prev_task: Optional[int],
         next_task: Optional[int],
-        head_queue_id: Optional[int],
         head_start_at: Optional[str],
         err_prefix: str,
     ) -> None:
@@ -2913,7 +2891,6 @@ class TaskScheduler(BaseTaskScheduler):
             task_id=task_id,
             prev_task=prev_task,
             next_task=next_task,
-            head_queue_id=head_queue_id,
             head_start_at=head_start_at,
             err_prefix=err_prefix,
         )

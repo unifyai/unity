@@ -68,8 +68,10 @@ async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
             ts._create_task(
                 name=name,
                 description=name,
-                schedule=Schedule(queue_id=qid),
-            )["details"]["task_id"],
+                schedule=Schedule(),
+            )[
+                "details"
+            ]["task_id"],
         )  # type: ignore[index]
 
     ts._set_queue(queue_id=qid, order=ids)
@@ -417,17 +419,17 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
     head_id = ts._create_task(
         name="ChainHead",
         description="ch head",
-        schedule=Schedule(queue_id=qid, start_at=future),
+        schedule=Schedule(start_at=future),
     )["details"]["task_id"]
     mid_id = ts._create_task(
         name="ChainMid",
         description="ch mid",
-        schedule=Schedule(queue_id=qid, prev_task=head_id),
+        schedule=Schedule(prev_task=head_id),
     )["details"]["task_id"]
     tail_id = ts._create_task(
         name="ChainTail",
         description="ch tail",
-        schedule=Schedule(queue_id=qid, prev_task=mid_id),
+        schedule=Schedule(prev_task=mid_id),
     )["details"]["task_id"]
 
     # Capture the original head's start_at to compare later

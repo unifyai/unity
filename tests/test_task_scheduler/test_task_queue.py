@@ -15,17 +15,17 @@ def test_get_queue_and_reorder():
     t0 = ts._create_task(
         name="T0",
         description="first",
-        schedule=Schedule(queue_id=qid, start_at=datetime.now(timezone.utc)),
+        schedule=Schedule(start_at=datetime.now(timezone.utc)),
     )
     t1 = ts._create_task(
         name="T1",
         description="second",
-        schedule=Schedule(queue_id=qid, prev_task=0),
+        schedule=Schedule(prev_task=0),
     )
     t2 = ts._create_task(
         name="T2",
         description="third",
-        schedule=Schedule(queue_id=qid, prev_task=1),
+        schedule=Schedule(prev_task=1),
     )
 
     queue = ts._get_queue(queue_id=qid)
@@ -45,7 +45,7 @@ def test_insert_into_queue():
 
     # base task
     qid = ts._allocate_new_queue_id()
-    ts._create_task(name="base", description="x", schedule=Schedule(queue_id=qid))
+    ts._create_task(name="base", description="x")
 
     # create a brand-new task that will be inserted
     new_id = ts._create_task(name="insert-me", description="y")["details"]["task_id"]
@@ -75,14 +75,14 @@ def test_insert_primed_task_downgrades_to_queued():
     ts._create_task(
         name="Research",
         description="Initial research phase",
-        schedule=Schedule(queue_id=qid),
+        schedule=Schedule(),
     )
 
     # 2) Second task explicitly queued behind the head
     ts._create_task(
         name="Write report",
         description="Summarise findings",
-        schedule=Schedule(queue_id=qid, prev_task=0),
+        schedule=Schedule(prev_task=0),
         status="queued",
     )
 
@@ -131,19 +131,18 @@ def test_start_time_moves_with_front_swap():
         name="A",
         description="first",
         schedule=Schedule(
-            queue_id=qid,
             start_at="2025-06-23T09:00:00+00:00",
         ),
     )
     ts._create_task(
         name="B",
         description="second",
-        schedule=Schedule(queue_id=qid, prev_task=0),
+        schedule=Schedule(prev_task=0),
     )
     ts._create_task(
         name="C",
         description="third",
-        schedule=Schedule(queue_id=qid, prev_task=1),
+        schedule=Schedule(prev_task=1),
     )
 
     ts._reorder_queue(queue_id=qid, new_order=[2, 0, 1])
@@ -168,14 +167,13 @@ def test_start_time_inherited_on_new_front_insert():
         name="Head",
         description="initial head",
         schedule=Schedule(
-            queue_id=qid,
             start_at="2025-06-23T09:00:00+00:00",
         ),
     )
     ts._create_task(
         name="Tail",
         description="initial tail",
-        schedule=Schedule(queue_id=qid, prev_task=0),
+        schedule=Schedule(prev_task=0),
     )
 
     new_front_id = ts._create_task(name="NewFront", description="inserted")["details"][
@@ -204,19 +202,18 @@ def test_start_time_after_multiple_reorders():
         name="A",
         description="first",
         schedule=Schedule(
-            queue_id=qid,
             start_at="2030-06-23T09:00:00+00:00",
         ),
     )
     ts._create_task(
         name="B",
         description="second",
-        schedule=Schedule(queue_id=qid, prev_task=0),
+        schedule=Schedule(prev_task=0),
     )
     ts._create_task(
         name="C",
         description="third",
-        schedule=Schedule(queue_id=qid, prev_task=1),
+        schedule=Schedule(prev_task=1),
     )
 
     # original order
@@ -246,17 +243,17 @@ def test_list_and_get_queues_basic():
     ts._create_task(
         name="Q0",
         description="head",
-        schedule=Schedule(queue_id=qid, start_at="2031-01-01T09:00:00+00:00"),
+        schedule=Schedule(start_at="2031-01-01T09:00:00+00:00"),
     )
     ts._create_task(
         name="Q1",
         description="mid",
-        schedule=Schedule(queue_id=qid, prev_task=0),
+        schedule=Schedule(prev_task=0),
     )
     ts._create_task(
         name="Q2",
         description="tail",
-        schedule=Schedule(queue_id=qid, prev_task=1),
+        schedule=Schedule(prev_task=1),
     )
 
     lst = ts._list_queues()
@@ -283,17 +280,17 @@ def test_reorder_queue_preserves_head_start_at():
     ts._create_task(
         name="A",
         description="first",
-        schedule=Schedule(queue_id=qid, start_at="2032-06-23T09:00:00+00:00"),
+        schedule=Schedule(start_at="2032-06-23T09:00:00+00:00"),
     )
     ts._create_task(
         name="B",
         description="second",
-        schedule=Schedule(queue_id=qid, prev_task=0),
+        schedule=Schedule(prev_task=0),
     )
     ts._create_task(
         name="C",
         description="third",
-        schedule=Schedule(queue_id=qid, prev_task=1),
+        schedule=Schedule(prev_task=1),
     )
 
     ts._reorder_queue(queue_id=qid, new_order=[2, 0, 1])
@@ -314,22 +311,22 @@ def test_move_tasks_to_new_queue():
     ts._create_task(
         name="T0",
         description="head",
-        schedule=Schedule(queue_id=qid0, start_at="2033-02-01T08:00:00+00:00"),
+        schedule=Schedule(start_at="2033-02-01T08:00:00+00:00"),
     )
     ts._create_task(
         name="T1",
         description="desc1",
-        schedule=Schedule(queue_id=qid0, prev_task=0),
+        schedule=Schedule(prev_task=0),
     )
     ts._create_task(
         name="T2",
         description="desc2",
-        schedule=Schedule(queue_id=qid0, prev_task=1),
+        schedule=Schedule(prev_task=1),
     )
     ts._create_task(
         name="T3",
         description="desc3",
-        schedule=Schedule(queue_id=qid0, prev_task=2),
+        schedule=Schedule(prev_task=2),
     )
 
     # move [1,3] to a new queue at the front
@@ -363,22 +360,22 @@ def test_partition_queue_split_with_dates():
     ts._create_task(
         name="P0",
         description="head",
-        schedule=Schedule(queue_id=qid0, start_at="2034-01-01T09:00:00+00:00"),
+        schedule=Schedule(start_at="2034-01-01T09:00:00+00:00"),
     )
     ts._create_task(
         name="P1",
         description="d1",
-        schedule=Schedule(queue_id=qid0, prev_task=0),
+        schedule=Schedule(prev_task=0),
     )
     ts._create_task(
         name="P2",
         description="d2",
-        schedule=Schedule(queue_id=qid0, prev_task=1),
+        schedule=Schedule(prev_task=1),
     )
     ts._create_task(
         name="P3",
         description="d3",
-        schedule=Schedule(queue_id=qid0, prev_task=2),
+        schedule=Schedule(prev_task=2),
     )
 
     res = ts._partition_queue(
@@ -415,17 +412,17 @@ def test_move_tasks_to_existing_queue_front_and_back():
     ts._create_task(
         name="M0",
         description="head",
-        schedule=Schedule(queue_id=qid0, start_at="2035-03-03T09:00:00+00:00"),
+        schedule=Schedule(start_at="2035-03-03T09:00:00+00:00"),
     )
     ts._create_task(
         name="M1",
         description="dx1",
-        schedule=Schedule(queue_id=qid0, prev_task=0),
+        schedule=Schedule(prev_task=0),
     )
     ts._create_task(
         name="M2",
         description="dx2",
-        schedule=Schedule(queue_id=qid0, prev_task=1),
+        schedule=Schedule(prev_task=1),
     )
 
     # create second queue by moving [2]
