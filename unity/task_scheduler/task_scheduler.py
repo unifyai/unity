@@ -945,6 +945,12 @@ class TaskScheduler(BaseTaskScheduler):
             - Never modify scheduling/ordering or `start_at` to begin execution.
             - If the user wants the whole sequence now, reorder the queue explicitly first
               (see `_update_task_queue`) so the desired subset is at the head, then call this.
+
+            Post-conditions (for the outer loop / LLM):
+            - Mode: "queue" (followers remain attached; chaining semantics).
+            - The selected task stays a member of its current queue.
+            - You SHOULD refresh queues after this call using `list_queues()` and `get_queue(queue_id=…)`
+              before attempting any further queue edits.
             """
 
             handle = await self._execute_queue_internal(
@@ -973,6 +979,13 @@ class TaskScheduler(BaseTaskScheduler):
               • The detached task loses its schedule entirely (no prev/next/start_at).
               • Followers of the detached task remain linked to each other.
             - This does NOT move the task into a new queue, and does NOT partition queues.
+
+            Post-conditions (for the outer loop / LLM):
+            - Mode: "isolated" (detached execution).
+            - The started task is NO LONGER a member of its former queue.
+            - You MUST re-query queues using `list_queues()` / `get_queue(queue_id=…)` before
+              any subsequent queue edits. Do NOT include the detached task id in `reorder_queue`
+              `new_order` arrays for its former queue.
             """
 
             # Run internal execute with detach=True to enforce isolation semantics
@@ -1808,6 +1821,14 @@ class TaskScheduler(BaseTaskScheduler):
             • head with ``start_at`` → ``scheduled``;
             • non-heads → at most ``queued``.
         - The active task (if any) in this queue retains its ``active`` status.
+
+        Guidance for callers (outer loop / LLM):
+        - Always refresh the queue membership immediately before constructing `new_order`
+          by calling `list_queues()` and `get_queue(queue_id=…)`.
+        - If a task was started via `execute_isolated_by_id`, it is DETACHED and no longer a
+          member of its former queue; do NOT include it in `new_order` for that queue.
+        - This method asserts that `new_order` is an exact permutation of the current queue;
+          if you see an assertion error, refresh state and reconstruct `new_order` accordingly.
         """
         # Build current queue membership directly from storage to avoid
         # assumptions about a single visible head during transitions.
