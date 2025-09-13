@@ -455,7 +455,9 @@ def build_execute_prompt(
         "The task referred to in the user's request may or may not already exist in the task list.",
         "",
         "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
-        "Do not ask the user questions in your final response. If no clarification tool is available in this outer loop, make a best‑guess attempt using sensible defaults and state your assumptions; if an inner tool asks questions, inform it that no clarification channel exists and provide defaults/best guesses.",
+        (
+            f"Do not ask the user questions in your final response. When a clarification tool is available, you must ask via `{request_clar_fname}` (never in plain text). If no clarification tool is available in this outer loop, make a best‑guess attempt using sensible defaults and state your assumptions; if an inner tool asks questions, inform it that no clarification channel exists and provide defaults/best guesses."
+        ),
         "",
         "Decision policy (isolation vs chain)",
         "------------------------------------",
@@ -497,6 +499,14 @@ def build_execute_prompt(
         f"• After ANY mutating tool call (including `{execute_by_id_fname}`, `{execute_isolated_by_id_fname}`, `{reorder_queue_fname}`, `{move_tasks_to_queue_fname}`, `{partition_queue_fname}`), you MUST re-query the affected queues using `{list_queues_fname}()` and `{get_queue_fname}(queue_id=…)` before issuing further queue edits or building a new_order list.",
         f"• Never assume prior queue membership or order after detaching or moving tasks. Always refresh first.",
         "",
+        "CLARIFICATION POLICY (always prefer tool over prose)",
+        "----------------------------------------------------",
+        (
+            f"• Whenever you need information from the human (e.g., an unknown or ambiguous reference), and `{request_clar_fname}` is available, you must call `{request_clar_fname}` with a concise question. Do not propose options in a plain assistant message when this tool is available."
+            if request_clar_fname
+            else "• If no clarification tool is available, do not ask questions in your final response; proceed using sensible defaults/best‑guess values and state assumptions explicitly."
+        ),
+        "",
         "A. If the request contains a *numeric task_id*:",
         f"   • **First** call `{ask_fname}` (or `{get_task_queue_fname}`) to confirm the task exists and learn the current order.",
         (
@@ -515,7 +525,7 @@ def build_execute_prompt(
     if request_clar_fname:
         lines.extend(
             [
-                f"   • If the id is **unknown** (zero results) → call `{request_clar_fname}` to ask the human whether to create a new task or provide a different reference.  Do **NOT** call `{execute_by_id_fname}` when the task cannot be confirmed.",
+                f"   • STRICT RULE: If the id is **unknown** (zero results), you must immediately call `{request_clar_fname}` to ask whether to create a new task or provide a different reference. Do **NOT** produce a plain-text answer or propose options; use the tool and wait for the answer before proceeding. Do **NOT** call `{execute_by_id_fname}` when the task cannot be confirmed.",
             ],
         )
     else:
@@ -586,7 +596,11 @@ def build_execute_prompt(
             "  – Use `cancel=false` when the user intends to defer or resume later (e.g., 'do it next week', 'as originally scheduled').",
             "• You may include a short `reason` string to aid logging.",
             "",
-            f"Respond *only* with tool calls until *after* `{execute_by_id_fname}` returns.  You **must not** attempt `{execute_by_id_fname}` until you are certain the referenced task exists. Once the task has started you may reply DONE.",
+            (
+                f"Respond *only* with tool calls until one of the following is true: (a) you have successfully started the task via `{execute_by_id_fname}` or `{execute_isolated_by_id_fname}` and can reply DONE, or (b) you have called `{request_clar_fname}`, received the answer, and it explicitly indicates to stop without starting. You **must not** attempt `{execute_by_id_fname}` until you are certain the referenced task exists."
+                if request_clar_fname
+                else f"Respond *only* with tool calls until *after* `{execute_by_id_fname}` returns.  You **must not** attempt `{execute_by_id_fname}` until you are certain the referenced task exists. Once the task has started you may reply DONE."
+            ),
             "",
             "Tools (name → argspec):",
             sig_json,
