@@ -2376,6 +2376,31 @@ class TaskScheduler(BaseTaskScheduler):
         # Allocate queue id when needed
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
 
+        # Capture existing head-level start_at BEFORE any mutations so it can be
+        # restored onto the new head reliably (avoids losing it during neutralisation)
+        existing_head_start: Optional[str] = None
+        try:
+            _orig_head = self._head_row_for_queue(target_qid)
+            if _orig_head is not None:
+                existing_head_start = (_orig_head.get("schedule") or {}).get("start_at")
+        except Exception:
+            existing_head_start = None
+        # Fallback: if no head detected for this queue yet, derive from any current
+        # member in the provided order that is a head and owns a start_at
+        if existing_head_start is None:
+            try:
+                for _tid in order:
+                    _row = self._get_single_row_or_raise(int(_tid))
+                    _sched = _row.get("schedule") or {}
+                    if (
+                        _sched.get("start_at") is not None
+                        and _sched.get("prev_task") is None
+                    ):
+                        existing_head_start = _sched.get("start_at")
+                        break
+            except Exception:
+                pass
+
         # Remove any other members currently in the target queue
         try:
             current_members = [t.task_id for t in self._get_queue(queue_id=target_qid)]
@@ -2412,7 +2437,8 @@ class TaskScheduler(BaseTaskScheduler):
                 task_id=int(tid),
                 entries={
                     "schedule": sched,
-                    "status": self._to_status(row.get("status")),
+                    # Temporary neutral state so invariants pass without start_at
+                    "status": Status.queued,
                     "queue_id": target_qid,
                 },
                 err_prefix=f"While preparing task {tid} for queue materialization:",
@@ -2428,18 +2454,11 @@ class TaskScheduler(BaseTaskScheduler):
                 "next_task": next_tid,
             }
             if idx == 0:
-                # Prefer provided queue_start_at; else preserve existing head start
-                if queue_start_at is None:
-                    try:
-                        head_row = self._head_row_for_queue(target_qid)
-                        if head_row is not None:
-                            existing = (head_row.get("schedule") or {}).get("start_at")
-                            if existing is not None:
-                                sched["start_at"] = existing
-                    except Exception:
-                        pass
-                else:
+                # Prefer provided queue_start_at; else preserve previously-captured head start
+                if queue_start_at is not None:
                     sched["start_at"] = queue_start_at
+                elif existing_head_start is not None:
+                    sched["start_at"] = existing_head_start
 
             # Derive status
             desired_status = (
@@ -2456,6 +2475,34 @@ class TaskScheduler(BaseTaskScheduler):
                 },
                 err_prefix=f"While materializing queue {target_qid} (task {tid}):",
             )
+
+        # Safety: explicitly (re)apply start_at on the new head using the public
+        # helper to enforce invariants, regardless of intermediate writes.
+        try:
+            if order:
+                head_tid = int(order[0])
+                source_start = (
+                    queue_start_at
+                    if queue_start_at is not None
+                    else existing_head_start
+                )
+                if source_start is not None:
+                    from datetime import datetime as _dt
+
+                    _src = str(source_start)
+                    if _src.endswith("Z"):
+                        _src = _src.replace("Z", "+00:00")
+                    try:
+                        dt = (
+                            source_start
+                            if isinstance(source_start, _dt)
+                            else _dt.fromisoformat(_src)
+                        )
+                    except Exception:
+                        dt = source_start  # type: ignore[assignment]
+                    self._update_task_start_at(task_id=head_tid, new_start_at=dt)  # type: ignore[arg-type]
+        except Exception:
+            pass
 
         # Auto-checkpoint
         try:
