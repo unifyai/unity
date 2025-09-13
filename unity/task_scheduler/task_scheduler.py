@@ -188,6 +188,7 @@ class TaskScheduler(BaseTaskScheduler):
                 # Ask
                 self.ask,
                 # Creation / deletion / cancellation
+                self._create_tasks,
                 self._create_task,
                 self._delete_task,
                 self._cancel_tasks,
@@ -1740,6 +1741,187 @@ class TaskScheduler(BaseTaskScheduler):
         return {
             "outcome": "task created successfully",
             "details": {"task_id": task_id},
+        }
+
+    def _create_tasks(
+        self,
+        *,
+        tasks: List[Dict[str, Any]],
+        queue_ordering: Optional[List[Union[List[int], Dict[str, Any]]]] = None,
+    ) -> ToolOutcome:
+        """
+        Batch‑create tasks with ascending ids and (optionally) materialise one
+        or more runnable queues in a single atomic flow.
+
+        Motivation and intended use
+        ---------------------------
+        Use this tool when the user asks to create a series/chain of new tasks
+        (potentially across multiple queues) and to establish their order immediately.
+        This avoids multiple calls to the singular ``_create_task`` followed by separate
+        queue manipulation calls. In one call you get:
+        1) predictable, ascending ``task_id`` assignment matching the provided
+           list order; and
+        2) explicit single‑queue or multi‑queue ordering for those new tasks.
+
+        Behaviour
+        ---------
+        - Task identifiers are assigned in ascending order following the order
+          of the provided ``tasks`` list (driven by the underlying auto‑increment).
+        - When ``queue_ordering`` is supplied, this method creates one or more
+          queues that include ONLY the newly created tasks, in the exact
+          head→tail order you specify. Fresh backend ``queue_id`` values are
+          allocated for each such queue.
+        - If any of these tasks are to be added into an *already existing* queue,
+          then leave this task out of the ``queue_ordering`` and add to the queue
+          later with the dedicated queue manipultation tools.
+
+        Parameters
+        ----------
+        tasks : list[dict]
+            One dict per task mirroring the arguments of ``_create_task``.
+            Typical usage is to provide just ``name`` and ``description`` for
+            each task and rely on ``queue_ordering`` for ordering.
+        queue_ordering : list[list[int] | dict] | None
+            Optional declaration of one or more queues using RELATIVE indices
+            into the ``tasks`` list. Indices are 0‑based and must not be
+            confused with the backend‑managed numeric ``queue_id``.
+            Supported forms:
+            - ``[[0,1,2]]`` → single queue whose order is task0→task1→task2.
+            - ``[{"order": [0,2], "queue_start_at": "2035-06-16T09:00:00Z"},
+               {"order": [1]}]`` → two queues; the first adopts a start time on
+              its head; the second has no start time by default.
+
+        Returns
+        -------
+        ToolOutcome
+            ``{"outcome": "tasks created", "details": {"task_ids": [...], "queues": [...]}}``
+            where ``queues`` lists the allocated ``queue_id`` for each declared
+            queue, its ``relative_queue_index`` (0‑based in the input array) and
+            the realised ``task_ids`` order.
+
+        Notes
+        -----
+        - Relative indices in ``queue_ordering`` refer to the position of each
+          spec in the ``tasks`` argument. They are not persistent ids (not the `queue_id`).
+        - If you need to create tasks without establishing their order yet,
+          you may omit ``queue_ordering`` and manipulate queues later via
+          dedicated queue tools. When both creation and ordering are requested
+          together, prefer this batched tool.
+        """
+
+        # Fast path: nothing to do
+        if not tasks:
+            return {
+                "outcome": "tasks created",
+                "details": {"task_ids": [], "queues": []},
+            }
+
+        # Pre‑validate names/descriptions to avoid partial creation on obvious duplicates
+        seen_names: set[str] = set()
+        seen_descs: set[str] = set()
+        for idx, spec in enumerate(tasks):
+            name = spec.get("name")
+            desc = spec.get("description")
+            if not name or not desc:
+                raise ValueError(
+                    f"Each task spec must include non‑empty 'name' and 'description' (index={idx}).",
+                )
+            if name in seen_names:
+                raise ValueError(
+                    f"Duplicate task name in batch: {name!r} (index={idx})",
+                )
+            if desc in seen_descs:
+                raise ValueError(
+                    "Duplicate task description in batch – descriptions must be unique: "
+                    f"{desc!r} (index={idx})",
+                )
+            seen_names.add(str(name))
+            seen_descs.add(str(desc))
+
+        # Create tasks sequentially to preserve ascending id assignment
+        created_ids: List[int] = []
+        for spec in tasks:
+            # Whitelist supported fields mirroring _create_task signature
+            payload: Dict[str, Any] = {}
+            for key in (
+                "name",
+                "description",
+                "status",
+                "schedule",
+                "trigger",
+                "deadline",
+                "repeat",
+                "priority",
+                "response_policy",
+            ):
+                if key in spec:
+                    payload[key] = spec[key]
+            out = self._create_task(**payload)
+            created_ids.append(int(out["details"]["task_id"]))
+
+        queues_report: List[Dict[str, Any]] = []
+
+        if queue_ordering:
+            # Normalise queue_ordering into a list of {order: [...], queue_start_at: ...}
+            normalised: List[Dict[str, Any]] = []
+
+            def _norm_one(item: Union[List[int], Dict[str, Any]]) -> Dict[str, Any]:
+                if isinstance(item, list):
+                    return {"order": list(item), "queue_start_at": None}
+                if isinstance(item, dict):
+                    order = item.get("order")
+                    if order is None:
+                        # Allow a friendlier synonym
+                        order = item.get("task_indices")
+                    assert isinstance(order, list), (
+                        "Each queue spec must contain an 'order' list of relative indices",
+                    )
+                    return {
+                        "order": list(order),
+                        "queue_start_at": item.get("queue_start_at"),
+                    }
+                raise ValueError(
+                    "Invalid queue_ordering item; must be a list or a dict with 'order'.",
+                )
+
+            normalised = [_norm_one(x) for x in queue_ordering]
+
+            used_indices: set[int] = set()
+            for rel_qidx, qspec in enumerate(normalised):
+                indices: List[int] = [int(i) for i in qspec.get("order", [])]
+                # Validate indices
+                for i in indices:
+                    if i < 0 or i >= len(created_ids):
+                        raise ValueError(
+                            f"queue_ordering references out‑of‑range task index {i}; valid range is 0..{len(created_ids)-1}",
+                        )
+                    if i in used_indices:
+                        raise ValueError(
+                            f"Task at relative index {i} is referenced by more than one queue in queue_ordering.",
+                        )
+                used_indices.update(indices)
+
+                # Map relative indices to real task ids in the provided order
+                order_ids: List[int] = [created_ids[i] for i in indices]
+
+                # Allocate a fresh numeric queue id and materialise the queue
+                qid = self._allocate_new_queue_id()
+                self._set_queue(
+                    queue_id=qid,
+                    order=order_ids,
+                    queue_start_at=qspec.get("queue_start_at"),
+                )
+                queues_report.append(
+                    {
+                        "relative_queue_index": rel_qidx,
+                        "queue_id": qid,
+                        "task_ids": order_ids,
+                    },
+                )
+
+        return {
+            "outcome": "tasks created",
+            "details": {"task_ids": created_ids, "queues": queues_report},
         }
 
     # Delete
