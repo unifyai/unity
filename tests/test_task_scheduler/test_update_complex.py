@@ -38,7 +38,7 @@ async def test_update_reorder_queue(basic_task_scenario):
 
     # After update, verify that the new order matches expectation by reading the queue that contains ids[0]
     row = ts._filter_tasks(filter=f"task_id == {ids[0]}")[0]
-    qid = (row.get("schedule") or {}).get("queue_id")
+    qid = row.get("queue_id")
     queue = [t.task_id for t in ts._get_queue(queue_id=qid)]
     # expected order: 0 (report) -> 2 (follow-up) -> 1 (slides)
     assert queue == [ids[0], ids[2], ids[1]]
@@ -87,11 +87,10 @@ async def test_update_lower_priority_for_future_date(basic_task_scenario):
     # create one future scheduled task with high priority
     # Use an explicit queue id as default queue does not exist
     row0 = ts._filter_tasks(limit=1)[0]
-    existing_qid = (row0.get("schedule") or {}).get("queue_id")
+    existing_qid = row0.get("queue_id")
     # If no existing queue, allocate one
     qid = existing_qid if existing_qid is not None else ts._allocate_new_queue_id()
     sched = Schedule(
-        queue_id=qid,
         start_at="2035-06-16T09:00:00Z",
         prev_task=None,
         next_task=None,
