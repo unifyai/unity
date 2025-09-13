@@ -19,6 +19,7 @@ import pytest
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
+from unity.task_scheduler.types.schedule import Schedule
 
 #  The helper used in the existing test‑suite – applies project‑level monkey‐
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
