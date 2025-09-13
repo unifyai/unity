@@ -373,8 +373,6 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except Exception:
             queue_rows = []
 
-        # (debug logging removed)
-
         # Create a dedicated router client with high reasoning and priority tier
         try:
             client = unify.AsyncUnify(
