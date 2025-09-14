@@ -26,7 +26,7 @@ def test_tool_list_columns_timing():
     cols = cm._list_columns()
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(cols, dict) and cols
-    # assert elapsed_ms < 200.0
+    assert elapsed_ms < 950.0
 
 
 @pytest.mark.unit
