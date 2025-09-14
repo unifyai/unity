@@ -68,8 +68,8 @@ def test_tool_filter_contacts_timing():
     rows = cm._filter_contacts(filter=f"contact_id == {cid}")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert rows and rows[0].contact_id == cid
-    # assert elapsed_ms < X
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 1800.0
+    print(f"elapsed: {elapsed_ms} < 1800")
 
 
 @pytest.mark.unit

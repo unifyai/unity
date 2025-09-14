@@ -4,8 +4,9 @@ import requests
 import json
 import functools
 import os
+import re
 from .prompt_builders import build_ask_prompt, build_update_prompt
-from ..common.embed_utils import ensure_vector_column, list_private_fields
+from ..common.embed_utils import ensure_vector_column
 from ..knowledge_manager.types import ColumnType
 from ..helpers import _handle_exceptions
 from ..common.tool_outcome import ToolOutcome
@@ -1668,6 +1669,33 @@ class ContactManager(BaseContactManager):
         # keep payloads small without a prior fields introspection request.
         # If the client does not support `from_fields`, fall back to excluding
         # private fields using a lightweight introspection.
+        # Fast-path: tighten the requested limit when the filter guarantees
+        # at most a single match (unique equality) or a bounded small list.
+        eff_limit = limit
+        if isinstance(filter, str):
+            # contact_id == <int>
+            if re.fullmatch(r"\s*contact_id\s*==\s*\d+\s*", filter):
+                eff_limit = min(eff_limit, 1)
+            else:
+                # Equality on unique fields → at most one row
+                unique_eq_patterns = (
+                    r"\s*email_address\s*==\s*(['\"])\S.*?\1\s*",
+                    r"\s*phone_number\s*==\s*(['\"])\S.*?\1\s*",
+                    r"\s*whatsapp_number\s*==\s*(['\"])\S.*?\1\s*",
+                )
+                if any(re.fullmatch(p, filter) for p in unique_eq_patterns):
+                    eff_limit = min(eff_limit, 1)
+                else:
+                    # contact_id in [a, b, c] → cap at list length
+                    m = re.fullmatch(
+                        r"\s*contact_id\s*in\s*\[\s*([0-9,\s]+)\s*\]\s*",
+                        filter,
+                    )
+                    if m:
+                        count_ids = len(re.findall(r"\d+", m.group(1)))
+                        if count_ids > 0:
+                            eff_limit = min(eff_limit, count_ids)
+
         try:
             # Read built‑ins plus any custom columns we observed in this instance
             from_fields = list(self._BUILTIN_FIELDS)
@@ -1677,16 +1705,17 @@ class ContactManager(BaseContactManager):
                 context=self._ctx,
                 filter=filter,
                 offset=offset,
-                limit=limit,
+                limit=eff_limit,
                 from_fields=from_fields,
             )
         except TypeError:
+            # Older client without from_fields support → avoid an extra
+            # get_fields call and fetch once with the tightened limit.
             logs = unify.get_logs(
                 context=self._ctx,
                 filter=filter,
                 offset=offset,
-                limit=limit,
-                exclude_fields=list_private_fields(self._ctx),
+                limit=eff_limit,
             )
         return [Contact(**lg.entries) for lg in logs]
 
