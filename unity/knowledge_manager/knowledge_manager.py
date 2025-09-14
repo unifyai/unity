@@ -3,7 +3,6 @@ import asyncio
 import uuid
 import unify
 import functools
-import requests
 from typing import Any, Dict, List, Optional, Callable, Union
 
 import json
@@ -34,6 +33,7 @@ from ..common.semantic_search import (
 )
 from ..common.context_store import TableStore
 from ..events.event_bus import EVENT_BUS, Event
+from ..common.http import request as http_request
 
 # ------------------------------------------------------------------ #
 # Optional per-tool runtime logging (KnowledgeManager)               #
@@ -725,7 +725,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
-        response = requests.request("GET", url, headers=headers)
+        response = http_request("GET", url, headers=headers)
         _handle_exceptions(response)
         ret = response.json()
         return {k: v["data_type"] for k, v in ret.items()}
@@ -786,7 +786,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {"project": proj, "context": ctx, "fields": columns}
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
@@ -859,7 +859,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         url = f"{unify.BASE_URL}/project/{proj}/contexts/{old_name}/rename"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {"name": new_name}
-        response = requests.request("PATCH", url, json=json_input, headers=headers)
+        response = http_request("PATCH", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
@@ -934,7 +934,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "context": ctx,
             "fields": {column_name: column_type},
         }
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
@@ -1019,7 +1019,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "ids_and_fields": [[None, column_name]],
             "source_type": "all",
         }
-        response = requests.request("DELETE", url, json=json_input, headers=headers)
+        response = http_request("DELETE", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
@@ -1059,7 +1059,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "old_field_name": old_name,
             "new_field_name": new_name,
         }
-        response = requests.request("PATCH", url, json=json_input, headers=headers)
+        response = http_request("PATCH", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
@@ -1741,7 +1741,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "columns": select,
         }
 
-        resp = requests.request("POST", url, json=payload, headers=headers)
+        resp = http_request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
 
         return dest_ctx
