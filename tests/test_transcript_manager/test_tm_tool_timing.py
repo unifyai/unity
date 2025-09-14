@@ -51,8 +51,8 @@ def test_tool_filter_messages_timing():
     rows = tm._filter_messages(filter="exchange_id == 4242")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert rows and rows[0].exchange_id == 4242
-    # assert elapsed_ms < X
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 1200.0
+    print(f"elapsed: {elapsed_ms} < 1200")
 
 
 @pytest.mark.unit

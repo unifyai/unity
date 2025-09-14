@@ -1270,7 +1270,9 @@ class TranscriptManager(BaseTranscriptManager):
             offset=offset,
             limit=limit,
             sorting={"timestamp": "descending"},
-            exclude_fields=list_private_fields(self._transcripts_ctx),
+            # Limit payload strictly to the Message schema to avoid fetching
+            # private/embedding columns and to remove an extra fields lookup.
+            from_fields=list(Message.model_fields.keys()),
         )
         results = [Message(**lg.entries) for lg in logs]
         return (
