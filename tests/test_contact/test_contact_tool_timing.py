@@ -52,7 +52,7 @@ def test_tool_update_contact_timing():
     out = cm._update_contact(contact_id=cid, surname="Case")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"] and out["details"]["contact_id"] == cid
-    # assert elapsed_ms < 300.0
+    assert elapsed_ms < 2300.0
 
 
 @pytest.mark.unit
