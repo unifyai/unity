@@ -152,6 +152,7 @@ def fetch_top_k_by_terms_with_score(
     *,
     k: int = 10,
     row_filter: Optional[str] = None,
+    allowed_fields: Optional[List[str]] = None,
 ) -> tuple[list[dict], str]:
     """Return top-k rows plus the private score column key for provided terms.
 
@@ -168,16 +169,27 @@ def fetch_top_k_by_terms_with_score(
     sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
     sum_key = ensure_mean_cosine_column_piecewise_named(context, terms, sum_hash)
 
-    # Exclude all private fields except the score key we need to read
-    exclude_fields = [f for f in list_private_fields(context) if f != sum_key]
-
-    logs = unify.get_logs(
-        context=context,
-        filter=row_filter,
-        sorting={sum_key: "ascending"},
-        limit=k,
-        exclude_fields=exclude_fields,
-    )
+    # Build read projection
+    if allowed_fields is not None:
+        # Ensure the private score column is included in the payload
+        from_fields = list(dict.fromkeys([*allowed_fields, sum_key]))
+        logs = unify.get_logs(
+            context=context,
+            filter=row_filter,
+            sorting={sum_key: "ascending"},
+            limit=k,
+            from_fields=from_fields,
+        )
+    else:
+        # Exclude all private fields except the score key we need to read
+        exclude_fields = [f for f in list_private_fields(context) if f != sum_key]
+        logs = unify.get_logs(
+            context=context,
+            filter=row_filter,
+            sorting={sum_key: "ascending"},
+            limit=k,
+            exclude_fields=exclude_fields,
+        )
     return [lg.entries for lg in logs], sum_key
 
 
@@ -230,6 +242,7 @@ def fetch_top_k_by_terms(
     *,
     k: int = 10,
     row_filter: Optional[str] = None,
+    allowed_fields: Optional[List[str]] = None,
 ) -> List[dict]:
     """Return top-k rows ranked by semantic similarity given pre-embedded terms.
 
@@ -243,15 +256,26 @@ def fetch_top_k_by_terms(
     if len(terms) == 1:
         embed_col, ref_text = terms[0]
         escaped_ref = ref_text.replace("'", "\\'")
-        logs = unify.get_logs(
-            context=context,
-            filter=row_filter,
-            sorting={
-                f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
-            },
-            limit=k,
-            exclude_fields=list_private_fields(context),
-        )
+        if allowed_fields is not None:
+            logs = unify.get_logs(
+                context=context,
+                filter=row_filter,
+                sorting={
+                    f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
+                },
+                limit=k,
+                from_fields=allowed_fields,
+            )
+        else:
+            logs = unify.get_logs(
+                context=context,
+                filter=row_filter,
+                sorting={
+                    f"cosine({embed_col}, embed('{escaped_ref}', model='{EMBED_MODEL}'))": "ascending",
+                },
+                limit=k,
+                exclude_fields=list_private_fields(context),
+            )
         return [lg.entries for lg in logs]
 
     # If multiple terms are provided but the filter excludes all rows, avoid
@@ -276,13 +300,22 @@ def fetch_top_k_by_terms(
     sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
     sum_key = ensure_mean_cosine_column_piecewise(context, terms, sum_hash)
 
-    logs = unify.get_logs(
-        context=context,
-        filter=row_filter,
-        sorting={sum_key: "ascending"},
-        limit=k,
-        exclude_fields=list_private_fields(context),
-    )
+    if allowed_fields is not None:
+        logs = unify.get_logs(
+            context=context,
+            filter=row_filter,
+            sorting={sum_key: "ascending"},
+            limit=k,
+            from_fields=allowed_fields,
+        )
+    else:
+        logs = unify.get_logs(
+            context=context,
+            filter=row_filter,
+            sorting={sum_key: "ascending"},
+            limit=k,
+            exclude_fields=list_private_fields(context),
+        )
     return [lg.entries for lg in logs]
 
 
@@ -292,6 +325,7 @@ def fetch_top_k_by_references(
     *,
     k: int = 10,
     row_filter: Optional[str] = None,
+    allowed_fields: Optional[List[str]] = None,
 ) -> List[dict]:
     """Return top-k rows from a context ranked by semantic similarity to reference text(s).
 
@@ -338,7 +372,13 @@ def fetch_top_k_by_references(
         embed_col = ensure_vector_for_source(context, source_expr)
         terms.append((embed_col, ref_text))
 
-    return fetch_top_k_by_terms(context, terms, k=k, row_filter=row_filter)
+    return fetch_top_k_by_terms(
+        context,
+        terms,
+        k=k,
+        row_filter=row_filter,
+        allowed_fields=allowed_fields,
+    )
 
 
 def backfill_rows(
@@ -348,6 +388,7 @@ def backfill_rows(
     *,
     row_filter: Optional[str] = None,
     unique_id_field: Optional[str] = None,
+    allowed_fields: Optional[List[str]] = None,
 ) -> List[dict]:
     """Backfill similarity results with additional rows to reach k.
 
@@ -398,13 +439,32 @@ def backfill_rows(
     needed = k - len(results)
     offset = 0
     while needed > 0:
-        fallback_logs = unify.get_logs(
-            context=context,
-            filter=row_filter,
-            offset=offset,
-            limit=k,
-            exclude_fields=list_private_fields(context),
-        )
+        if allowed_fields is not None:
+            # Ensure we can deduplicate
+            from_fields = list(
+                dict.fromkeys(
+                    (
+                        [*(allowed_fields or []), unique_id_field]
+                        if unique_id_field
+                        else (allowed_fields or [])
+                    ),
+                ),
+            )
+            fallback_logs = unify.get_logs(
+                context=context,
+                filter=row_filter,
+                offset=offset,
+                limit=k,
+                from_fields=from_fields,
+            )
+        else:
+            fallback_logs = unify.get_logs(
+                context=context,
+                filter=row_filter,
+                offset=offset,
+                limit=k,
+                exclude_fields=list_private_fields(context),
+            )
         if not fallback_logs:
             break
 
