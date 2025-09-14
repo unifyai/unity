@@ -1,6 +1,5 @@
 from typing import List, Dict, Optional, Callable, Any, Tuple
 import asyncio
-import requests
 import json
 import functools
 import os
@@ -31,6 +30,7 @@ from ..common.semantic_search import (
     fetch_top_k_by_references,
     backfill_rows,
 )
+from ..common.http import request as http_request
 
 # ------------------------------------------------------------------ #
 #  Optional per-tool runtime logging                                  #
@@ -264,7 +264,7 @@ class ContactManager(BaseContactManager):
         """
         url = f"{os.environ['UNIFY_BASE_URL']}/assistant?"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = requests.request("GET", url, headers=headers)
+        response = http_request("GET", url, headers=headers)
         _handle_exceptions(response)
         data = response.json()
         return data.get("info", []) if isinstance(data, dict) else []
@@ -438,7 +438,7 @@ class ContactManager(BaseContactManager):
 
         url = f"{os.environ['UNIFY_BASE_URL']}/user/basic-info"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = requests.request("GET", url, headers=headers)
+        response = http_request("GET", url, headers=headers)
 
         # Raise for HTTP errors so the except-block handles them uniformly
         _handle_exceptions(response)
@@ -681,7 +681,7 @@ class ContactManager(BaseContactManager):
                 column_name: column_info,
             },
         }
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         # Remember the new column for subsequent reads within this manager instance
         try:
@@ -732,7 +732,7 @@ class ContactManager(BaseContactManager):
             "context": self._ctx,
             "fields": [column_name],
         }
-        response = requests.request("DELETE", url, json=json_input, headers=headers)
+        response = http_request("DELETE", url, json=json_input, headers=headers)
         _handle_exceptions(response)
 
         payload: Dict[str, Any] = {}
@@ -762,7 +762,7 @@ class ContactManager(BaseContactManager):
                 "ids_and_fields": [[None, column_name]],
                 "source_type": "all",
             }
-            fb_resp = requests.request(
+            fb_resp = http_request(
                 "DELETE",
                 fallback_url,
                 json=fallback_body,

@@ -4,9 +4,9 @@ Utility functions for embedding-based vector search through the logs.
 
 import os
 
-import requests
 import unify
 import threading
+from .http import request as http_request
 
 # Model to use for text embeddings
 EMBED_MODEL = "text-embedding-3-small"
@@ -92,7 +92,7 @@ def ensure_derived_column(
         if derived is not None:
             json_input["derived"] = derived
 
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = http_request("POST", url, json=json_input, headers=headers)
         if response.status_code != 200:
             body = getattr(response, "text", "") or ""
             if (

@@ -7,7 +7,7 @@ import functools
 from typing import List, Dict, Optional, Union, Any, Callable, Literal
 
 import unify
-import requests
+from ..common.http import request as http_request
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
@@ -1036,7 +1036,7 @@ class TranscriptManager(BaseTranscriptManager):
             "new_context": sender_join_ctx,
             "columns": select,
         }
-        resp = requests.request("POST", url, json=payload, headers=headers)
+        resp = http_request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
 
         # Base terms for sender join ranking
