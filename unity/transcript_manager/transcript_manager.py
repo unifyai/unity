@@ -223,6 +223,17 @@ class TranscriptManager(BaseTranscriptManager):
         # leaving the actual network I/O to an internal worker thread.
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
+        # Cache transcript columns for this singleton instance to avoid repeat
+        # backend reads during tools like `_list_columns`. This cache is
+        # populated lazily on first use, but we attempt a best-effort prefetch
+        # here so the first tool call does not pay the network cost.
+        self._columns_cache_all: Dict[str, str] = {}
+        try:
+            self._columns_cache_all = dict(self._store.get_columns())
+        except Exception:
+            # Defer to lazy population if prefetch fails
+            self._columns_cache_all = {}
+
     @classmethod
     def _get_logger(cls) -> unify.AsyncLoggerManager:
         return cls._LOGGER
@@ -1368,13 +1379,23 @@ class TranscriptManager(BaseTranscriptManager):
         Dict[str, str]
             Dictionary mapping column names to their types.
         """
-        return TableStore(self._transcripts_ctx).get_columns()
+        # Serve from the in-process cache when available; otherwise fetch once
+        # and remember for subsequent reads within this manager's lifetime.
+        if getattr(self, "_columns_cache_all", None):
+            return dict(self._columns_cache_all)
+        cols = self._store.get_columns()
+        try:
+            self._columns_cache_all = dict(cols)
+        except Exception:
+            pass
+        return cols
 
     @_tm_log_tool_runtime
     def _list_columns(
         self,
         *,
         include_types: bool = True,
+        include_private: bool = False,
     ) -> Dict[str, str] | list[str]:
         """
         Return the list of available columns in the transcripts table, optionally with types.
@@ -1385,8 +1406,14 @@ class TranscriptManager(BaseTranscriptManager):
             Controls the shape of the returned value:
             - When True: returns a mapping {column_name: column_type}.
             - When False: returns a list of column names.
+        include_private : bool, default False
+            When False, private/internal columns (those whose names start with "_")
+            are omitted from the result to reduce payload size and avoid exposing
+            vector/derived fields. Set to True to return all columns.
         """
         cols = self._get_columns()
+        if not include_private:
+            cols = {k: v for k, v in cols.items() if not str(k).startswith("_")}
         return cols if include_types else list(cols)
 
     def _num_messages(self) -> int:
