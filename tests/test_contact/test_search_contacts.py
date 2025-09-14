@@ -172,7 +172,7 @@ def test_search_contacts_backfills_when_insufficient_similarity_results():
     # Carla should be the top semantic match
     assert names[0] == "Carla"
     # Remaining should be backfilled from latest creation order without duplicates
-    assert names[2:4] == ["Frank", "Evelyn"]
+    assert names[1:4] == ["Frank", "Evelyn", "Darren"]
 
     # When references is None, skip semantic search and return most recent contacts
     recent_only = cm._search_contacts(references=None, k=3)
