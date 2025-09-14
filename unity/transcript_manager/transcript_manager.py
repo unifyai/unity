@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Union, Any, Callable, Literal
 
 import unify
 from ..common.http import request as http_request
-from ..common.embed_utils import ensure_vector_column, list_private_fields
+from ..common.embed_utils import ensure_vector_column
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
@@ -890,7 +890,9 @@ class TranscriptManager(BaseTranscriptManager):
             logs = unify.get_logs(
                 context=self._transcripts_ctx,
                 limit=k,
-                exclude_fields=list_private_fields(self._transcripts_ctx),
+                # Restrict payload to the Message schema to avoid a fields lookup
+                from_fields=list(Message.model_fields.keys()),
+                sorting={"timestamp": "descending"},
             )
             results = [Message(**lg.entries) for lg in logs]
             return (
@@ -1022,14 +1024,16 @@ class TranscriptManager(BaseTranscriptManager):
         sender_join_ctx = f"{left_ctx}__sender_join__{query_hash}"
 
         # Perform sender join selecting derived embedding columns directly
-        select: Dict[str, str] = {
-            f"{left_ctx}.message_id": "message_id",
-            f"{left_ctx}.receiver_ids": "receiver_ids",
-        }
+        # Use copy=False to avoid creating copies of logs; pass a list of columns.
+        select_cols: list[str] = []
+        # Include all message fields so we can reconstruct results without a second fetch
+        for mf in Message.model_fields.keys():
+            select_cols.append(f"{left_ctx}.{mf}")
+        # Include required embedding columns for ranking
         for embed_col, _ in msg_embed_columns:
-            select[f"{left_ctx}.{embed_col}"] = embed_col
+            select_cols.append(f"{left_ctx}.{embed_col}")
         for embed_col, _ in sender_contact_embed_columns:
-            select[f"{right_ctx}.{embed_col}"] = embed_col
+            select_cols.append(f"{right_ctx}.{embed_col}")
 
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
         headers = {
@@ -1045,7 +1049,8 @@ class TranscriptManager(BaseTranscriptManager):
             "join_expr": f"{left_ctx}.sender_id == {right_ctx}.contact_id",
             "mode": "inner",
             "new_context": sender_join_ctx,
-            "columns": select,
+            "columns": select_cols,
+            "copy": False,
         }
         resp = http_request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
@@ -1065,17 +1070,17 @@ class TranscriptManager(BaseTranscriptManager):
                 k=oversample,
             )
         else:
-            # Receiver-only search: rank contacts by receiver terms, then gather messages that include
-            # those contacts as receivers; compute per-message min receiver score; finally return top-k.
+            # Receiver-only search: rank contacts by receiver terms, then batch-fetch
+            # messages that include any of those contacts as receivers using OR-batched filters.
             top_contacts_limit = max(k * 10, 200)
             top_contact_rows, recv_score_key = fetch_top_k_by_terms_with_score(
                 right_ctx,
                 receiver_contact_embed_columns,
                 k=top_contacts_limit,
             )
-            # Accumulate candidate messages keyed by message_id with their provisional score (min over receivers)
-            msg_to_score: dict[int, float] = {}
-            seen_msg_ids: set[int] = set()
+
+            # Build contact_id -> score map
+            contact_scores: dict[int, float] = {}
             for contact_row in top_contact_rows:
                 cid = contact_row.get("contact_id")
                 if cid is None:
@@ -1088,64 +1093,84 @@ class TranscriptManager(BaseTranscriptManager):
                     c_score = float(contact_row.get(recv_score_key, 0))
                 except Exception:
                     c_score = 0.0
-                # Fetch messages where this contact is in receiver_ids
-                msgs = unify.get_logs(
+                contact_scores[cid_int] = c_score
+
+            # Accumulate candidate messages keyed by message_id with provisional score (min over receivers)
+            msg_to_score: dict[int, float] = {}
+            oversample_target = max(k * 5, 100)
+            # Batch OR-size to reduce backend calls
+            BATCH_OR_SIZE = 50
+            contact_ids: list[int] = list(contact_scores.keys())
+            for i in range(0, len(contact_ids), BATCH_OR_SIZE):
+                batch = contact_ids[i : i + BATCH_OR_SIZE]
+                if not batch:
+                    continue
+                or_expr = " or ".join(f"{cid} in receiver_ids" for cid in batch)
+                rows = unify.get_logs(
                     context=left_ctx,
-                    filter=f"{cid_int} in receiver_ids",
-                    limit=max(k * 5, 100),
-                    exclude_fields=list_private_fields(left_ctx),
+                    filter=or_expr,
+                    # Only need message_id and receiver_ids at this stage
+                    from_fields=["message_id", "receiver_ids"],
+                    limit=oversample_target,
                 )
-                for m in msgs:
-                    mid = m.entries.get("message_id")
-                    if mid is None:
+                for lg in rows:
+                    entries = lg.entries
+                    mid = entries.get("message_id")
+                    rids = entries.get("receiver_ids", [])
+                    if mid is None or not isinstance(rids, list):
                         continue
                     try:
                         mid_int = int(mid)
                     except Exception:
                         continue
+                    # Compute min receiver score across all receivers for this message
+                    min_recv = 2.0
+                    for rid in rids:
+                        try:
+                            sc = contact_scores.get(int(rid))
+                            if sc is not None and sc < min_recv:
+                                min_recv = sc
+                        except Exception:
+                            continue
                     prev = msg_to_score.get(mid_int)
-                    if (prev is None) or (c_score < prev):
-                        msg_to_score[mid_int] = c_score
-                        seen_msg_ids.add(mid_int)
-                if len(seen_msg_ids) >= k * 5:
+                    if (prev is None) or (min_recv < prev):
+                        msg_to_score[mid_int] = min_recv
+                if len(msg_to_score) >= oversample_target:
                     break
+
             # Turn into candidate rows with only message_id and receiver_ids; we'll refine later
             candidate_rows = []
             if msg_to_score:
-                # Fetch these messages to populate receiver_ids for the next step
-                for mid in list(msg_to_score.keys()):
-                    rows = unify.get_logs(
-                        context=left_ctx,
-                        filter=f"message_id == {int(mid)}",
-                        limit=1,
-                        exclude_fields=list_private_fields(left_ctx),
-                    )
-                    if rows:
-                        row = dict(rows[0].entries)
-                        # Inject a synthetic base score column name for uniformity in later code
-                        row["_receiver_only_base"] = 0.0
-                        candidate_rows.append(row)
+                # Batch-fetch receiver_ids for these messages
+                ids_expr = ", ".join(str(i) for i in msg_to_score.keys())
+                rows = unify.get_logs(
+                    context=left_ctx,
+                    filter=f"message_id in [{ids_expr}]",
+                    from_fields=["message_id", "receiver_ids"],
+                    limit=len(msg_to_score),
+                )
+                # Build lookup to avoid re-reads later
+                for lg in rows:
+                    row = dict(lg.entries)
+                    row["_receiver_only_base"] = 0.0
+                    candidate_rows.append(row)
 
         # Fast path: no receiver terms → return top-k by base ranking
         if not receiver_contact_embed_columns:
-            # Map back to original messages by message_id
+            # Reconstruct messages directly from the joined rows (we included all message fields)
             results: List[Message] = []
             taken = 0
+            msg_field_keys = set(Message.model_fields.keys())
             for row in candidate_rows:
                 if taken >= k:
                     break
-                mid = row.get("message_id")
-                if mid is None:
-                    continue
-                rows = unify.get_logs(
-                    context=left_ctx,
-                    filter=f"message_id == {int(mid)}",
-                    limit=1,
-                    exclude_fields=list_private_fields(left_ctx),
-                )
-                if rows:
-                    results.append(Message(**rows[0].entries))
+                # Filter to Message schema fields only
+                msg_payload = {k: row.get(k) for k in msg_field_keys if k in row}
+                try:
+                    results.append(Message(**msg_payload))
                     taken += 1
+                except Exception:
+                    continue
             return (
                 self._format_contacts_and_messages(results)
                 if return_with_contacts_table
@@ -1205,17 +1230,33 @@ class TranscriptManager(BaseTranscriptManager):
         combined.sort(key=lambda t: t[1])
         top_ids = [mid for mid, _ in combined[:k]]
 
-        # Fetch and return original message rows
+        # Build lookup from candidate rows to avoid re-fetching
+        if not top_ids:
+            return (
+                self._format_contacts_and_messages([])
+                if return_with_contacts_table
+                else []
+            )
+        msg_field_keys = set(Message.model_fields.keys())
+        row_by_id: dict[int, dict] = {}
+        for row in candidate_rows:
+            mid = row.get("message_id")
+            if mid is None:
+                continue
+            try:
+                mid_int = int(mid)
+            except Exception:
+                continue
+            row_by_id[mid_int] = {k: row.get(k) for k in msg_field_keys if k in row}
         results: List[Message] = []
         for mid in top_ids:
-            rows = unify.get_logs(
-                context=left_ctx,
-                filter=f"message_id == {int(mid)}",
-                limit=1,
-                exclude_fields=list_private_fields(left_ctx),
-            )
-            if rows:
-                results.append(Message(**rows[0].entries))
+            payload = row_by_id.get(mid)
+            if not payload:
+                continue
+            try:
+                results.append(Message(**payload))
+            except Exception:
+                continue
 
         return (
             self._format_contacts_and_messages(results)
