@@ -1068,6 +1068,7 @@ class ContactManager(BaseContactManager):
             "clarification_up_q",
             "clarification_down_q",
             "kwargs",
+            "_log_id",
         }
         safe: Dict[str, Any] = {}
         for key, value in (custom_columns or {}).items():
@@ -1251,6 +1252,7 @@ class ContactManager(BaseContactManager):
         rolling_summary: Optional[str] = None,
         respond_to: Optional[bool] = None,
         response_policy: Optional[str] = None,
+        _log_id: Optional[int] = None,
         **kwargs: Any,
     ) -> ToolOutcome:
         """
@@ -1369,22 +1371,24 @@ class ContactManager(BaseContactManager):
                     "Another contact already exists with one of the provided unique fields.",
                 )
 
-        # Find the specific log entry to update
-        target_ids = unify.get_logs(
-            context=self._ctx,
-            filter=f"contact_id == {contact_id}",
-            return_ids_only=True,
-        )
-        if not target_ids:
-            raise ValueError(
-                f"No contact found with contact_id {contact_id} to update.",
+        # Find the specific log entry to update (or use provided id)
+        if _log_id is None:
+            target_ids = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {contact_id}",
+                return_ids_only=True,
             )
-        if len(target_ids) > 1:
-            raise ValueError(
-                f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
-            )
-
-        log_to_update_id = target_ids[0]
+            if not target_ids:
+                raise ValueError(
+                    f"No contact found with contact_id {contact_id} to update.",
+                )
+            if len(target_ids) > 1:
+                raise ValueError(
+                    f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
+                )
+            log_to_update_id = target_ids[0]
+        else:
+            log_to_update_id = _log_id
 
         unify.update_logs(
             logs=[log_to_update_id],
@@ -1402,6 +1406,7 @@ class ContactManager(BaseContactManager):
         self,
         *,
         contact_id: int,
+        _log_id: Optional[int] = None,
     ) -> ToolOutcome:
         """
         Permanently delete a contact.
@@ -1433,27 +1438,32 @@ class ContactManager(BaseContactManager):
         if contact_id in (0, 1):
             raise RuntimeError("Cannot delete system contacts with id 0 or 1.")
 
-        # Minimise backend scan work while preserving duplicate detection by
-        # capping the lookup to at most two rows.
-        log_ids = unify.get_logs(
-            context=self._ctx,
-            filter=f"contact_id == {contact_id}",
-            limit=2,
-            return_ids_only=True,
-        )
-        if not log_ids:
-            raise ValueError(
-                f"No contact found with contact_id {contact_id} to delete.",
+        # Resolve the log id (or use the provided one)
+        if _log_id is None:
+            # Minimise backend scan work while preserving duplicate detection by
+            # capping the lookup to at most two rows.
+            log_ids = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {contact_id}",
+                limit=2,
+                return_ids_only=True,
             )
-        if len(log_ids) > 1:
-            raise RuntimeError(
-                f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
-            )
+            if not log_ids:
+                raise ValueError(
+                    f"No contact found with contact_id {contact_id} to delete.",
+                )
+            if len(log_ids) > 1:
+                raise RuntimeError(
+                    f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
+                )
+            resolved_id = log_ids[0]
+        else:
+            resolved_id = _log_id
 
         # Pass a single integer id to avoid wrapping in a list
         unify.delete_logs(
             context=self._ctx,
-            logs=log_ids[0],
+            logs=resolved_id,
         )
         return {
             "outcome": "contact deleted",
@@ -1526,19 +1536,32 @@ class ContactManager(BaseContactManager):
         else:
             overrides = {}
 
-        # Retrieve both contacts
-        def _fetch(cid: int):
-            logs = unify.get_logs(
-                context=self._ctx,
-                filter=f"contact_id == {cid}",
-                limit=1,
-            )
-            if not logs:
-                raise ValueError(f"No contact found with contact_id {cid}.")
-            return logs[0]
+        # Retrieve both contacts with a single backend call
+        rows = unify.get_logs(
+            context=self._ctx,
+            filter=f"contact_id in [{contact_id_1}, {contact_id_2}]",
+            limit=2,
+        )
+        if not rows or len(rows) < 2:
+            # Disambiguate which id is missing
+            present_ids: set[int] = set()
+            for lg in rows or []:
+                try:
+                    present_ids.add(int(lg.entries.get("contact_id")))
+                except Exception:
+                    pass
+            missing = contact_id_1 if contact_id_1 not in present_ids else contact_id_2
+            raise ValueError(f"No contact found with contact_id {missing}.")
 
-        log1 = _fetch(contact_id_1)
-        log2 = _fetch(contact_id_2)
+        # Map by contact_id to avoid ordering assumptions
+        by_id: Dict[int, Any] = {}
+        for lg in rows:
+            try:
+                by_id[int(lg.entries.get("contact_id"))] = lg
+            except Exception:
+                continue
+        log1 = by_id[contact_id_1]
+        log2 = by_id[contact_id_2]
 
         entries1 = log1.entries
         entries2 = log2.entries
@@ -1556,7 +1579,10 @@ class ContactManager(BaseContactManager):
         # Build the consolidated field map (skip contact_id – handled separately)
         consolidated: Dict[str, Any] = {}
 
-        all_cols = set(self._get_columns())
+        # Restrict to columns present on either side; skip private vector columns
+        entries1 = log1.entries
+        entries2 = log2.entries
+        all_cols = set(entries1.keys()) | set(entries2.keys())
         all_cols.discard("contact_id")
 
         for col in all_cols:
@@ -1583,10 +1609,12 @@ class ContactManager(BaseContactManager):
             k: v for k, v in consolidated.items() if k not in self._BUILTIN_FIELDS
         }
 
-        # Apply updates to the kept contact
+        # Apply updates to the kept contact (avoid an extra id lookup by passing _log_id)
         if builtin_updates or custom_updates:
+            kept_log_id = getattr(by_id[keep_id], "id", None)
             self._update_contact(
                 contact_id=keep_id,
+                _log_id=kept_log_id,
                 **{
                     k: builtin_updates.get(k)
                     for k in self._BUILTIN_FIELDS
@@ -1595,19 +1623,39 @@ class ContactManager(BaseContactManager):
                 **(custom_updates or {}),
             )
 
-        # Delete the other contact
-        self._delete_contact(contact_id=delete_id)
+        # Delete the other contact (avoid an extra id lookup by passing _log_id)
+        delete_log_id = getattr(by_id[delete_id], "id", None)
+        self._delete_contact(contact_id=delete_id, _log_id=delete_log_id)
 
         # Keep transcript history consistent by rewriting old ids
-        from unity.transcript_manager.transcript_manager import (
-            TranscriptManager,
-        )  # noqa: WPS433
+        # Only rewrite transcripts if any message references the deleted id
+        try:
+            ctxs = unify.get_active_context()
+            read_ctx = ctxs.get("read")
+        except Exception:
+            read_ctx = None
+        transcripts_ctx = f"{read_ctx}/Transcripts" if read_ctx else "Transcripts"
 
-        tm = TranscriptManager(contact_manager=self)
-        tm._update_contact_id(
-            original_contact_id=delete_id,
-            new_contact_id=keep_id,
-        )
+        try:
+            referenced = unify.get_logs(
+                context=transcripts_ctx,
+                filter=f"(sender_id == {delete_id}) or ({delete_id} in receiver_ids)",
+                limit=1,
+                return_ids_only=True,
+            )
+        except Exception:
+            referenced = []
+
+        if referenced:
+            from unity.transcript_manager.transcript_manager import (
+                TranscriptManager,
+            )  # noqa: WPS433
+
+            tm = TranscriptManager(contact_manager=self)
+            tm._update_contact_id(
+                original_contact_id=delete_id,
+                new_contact_id=keep_id,
+            )
 
         return {
             "outcome": "contacts merged successfully",
