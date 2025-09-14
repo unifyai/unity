@@ -3,7 +3,6 @@ import asyncio
 import uuid
 import unify
 import functools
-import requests
 from typing import Any, Dict, List, Optional, Callable, Union
 
 import json
@@ -33,6 +32,111 @@ from ..common.semantic_search import (
     backfill_rows,
 )
 from ..common.context_store import TableStore
+from ..events.event_bus import EVENT_BUS, Event
+from ..common.http import request as http_request
+
+# ------------------------------------------------------------------ #
+# Optional per-tool runtime logging (KnowledgeManager)               #
+# ------------------------------------------------------------------ #
+import time
+
+
+def _env_truthy(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    raw_l = str(raw).strip().lower()
+    return raw_l in {"1", "true", "yes", "on"}
+
+
+def _km_timing_enabled() -> bool:
+    # Per-manager override → global fallback
+    return _env_truthy(
+        "KNOWLEDGE_MANAGER_TOOL_TIMING",
+        _env_truthy("TOOL_TIMING", False),
+    )
+
+
+def _km_timing_print_enabled() -> bool:
+    return _env_truthy(
+        "KNOWLEDGE_MANAGER_TOOL_TIMING_PRINT",
+        _env_truthy("TOOL_TIMING_PRINT", False),
+    )
+
+
+def _km_log_tool_runtime(func):
+    """Decorator to measure and optionally publish per-tool runtimes.
+
+    Controlled by env flags:
+      • KNOWLEDGE_MANAGER_TOOL_TIMING (fallback TOOL_TIMING)
+      • KNOWLEDGE_MANAGER_TOOL_TIMING_PRINT (fallback TOOL_TIMING_PRINT)
+    Publishes a lightweight ManagerTool event on EVENT_BUS when enabled.
+    """
+
+    @functools.wraps(func, updated=())
+    def _wrapper(self: "KnowledgeManager", *args, **kwargs):
+        start = time.perf_counter()
+        try:
+            return func(self, *args, **kwargs)
+        finally:
+            try:
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+            except Exception:
+                elapsed_ms = -1.0
+
+            if _km_timing_print_enabled():
+                try:
+                    print(f"KnowledgeManager.{func.__name__} took {elapsed_ms:.2f} ms")
+                except Exception:
+                    pass
+
+            if not _km_timing_enabled():
+                return
+
+            # Determine category best-effort at runtime
+            try:
+                if (
+                    isinstance(getattr(self, "_ask_tools", None), dict)
+                    and func.__name__ in self._ask_tools
+                ):
+                    category = "ask"
+                elif (
+                    isinstance(getattr(self, "_update_tools", None), dict)
+                    and func.__name__ in self._update_tools
+                ):
+                    category = "update"
+                elif (
+                    isinstance(getattr(self, "_refactor_tools", None), dict)
+                    and func.__name__ in self._refactor_tools
+                ):
+                    category = "refactor"
+                else:
+                    category = "direct"
+            except Exception:
+                category = "direct"
+
+            # Publish event if an event loop is running
+            try:
+                evt = Event(
+                    type="ManagerTool",
+                    payload={
+                        "manager": "KnowledgeManager",
+                        "tool": func.__name__,
+                        "category": category,
+                        "duration_ms": float(elapsed_ms),
+                    },
+                )
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None and EVENT_BUS:
+                    asyncio.create_task(EVENT_BUS.publish(evt))
+            except Exception:
+                # Never let timing/logging affect tool behaviour
+                pass
+
+    return _wrapper
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -621,7 +725,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
-        response = requests.request("GET", url, headers=headers)
+        response = http_request("GET", url, headers=headers)
         _handle_exceptions(response)
         ret = response.json()
         return {k: v["data_type"] for k, v in ret.items()}
@@ -631,6 +735,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Tables
 
+    @_km_log_tool_runtime
     def _create_table(
         self,
         *,
@@ -681,10 +786,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {"project": proj, "context": ctx, "fields": columns}
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
+    @_km_log_tool_runtime
     def _tables_overview(
         self,
         *,
@@ -725,6 +831,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             k: {**v, "columns": self._get_columns(table=k)} for k, v in tables.items()
         }
 
+    @_km_log_tool_runtime
     def _rename_table(
         self,
         *,
@@ -752,10 +859,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         url = f"{unify.BASE_URL}/project/{proj}/contexts/{old_name}/rename"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {"name": new_name}
-        response = requests.request("PATCH", url, json=json_input, headers=headers)
+        response = http_request("PATCH", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
+    @_km_log_tool_runtime
     def _delete_tables(
         self,
         *,
@@ -791,6 +899,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Columns
 
+    @_km_log_tool_runtime
     def _create_empty_column(
         self,
         *,
@@ -825,10 +934,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             "context": ctx,
             "fields": {column_name: column_type},
         }
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
+    @_km_log_tool_runtime
     def _create_derived_column(
         self,
         *,
@@ -869,6 +979,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         response = requests.request("POST", url, json=json_input, headers=headers)
         return response.json()
 
+    @_km_log_tool_runtime
     def _delete_column(
         self,
         *,
@@ -908,10 +1019,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             "ids_and_fields": [[None, column_name]],
             "source_type": "all",
         }
-        response = requests.request("DELETE", url, json=json_input, headers=headers)
+        response = http_request("DELETE", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
+    @_km_log_tool_runtime
     def _rename_column(
         self,
         *,
@@ -947,10 +1059,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             "old_field_name": old_name,
             "new_field_name": new_name,
         }
-        response = requests.request("PATCH", url, json=json_input, headers=headers)
+        response = http_request("PATCH", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
+    @_km_log_tool_runtime
     def _copy_column(
         self,
         *,
@@ -1002,6 +1115,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "column": column_name,
         }
 
+    @_km_log_tool_runtime
     def _move_column(
         self,
         *,
@@ -1043,6 +1157,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "delete_result": str(del_res),
         }
 
+    @_km_log_tool_runtime
     def _transform_column(
         self,
         *,
@@ -1096,6 +1211,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     #  Row-level deletion
 
+    @_km_log_tool_runtime
     def _delete_rows(
         self,
         *,
@@ -1156,6 +1272,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Row creation / update
 
+    @_km_log_tool_runtime
     def _add_rows(
         self,
         *,
@@ -1186,6 +1303,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             batched=True,
         )
 
+    @_km_log_tool_runtime
     def _update_rows(
         self,
         *,
@@ -1229,6 +1347,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         return res
 
     # Vector Search Helpers
+    @_km_log_tool_runtime
     def _vectorize_column(
         self,
         table: str,
@@ -1258,6 +1377,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             source_column=source_column,
         )
 
+    @_km_log_tool_runtime
     def _search(
         self,
         *,
@@ -1292,6 +1412,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         rows: List[Dict[str, Any]] = fetch_top_k_by_references(context, references, k=k)
         return backfill_rows(context, rows, k)
 
+    @_km_log_tool_runtime
     def _search_join(
         self,
         *,
@@ -1377,6 +1498,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             except Exception:
                 pass
 
+    @_km_log_tool_runtime
     def _search_multi_join(
         self,
         *,
@@ -1619,11 +1741,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             "columns": select,
         }
 
-        resp = requests.request("POST", url, json=payload, headers=headers)
+        resp = http_request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
 
         return dest_ctx
 
+    @_km_log_tool_runtime
     def _filter(
         self,
         *,
@@ -1673,6 +1796,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ]
         return results
 
+    @_km_log_tool_runtime
     def _filter_join(
         self,
         *,
@@ -1782,6 +1906,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return rows
 
+    @_km_log_tool_runtime
     def _filter_multi_join(
         self,
         *,

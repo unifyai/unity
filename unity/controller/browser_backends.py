@@ -382,7 +382,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
             headers = {
                 "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
             }
-            result = requests.request(
+            from ..common.http import request as http_request
+
+            result = http_request(
                 method,
                 url,
                 json=payload,
@@ -422,7 +424,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
             for prefix_folder in ["home/install", "home/deb"]:
                 try:
                     # Request signed URLs for all files under the prefix
-                    dl_resp = requests.get(
+                    from ..common.http import get as http_get
+
+                    dl_resp = http_get(
                         dl_endpoint,
                         params={
                             "user_id": user_id,
@@ -461,7 +465,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                                 "/" + rel_from_assistant
                             )  # starts with home/install or home/deb
                             os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                            bin_resp = requests.get(url, timeout=300)
+                            bin_resp = http_get(url, timeout=300)
                             if bin_resp.status_code >= 400:
                                 print(
                                     f"Warning: download content failed for {full_path}: {bin_resp.status_code}",

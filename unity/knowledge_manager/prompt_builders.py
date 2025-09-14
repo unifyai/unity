@@ -270,6 +270,17 @@ def build_update_prompt(
         )
     )
 
+    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
+    parallelism_block = textwrap.dedent(
+        """
+        Parallelism and single‑call preference
+        -------------------------------------
+        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
+        • When multiple independent reads or writes are needed, plan them together and run them in parallel rather than a serial drip of micro‑calls.
+        • Batch arguments where possible and avoid confirmatory re‑queries unless new ambiguity arises.
+        """,
+    ).strip()
+
     parts: list[str] = [
         activity_block,
         core_instructions,
@@ -278,6 +289,8 @@ def build_update_prompt(
         "",
         "Tools (name → argspec):",
         sig_json,
+        "",
+        parallelism_block,
         "",
         "ColumnType Schema",
         "-----------------",
@@ -382,6 +395,17 @@ def build_ask_prompt(
         else ""
     )
 
+    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
+    parallelism_block = textwrap.dedent(
+        """
+        Parallelism and single‑call preference
+        -------------------------------------
+        • Prefer a single comprehensive search call over several surgical calls when a tool can safely do the whole job.
+        • When multiple independent reads are needed, plan them together and run them in parallel rather than a serial drip of micro‑calls.
+        • Avoid confirmatory re‑queries unless new ambiguity arises.
+        """,
+    ).strip()
+
     parts: list[str] = [
         activity_block,
         core_instructions,
@@ -390,6 +414,8 @@ def build_ask_prompt(
         "",
         "Tools (name → argspec):",
         sig_json,
+        "",
+        parallelism_block,
         "",
         "ColumnType Schema",
         "-----------------",

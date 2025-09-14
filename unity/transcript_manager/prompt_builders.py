@@ -169,6 +169,17 @@ def build_ask_prompt(
         )
     )
 
+    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
+    parallelism_block = textwrap.dedent(
+        """
+        Parallelism and single‑call preference
+        -------------------------------------
+        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
+        • When you need multiple independent reads, plan them together and run them in parallel rather than a serial drip of micro‑calls.
+        • Batch arguments where possible and avoid confirmatory re‑queries unless new ambiguity arises.
+        """,
+    ).strip()
+
     return "\n".join(
         [
             activity_block,
@@ -194,6 +205,8 @@ def build_ask_prompt(
             sig_json,
             "",
             usage_examples,
+            "",
+            parallelism_block,
             "",
             "Schemas",
             "-------",

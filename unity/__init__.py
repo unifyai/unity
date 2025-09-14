@@ -122,12 +122,12 @@ def _list_all_assistants() -> list[dict]:
     try:
         # Defer optional imports so that the package can be imported without
         # 'requests' installed (common in offline test environments).
-        import requests  # type: ignore
         from .helpers import _handle_exceptions  # local, may import requests
+        from .common.http import request as http_request
 
         url = f"{os.environ['UNIFY_BASE_URL']}/assistant"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = requests.request("GET", url, headers=headers)
+        response = http_request("GET", url, headers=headers)
         _handle_exceptions(response)
         data = response.json()
         return data.get("info", []) if isinstance(data, dict) else []

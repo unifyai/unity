@@ -8,6 +8,9 @@ import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserO
 import { z, ZodTypeAny, ZodAny } from 'zod';
 import dotenv from 'dotenv';
 dotenv.config();
+import os from 'os';
+import path from 'path';
+import fs from 'fs';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -141,6 +144,21 @@ function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new S
 
   return z.any();
 }
+
+function getDefaultBrowserPaths() {
+  const base = path.join(os.tmpdir(), 'unify', 'assistant', 'browser');
+  const downloadsPath = path.join(base, 'install');
+  const tracesDir = path.join(base, 'traces');
+  try {
+    fs.mkdirSync(downloadsPath, { recursive: true });
+    fs.mkdirSync(tracesDir, { recursive: true });
+  } catch (_e) {
+    // ignore directory creation errors; downstream may still handle
+  }
+  return { downloadsPath, tracesDir };
+}
+
+const defaultBrowserPaths = getDefaultBrowserPaths();
 
 const app = express();
 const wsInstance = expressWs(app);
@@ -350,7 +368,7 @@ const startDesktop = () => {
 
   startBrowserAgent({
     url: "https://www.duckduckgo.com/",
-    browser: getLaunchOptions(false, "/tmp/unify/assistant/browser/install", "/tmp/unify/assistant/browser/traces"),
+    browser: getLaunchOptions(false, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
   }).then(agent => {
     desktopBrowserAgent = agent;
     console.log("✅ Desktop BrowserAgent started successfully.");
@@ -363,7 +381,7 @@ const startDesktop = () => {
 const startBrowser = (headless: boolean) => {
   startBrowserAgent({
     url: "https://www.duckduckgo.com/",
-    browser: getLaunchOptions(headless, "/tmp/unify/assistant/browser/install", "/tmp/unify/assistant/browser/traces"),
+    browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
     narrate: true,
   }).then(agent => {
     browserAgent = agent;

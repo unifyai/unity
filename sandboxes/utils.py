@@ -1140,7 +1140,7 @@ def steering_controls_hint(
         "/pause",
         "/resume",
         "/ask <q>",
-        "/freeform <text>",
+        "/freeform <text> (or plain text)",
     ]
     if voice_enabled:
         base_parts.append("/r (record voice)")
@@ -1929,26 +1929,20 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     except Exception as exc:
                         print(f"⚠️  Failed to send clarification: {exc}")
                 else:
-                    # Otherwise → interject (forward exactly as typed)
-                    print(f"interjecting: {txt}")
-                    run_in_loop(handle.interject(txt))
-                    print("✅ Interjection sent.")
-                    if enable_voice_steering:
-                        speak("Interjection sent")
-                        _wait_for_tts_end()
-                        print(
-                            steering_controls_hint(
-                                pending_clarification=(pending_clar_q is not None),
-                                voice_enabled=enable_voice_steering,
-                            ),
-                        )
-                    else:
-                        print(
-                            steering_controls_hint(
-                                pending_clarification=(pending_clar_q is not None),
-                                voice_enabled=enable_voice_steering,
-                            ),
-                        )
+                    # Otherwise → route plain text via freeform (LLM router decides ask/interject/pause/resume/stop/status)
+                    should_break = await _route_freeform_and_apply(
+                        handle,
+                        txt,
+                        enable_voice_steering,
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                        chat_context=chat_context,
+                        is_task_running=not handle.done(),
+                    )
+                    if should_break:
+                        break
         await asyncio.sleep(poll)
 
     # Task completed: cancel any ongoing TTS immediately and return result
@@ -3153,96 +3147,167 @@ def apply_per_task_simulation_patch(
     function once the outer handle completes.
     """
 
-    # Imports kept local to avoid pulling these modules for other sandboxes
-    from unity.task_scheduler.active_task import ActiveTask  # noqa: WPS433
-    from unity.actor.simulated import SimulatedActor  # noqa: WPS433
+    # NOTE:
+    # To avoid cross-call races, we install a single, process-wide wrapper once
+    # and keep it installed for the sandbox lifetime. Per-call overrides are
+    # stored behind a token so earlier calls cannot clobber newer ones.
 
-    _orig_create_cm = ActiveTask.create  # classmethod descriptor
-    _orig_create_fn = (
-        _orig_create_cm.__func__
-        if hasattr(_orig_create_cm, "__func__")
-        else _orig_create_cm
-    )
+    # Lazy, idempotent installation
+    global _SANDBOX_SIM_PATCH_INSTALLED
+    global _SANDBOX_SIM_PATCH_LOCK
+    global _SANDBOX_SIM_ORIG_CREATE
+    global _SANDBOX_SIM_TOKEN
+    global _SANDBOX_SIM_PER_CALL
+    global _SANDBOX_SIM_LOG_MODE
+    global _SANDBOX_SIM_GEN
 
-    async def _wrapped_create(
-        cls,  # type: ignore[no-redef]
-        actor,  # ignored during simulation
-        *,
-        task_description: str,
-        parent_chat_context: Optional[list[dict]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        task_id: Optional[int] = None,
-        instance_id: Optional[int] = None,
-        scheduler: Optional["TaskScheduler"] = None,  # type: ignore[name-defined]
-    ):
-        s, d, g = _merge_sim_params_for_task(scheduler, task_id, per_call_overrides)
-        sim_actor = SimulatedActor(
-            steps=s,
-            duration=d,
-            simulation_guidance=g,
-            log_mode=log_mode,
-        )
-        # Best-effort: consume one-shot rules that apply to this task
-        try:
-            if task_id is not None:
-                tid_int = int(task_id)
-                _tid_params = SIMULATION_PLANS.resolve_for_task_id(tid_int)
-                if _tid_params is not None and bool(
-                    getattr(_tid_params, "one_shot", False),
-                ):
-                    SIMULATION_PLANS.consume_one_shot_for(
-                        SimulationSelector(by_task_id=tid_int),
-                        task_id=tid_int,
-                    )
-            if scheduler is not None and task_id is not None:
-                # Resolve queue index and consume if a queue-index rule applied
+    try:
+        _SANDBOX_SIM_PATCH_INSTALLED
+    except NameError:
+        _SANDBOX_SIM_PATCH_INSTALLED = False  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_PATCH_LOCK
+    except NameError:
+        import threading as _th  # local, keep module surface small
+
+        _SANDBOX_SIM_PATCH_LOCK = _th.Lock()  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_ORIG_CREATE
+    except NameError:
+        _SANDBOX_SIM_ORIG_CREATE = None  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_TOKEN
+    except NameError:
+        _SANDBOX_SIM_TOKEN = 0  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_PER_CALL
+    except NameError:
+        _SANDBOX_SIM_PER_CALL = None  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_LOG_MODE
+    except NameError:
+        _SANDBOX_SIM_LOG_MODE = "print"  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_GEN
+    except NameError:
+        _SANDBOX_SIM_GEN = 0  # type: ignore[assignment]
+
+    with _SANDBOX_SIM_PATCH_LOCK:  # type: ignore[arg-type]
+        if not _SANDBOX_SIM_PATCH_INSTALLED:  # type: ignore[arg-type]
+            # Imports kept local to avoid pulling these modules for other sandboxes
+            from unity.task_scheduler.active_task import ActiveTask  # noqa: WPS433
+            from unity.actor.simulated import SimulatedActor  # noqa: WPS433
+
+            _orig_create_cm = ActiveTask.create  # classmethod descriptor
+            _SANDBOX_SIM_ORIG_CREATE = _orig_create_cm  # type: ignore[assignment]
+            _orig_create_fn = (
+                _orig_create_cm.__func__
+                if hasattr(_orig_create_cm, "__func__")
+                else _orig_create_cm
+            )
+
+            async def _wrapped_create(
+                cls,  # type: ignore[no-redef]
+                actor,  # ignored during simulation
+                *,
+                task_description: str,
+                parent_chat_context: Optional[list[dict]] = None,
+                clarification_up_q: Optional[asyncio.Queue[str]] = None,
+                clarification_down_q: Optional[asyncio.Queue[str]] = None,
+                task_id: Optional[int] = None,
+                instance_id: Optional[int] = None,
+                scheduler: Optional["TaskScheduler"] = None,  # type: ignore[name-defined]
+            ):
+                # Snapshot current per-call state without holding the lock for long
                 try:
-                    q = scheduler._get_task_queue()  # type: ignore[attr-defined]
-                    idx = None
-                    for i, t in enumerate(q, 1):
-                        if getattr(t, "task_id", None) == task_id:
-                            idx = i
-                            break
-                    if idx is not None:
-                        _resolved_tid, qparams = (
-                            SIMULATION_PLANS.resolve_for_queue_index(
-                                scheduler,
-                                idx,
-                            )
-                        )
-                        if qparams is not None and bool(
-                            getattr(qparams, "one_shot", False),
+                    per_call = _SANDBOX_SIM_PER_CALL  # type: ignore[name-defined]
+                except Exception:
+                    per_call = None
+                try:
+                    _log_mode = _SANDBOX_SIM_LOG_MODE  # type: ignore[name-defined]
+                except Exception:
+                    _log_mode = "print"
+
+                s, d, g = _merge_sim_params_for_task(scheduler, task_id, per_call)
+                sim_actor = SimulatedActor(
+                    steps=s,
+                    duration=d,
+                    simulation_guidance=g,
+                    log_mode=_log_mode,
+                )
+                # Best-effort: consume one-shot rules that apply to this task
+                try:
+                    if task_id is not None:
+                        tid_int = int(task_id)
+                        _tid_params = SIMULATION_PLANS.resolve_for_task_id(tid_int)
+                        if _tid_params is not None and bool(
+                            getattr(_tid_params, "one_shot", False),
                         ):
                             SIMULATION_PLANS.consume_one_shot_for(
-                                SimulationSelector(by_queue_index=idx),
+                                SimulationSelector(by_task_id=tid_int),
+                                task_id=tid_int,
                             )
+                    if scheduler is not None and task_id is not None:
+                        # Resolve queue index and consume if a queue-index rule applied
+                        try:
+                            q = scheduler._get_task_queue()  # type: ignore[attr-defined]
+                            idx = None
+                            for i, t in enumerate(q, 1):
+                                if getattr(t, "task_id", None) == task_id:
+                                    idx = i
+                                    break
+                            if idx is not None:
+                                _resolved_tid, qparams = (
+                                    SIMULATION_PLANS.resolve_for_queue_index(
+                                        scheduler,
+                                        idx,
+                                    )
+                                )
+                                if qparams is not None and bool(
+                                    getattr(qparams, "one_shot", False),
+                                ):
+                                    SIMULATION_PLANS.consume_one_shot_for(
+                                        SimulationSelector(by_queue_index=idx),
+                                    )
+                        except Exception:
+                            pass
                 except Exception:
                     pass
-        except Exception:
-            pass
 
-        return await _orig_create_fn(
-            cls,
-            sim_actor,
-            task_description=task_description,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
-            task_id=task_id,
-            instance_id=instance_id,
-            scheduler=scheduler,
-        )
+                return await _orig_create_fn(
+                    cls,
+                    sim_actor,
+                    task_description=task_description,
+                    parent_chat_context=parent_chat_context,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
+                    task_id=task_id,
+                    instance_id=instance_id,
+                    scheduler=scheduler,
+                )
 
-    ActiveTask.create = classmethod(_wrapped_create)  # type: ignore[assignment]
+            ActiveTask.create = classmethod(_wrapped_create)  # type: ignore[assignment]
+            _SANDBOX_SIM_PATCH_INSTALLED = True  # type: ignore[assignment]
+
+        # Update per-call state guarded by a token; newest wins.
+        _SANDBOX_SIM_GEN = int(_SANDBOX_SIM_GEN) + 1  # type: ignore[assignment]
+        token = int(_SANDBOX_SIM_GEN)
+        _SANDBOX_SIM_TOKEN = token  # type: ignore[assignment]
+        _SANDBOX_SIM_PER_CALL = per_call_overrides  # type: ignore[assignment]
+        _SANDBOX_SIM_LOG_MODE = log_mode  # type: ignore[assignment]
 
     def restore() -> None:
+        # Only clear the per-call overrides if we are still the latest token.
         try:
-            from unity.task_scheduler.active_task import (
-                ActiveTask as _AT,
-            )  # noqa: WPS433
-
-            _AT.create = _orig_create_cm  # type: ignore[assignment]
+            with _SANDBOX_SIM_PATCH_LOCK:  # type: ignore[arg-type]
+                if _SANDBOX_SIM_TOKEN == token:  # type: ignore[name-defined]
+                    # Clear state; keep the wrapper installed to avoid races.
+                    try:
+                        # Preserve log_mode for future calls; just drop per-call overrides.
+                        pass
+                    finally:
+                        # Reset only the per-call overrides
+                        globals()["_SANDBOX_SIM_PER_CALL"] = None
         except Exception:
             pass
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Union
 from enum import Enum
+from functools import cached_property
 
 import unify
 
@@ -51,7 +52,8 @@ class TasksStore:
             unify.create_fields(missing, context=self._ctx)
 
     # ------------------------------- Reads ---------------------------------
-    def get_fields(self) -> Dict[str, str]:
+    @cached_property
+    def fields(self) -> Dict[str, str]:
         try:
             fields = unify.get_fields(context=self._ctx) or {}
             return {
@@ -138,45 +140,102 @@ class TasksStore:
         # Preserve 'activated_by' unless the caller explicitly sets/clears it.
 
         def _norm(v: Any) -> Any:
-            # Preserve semantic values for enums: for StrEnum keep the string value;
-            # for plain Enum store the underlying `.value` (e.g. 'weekly', 'MO').
+            # Normalize enums to their underlying values
             if isinstance(v, Enum):
                 try:
                     from enum import StrEnum  # py311+
 
                     if isinstance(v, StrEnum):  # type: ignore[arg-type]
-                        return str(v)
+                        return v.value
                 except Exception:
-                    # StrEnum may not be available in older runtimes; fall through
                     pass
                 return v.value
+            # Datetime family → ISO-8601 strings
+            try:
+                import datetime as _dt
+
+                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+                    return v.isoformat()
+            except Exception:
+                pass
+            # Pydantic models → plain dict (JSON mode for consistent strings)
+            try:
+                from pydantic import BaseModel as _BM  # type: ignore
+
+                if isinstance(v, _BM):
+                    return _norm(v.model_dump(mode="json"))
+            except Exception:
+                pass
             if isinstance(v, dict):
                 return {k: _norm(x) for k, x in v.items()}
             if isinstance(v, list):
                 return [_norm(x) for x in v]
             return v
 
-        norm_entries = _norm(entries)
+        def _strip_nones(value: Any, *, top_level: bool) -> Any:
+            """
+            Remove None values from nested structures so we don't accidentally
+            clear existing fields when performing partial updates.
+
+            Policy:
+            - At the top level we KEEP explicit None values (e.g., schedule=None) so
+              callers can intentionally clear a whole field.
+            - For nested dicts/lists we DROP None entries/values entirely.
+            """
+            if isinstance(value, dict):
+                out: Dict[str, Any] = {}
+                for k, v in value.items():
+                    if v is None:
+                        if top_level:
+                            out[k] = None
+                        else:
+                            # omit nested None
+                            continue
+                    else:
+                        out[k] = _strip_nones(v, top_level=False)
+                return out
+            if isinstance(value, list):
+                return [
+                    _strip_nones(v, top_level=False) for v in value if v is not None
+                ]
+            return value
+
+        norm_entries = _strip_nones(_norm(entries), top_level=True)
         return unify.update_logs(
             logs=logs,
             context=self._ctx,
             entries=norm_entries,
-            overwrite=overwrite,
+            overwrite=True,
         )
 
     def log(self, *, entries: Dict[str, Any], new: bool = True) -> unify.Log:
         def _norm(v: Any) -> Any:
-            # Preserve semantic values for enums: for StrEnum keep the string value;
-            # for plain Enum store the underlying `.value`.
+            # Normalize enums to their underlying values
             if isinstance(v, Enum):
                 try:
                     from enum import StrEnum  # py311+
 
                     if isinstance(v, StrEnum):  # type: ignore[arg-type]
-                        return str(v)
+                        return v.value
                 except Exception:
                     pass
                 return v.value
+            # Datetime family → ISO-8601 strings
+            try:
+                import datetime as _dt
+
+                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+                    return v.isoformat()
+            except Exception:
+                pass
+            # Pydantic models → plain dict (JSON mode for consistent strings)
+            try:
+                from pydantic import BaseModel as _BM  # type: ignore
+
+                if isinstance(v, _BM):
+                    return _norm(v.model_dump(mode="json"))
+            except Exception:
+                pass
             if isinstance(v, dict):
                 return {k: _norm(x) for k, x in v.items()}
             if isinstance(v, list):
@@ -184,6 +243,7 @@ class TasksStore:
             return v
 
         norm_entries = _norm(entries)
+        # Create with expanded fields so auto-counting applies when ids are omitted
         return unify.log(context=self._ctx, new=new, **norm_entries)
 
     def delete(self, *, logs: Union[int, List[int]]) -> Dict[str, str]:

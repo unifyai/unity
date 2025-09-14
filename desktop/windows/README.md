@@ -1,14 +1,42 @@
-# Linux Remote Client
+# Windows Remote Client
+
+### Prerequisites
+
+1. PowerShell
+
+2. Chocolatey
+
+```powershell
+winget install --id=Chocolatey.Chocolatey -e
+```
+
+3. Git
+
+```powershell
+winget install --id=Git.Git -e --source winget
+```
+
+4. Python 3 (for websockify)
+
+```powershell
+winget install --id=Python.Python.3 -e
+```
 
 ### Setup
 
-1. Install the required package
+1. Install the required package through PowerShell in "Run as Administrator" mode.
 
-`bash install.sh`
+```powershell
+.\install.ps1
+```
+
+- When prompted by a TightVNC popup window, set/change primary password to your Unify API key.
 
 2. Start the remote client app.
 
-`bash remote.sh $UNIFY_KEY`
+```powershell
+.\remote.ps1
+```
 
 3. Tunnel the service to HTTPS.
 
@@ -16,23 +44,31 @@ a. For testing
 
 - Start the tunnel. A URL for testing will be provided.
 
-`bash tunnel.sh`
+```powershell
+.\tunnel.ps1
+```
 
 b. For production - WIP
 
 - Login to Cloudflare. This is a one time step.
 
-`cloudflared tunnel login`
+```powershell
+cloudflared tunnel login
+```
 
-- Start the tunnel.
+- Start the tunnel - TODO
 
-`TUNNEL_HOSTNAME=<prod_hostname> TUNNEL_NAME=<prod_appname> bash tunnel.sh`
+```powershell
+.\tunnel.ps1 -Hostname your.domain.com -TunnelName myapp -LocalPort 6080
+```
 
 ### Live Remote Viewing and Controls
 
 1. Tunnel the remote view.
 
-`bash liveview.sh`
+```powershell
+.\liveview.ps1
+```
 
 2. View and control the desktop through the URL below. When prompted for password, input your Unify API key.
 

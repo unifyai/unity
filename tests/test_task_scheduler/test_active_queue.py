@@ -14,10 +14,18 @@ from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
 
 async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
     ids: list[int] = []
+    qid = ts._allocate_new_queue_id()
     for n in names:
-        ids.append(ts._create_task(name=n, description=n)["details"]["task_id"])  # type: ignore[index]
-    original = [t.task_id for t in ts._get_task_queue()]
-    ts._update_task_queue(original=original, new=ids)
+        ids.append(
+            ts._create_task(
+                name=n,
+                description=n,
+                queue_id=qid,
+            )[  # type: ignore[misc]
+                "details"
+            ]["task_id"],
+        )  # type: ignore[index]
+    ts._set_queue(queue_id=qid, order=ids)
     ts._update_task_start_at(task_id=ids[0], new_start_at=datetime.now(timezone.utc))
     return ids
 
@@ -56,7 +64,10 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
 
     # Create a single task and start it (queue semantics by default)
     name1 = "Singleton A"
-    tid1 = ts._create_task(name=name1, description=name1)["details"]["task_id"]
+    qid = ts._allocate_new_queue_id()
+    tid1 = ts._create_task(name=name1, description=name1, queue_id=qid)["details"][
+        "task_id"
+    ]
     handle = await ts.execute(text=str(tid1))
 
     # 1) Passthrough path: queue length == 1 → inner sees raw question
@@ -68,11 +79,12 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
 
     # 2) Append a follower behind the active task – this grows the queue to >1
     name2 = "Follower B"
-    tid2 = ts._create_task(name=name2, description=name2)["details"]["task_id"]
+    tid2 = ts._create_task(name=name2, description=name2, queue_id=qid)["details"][
+        "task_id"
+    ]
 
     # Establish explicit order: [tid1, tid2]
-    original = [t.task_id for t in ts._get_task_queue(task_id=tid1)]
-    ts._update_task_queue(original=original, new=[tid1, tid2])
+    ts._set_queue(queue_id=qid, order=[tid1, tid2])
 
     # 3) Multi-task path: queue length > 1 → passthrough disabled, CHAIN preamble expected
     await handle.ask("Q2: what remains?")
@@ -219,7 +231,7 @@ async def test_execute_queue_by_numeric_id_completes_all(monkeypatch):
     x, y = await _make_ordered_queue(ts, ["X", "Y"])  # type: ignore[misc]
 
     # Ensure the queue order, then start by id
-    ts._update_task_queue(original=[x, y], new=[x, y])
+    # queue already materialised by helper
     h = await ts.execute(text=str(x))
     await h.result()
 
@@ -686,6 +698,134 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
         r.get("status") not in ("completed", "cancelled", "failed", "active")
         for r in rows_c
     )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_task_done_aggregates_all_when_called_late(monkeypatch):
+    """
+    If called after multiple tasks completed, active_task_done should return
+    a JSON mapping containing all completions since never having been called.
+    """
+
+    # Immediate completion per task to avoid timing races
+    class _Immediate(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw.pop("duration", None)
+            super().__init__(steps=0, duration=None, *a, **kw)
+
+    monkeypatch.setattr(
+        "unity.actor.simulated.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    a, b, c = await _make_ordered_queue(ts, ["A_done", "B_done", "C_done"])  # type: ignore[misc]
+
+    # Run the entire queue to completion
+    h = await ts.execute(text=str(a))
+    await h.result()
+
+    # Access inner handle if wrapped
+    inner = getattr(h, "_inner", h)
+
+    # Call active_task_done the first time – should aggregate all completions
+    import json as _json
+
+    payload_str = await inner.active_task_done()
+    data = _json.loads(payload_str or "{}")
+    assert isinstance(data, dict)
+    assert set(data.keys()) == {"A_done", "B_done", "C_done"}
+    assert all(isinstance(v, str) for v in data.values())
+
+    # Second call after everything already consumed should be empty
+    payload_str2 = await inner.active_task_done()
+    data2 = _json.loads(payload_str2 or "{}")
+    assert data2 == {}
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_task_done_incremental(monkeypatch):
+    """
+    Consecutive calls to active_task_done should return only new completions
+    since the previous call.
+    """
+
+    # Step-based actor: one step to complete each task
+    class _StepOne(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 1
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _StepOne, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _StepOne,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    a_id, b_id = await _make_ordered_queue(ts, ["A_inc", "B_inc"])  # type: ignore[misc]
+
+    # Detect when B becomes active
+    b_active_evt: asyncio.Event = asyncio.Event()
+    orig_update_status = ts._update_task_status_instance
+
+    def spy_update_status(*, task_id: int, instance_id: int, new_status: str, activated_by=None):  # type: ignore[override]
+        res = orig_update_status(
+            task_id=task_id,
+            instance_id=instance_id,
+            new_status=new_status,
+            activated_by=activated_by,
+        )
+        try:
+            if task_id == b_id and str(new_status) == "active":
+                b_active_evt.set()
+        except Exception:
+            pass
+        return res
+
+    monkeypatch.setattr(
+        ts,
+        "_update_task_status_instance",
+        spy_update_status,
+        raising=True,
+    )
+
+    h = await ts.execute(text=str(a_id))
+    inner = getattr(h, "_inner", h)
+
+    # Complete A with a single step (pause triggers a step in simulated actor)
+    h.pause()
+
+    # First call should include only A
+    import json as _json
+
+    payload1 = await inner.active_task_done()
+    data1 = _json.loads(payload1 or "{}")
+    assert set(data1.keys()) == {"A_inc"}
+
+    # Ensure B is active, then complete it
+    await asyncio.wait_for(b_active_evt.wait(), timeout=5)
+    h.pause()
+
+    # Second call should include only B
+    payload2 = await inner.active_task_done()
+    data2 = _json.loads(payload2 or "{}")
+    assert set(data2.keys()) == {"B_inc"}
+
+    # Further calls after consumption should be empty
+    payload3 = await inner.active_task_done()
+    data3 = _json.loads(payload3 or "{}")
+    assert data3 == {}
 
 
 @pytest.mark.asyncio

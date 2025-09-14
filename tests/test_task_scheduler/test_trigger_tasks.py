@@ -77,6 +77,7 @@ def test_update_trigger_on_scheduled_task_raises():
     ts = TaskScheduler()
 
     future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    qid = ts._allocate_new_queue_id()
     tid = ts._create_task(
         name="Morning maintenance window",
         description="Auto-patch servers tomorrow.",
@@ -149,9 +150,11 @@ def test_update_queue_rejects_trigger_tasks():
     ts = TaskScheduler()
 
     # Normal queued task
+    qid = ts._allocate_new_queue_id()
     ts._create_task(
         name="Prep deck",
         description="Slides.",
+        schedule=Schedule(),
     )
 
     # Trigger-based task
@@ -162,7 +165,7 @@ def test_update_queue_rejects_trigger_tasks():
     )["details"]["task_id"]
 
     with pytest.raises(ValueError):
-        ts._update_task_queue(original=[0], new=[trig_tid, 0])
+        ts._set_queue(queue_id=qid, order=[trig_tid, 0])
 
 
 # --------------------------------------------------------------------------- #

@@ -182,6 +182,16 @@ Anti‑patterns to avoid
     ).strip()
 
     activity_block = "{broader_context}" if include_activity else ""
+    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
+    parallelism_block = textwrap.dedent(
+        """
+        Parallelism and single‑call preference
+        -------------------------------------
+        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
+        • When you need multiple independent reads or small writes, plan them together and run them in parallel rather than a serial drip of micro‑calls.
+        • Batch arguments where possible (set multiple fields in one `_update_contact` call) and avoid confirmatory re‑queries unless new ambiguity arises.
+        """,
+    ).strip()
 
     return "\n".join(
         [
@@ -202,6 +212,8 @@ Anti‑patterns to avoid
             special_contacts_block,
             "",
             usage_examples,
+            "",
+            parallelism_block,
             "",
             clar_section,
             "",
@@ -353,6 +365,16 @@ Anti‑patterns to avoid
         )
 
     activity_block = "{broader_context}" if include_activity else ""
+    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
+    parallelism_block = textwrap.dedent(
+        """
+        Parallelism and single‑call preference
+        -------------------------------------
+        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
+        • When several reads or writes are independent, plan them together and run them in parallel rather than a serial drip of micro‑calls.
+        • Batch arguments where possible (set multiple fields in one `_update_contact` call) and avoid confirmatory re‑queries unless new ambiguity arises.
+        """,
+    ).strip()
     clar_section = clarification_guidance(tools)
 
     # ─ Special contacts guidance ─
@@ -376,7 +398,7 @@ Anti‑patterns to avoid
             "Prefer minimal, precise mutations to existing records identified by contact_id.",
             "When the user describes a contact semantically, resolve the id first by requesting the contact_id from the ask method, then perform the update via the contact_id.",
             "use the `ask` method to see if you can find any missing context *before* you consider asking the user for clarifications.",
-            "If the `ask` method is the only available tool, then ask a *read-only question*, mutation-capable tools will be exposed in subsequent turns."
+            "If the `ask` method is the only available tool, then ask a *read-only question*, mutation-capable tools will be exposed in subsequent turns.",
             "",
             "Tools (name → argspec):",
             sig_json,
@@ -384,6 +406,8 @@ Anti‑patterns to avoid
             special_contacts_block,
             "",
             usage_examples,
+            "",
+            parallelism_block,
             "",
             clar_section,
             "",
@@ -395,7 +419,7 @@ Anti‑patterns to avoid
             "",
             "ColumnType schema (for custom columns):",
             json.dumps(column_type_schema, indent=4),
-            "Do *not* create new columns if an alias already exists" "",
+            "Do not create new columns if an alias already exists.",
             f"Current UTC time is {_now()}.",
             "",
         ],

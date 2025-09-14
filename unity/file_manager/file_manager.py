@@ -6,7 +6,7 @@ import functools
 import json
 import logging
 import os
-import requests
+from ..common.http import request as http_request
 import shutil
 import tempfile
 from pathlib import Path
@@ -529,7 +529,7 @@ class FileManager(BaseFileManager):
         proj = unify.active_project()
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={self._ctx}"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = requests.request("GET", url, headers=headers)
+        response = http_request("GET", url, headers=headers)
         from ..helpers import _handle_exceptions
 
         _handle_exceptions(response)

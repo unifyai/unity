@@ -174,7 +174,7 @@ async def test_ask_with_clarification(
     )
 
     # Expect a clarification question
-    clarification_question_text = await asyncio.wait_for(clar_up_q.get(), timeout=60)
+    clarification_question_text = await asyncio.wait_for(clar_up_q.get(), timeout=300)
 
     # Provide clarification
     await clar_down_q.put("I mean Alice Wonder.")

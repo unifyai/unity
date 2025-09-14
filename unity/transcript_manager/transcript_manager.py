@@ -7,7 +7,7 @@ import functools
 from typing import List, Dict, Optional, Union, Any, Callable, Literal
 
 import unify
-import requests
+from ..common.http import request as http_request
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
@@ -40,6 +40,78 @@ from ..common.semantic_search import (
 )
 import json as _json
 from ..events.event_bus import EVENT_BUS, Event
+import time
+
+# ------------------------------------------------------------------ #
+#  Module-level optional per-tool runtime logging (TranscriptManager) #
+# ------------------------------------------------------------------ #
+
+
+def _env_truthy_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _tm_timing_enabled() -> bool:
+    # Per-manager override → global fallback
+    return _env_truthy_flag(
+        "TRANSCRIPT_MANAGER_TOOL_TIMING",
+        _env_truthy_flag("TOOL_TIMING", False),
+    )
+
+
+def _tm_timing_print_enabled() -> bool:
+    return _env_truthy_flag(
+        "TRANSCRIPT_MANAGER_TOOL_TIMING_PRINT",
+        _env_truthy_flag("TOOL_TIMING_PRINT", False),
+    )
+
+
+def _tm_log_tool_runtime(func):
+    """Decorator to measure and optionally publish per-tool runtimes for TM."""
+
+    @functools.wraps(func, updated=())
+    def _wrapper(self: "TranscriptManager", *args, **kwargs):
+        start = time.perf_counter()
+        result = func(self, *args, **kwargs)
+        try:
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+        except Exception:
+            elapsed_ms = -1.0
+
+        if _tm_timing_print_enabled():
+            try:
+                print(
+                    f"TranscriptManager.{func.__name__} took {elapsed_ms:.2f} ms",
+                )
+            except Exception:
+                pass
+
+        if _tm_timing_enabled():
+            try:
+                evt = Event(
+                    type="ManagerTool",
+                    payload={
+                        "manager": "TranscriptManager",
+                        "tool": func.__name__,
+                        "category": "direct",
+                        "duration_ms": float(elapsed_ms),
+                    },
+                )
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None and EVENT_BUS:
+                    asyncio.create_task(EVENT_BUS.publish(evt))
+            except Exception:
+                pass
+
+        return result
+
+    return _wrapper
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -154,6 +226,97 @@ class TranscriptManager(BaseTranscriptManager):
     @classmethod
     def _get_logger(cls) -> unify.AsyncLoggerManager:
         return cls._LOGGER
+
+    # ------------------------------------------------------------------ #
+    #  Optional per-tool runtime logging                                 #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _env_truthy(name: str, default: bool = False) -> bool:
+        raw = os.environ.get(name)
+        if raw is None:
+            return default
+        raw_l = str(raw).strip().lower()
+        return raw_l in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _timing_enabled(cls) -> bool:
+        # Per-manager override → global fallback
+        # Reuse ContactManager's flag names for consistency
+        cm_flag = os.environ.get("TRANSCRIPT_MANAGER_TOOL_TIMING")
+        if cm_flag is not None:
+            val = str(cm_flag).strip().lower() in {"1", "true", "yes", "on"}
+            return val
+        # Fallback to global
+        glob = os.environ.get("TOOL_TIMING")
+        return (
+            str(glob).strip().lower() in {"1", "true", "yes", "on"}
+            if glob is not None
+            else False
+        )
+
+    @classmethod
+    def _timing_print_enabled(cls) -> bool:
+        tm_flag = os.environ.get("TRANSCRIPT_MANAGER_TOOL_TIMING_PRINT")
+        if tm_flag is not None:
+            val = str(tm_flag).strip().lower() in {"1", "true", "yes", "on"}
+            return val
+        glob = os.environ.get("TOOL_TIMING_PRINT")
+        return (
+            str(glob).strip().lower() in {"1", "true", "yes", "on"}
+            if glob is not None
+            else False
+        )
+
+    @classmethod
+    def _log_tool_runtime(cls, func):
+        """Decorator to measure and optionally publish per-tool runtimes.
+
+        Mirrors ContactManager's timing behaviour: controlled by
+        CONTACT_MANAGER_TOOL_TIMING and CONTACT_MANAGER_TOOL_TIMING_PRINT.
+        """
+
+        @functools.wraps(func, updated=())
+        def _wrapper(self: "TranscriptManager", *args, **kwargs):
+            start = time.perf_counter()
+            try:
+                return func(self, *args, **kwargs)
+            finally:
+                try:
+                    elapsed_ms = (time.perf_counter() - start) * 1000.0
+                except Exception:
+                    elapsed_ms = -1.0
+
+                if cls._timing_print_enabled():
+                    try:
+                        print(
+                            f"TranscriptManager.{func.__name__} took {elapsed_ms:.2f} ms",
+                        )
+                    except Exception:
+                        pass
+
+                if not cls._timing_enabled():
+                    return
+
+                try:
+                    evt = Event(
+                        type="ManagerTool",
+                        payload={
+                            "manager": "TranscriptManager",
+                            "tool": func.__name__,
+                            "category": "direct",
+                            "duration_ms": float(elapsed_ms),
+                        },
+                    )
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop is not None and EVENT_BUS:
+                        asyncio.create_task(EVENT_BUS.publish(evt))
+                except Exception:
+                    pass
+
+        return _wrapper
 
     # ------------------------------------------------------------------ #
     #  Small internal helper – LLM client factory                        #
@@ -634,6 +797,7 @@ class TranscriptManager(BaseTranscriptManager):
 
     # Tools #
     # ------#
+    @_tm_log_tool_runtime
     def _search_messages(
         self,
         *,
@@ -872,7 +1036,7 @@ class TranscriptManager(BaseTranscriptManager):
             "new_context": sender_join_ctx,
             "columns": select,
         }
-        resp = requests.request("POST", url, json=payload, headers=headers)
+        resp = http_request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
 
         # Base terms for sender join ranking
@@ -1048,6 +1212,7 @@ class TranscriptManager(BaseTranscriptManager):
             else results
         )
 
+    @_tm_log_tool_runtime
     def _filter_messages(
         self,
         *,
@@ -1205,6 +1370,7 @@ class TranscriptManager(BaseTranscriptManager):
         """
         return TableStore(self._transcripts_ctx).get_columns()
 
+    @_tm_log_tool_runtime
     def _list_columns(
         self,
         *,
