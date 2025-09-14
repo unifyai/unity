@@ -69,7 +69,7 @@ def test_tool_filter_contacts_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert rows and rows[0].contact_id == cid
     # assert elapsed_ms < X
-    # print(f"elapsed: {elapsed_ms} < X")
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -83,7 +83,7 @@ def test_tool_delete_contact_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"] and out["details"]["contact_id"] == cid
     # assert elapsed_ms < X
-    # print(f"elapsed: {elapsed_ms} < X")
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -101,7 +101,7 @@ def test_tool_create_custom_column_timing():
     assert isinstance(resp, dict)
     assert col in cm._list_columns()
     # assert elapsed_ms < X
-    # print(f"elapsed: {elapsed_ms} < X")
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -120,7 +120,7 @@ def test_tool_delete_custom_column_timing():
     assert isinstance(resp, dict)
     assert col not in cm._list_columns()
     # assert elapsed_ms < X
-    # print(f"elapsed: {elapsed_ms} < X")
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -139,7 +139,7 @@ def test_tool_merge_contacts_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"] and out["details"]["kept_contact_id"] == c1
     # assert elapsed_ms < X
-    # print(f"elapsed: {elapsed_ms} < X")
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -154,4 +154,4 @@ def test_tool_search_contacts_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(results, list) and results
     # assert elapsed_ms < X
-    # print(f"elapsed: {elapsed_ms} < X")
+    print(f"elapsed: {elapsed_ms} < X")
