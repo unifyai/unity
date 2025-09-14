@@ -1713,17 +1713,24 @@ class ContactManager(BaseContactManager):
         if getattr(self, "_known_custom_fields", None):
             allowed_fields.extend(sorted(self._known_custom_fields))
 
+        # Exclude system contacts (assistant/user) from search results
+        system_filter = "contact_id != 0 and contact_id != 1"
+
+        # Persisted embedding flow: ensure vector/derived columns exist (first use),
+        # then sort by cosine/mean-cosine using server-side columns.
         rows = fetch_top_k_by_references(
             self._ctx,
             references,
             k=k,
             allowed_fields=allowed_fields,
-            row_filter=None,
+            row_filter=system_filter,
         )
+
         filled = backfill_rows(
             self._ctx,
             rows,
             k,
+            row_filter=system_filter,
             unique_id_field="contact_id",
             allowed_fields=allowed_fields,
         )
