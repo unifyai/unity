@@ -76,6 +76,106 @@ from .queue_engine import plan_reorder_queue
 
 
 # ------------------------------------------------------------------ #
+#  Optional per-tool runtime logging (TaskScheduler)                 #
+# ------------------------------------------------------------------ #
+from ..events.event_bus import EVENT_BUS, Event
+import time
+
+
+def _env_truthy(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    raw_l = str(raw).strip().lower()
+    return raw_l in {"1", "true", "yes", "on"}
+
+
+def _ts_timing_enabled() -> bool:
+    # Per-manager override → global fallback
+    return _env_truthy(
+        "TASK_SCHEDULER_TOOL_TIMING",
+        _env_truthy("TOOL_TIMING", False),
+    )
+
+
+def _ts_timing_print_enabled() -> bool:
+    return _env_truthy(
+        "TASK_SCHEDULER_TOOL_TIMING_PRINT",
+        _env_truthy("TOOL_TIMING_PRINT", False),
+    )
+
+
+def _ts_log_tool_runtime(func):
+    """Decorator to measure and optionally publish per-tool runtimes.
+
+    Controlled by env flags:
+      • TASK_SCHEDULER_TOOL_TIMING (fallback TOOL_TIMING)
+      • TASK_SCHEDULER_TOOL_TIMING_PRINT (fallback TOOL_TIMING_PRINT)
+    Publishes a lightweight ManagerTool event on EVENT_BUS when enabled.
+    """
+
+    @functools.wraps(func, updated=())
+    def _wrapper(self: "TaskScheduler", *args, **kwargs):
+        start = time.perf_counter()
+        try:
+            return func(self, *args, **kwargs)
+        finally:
+            try:
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+            except Exception:
+                elapsed_ms = -1.0
+
+            if _ts_timing_print_enabled():
+                try:
+                    print(f"TaskScheduler.{func.__name__} took {elapsed_ms:.2f} ms")
+                except Exception:
+                    pass
+
+            if not _ts_timing_enabled():
+                return
+
+            # Determine category best-effort at runtime
+            try:
+                if (
+                    isinstance(getattr(self, "_ask_tools", None), dict)
+                    and func.__name__ in self._ask_tools
+                ):
+                    category = "ask"
+                elif (
+                    isinstance(getattr(self, "_update_tools", None), dict)
+                    and func.__name__ in self._update_tools
+                ):
+                    category = "update"
+                else:
+                    category = "direct"
+            except Exception:
+                category = "direct"
+
+            # Publish event if an event loop is running
+            try:
+                evt = Event(
+                    type="ManagerTool",
+                    payload={
+                        "manager": "TaskScheduler",
+                        "tool": func.__name__,
+                        "category": category,
+                        "duration_ms": float(elapsed_ms),
+                    },
+                )
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None and EVENT_BUS:
+                    asyncio.create_task(EVENT_BUS.publish(evt))
+            except Exception:
+                # Never let timing/logging affect tool behaviour
+                pass
+
+    return _wrapper
+
+
+# ------------------------------------------------------------------ #
 #  Typed reintegration plan                                          #
 # ------------------------------------------------------------------ #
 from .types.reintegration_plan import ReintegrationPlan
@@ -1482,6 +1582,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Create
 
+    @_ts_log_tool_runtime
     def _create_task(
         self,
         *,
@@ -1743,6 +1844,7 @@ class TaskScheduler(BaseTaskScheduler):
             "details": {"task_id": task_id},
         }
 
+    @_ts_log_tool_runtime
     def _create_tasks(
         self,
         *,
@@ -1992,6 +2094,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Delete
 
+    @_ts_log_tool_runtime
     def _delete_task(self, *, task_id: int) -> ToolOutcome:
         """
         Permanently **remove** a task from storage.
@@ -2022,6 +2125,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Cancel Task(s)
 
+    @_ts_log_tool_runtime
     def _cancel_tasks(self, task_ids: List[int]) -> ToolOutcome:
         """
         Mark one or many tasks as **cancelled** (non-recoverable terminal
@@ -2171,6 +2275,7 @@ class TaskScheduler(BaseTaskScheduler):
             cur = nxt_rows[0] if nxt_rows else None
         return ordered
 
+    @_ts_log_tool_runtime
     def _list_queues(self) -> List[Dict[str, Any]]:
         """
         List all runnable queues. There is no default queue; every queue must have a numeric ``queue_id``.
@@ -2221,6 +2326,7 @@ class TaskScheduler(BaseTaskScheduler):
             )
         return out
 
+    @_ts_log_tool_runtime
     def _get_queue(
         self,
         *,
@@ -2265,6 +2371,7 @@ class TaskScheduler(BaseTaskScheduler):
             ordered.append(Task(**_row))
         return ordered
 
+    @_ts_log_tool_runtime
     def _reorder_queue(
         self,
         *,
@@ -2392,6 +2499,7 @@ class TaskScheduler(BaseTaskScheduler):
             },
         }
 
+    @_ts_log_tool_runtime
     def _move_tasks_to_queue(
         self,
         *,
@@ -2580,6 +2688,7 @@ class TaskScheduler(BaseTaskScheduler):
     #  Atomic queue materialization                                       #
     # ------------------------------------------------------------------ #
 
+    @_ts_log_tool_runtime
     def _set_queue(
         self,
         *,
@@ -2809,6 +2918,7 @@ class TaskScheduler(BaseTaskScheduler):
     #  Bulk low-level schedule edit (atomic)                              #
     # ------------------------------------------------------------------ #
 
+    @_ts_log_tool_runtime
     def _set_schedules_atomic(
         self,
         *,
@@ -2957,6 +3067,7 @@ class TaskScheduler(BaseTaskScheduler):
     #  Diagnostics                                                        #
     # ------------------------------------------------------------------ #
 
+    @_ts_log_tool_runtime
     def _explain_queue(self, *, queue_id: Optional[int] = None) -> Dict[str, Any]:
         """Return a compact diagnostic view of a queue."""
         order = [t.task_id for t in self._get_queue(queue_id=queue_id)]
@@ -2969,6 +3080,7 @@ class TaskScheduler(BaseTaskScheduler):
             "start_at": start_at,
         }
 
+    @_ts_log_tool_runtime
     def _partition_queue(
         self,
         *,
@@ -3126,6 +3238,7 @@ class TaskScheduler(BaseTaskScheduler):
     #  Centralised schedule/status write with invariant validation        #
     # ------------------------------------------------------------------ #
 
+    @_ts_log_tool_runtime
     def _validated_write(
         self,
         *,
@@ -3233,6 +3346,7 @@ class TaskScheduler(BaseTaskScheduler):
     #  Centralised helpers for queue link manipulation                    #
     # ------------------------------------------------------------------ #
 
+    @_ts_log_tool_runtime
     def _detach_from_queue_for_activation(
         self,
         *,
@@ -3245,6 +3359,7 @@ class TaskScheduler(BaseTaskScheduler):
             detach=detach,
         )
 
+    @_ts_log_tool_runtime
     def _attach_with_links(
         self,
         *,
@@ -3309,6 +3424,7 @@ class TaskScheduler(BaseTaskScheduler):
         else:
             self._primed_task = None
 
+    @_ts_log_tool_runtime
     def _get_task_queue(
         self,
         task_id: Optional[int] = None,
@@ -3334,6 +3450,7 @@ class TaskScheduler(BaseTaskScheduler):
         return _ops_get_task_queue(self, task_id=task_id)
 
     # Small helper for ActiveQueue to await linkage stabilisation
+    @_ts_log_tool_runtime
     def _get_linkage_barrier(self, *, task_id: int):
         try:
             return self._linkage_barriers.get(int(task_id))
@@ -3402,6 +3519,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         return final_prev, final_next
 
+    @_ts_log_tool_runtime
     def _update_task_queue(
         self,
         *,
@@ -3447,6 +3565,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Membership changed (insert-only) → materialize exact order
         return self._set_queue(queue_id=None, order=list(new))
 
+    @_ts_log_tool_runtime
     def _update_task_trigger(
         self,
         *,
@@ -3513,6 +3632,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Update Name / Description
 
+    @_ts_log_tool_runtime
     def _update_task_name(
         self,
         *,
@@ -3539,6 +3659,7 @@ class TaskScheduler(BaseTaskScheduler):
             entries={"name": new_name},
         )
 
+    @_ts_log_tool_runtime
     def _update_task_description(
         self,
         *,
@@ -3573,6 +3694,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Update Task(s) Status / Schedule / Deadline / Repetition / Priority
 
+    @_ts_log_tool_runtime
     def _update_task_status(
         self,
         *,
@@ -3613,6 +3735,7 @@ class TaskScheduler(BaseTaskScheduler):
         entries: Dict[str, Any] = {"status": new_status_enum}
         return self._write_log_entries(logs=log_ids, entries=entries, overwrite=True)
 
+    @_ts_log_tool_runtime
     def _update_task_start_at(
         self,
         *,
@@ -3697,6 +3820,7 @@ class TaskScheduler(BaseTaskScheduler):
             err_prefix=f"While updating start_at for task {task_id}:",
         )
 
+    @_ts_log_tool_runtime
     def _update_task_deadline(
         self,
         *,
@@ -3724,6 +3848,7 @@ class TaskScheduler(BaseTaskScheduler):
             entries={"deadline": new_deadline},
         )
 
+    @_ts_log_tool_runtime
     def _update_task_repetition(
         self,
         *,
@@ -3751,6 +3876,7 @@ class TaskScheduler(BaseTaskScheduler):
             entries={"repeat": [r.model_dump() for r in new_repeat]},
         )
 
+    @_ts_log_tool_runtime
     def _update_task_priority(
         self,
         *,
@@ -4292,6 +4418,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Search Across Tasks
 
+    @_ts_log_tool_runtime
     def _search_tasks(
         self,
         *,
@@ -4340,6 +4467,7 @@ class TaskScheduler(BaseTaskScheduler):
             sanitized.append(Task(**row))
         return sanitized
 
+    @_ts_log_tool_runtime
     def _filter_tasks(
         self,
         *,
@@ -4471,6 +4599,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         return self._store.fields
 
+    @_ts_log_tool_runtime
     def _list_columns(
         self,
         *,
@@ -4482,6 +4611,7 @@ class TaskScheduler(BaseTaskScheduler):
         cols = self._get_columns()
         return cols if include_types else list(cols)
 
+    @_ts_log_tool_runtime
     def _num_tasks(self) -> int:
         """Return the total number of tasks in the Tasks context."""
         return self._store.get_metric_count(key="task_id")

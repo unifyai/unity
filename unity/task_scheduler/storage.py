@@ -150,6 +150,22 @@ class TasksStore:
                 except Exception:
                     pass
                 return v.value
+            # Datetime family → ISO-8601 strings
+            try:
+                import datetime as _dt
+
+                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+                    return v.isoformat()
+            except Exception:
+                pass
+            # Pydantic models → plain dict (JSON mode for consistent strings)
+            try:
+                from pydantic import BaseModel as _BM  # type: ignore
+
+                if isinstance(v, _BM):
+                    return _norm(v.model_dump(mode="json"))
+            except Exception:
+                pass
             if isinstance(v, dict):
                 return {k: _norm(x) for k, x in v.items()}
             if isinstance(v, list):
@@ -204,6 +220,22 @@ class TasksStore:
                 except Exception:
                     pass
                 return v.value
+            # Datetime family → ISO-8601 strings
+            try:
+                import datetime as _dt
+
+                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+                    return v.isoformat()
+            except Exception:
+                pass
+            # Pydantic models → plain dict (JSON mode for consistent strings)
+            try:
+                from pydantic import BaseModel as _BM  # type: ignore
+
+                if isinstance(v, _BM):
+                    return _norm(v.model_dump(mode="json"))
+            except Exception:
+                pass
             if isinstance(v, dict):
                 return {k: _norm(x) for k, x in v.items()}
             if isinstance(v, list):
