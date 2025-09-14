@@ -45,8 +45,19 @@ def _env_truthy(name: str, default: bool = False) -> bool:
     return raw_l in {"1", "true", "yes", "on"}
 
 
-_TOOL_TIMING_ENABLED = _env_truthy("CONTACT_MANAGER_TOOL_TIMING", False)
-_TOOL_TIMING_PRINT = _env_truthy("CONTACT_MANAGER_TOOL_TIMING_PRINT", False)
+def _timing_enabled() -> bool:
+    # Per-manager override → global fallback
+    return _env_truthy(
+        "CONTACT_MANAGER_TOOL_TIMING",
+        _env_truthy("TOOL_TIMING", False),
+    )
+
+
+def _timing_print_enabled() -> bool:
+    return _env_truthy(
+        "CONTACT_MANAGER_TOOL_TIMING_PRINT",
+        _env_truthy("TOOL_TIMING_PRINT", False),
+    )
 
 
 def _log_tool_runtime(func):
@@ -68,13 +79,13 @@ def _log_tool_runtime(func):
             except Exception:
                 elapsed_ms = -1.0
 
-            if _TOOL_TIMING_PRINT:
+            if _timing_print_enabled():
                 try:
                     print(f"ContactManager.{func.__name__} took {elapsed_ms:.2f} ms")
                 except Exception:
                     pass
 
-            if not _TOOL_TIMING_ENABLED:
+            if not _timing_enabled():
                 return
 
             # Determine category best-effort at runtime
