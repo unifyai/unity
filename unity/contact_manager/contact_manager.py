@@ -222,6 +222,23 @@ class ContactManager(BaseContactManager):
         # rolling activity inclusion flag
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
+        # Track custom columns observed/created during this manager's lifetime so we can
+        # whitelist fields in a single read without a separate fields-introspection call.
+        # This avoids redundant backend calls inside tools like `_filter_contacts` while
+        # still returning custom fields commonly used right after creation/update.
+        self._known_custom_fields: set[str] = set()
+
+        # Prefill known custom fields once at construction to include any preexisting
+        # non-private columns without an extra lookup per tool call.
+        try:
+            existing_cols = self._get_columns()
+            for col in existing_cols:
+                if col not in self._REQUIRED_COLUMNS and not str(col).startswith("_"):
+                    self._known_custom_fields.add(col)
+        except Exception:
+            # Best-effort only; tools fall back safely
+            pass
+
         # ── ensure an assistant contact with id 0 exists and is up-to-date ──
         self._sync_assistant_contact()
         # ── ensure a default *user* contact with id 1 exists and is up-to-date ──
@@ -652,6 +669,11 @@ class ContactManager(BaseContactManager):
         }
         response = requests.request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
+        # Remember the new column for subsequent reads within this manager instance
+        try:
+            self._known_custom_fields.add(column_name)
+        except Exception:
+            pass
         return response.json()
 
     @_log_tool_runtime
@@ -699,6 +721,12 @@ class ContactManager(BaseContactManager):
         }
         response = requests.request("DELETE", url, json=json_input, headers=headers)
         _handle_exceptions(response)
+        # Update local view of known custom columns
+        try:
+            if column_name in self._known_custom_fields:
+                self._known_custom_fields.discard(column_name)
+        except Exception:
+            pass
         return response.json()
 
     # ------------------------------------------------------------------ #
@@ -1101,9 +1129,15 @@ class ContactManager(BaseContactManager):
 
         # Merge any custom columns provided by the caller (sanitised first).
         if kwargs:
-            contact_details.update(
-                self._sanitize_custom_columns(kwargs),
-            )
+            safe_custom = self._sanitize_custom_columns(kwargs)
+            contact_details.update(safe_custom)
+            # Track keys so subsequent reads in this instance can whitelist them
+            try:
+                for k in safe_custom.keys():
+                    if k not in self._BUILTIN_FIELDS:
+                        self._known_custom_fields.add(k)
+            except Exception:
+                pass
 
         assert any(
             v is not None for v in contact_details.values()
@@ -1240,9 +1274,14 @@ class ContactManager(BaseContactManager):
         }
         # Merge any additional custom columns (sanitised first)
         if kwargs:
-            contact_details.update(
-                self._sanitize_custom_columns(kwargs),
-            )
+            safe_custom = self._sanitize_custom_columns(kwargs)
+            contact_details.update(safe_custom)
+            try:
+                for k in safe_custom.keys():
+                    if k not in self._BUILTIN_FIELDS:
+                        self._known_custom_fields.add(k)
+            except Exception:
+                pass
 
         # Collapse updates into a single dict so we only perform one write op
         updates_dict = {k: v for k, v in contact_details.items() if v is not None}
@@ -1561,16 +1600,26 @@ class ContactManager(BaseContactManager):
         - Embedding columns (``*_emb``) are excluded from the returned models to keep payloads
           compact.
         """
+        # Restrict payloads to built‑in + known custom columns to avoid an
+        # upfront fields lookup and reduce transfer size. Semantic sorting uses
+        # private columns server‑side and does not require them in the payload.
+        allowed_fields = list(self._BUILTIN_FIELDS)
+        if getattr(self, "_known_custom_fields", None):
+            allowed_fields.extend(sorted(self._known_custom_fields))
+
         rows = fetch_top_k_by_references(
             self._ctx,
             references,
             k=k,
+            allowed_fields=allowed_fields,
+            row_filter=None,
         )
         filled = backfill_rows(
             self._ctx,
             rows,
             k,
             unique_id_field="contact_id",
+            allowed_fields=allowed_fields,
         )
         return [Contact(**r) for r in filled]
 
@@ -1615,13 +1664,30 @@ class ContactManager(BaseContactManager):
         - This tool is brittle for substring searches across text; prefer ``_search_contacts``
           for that purpose.
         """
-        logs = unify.get_logs(
-            context=self._ctx,
-            filter=filter,
-            offset=offset,
-            limit=limit,
-            exclude_fields=list_private_fields(self._ctx),
-        )
+        # Prefer a single backend call that whitelists the built‑in columns to
+        # keep payloads small without a prior fields introspection request.
+        # If the client does not support `from_fields`, fall back to excluding
+        # private fields using a lightweight introspection.
+        try:
+            # Read built‑ins plus any custom columns we observed in this instance
+            from_fields = list(self._BUILTIN_FIELDS)
+            if getattr(self, "_known_custom_fields", None):
+                from_fields.extend(sorted(self._known_custom_fields))
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter=filter,
+                offset=offset,
+                limit=limit,
+                from_fields=from_fields,
+            )
+        except TypeError:
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter=filter,
+                offset=offset,
+                limit=limit,
+                exclude_fields=list_private_fields(self._ctx),
+            )
         return [Contact(**lg.entries) for lg in logs]
 
     # ------------------------------------------------------------------ #
