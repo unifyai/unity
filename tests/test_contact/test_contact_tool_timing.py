@@ -39,7 +39,7 @@ def test_tool_create_contact_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"]
     assert isinstance(out.get("details", {}).get("contact_id"), int)
-    # assert elapsed_ms < 300.0
+    assert elapsed_ms < 1500.0
 
 
 @pytest.mark.unit

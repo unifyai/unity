@@ -1109,19 +1109,6 @@ class ContactManager(BaseContactManager):
             v is not None for v in contact_details.values()
         ), "At least one contact detail must be provided."
 
-        # If it's the first contact, create immediately
-        if not unify.get_logs(context=self._ctx):
-            unify.log(
-                context=self._ctx,
-                **contact_details,
-                new=True,
-                mutable=True,
-            )
-            return {
-                "outcome": "contact created successfully",
-                "details": {"contact_id": 0},
-            }
-
         # Verify uniqueness for contact fields that should be unique (emails,
         # phone numbers, etc.).  We use a simple heuristic to consider any
         # field ending in *_address or *_number as unique.
@@ -1131,16 +1118,24 @@ class ContactManager(BaseContactManager):
             if f.endswith("_address") or f.endswith("_number")
         }
 
-        for key, value in contact_details.items():
-            if key not in unique_fields or value is None:
-                continue
-            logs = unify.get_logs(
+        # Perform a single existence check across all provided unique fields
+        provided_unique_constraints = [
+            f"{key} == {value!r}"
+            for key, value in contact_details.items()
+            if key in unique_fields and value is not None
+        ]
+
+        if provided_unique_constraints:
+            or_expr = " or ".join(provided_unique_constraints)
+            dupes = unify.get_logs(
                 context=self._ctx,
-                filter=f"{key} == {value!r}",
+                filter=or_expr,
+                limit=1,
+                return_ids_only=True,
             )
             assert (
-                len(logs) == 0
-            ), f"Invalid, contact with {key} {value} already exists."
+                len(dupes) == 0
+            ), "Invalid, contact with a provided unique field already exists."
 
         # Create the new contact
         log = unify.log(
