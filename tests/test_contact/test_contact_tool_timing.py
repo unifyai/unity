@@ -138,8 +138,8 @@ def test_tool_merge_contacts_timing():
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"] and out["details"]["kept_contact_id"] == c1
-    # assert elapsed_ms < X
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 6000.0
+    print(f"elapsed: {elapsed_ms} < 6000")
 
 
 @pytest.mark.unit
