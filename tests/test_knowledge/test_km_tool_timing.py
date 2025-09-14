@@ -23,7 +23,8 @@ def test_tool_tables_overview_timing():
     tabs = km._tables_overview()
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(tabs, dict)
-    # assert elapsed_ms < 200.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -41,7 +42,8 @@ def test_tool_create_table_and_add_rows_timing():
     # Verify via a read instead of assuming a specific return type
     data = km._filter(tables=["PerfTable"])["PerfTable"]
     assert isinstance(data, list) and len(data) == 2
-    # assert elapsed_ms < 400.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -62,7 +64,8 @@ def test_tool_filter_timing():
         and data["PerfFilter"]
         and data["PerfFilter"][0]["x"] == 2
     )
-    # assert elapsed_ms < 250.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -81,7 +84,8 @@ def test_tool_create_empty_column_timing():
     assert isinstance(out, dict)
     cols = km._tables_overview(include_column_info=True)["PerfCols"]["columns"]
     assert "score" in cols
-    # assert elapsed_ms < 400.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -97,7 +101,8 @@ def test_tool_rename_column_timing():
     assert isinstance(out, dict)
     data = km._filter(tables=["PerfRename"])["PerfRename"]
     assert "X" in data[0] and "x" not in data[0]
-    # assert elapsed_ms < 400.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -113,7 +118,8 @@ def test_tool_delete_column_timing():
     assert isinstance(out, dict)
     data = km._filter(tables=["PerfDeleteCol"])["PerfDeleteCol"]
     assert "x" not in data[0]
-    # assert elapsed_ms < 400.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -127,7 +133,8 @@ def test_tool_delete_rows_timing():
     res = km._delete_rows(filter="x >= 3", tables=["PerfDelRows"], limit=100)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(res, dict) and "PerfDelRows" in res
-    # assert elapsed_ms < 400.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -141,7 +148,8 @@ def test_tool_delete_tables_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     tabs = km._tables_overview()
     assert "TmpDelTable" not in tabs
-    # assert elapsed_ms < 400.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -163,7 +171,8 @@ def test_tool_search_timing():
     nearest = km._search(table=tbl, references={"content": "banking"}, k=1)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(nearest, list) and nearest
-    # assert elapsed_ms < 800.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -203,4 +212,5 @@ def test_tool_search_join_timing():
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(results, list) and results
-    # assert elapsed_ms < 1000.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")

@@ -26,7 +26,8 @@ def test_tool_list_columns_timing():
     cols = ts._list_columns()
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(cols, dict) and cols
-    # assert elapsed_ms < 200.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -41,7 +42,8 @@ def test_tool_create_and_filter_timing():
     tid = int(out["details"]["task_id"])
     rows = ts._filter_tasks(filter=f"task_id == {tid}")
     assert rows and rows[0]["task_id"] == tid
-    # assert elapsed_ms < 400.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -68,7 +70,8 @@ def test_tool_create_tasks_and_list_queues_timing():
     qid = queues[0]["queue_id"]
     chain = ts._get_queue(queue_id=qid)
     assert len(chain) >= 2
-    # assert elapsed_ms < 800.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -102,7 +105,8 @@ def test_tool_update_fields_timing():
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert elapsed_ms >= 0.0  # sanity: decorator executed
-    # assert elapsed_ms < 1200.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -128,8 +132,9 @@ def test_tool_set_and_reorder_queue_timing():
     assert [t.task_id for t in chain2][:3] == rev
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert elapsed_ms >= 0.0 and ro_ms >= 0.0
-    # assert elapsed_ms < 1000.0
-    # assert ro_ms < 600.0
+    # assert elapsed_ms < X
+    # assert ro_ms < X
+    # print(f"elapsed: {elapsed_ms} < X; reorder: {ro_ms} < X")
 
 
 @pytest.mark.unit
@@ -145,7 +150,8 @@ def test_tool_delete_and_cancel_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert del_out["details"]["task_id"] == tid_del
     assert tid_can in can_out["details"]["task_ids"]
-    # assert elapsed_ms < 800.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
 
 
 @pytest.mark.unit
@@ -159,4 +165,5 @@ def test_tool_search_tasks_timing():
     results = ts._search_tasks(references={"description": "banking"}, k=1)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(results, list)
-    # assert elapsed_ms < 900.0
+    # assert elapsed_ms < X
+    print(f"elapsed: {elapsed_ms} < X")
