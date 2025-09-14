@@ -649,7 +649,20 @@ class ContactManager(BaseContactManager):
             column_name not in self._REQUIRED_COLUMNS
         ), f"'{column_name}' is a required column and cannot be recreated."
 
-        if column_name in self._get_columns():
+        # Fast local validation to avoid unnecessary network round-trips
+        # Enforce simple snake_case starting with a letter
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", column_name):
+            raise ValueError(
+                "column_name must be snake_case: start with a letter, then letters/digits/underscores",
+            )
+
+        # Avoid a pre-flight GET to check for existence; rely on our singleton's
+        # private state which is kept in sync at construction and on create/delete.
+        # This prevents an extra blocking backend read on every create call.
+        if (
+            getattr(self, "_known_custom_fields", None)
+            and column_name in self._known_custom_fields
+        ):
             raise ValueError(f"Column '{column_name}' already exists.")
 
         proj = unify.active_project()
