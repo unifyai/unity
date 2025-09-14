@@ -1380,9 +1380,12 @@ class ContactManager(BaseContactManager):
         if contact_id in (0, 1):
             raise RuntimeError("Cannot delete system contacts with id 0 or 1.")
 
+        # Minimise backend scan work while preserving duplicate detection by
+        # capping the lookup to at most two rows.
         log_ids = unify.get_logs(
             context=self._ctx,
             filter=f"contact_id == {contact_id}",
+            limit=2,
             return_ids_only=True,
         )
         if not log_ids:
@@ -1394,9 +1397,10 @@ class ContactManager(BaseContactManager):
                 f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
             )
 
+        # Pass a single integer id to avoid wrapping in a list
         unify.delete_logs(
             context=self._ctx,
-            logs=log_ids,
+            logs=log_ids[0],
         )
         return {
             "outcome": "contact deleted",
