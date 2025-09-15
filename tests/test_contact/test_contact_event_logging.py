@@ -53,6 +53,7 @@ async def test_managermethod_events_for_ask():
     ), "Outgoing event should carry the assistant answer"
 
 
+@pytest.mark.slow
 @pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project

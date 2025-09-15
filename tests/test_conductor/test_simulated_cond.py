@@ -178,6 +178,7 @@ async def test_handle_stop():
 # ─────────────────────────────────────────────────────────────────────────────
 # 7.  Clarification handshake                                                 #
 # ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.slow
 @pytest.mark.asyncio
 @_handle_project
 async def test_cond_supports_optional_clarification_channels():

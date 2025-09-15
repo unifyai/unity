@@ -70,6 +70,7 @@ async def test_update_create_new_contact(
 
 
 @_handle_project
+@pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_existing_contact_details(
@@ -106,6 +107,7 @@ async def test_update_existing_contact_details(
 
 
 @_handle_project
+@pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_with_parent_context_identification(
@@ -146,6 +148,7 @@ async def test_update_with_parent_context_identification(
 
 
 @_handle_project
+@pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_with_clarification_needed(
@@ -233,6 +236,7 @@ async def test_update_with_clarification_needed(
 
 
 @_handle_project
+@pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_interjection_modification(
@@ -281,6 +285,7 @@ async def test_update_stop_operation(
 
 
 @_handle_project
+@pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_add_bio(

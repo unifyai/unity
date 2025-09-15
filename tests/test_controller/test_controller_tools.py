@@ -82,6 +82,7 @@ async def test_controller_observe_tool_loop():
     assert any(token in answer.lower() for token in ("true", "yes"))
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 @_handle_project
 async def test_controller_complex_tool_loop():
