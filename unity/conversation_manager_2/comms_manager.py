@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import asyncio
 from google.cloud import pubsub_v1
 import json
@@ -5,6 +9,8 @@ import os
 from unity.conversation_manager.events import *
 from unity.constants import ASYNCIO_DEBUG
 import redis.asyncio as redis
+
+
 
 
 # Subscription IDs
