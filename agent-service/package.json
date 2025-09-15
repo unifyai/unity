@@ -15,7 +15,7 @@
     "dotenv": "^17.2.0",
     "express": "^5.1.0",
     "express-ws": "^5.0.2",
-    "magnitude-core": "^0.2.26",
+    "magnitude-core": "file:../magnitude/packages/magnitude-core",
     "ws": "^8.18.3",
     "zod": "^3.25.76"
   },
