@@ -22,22 +22,46 @@ When an actor starts a task, it returns a `SteerableToolHandle`, which the sandb
 ### Magnitude Agent Service Setup
 Some actors (particularly `HierarchicalActor` and `CodeActActor`) require the Magnitude BrowserAgent service to be running for web automation tasks.
 
-**1. Install Dependencies:**
+The repo uses Unity's modified `magnitude-core` for the agent service (see `agent-service/package.json` dependency: `"magnitude-core": "file:../magnitude/packages/magnitude-core"`). The `magnitude/` directory contains our fork with Unity-specific enhancements.
+
+**1. Build local magnitude-core:**
 ```bash
+# First, clone the unity repository if you haven't already
+git clone <unity-repo-url>
+cd unity
+
+# Clone Unity's magnitude fork into the magnitude/ subdirectory
+git clone https://github.com/unifyai/magnitude.git magnitude
+cd magnitude
+git checkout unity-modifications  # Our branch with Unity enhancements
+
+# Build magnitude-core
+cd packages/magnitude-core
+npm install
+npm run build
+```
+
+**2. Install Agent Service deps:**
+```bash
+cd ../..  # Back to repo root from magnitude/packages/magnitude-core
 cd agent-service
 npm install
 ```
 
-**2. Configure Environment:**
+**3. Configure Environment:**
 Create a `.env` file in the `agent-service` directory:
 ```bash
 # agent-service/.env
 ANTHROPIC_API_KEY="sk-ant-..."
 UNIFY_BASE_URL="..."
 UNIFY_KEY="..."
+# Optional depending on configured LLM clients in magnitude-core (BAML)
+GOOGLE_API_KEY="..."
+OPENROUTER_API_KEY="..."
+OPENAI_API_KEY="..."
 ```
 
-**3. Start the Service:**
+**4. Start the Service:**
 ```bash
 cd agent-service
 npx ts-node src/index.ts
@@ -45,7 +69,22 @@ npx ts-node src/index.ts
 
 The service will run on `http://localhost:3000` (configurable via `--agent-url`).
 
-> **Note:** The agent service must be running before starting actors that use browser automation. You can verify it's working by visiting `http://localhost:3000/health`.
+> If you change code in `magnitude/packages/magnitude-core`, rebuild it and refresh the service dependency:
+> ```bash
+> # Rebuild local core
+> cd magnitude/packages/magnitude-core
+> npm run build
+> 
+> # Reinstall in agent-service to pick up the updated local package
+> cd ../..  # Back to repo root
+> cd agent-service
+> npm install --force
+> ```
+
+> You can also use `yalc` for a faster inner loop:
+> - In `magnitude-core`: `npm run build && npx yalc publish --push`
+> - In `agent-service`: `npx yalc add magnitude-core`
+> - Re-run publish after changes to auto-push updates.
 
 Running the sandbox
 -------------------
@@ -63,13 +102,16 @@ python -m sandboxes.actor.sandbox --actor hierarchical --voice --persist
 Here's a complete setup workflow:
 
 ```bash
-# Terminal 1: Start the agent service
-cd agent-service
-npm install  # (first time only)
-npx ts-node src/index.ts
+# Terminal 1: Build core and start the agent service
+git clone <unity-repo-url> && cd unity
+git clone https://github.com/unifyai/magnitude.git magnitude
+cd magnitude && git checkout unity-modifications
+cd packages/magnitude-core && npm i && npm run build
+cd ../..  # Back to repo root
+cd agent-service && npm i && npx ts-node src/index.ts
 
 # Terminal 2: Run the actor sandbox
-cd ..  # back to project root
+# (assuming you're in the unity repo root)
 python -m sandboxes.actor.sandbox --actor hierarchical
 
 # In the sandbox:
@@ -226,6 +268,7 @@ The actor sandbox supports full project lifecycle management through Unify's ver
 * **Agent service connection** – If using `--agent-url`, verify the service is running and accessible at `http://localhost:3000/health`.
 * **Agent service not running** – Many actors require the Magnitude service. Start it with `cd agent-service && npx ts-node src/index.ts`.
 * **Agent service environment** – Ensure `.env` file in `agent-service/` has valid `ANTHROPIC_API_KEY`, `UNIFY_BASE_URL`, and `UNIFY_KEY`.
+* **Magnitude branch** – Ensure you're on the `unity-modifications` branch in the `magnitude/` directory for Unity-specific enhancements.
 * **Headless mode issues** – Try running without `--headless` first to see if browser automation is working.
 
 **Performance & Logging:**
