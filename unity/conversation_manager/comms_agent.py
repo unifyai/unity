@@ -219,7 +219,7 @@ class CommsAgent:
                 self._send_email_to_third_party,
                 self._send_whatsapp_to_third_party,
                 self._join_meet,
-                self._implicit_contact_creation
+                self._implicit_contact_creation,
             )
             return
 
@@ -1023,10 +1023,7 @@ class CommsAgent:
         """
         return await send_whatsapp_message(description, parent_chat_context)
 
-    async def _implicit_contact_creation(
-        self,
-        description: str
-    ):
+    async def _implicit_contact_creation(self, description: str):
         """
         Creates a new contact implicitly.
         This is used when some new individual is mentioned during the conversation.
@@ -1039,25 +1036,31 @@ class CommsAgent:
         res = await client.beta.chat.completions.parse(
             model="gpt-4.1",
             messages=[
-                {"role": "system", "content": (
-                    "You've been provided with a list of contacts and a description of "
-                    "a new individual. Create a new contact with the information in the"
-                    " description if its not in the list already. If the new contact is"
-                    " not in the list, return a new contact with the information in the"
-                    " description. If the new contact is in the list, return the"
-                    " contact from the list."
-                )},
-                {"role": "user", "content": (
-                    f"Contacts: {contacts}\n"
-                    f"New Contact Description: {description}"
-                )},
+                {
+                    "role": "system",
+                    "content": (
+                        "You've been provided with a list of contacts and a description of "
+                        "a new individual. Create a new contact with the information in the"
+                        " description if its not in the list already. If the new contact is"
+                        " not in the list, return a new contact with the information in the"
+                        " description. If the new contact is in the list, return the"
+                        " contact from the list."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Contacts: {contacts}\n"
+                        f"New Contact Description: {description}"
+                    ),
+                },
             ],
             response_format=ImplicitContactOutput,
         )
         print("Response", res)
         if res.choices[0].message.parsed.new_contact:
             self.contact_manager._create_contact(
-                **res.choices[0].message.parsed.contact.model_dump()
+                **res.choices[0].message.parsed.contact.model_dump(),
             )
             return "Contact Created Successfully"
         else:
@@ -1243,7 +1246,7 @@ class CommsAgent:
                 self._ensure_contact_manager()
                 print("handle_logging: Contact Manager Initialized")
                 self.transcript_manager = TranscriptManager(
-                    contact_manager=self.contact_manager
+                    contact_manager=self.contact_manager,
                 )
                 self.transcript_manager._get_logger().session.headers[
                     "Authorization"
@@ -1323,7 +1326,8 @@ class CommsAgent:
                 self._ensure_contact_manager()
                 print("handle_past_events: Contact Manager Initialized")
                 self.broader_context = await asyncio.to_thread(
-                    get_broader_context, self.contact_manager
+                    get_broader_context,
+                    self.contact_manager,
                 )
             except Exception as e:
                 print(f"Error fetching bus events: {e}")
