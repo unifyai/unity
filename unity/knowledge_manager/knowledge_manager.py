@@ -3,7 +3,8 @@ import asyncio
 import uuid
 import unify
 import functools
-from typing import Any, Dict, List, Optional, Callable, Union
+import requests
+from typing import Any, Dict, List, Optional, Union
 
 import json
 
@@ -301,33 +302,6 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return f"{self._ctx}/{table}"
 
-    def _look_first_tool_policy(self, step: int, tls: Dict[str, Callable]):
-        """
-        Prefer lookup/search tools on the first step of a tool loop.
-
-        Parameters
-        ----------
-        step : int
-            Zero‑based tool‑use step index.
-        tls : dict[str, Callable]
-            Full toolset available to the loop.
-
-        Returns
-        -------
-        tuple[str, dict[str, Callable]]
-            A pair ``(mode, tools)`` where ``mode`` is either ``"required"``
-            (first step) or ``"auto"`` (subsequent steps).
-        """
-        if step < 1:
-            return "required", methods_to_tool_dict(
-                self._filter,
-                self._search,
-                self._filter_join,
-                self._search_join,
-                include_class_name=False,
-            )
-        return "auto", tls
-
     @staticmethod
     def _default_ask_tool_policy(
         step_index: int,
@@ -353,15 +327,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require lookup/search tools on the first step; auto thereafter."""
-        if step_index < 1:
-            lookup_tools = {
-                k: v
-                for k, v in current_tools.items()
-                if k in {"filter", "search", "filter_join", "search_join"}
-            }
-            if lookup_tools:
-                return ("required", lookup_tools)
+        """Require ask on the first step; auto thereafter."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
     # Public #
@@ -860,6 +828,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         # Always add the generated primary-key unless the caller supplied it.
         if columns is None:
             columns = {}
+        # Make sure fields are always mutable by default
+        columns = {k: {"type": v, "mutable": True} for k, v in columns.items()}
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {
             "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
@@ -1008,6 +978,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend response.
         """
+        if column_name in self._get_columns(table=table):
+            raise ValueError(f"Column '{column_name}' already exists.")
+
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
@@ -1015,7 +988,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         json_input = {
             "project": proj,
             "context": ctx,
-            "fields": {column_name: column_type},
+            "fields": {column_name: {"type": column_type, "mutable": True}},
         }
         response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
@@ -1059,7 +1032,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "equation": equation,
             "referenced_logs": {"lg": {"context": self._ctx_for_table(table)}},
         }
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = http_request("POST", url, json=json_input, headers=headers)
         return response.json()
 
     @_km_log_tool_runtime
