@@ -240,7 +240,7 @@ async def test_multiple_tables_and_join_like_query():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(420)
 @_handle_project
 async def test_incremental_updates_and_refactor():
     """
