@@ -2041,7 +2041,7 @@ class HierarchicalPlan(BaseActiveTask):
                             description="The index of the current tab. Return None if the tab index cannot be determined from the visible content.",
                         )
 
-                    original_tab_index = await self.actor.action_provider.browser_observe(
+                    original_tab_index = await self.actor.action_provider.observe(
                         "Look at the browser tabs at the top of the screen. What is the numerical index (starting from 0) of the currently active/selected tab? If you cannot see clear tab indicators or determine the active tab index, return null for current_tab_index.",
                         response_format=TabState,
                     )
@@ -2056,7 +2056,7 @@ class HierarchicalPlan(BaseActiveTask):
                     )
 
                 self.action_log.append("SANDBOX: Opening new tab for exploration")
-                await self.actor.action_provider.browser_act(
+                await self.actor.action_provider.act(
                     f"Open a new tab navigating to the url {original_url} and ensure the new tab is active",
                 )
 
@@ -2135,7 +2135,7 @@ class HierarchicalPlan(BaseActiveTask):
                         if original_tab_index.current_tab_index is not None
                         else 0
                     )
-                    await self.actor.action_provider.browser_act(
+                    await self.actor.action_provider.act(
                         f"Switch to tab {tab_index} which was on the url {original_url} to go back to the original tab",
                     )
                     self.action_log.append("SANDBOX: Returned to original tab")
@@ -2196,12 +2196,26 @@ class HierarchicalPlan(BaseActiveTask):
         if self.persist:
             self._set_state(_HierarchicalPlanState.COMPLETED)
             self._set_final_result(result_str)
+            try:
+                if hasattr(self, "_done_events") and not self._done_events.empty():
+                    event_to_signal = self._done_events.get_nowait()
+                    event_to_signal.set()
+            except Exception:
+                pass
         else:
             self._set_state(_HierarchicalPlanState.STOPPED)
             if self._execution_task and not self._execution_task.done():
                 self._execution_task.cancel()
             self._set_final_result(result_str)
 
+        try:
+            self.runtime._release_from_checkpoint()
+        except Exception:
+            pass
+        try:
+            self.runtime.resume()
+        except Exception:
+            pass
         return result_str
 
     async def pause(self) -> str:
@@ -2456,7 +2470,7 @@ class HierarchicalActor(BaseActor):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        persist: bool = False,
+        persist: bool = True,
         **kwargs,
     ) -> HierarchicalPlan:
         """
