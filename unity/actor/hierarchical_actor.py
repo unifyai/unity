@@ -1582,13 +1582,14 @@ class HierarchicalPlan(BaseActiveTask):
             or f"Plan finished in state {self._state.name} without a result."
         )
 
-    async def done(self) -> str:
+    def done(self) -> bool:
         """
-        Waits until the plan has completed its current unit of work and is
-        paused waiting for the next instruction.
+        Checks if the plan has completed.
 
-        Returns a concise summary of all actions performed since the last
-        time `done()` was called.
+        Returns:
+            True if the plan is in a terminal state, False otherwise.
+        """
+        return self._is_complete
 
         Raises:
             RuntimeError: If the plan was not initialized with `persist=True`.
