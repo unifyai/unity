@@ -1792,14 +1792,14 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     continue
                 if cmd in {"ask", "?"}:
                     if not arg.strip():
-                        print("Usage: /ask <question>")
+                        print("Usage: /ask <question>", file=sys.__stdout__)
                     else:
                         try:
-                            print(f"❓ Asking question: {arg}")
+                            print(f"❓ Asking question: {arg}", file=sys.__stdout__)
                             # Forward the question exactly as provided
                             nested = await handle.ask(arg)
                             ans = await nested.result()
-                            print(f"[ask] → {ans}")
+                            print(f"[ask] → {ans}", file=sys.__stdout__)
                             if enable_voice_steering:
                                 speak(str(ans))
                                 _wait_for_tts_end()
@@ -1810,9 +1810,10 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                         ),
                                         voice_enabled=enable_voice_steering,
                                     ),
+                                    file=sys.__stdout__,
                                 )
                         except Exception as exc:
-                            print(f"⚠️  Ask failed: {exc}")
+                            print(f"⚠️  Ask failed: {exc}", file=sys.__stdout__)
                     continue
                 if enable_voice_steering and cmd in {"record", "rec", "r"}:
                     try:
