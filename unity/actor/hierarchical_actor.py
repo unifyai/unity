@@ -1139,8 +1139,8 @@ class HierarchicalPlan(BaseActiveTask):
 
         if self.persist:
             self._done_events = asyncio.Queue()
-            self._summary_results = asyncio.Queue()
-            self._last_done_log_index = 0
+            self.cumulative_interactions: List[Tuple] = []
+            self._last_summarized_interaction_count: int = 0
 
         self._child_tasks: set[asyncio.Task] = set()
 
@@ -1291,12 +1291,6 @@ class HierarchicalPlan(BaseActiveTask):
                 if hasattr(self, "_done_events") and not self._done_events.empty():
                     try:
                         event_to_signal = self._done_events.get_nowait()
-                        new_log_entries = self.action_log[self._last_done_log_index :]
-                        self._last_done_log_index = len(self.action_log)
-
-                        summary = await self._summarize_log_chunk(new_log_entries)
-                        await self._summary_results.put(summary)
-
                         event_to_signal.set()
                     except asyncio.QueueEmpty:
                         pass
@@ -1591,42 +1585,58 @@ class HierarchicalPlan(BaseActiveTask):
         """
         return self._is_complete
 
-        Raises:
-            RuntimeError: If the plan was not initialized with `persist=True`.
+    async def awaiting_next_instruction(self) -> str:
+        """
+        Waits until the plan has completed its current unit of work and is
+        paused waiting for the next instruction. Returns a summary of actions
+        performed since the last call to this method.
         """
         if not self.persist:
             raise RuntimeError(
-                "The .done() handle is only available when the plan is started with persist=True.",
+                "The .awaiting_next_instruction() handle is only available when the plan is started with persist=True.",
             )
 
         completion_event = asyncio.Event()
         await self._done_events.put(completion_event)
-
         await completion_event.wait()
 
-        summary = await self._summary_results.get()
+        start_index = self._last_summarized_interaction_count
+        new_interactions = self.cumulative_interactions[start_index:]
+
+        if not new_interactions:
+            return "No new actions were performed since the last update."
+
+        formatted_interactions = []
+        for interaction in new_interactions:
+            kind, act, obs, *logs = interaction
+            logs = logs[0] if logs else []
+            log_entry = f"- Action: `{act}` with result `{obs or 'N/A'}`"
+            if logs:
+                log_details = "\n".join([f"    {line}" for line in logs])
+                log_entry += f"\n  - Agent Logs:\n{log_details}"
+            formatted_interactions.append(log_entry)
+
+        summary = await self._summarize_log_chunk("\n".join(formatted_interactions))
+
+        self._last_summarized_interaction_count = len(self.cumulative_interactions)
         return summary
 
-    async def _summarize_log_chunk(self, log_chunk: list[str]) -> str:
+    async def _summarize_log_chunk(self, summaries: str) -> str:
         """Uses an LLM to summarize a list of action log entries."""
-        if not log_chunk:
-            return "No new actions were taken."
-
-        log_text = "\n".join(log_chunk)
+        if not summaries:
+            return "Actions completed successfully."
 
         prompt = textwrap.dedent(
             f"""
             The following is a log of actions from an autonomous agent.
-            Summarize these actions concisely in a single sentence from the first-person perspective (e.g., "I navigated to the website and then searched for cookies.").
-            Focus on what was accomplished, not on internal states or verification steps.
+            Summarize these actions concisely in a single sentence from the first-person perspective (e.g., "I have successfully navigated to the website and then searched for cookies.").
 
             ACTION LOG:
             ---
-            {log_text}
+            {summaries}
             ---
         """,
         )
-
         summary = await llm_call(self.summarization_client, prompt)
         return summary.strip()
 
@@ -3140,6 +3150,7 @@ class HierarchicalActor(BaseActor):
                 plan.last_verified_screenshot = (
                     await self.action_provider.browser.get_screenshot()
                 )
+                plan.cumulative_interactions.extend(interactions_for_this_step)
                 logger.info(
                     f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
                 )
