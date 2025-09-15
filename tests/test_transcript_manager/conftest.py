@@ -345,6 +345,28 @@ def tm_scenario(request: pytest.FixtureRequest):
                 if _ctx in all_ctxs:
                     commit_context_and_store(_ctx)
 
+    # If we reused an existing scenario (no fresh seeding in this process), the
+    # in-memory name→id map may still be empty. Rebuild it from the Contacts table
+    # so downstream tests (that rely on _ID_BY_NAME) do not fail.
+    if not _ID_BY_NAME:
+        try:
+            # Attempt to read all contacts in the active scenario and populate the map.
+            # We prefer the ContactManager tool to keep logic consistent.
+            contacts = sb.cm._filter_contacts(limit=1000)
+            rebuilt: dict[str, int] = {}
+            for c in contacts or []:
+                try:
+                    first = getattr(c, "first_name", None)
+                    cid = getattr(c, "contact_id", None)
+                    if first is not None and cid is not None:
+                        rebuilt[str(first).lower()] = int(cid)
+                except Exception:
+                    continue
+            if rebuilt:
+                _ID_BY_NAME.update(rebuilt)
+        except Exception as _exc:
+            pass
+
     unify.unset_context()
     yield sb.tm, _ID_BY_NAME
 
