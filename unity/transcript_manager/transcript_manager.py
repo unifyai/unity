@@ -487,7 +487,7 @@ class TranscriptManager(BaseTranscriptManager):
             List[Union[Dict[str, Any], Message]],
         ],
         synchronous: bool = False,
-    ) -> None:
+    ) -> List[Message]:
         """
         Insert one or more messages into the backing store.
 
@@ -511,11 +511,19 @@ class TranscriptManager(BaseTranscriptManager):
         synchronous : bool, default=False
             If True, messages will be logged in order synchronously. If False,
             messages may be logged asynchronously in any order.
+
+        Returns
+        -------
+        list[Message]
+            The created messages as validated ``Message`` models, populated
+            with assigned identifiers (e.g., ``message_id`` and
+            ``exchange_id``) exactly as returned by the storage backend. The
+            shape mirrors ``_filter_messages`` (list of ``Message``).
         """
 
         # ── 0. Early-exit on empty input ────────────────────────────────────
         if not messages:
-            return
+            return []
 
         if not isinstance(messages, list):
             messages = [messages]
@@ -643,31 +651,84 @@ class TranscriptManager(BaseTranscriptManager):
                 # Defensive – never propagate EventBus issues to caller
                 pass
 
-        for entries, msg in zip(msg_entries, normalised_messages):
+        created_messages: List[Message] = []
+
+        for entries, _orig_msg in zip(msg_entries, normalised_messages):
             # Ensure correct creation order by performing contact creation *before*
             # the logger call (already satisfied above).  Now we can log safely.
-            if synchronous:
-                unify.log(
-                    project=unify.active_project(),
-                    context=self._transcripts_ctx,
-                    **entries,
-                    params={},
-                )
-            else:
-                self._get_logger().log_create(
-                    project=unify.active_project(),
-                    context=self._transcripts_ctx,
-                    params={},
-                    entries=entries,
-                )
+            log = unify.log(
+                context=self._transcripts_ctx,
+                **entries,
+                new=True,
+                mutable=True,
+                params={},
+            )
+
+            # Build a Message from the POST response; if ids look unassigned,
+            # perform a one-off read to retrieve the assigned values.
+            # TODO: Remove this GET fallback once the backend echoes auto-assigned
+            # exchange_id on POST responses consistently. message_id already echoes reliably.
+            try:
+                persisted_payload = {
+                    k: log.entries.get(k) for k in Message.model_fields.keys()
+                }
+                # Only refetch when exchange_id is missing/unassigned, since message_id
+                # is already returned by the POST in current backends.
+                need_refetch = False
+                try:
+                    xid_val = persisted_payload.get("exchange_id")
+                    if xid_val is None or int(xid_val) <= -1:
+                        need_refetch = True
+                except Exception:
+                    need_refetch = True
+
+                if need_refetch:
+                    try:
+                        ts = entries.get("timestamp")
+                        snd = entries.get("sender_id")
+                        med = entries.get("medium")
+                        flt = f"timestamp == '{ts}' and sender_id == {snd} and medium == '{med}'"
+                        rows = unify.get_logs(
+                            context=self._transcripts_ctx,
+                            filter=flt,
+                            limit=1,
+                            from_fields=list(Message.model_fields.keys()),
+                            sorting={"timestamp": "descending"},
+                        )
+                        if rows:
+                            persisted_payload = dict(rows[0].entries)
+                    except Exception:
+                        pass
+
+                # Remove any None values for id fields so the validator can apply sentinel if needed
+                if persisted_payload.get("message_id") is None:
+                    persisted_payload.pop("message_id", None)
+                if persisted_payload.get("exchange_id") is None:
+                    persisted_payload.pop("exchange_id", None)
+
+                created_msg = Message(**persisted_payload)
+                created_messages.append(created_msg)
+            except Exception:
+                # Fallback to constructing from the original request shape, omitting id keys
+                fallback_payload = {
+                    k: entries.get(k) for k in Message.model_fields.keys()
+                }
+                if fallback_payload.get("message_id") is None:
+                    fallback_payload.pop("message_id", None)
+                if fallback_payload.get("exchange_id") is None:
+                    fallback_payload.pop("exchange_id", None)
+                created_msg = Message(**fallback_payload)
+                created_messages.append(created_msg)
 
             try:
                 # If we're inside an event-loop schedule the coroutine there …
                 loop = asyncio.get_running_loop()
-                loop.create_task(_publish_message(msg))
+                loop.create_task(_publish_message(created_msg))
             except RuntimeError:
                 # … otherwise create a *temporary* loop so the event isn't lost.
-                asyncio.run(_publish_message(msg))
+                asyncio.run(_publish_message(created_msg))
+
+        return created_messages
 
     def join_published(self):
         self._get_logger().join()
