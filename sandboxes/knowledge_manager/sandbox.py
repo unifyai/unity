@@ -20,9 +20,11 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 from datetime import datetime
 
-import unify
-
 from dotenv import load_dotenv
+
+load_dotenv()
+
+import unify
 from pydantic import BaseModel, Field
 from sandboxes.scenario_builder import ScenarioBuilder
 
@@ -31,7 +33,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-load_dotenv()
 
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
@@ -157,7 +158,7 @@ async def _dispatch_with_context(
         return "refactor", handle
 
     # ───── everything else – ask an LLM judge ────────────────────────
-    judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
+    judge = unify.Unify("gpt-5@openai", response_format=_Intent)
     intent = _Intent.model_validate_json(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )

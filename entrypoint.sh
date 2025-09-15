@@ -6,6 +6,8 @@ set -e
 # Global variables to track processes
 REDIS_PID=""
 MAIN_PID=""
+AGENT_PID=""
+DESKTOP_PID=""
 
 # Function to handle graceful shutdown
 cleanup() {
@@ -28,10 +30,22 @@ cleanup() {
         redis-cli shutdown 2>/dev/null || true
     fi
 
-    if [ ! -z "$BROWSER_PID" ]; then
-        echo "Stopping browser (PID: $BROWSER_PID)..."
-        kill -TERM $BROWSER_PID 2>/dev/null || true
-        wait $BROWSER_PID 2>/dev/null || true
+    if [ ! -z "$DESKTOP_PID" ]; then
+        echo "Stopping desktop (PID: $DESKTOP_PID)..."
+        kill -TERM $DESKTOP_PID 2>/dev/null || true
+        wait $DESKTOP_PID 2>/dev/null || true
+    else
+        echo "Stopping desktop..."
+        pkill -f "desktop.sh" 2>/dev/null || true
+    fi
+
+    if [ ! -z "$AGENT_PID" ]; then
+        echo "Stopping agent-service (PID: $AGENT_PID)..."
+        kill -TERM $AGENT_PID 2>/dev/null || true
+        wait $AGENT_PID 2>/dev/null || true
+    else
+        echo "Stopping agent-service..."
+        pkill -f "ts-node" 2>/dev/null || true
     fi
 
     echo "Cleanup complete"
@@ -54,11 +68,7 @@ REDIS_PID=$!
 echo "Redis started with PID: $REDIS_PID"
 
 
-# Virtual devices and remote browser setup
-xdg-desktop-portal &
-xdg-desktop-portal-gtk &  # or -gtk, depending on your compositor
-
-# Set up for virtual audio
+# Virtual desktop and devices
 export XDG_RUNTIME_DIR=/tmp/runtime-root
 mkdir -p $XDG_RUNTIME_DIR
 chmod 700 $XDG_RUNTIME_DIR
@@ -68,12 +78,12 @@ dbus-daemon --system --fork
 eval "$(dbus-launch)"
 export DBUS_SESSION_BUS_ADDRESS
 
+# Start virtual device
 pipewire &
 pipewire-pulse &
 wireplumber &
 sleep 2
 
-# Create the virtual sink/mic
 # 1. For capturing Meet participant audio
 pactl load-module module-null-sink sink_name=meet_sink
 pactl load-module module-remap-source master=meet_sink.monitor source_name=meet_mic
@@ -85,8 +95,17 @@ pactl load-module module-remap-source master=agent_sink.monitor source_name=agen
 pactl set-default-source meet_mic
 pactl set-default-sink agent_sink
 
-bash device.sh &
-BROWSER_PID=$!
+# Launch virtual desktop
+bash /app/desktop/desktop.sh &
+DESKTOP_PID=$!
+
+# Start agent-service (ts-node)
+npx ts-node /app/agent-service/src/index.ts &
+AGENT_PID=$!
+
+# echo "Starting virtual desktop and Magnitude server..."
+# bash desktop/startup.sh &
+# DESKTOP_PID=$!
 
 
 # Start the main application in parallel

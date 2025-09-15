@@ -6,12 +6,23 @@ from .status import Status
 from .schedule import Schedule
 from .trigger import Trigger
 from .repetition import RepeatPattern
+from .activated_by import ActivatedBy
 from datetime import datetime
 
 UNASSIGNED = -1
 
 
 class Task(BaseModel):
+    # Top-level queue identifier for tasks that are members of a runnable queue.
+    # When a task is queued/scheduled, this must be populated. The schedule
+    # object never carries a queue_id field; use this top-level column solely.
+    queue_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Identifier of the runnable queue this task belongs to. Matches "
+            "schedule.queue_id for queued/scheduled tasks."
+        ),
+    )
     task_id: int = Field(
         default=UNASSIGNED,
         description="Unique identifier for the task",
@@ -60,6 +71,13 @@ class Task(BaseModel):
             "a contact's own response_policy, the task-level policy takes precedence."
         ),
     )
+    activated_by: Optional[ActivatedBy] = Field(
+        default=None,
+        description=(
+            "Reason the task instance transitioned to the active state.\n"
+            "This is set automatically at activation time and is never directly editable."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -88,6 +106,12 @@ class Task(BaseModel):
                 "Status 'triggerable' requires a non-null *trigger* definition.",
             )
 
+        # `activated_by` may only be present once the task is actually active
+        if self.status != Status.active and self.activated_by is not None:
+            raise ValueError(
+                "`activated_by` may only be set when status is 'active'",
+            )
+
         return self
 
     def to_post_json(self) -> dict:
@@ -96,4 +120,7 @@ class Task(BaseModel):
             exclude.add("task_id")
         if self.instance_id == UNASSIGNED:
             exclude.add("instance_id")
+        # Allow backend auto-increment for queue_id by omitting it when unset
+        if self.queue_id is None:
+            exclude.add("queue_id")
         return self.model_dump(mode="json", exclude=exclude)

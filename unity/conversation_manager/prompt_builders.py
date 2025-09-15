@@ -124,12 +124,24 @@ def _build_communication_rules_section(is_call: bool) -> str:
         "- Send the full SMS message in one go when possible, same goes for emails.",
         "- If the user asks for a call, you should initiate a call task using the ToolUseAction",
         "- Always ensure phone numbers have prefixed with +",
+        "- If the user sends you an sms asking about something, then it's expected that you will reply with an sms through the ToolUseAction.",
+        '- In the above example, there should be ALWAYS be an explicit mention of something like "DIRECT <SMS/WHATSAPP/EMAIL/CALL>: <contents of the interaction>" in the ToolUseAction based on the communication channel.',
+        '- If it is a third-party SMS, WhatsApp or Email (i.e. to be sent to someone other than the current user), then you should also mention something like "THIRD PARTY <SMS/WHATSAPP/EMAIL/CALL>: <contents of the interaction>" in the ToolUseAction.',
+        "- The same logic applies even to cross-channel communication, i.e. if the user sends you an sms asking to send an email, then again decision about DIRECT/THIRD PARTY should be the same as if they asked to send an sms instead.",
+        "- For cross-channel communication, you need to also send an acknowledgement of the action to the user, for example in the above case, you also need to send an sms acknowledgement of having sent the email, include that in the ToolUseAction as well.",
+        "- Similarly, if it was an email asking you to send an sms, then you should send an email acknowledgement of having sent the sms.",
+        "- If the user mentions a new individual asking you to call them or send them a message (AND that person hasn't been mentioned before), you should create a contact with whatever information you have about them, such as name, phone number, email address, bio, etc.",
     ]
 
     return "\n".join([title, underline] + lines)
 
 
-def _build_user_details_section(name: str) -> str:
+def _build_user_details_section(
+    name: str,
+    number: str,
+    whatsapp_number: str,
+    email: str,
+) -> str:
     title = "User Details:"
     underline = "-" * len(title)
     return "\n".join(
@@ -137,6 +149,9 @@ def _build_user_details_section(name: str) -> str:
             title,
             underline,
             f"User Name: {name}",
+            f"User Phone Number: {number}",
+            f"User WhatsApp Number: {whatsapp_number}",
+            f"User Email Address: {email}",
         ],
     )
 
@@ -189,6 +204,9 @@ def _build_task_context_section(
 # prompt builders
 def build_call_sys_prompt(
     user_name: str,
+    user_number: str,
+    user_whatsapp_number: str,
+    user_email: str,
     assistant_name: str,
     assistant_age: str,
     assistant_region: str,
@@ -207,7 +225,12 @@ def build_call_sys_prompt(
             assistant_region,
             assistant_about,
         ),
-        _build_user_details_section(user_name),
+        _build_user_details_section(
+            user_name,
+            user_number,
+            user_whatsapp_number,
+            user_email,
+        ),
         _build_event_stream_section(),
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
@@ -226,6 +249,9 @@ def build_call_sys_prompt(
 
 def build_non_call_sys_prompt(
     user_name: str,
+    user_number: str,
+    user_whatsapp_number: str,
+    user_email: str,
     assistant_name: str,
     assistant_age: str,
     assistant_region: str,
@@ -244,7 +270,12 @@ def build_non_call_sys_prompt(
             assistant_region,
             assistant_about,
         ),
-        _build_user_details_section(user_name),
+        _build_user_details_section(
+            user_name,
+            user_number,
+            user_whatsapp_number,
+            user_email,
+        ),
         _build_event_stream_section(),
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),

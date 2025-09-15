@@ -20,13 +20,13 @@ from livekit.plugins import (
     silero,
 )
 
-if sys.platform == "darwin":
+if not sys.platform.startswith("win"):
     from livekit.plugins import noise_cancellation
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
 
 from livekit.agents import ModelSettings, llm, FunctionTool, Agent
-from typing import AsyncIterable
+from typing import AsyncIterable, get_args
 import sounddevice as sd
 import numpy as np
 
@@ -37,12 +37,14 @@ from unity.conversation_manager.utils import (
     dispatch_agent,
     publish_event,
     close_connection,
-    get_reader,
+    create_connection,
 )
 
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
+reader = None
+writer = None
 
 
 async def audio_from_meet_mic():
@@ -92,17 +94,22 @@ class Assistant(Agent):
         from_number: str = "",
         to_number: str = "",
         meet_id: str = None,
+        outbound: bool = False,
     ) -> None:
         self.past_events = []
         self.new_events = []
         # self.client = client
         self.current_tasks_status = None
         self.from_number = from_number
+        self._call_received = not outbound
 
         # meet conference
         self.meet_id = meet_id
         self.is_meet_call = meet_id is not None
         super().__init__(instructions="", llm=openai.LLM(model="gpt-4o"))
+
+    def set_call_received(self):
+        self._call_received = True
 
     async def on_user_turn_completed(
         self,
@@ -120,6 +127,7 @@ class Assistant(Agent):
                     content=new_message.text_content,
                 ).to_dict(),
             },
+            writer=writer,
         )
         raise llm.StopResponse()
 
@@ -129,6 +137,10 @@ class Assistant(Agent):
         tools: list[FunctionTool],
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
+        print("waiting for call to be received...")
+        while not self._call_received:
+            await asyncio.sleep(0.1)
+        print("call received")
         print("running llm node...")
         while True:
             chunk = await chunk_queue.get()
@@ -232,6 +244,8 @@ class Assistant(Agent):
 
 
 async def entrypoint(ctx: agents.JobContext):
+    global reader, writer
+
     await ctx.connect()
 
     # Get phone numbers from environment variables
@@ -239,6 +253,7 @@ async def entrypoint(ctx: agents.JobContext):
     tts_provider = os.environ.get("TTS_PROVIDER", "cartesia")
     voice_id = os.environ.get("VOICE_ID", "")
     # to_number = os.environ.get("CALL_TO_NUMBER", "")
+    outbound = os.environ.get("OUTBOUND", "False") == "True"
 
     # meet conference
     meet_id = os.environ.get("MEET_ID", "")
@@ -249,7 +264,7 @@ async def entrypoint(ctx: agents.JobContext):
     print("voice_id", voice_id)
 
     session = AgentSession(
-        stt=deepgram.STT(model="nova-3", language="multi"),
+        stt=deepgram.STT(model="nova-3", language="en-GB"),
         llm=openai.LLM(model="gpt-4o"),
         tts=(
             elevenlabs.TTS(
@@ -261,8 +276,8 @@ async def entrypoint(ctx: agents.JobContext):
                 voice=voice_id if voice_id != "" else cartesia.tts.TTSDefaultVoiceId,
             )
         ),
-        vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
+        vad=silero.VAD.load(min_speech_duration=0.15),
+        turn_detection=EnglishModel(),
     )
 
     async def end_call():
@@ -275,6 +290,7 @@ async def entrypoint(ctx: agents.JobContext):
                 "to": "past",
                 "event": PhoneCallEndedEvent().to_dict(),
             },
+            writer=writer,
         )
         print("End call event sent")
 
@@ -301,7 +317,7 @@ async def entrypoint(ctx: agents.JobContext):
 
         # Close the connection gracefully
         try:
-            await close_connection()
+            await close_connection(writer=writer)
             print("Connection closed gracefully")
         except Exception as e:
             print(f"Error during connection cleanup: {e}")
@@ -352,27 +368,33 @@ async def entrypoint(ctx: agents.JobContext):
             token=meet_token,
         )
 
+    assistant = Assistant(
+        from_number=from_number,
+        meet_id=meet_id if meet_id else None,
+        outbound=outbound,
+    )
     await session.start(
         room=ctx.room,
-        agent=Assistant(from_number=from_number, meet_id=meet_id if meet_id else None),
+        agent=assistant,
         room_input_options=RoomInputOptions(
             # LiveKit Cloud enhanced noise cancellation
             # - If self-hosting, omit this parameter
             # - For telephony applications, use `BVCTelephony` for best results
             noise_cancellation=(
-                noise_cancellation.BVC() if sys.platform == "darwin" else None
+                noise_cancellation.BVC() if not sys.platform.startswith("win") else None
             ),
         ),
     )
 
     # Initialize connection using utility function
-    reader = await get_reader()
+    reader, writer = await create_connection("call")
     await publish_event(
         {
             "topic": from_number,
             "to": "pending",
             "event": PhoneCallStartedEvent().to_dict(),
         },
+        writer=writer,
     )
 
     async def response_task():
@@ -404,6 +426,7 @@ async def entrypoint(ctx: agents.JobContext):
                                     content=phone_utterance,
                                 ).to_dict(),
                             },
+                            writer=writer,
                         ),
                     )
                     # Update activity time on assistant response
@@ -421,13 +444,14 @@ async def entrypoint(ctx: agents.JobContext):
                                     "topic": from_number,
                                     "event": InterruptEvent().to_dict(),
                                 },
+                                writer=writer,
                             ),
                         )
         except asyncio.CancelledError:
             pass
 
     async def collect_events():
-        nonlocal last_activity_time, reader
+        nonlocal last_activity_time
         global chunk_queue
 
         while True:
@@ -440,7 +464,10 @@ async def entrypoint(ctx: agents.JobContext):
                 # Update activity time on any event
                 last_activity_time = asyncio.get_event_loop().time()
                 # handle msg
-                if msg["type"] == "start_gen":
+                if msg["type"] == "call_received":
+                    print("call received")
+                    assistant.set_call_received()
+                elif msg["type"] == "start_gen":
                     chunk_queue = asyncio.Queue()
                     t = asyncio.create_task(response_task())
                     t.add_done_callback(on_response_end)
@@ -465,15 +492,17 @@ if __name__ == "__main__":
     tts_provider = "cartesia"
     voice_id = ""
     meet_id = ""
+    outbound = "False"
     print("sys.argv", sys.argv)
 
-    if len(sys.argv) > 6:
+    if len(sys.argv) > 7:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
         tts_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
         voice_id = sys.argv[5]
         meet_id = sys.argv[6] if sys.argv[6] != "None" else ""
+        outbound = sys.argv[7]
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint
@@ -482,7 +511,8 @@ if __name__ == "__main__":
     os.environ["MEET_ID"] = meet_id
     if voice_id != "None":
         os.environ["VOICE_ID"] = voice_id
-    # os.environ["CALL_TO_NUMBER"] = to_number
+    # os.environ["CALL_TO_NUMBER"] = assistant_number
+    os.environ["OUTBOUND"] = outbound
 
     agent_name = f"unity_{assistant_number}" if meet_id == "" else meet_id
 

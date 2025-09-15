@@ -90,7 +90,7 @@ class CommsManager:
                             assistant_email=event["assistant_email"],
                             user_name=event["user_name"],
                             user_number=event["user_number"],
-                            user_phone_number=event["user_phone_number"],
+                            user_whatsapp_number=event["user_whatsapp_number"],
                             user_email=event["user_email"],
                             tts_provider=event["tts_provider"],
                             voice_id=event["voice_id"],
@@ -98,11 +98,14 @@ class CommsManager:
                     },
                 )
             elif thread in events_map:
+                contact_details = event.get("contact_details", {})
                 content = event["body"]
                 topic = ""
+                extras = dict()
                 if thread == "email":
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     topic = event["from"].split("<")[1][:-1]
+                    extras = {"message_id": event["message_id"]}
                 else:
                     topic = event["from_number"].replace("whatsapp:", "").strip()
                 # Put the message in the queue instead of creating a task
@@ -111,43 +114,41 @@ class CommsManager:
                     {
                         "topic": topic,
                         "event": events_map[thread](
+                            contact_details=contact_details,
                             content=content,
                             role="User",
+                            **extras,
                         ).to_dict(),
                     },
                 )
                 message.ack()
-            elif thread == "call":
+            elif "call" in thread:
                 try:
-                    # Extract phone numbers from the message data
-                    from_number = event.get("caller_number", "")
-                    to_number = "+" + event.get("conference_name", "").replace(
-                        "Unity_",
-                        "",
-                    )
-                    self.loop.call_soon_threadsafe(
-                        self.message_queue.put_nowait,
-                        {
+                    contact_details = event.get("contact_details", {})
+                    if thread == "call":
+                        message_dict = {
                             "topic": event["caller_number"],
                             "event": PhoneCallInitiatedEvent(
+                                contact_details=contact_details,
                                 voice_id=event.get("voice_id", None),
                                 tts_provider=event.get("tts_provider", None),
                             ).to_dict(),
-                        },
+                        }
+                    else:
+                        message_dict = {
+                            "topic": "call_process",
+                            "type": "call_received",
+                        }
+                    self.loop.call_soon_threadsafe(
+                        self.message_queue.put_nowait,
+                        message_dict,
                     )
-                    # this should be handled through the comms agents i think
-                    # self.call_proc = run_script(
-                    #     "call.py",
-                    #     "dev",
-                    #     from_number,
-                    #     to_number,
-                    # )
                     message.ack()
                 except json.JSONDecodeError:
-                    print("Invalid message format for call event")
+                    print(f"Invalid message format for {thread} event")
                     message.nack()
                 except Exception as e:
-                    print(f"Error processing call event: {e}")
+                    print(f"Error processing {thread} event: {e}")
                     message.nack()
             else:
                 print(f"Unknown event type: {thread}")

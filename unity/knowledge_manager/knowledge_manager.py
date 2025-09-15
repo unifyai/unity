@@ -3,17 +3,17 @@ import asyncio
 import uuid
 import unify
 import functools
-import requests
 from typing import Any, Dict, List, Optional, Callable, Union
 
 import json
-from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
+from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..helpers import _handle_exceptions
 from .types import ColumnType
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
     methods_to_tool_dict,
+    TOOL_LOOP_LINEAGE,
 )
 from ..helpers import _handle_exceptions
 from .base import BaseKnowledgeManager
@@ -27,6 +27,116 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
+from ..common.semantic_search import (
+    fetch_top_k_by_references,
+    backfill_rows,
+)
+from ..common.context_store import TableStore
+from ..events.event_bus import EVENT_BUS, Event
+from ..common.http import request as http_request
+
+# ------------------------------------------------------------------ #
+# Optional per-tool runtime logging (KnowledgeManager)               #
+# ------------------------------------------------------------------ #
+import time
+
+
+def _env_truthy(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    raw_l = str(raw).strip().lower()
+    return raw_l in {"1", "true", "yes", "on"}
+
+
+def _km_timing_enabled() -> bool:
+    # Per-manager override → global fallback
+    return _env_truthy(
+        "KNOWLEDGE_MANAGER_TOOL_TIMING",
+        _env_truthy("TOOL_TIMING", False),
+    )
+
+
+def _km_timing_print_enabled() -> bool:
+    return _env_truthy(
+        "KNOWLEDGE_MANAGER_TOOL_TIMING_PRINT",
+        _env_truthy("TOOL_TIMING_PRINT", False),
+    )
+
+
+def _km_log_tool_runtime(func):
+    """Decorator to measure and optionally publish per-tool runtimes.
+
+    Controlled by env flags:
+      • KNOWLEDGE_MANAGER_TOOL_TIMING (fallback TOOL_TIMING)
+      • KNOWLEDGE_MANAGER_TOOL_TIMING_PRINT (fallback TOOL_TIMING_PRINT)
+    Publishes a lightweight ManagerTool event on EVENT_BUS when enabled.
+    """
+
+    @functools.wraps(func, updated=())
+    def _wrapper(self: "KnowledgeManager", *args, **kwargs):
+        start = time.perf_counter()
+        try:
+            return func(self, *args, **kwargs)
+        finally:
+            try:
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+            except Exception:
+                elapsed_ms = -1.0
+
+            if _km_timing_print_enabled():
+                try:
+                    print(f"KnowledgeManager.{func.__name__} took {elapsed_ms:.2f} ms")
+                except Exception:
+                    pass
+
+            if not _km_timing_enabled():
+                return
+
+            # Determine category best-effort at runtime
+            try:
+                if (
+                    isinstance(getattr(self, "_ask_tools", None), dict)
+                    and func.__name__ in self._ask_tools
+                ):
+                    category = "ask"
+                elif (
+                    isinstance(getattr(self, "_update_tools", None), dict)
+                    and func.__name__ in self._update_tools
+                ):
+                    category = "update"
+                elif (
+                    isinstance(getattr(self, "_refactor_tools", None), dict)
+                    and func.__name__ in self._refactor_tools
+                ):
+                    category = "refactor"
+                else:
+                    category = "direct"
+            except Exception:
+                category = "direct"
+
+            # Publish event if an event loop is running
+            try:
+                evt = Event(
+                    type="ManagerTool",
+                    payload={
+                        "manager": "KnowledgeManager",
+                        "tool": func.__name__,
+                        "category": category,
+                        "duration_ms": float(elapsed_ms),
+                    },
+                )
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None and EVENT_BUS:
+                    asyncio.create_task(EVENT_BUS.publish(evt))
+            except Exception:
+                # Never let timing/logging affect tool behaviour
+                pass
+
+    return _wrapper
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -37,8 +147,21 @@ class KnowledgeManager(BaseKnowledgeManager):
         include_contacts: bool = True,
     ) -> None:
         """
-        KnowledgeManager now **directly manipulates** the root-level
-        ``Contacts`` table instead of calling the public ContactManager API.
+        Initialise the KnowledgeManager.
+
+        This manager reads/writes directly to Unify contexts for knowledge
+        tables. When ``include_contacts`` is ``True`` it also exposes the
+        root‑level ``Contacts`` table for cross‑table queries/joins.
+
+        Parameters
+        ----------
+        rolling_summary_in_prompts : bool, default ``True``
+            When enabled, inject a short rolling activity summary (sourced
+            from ``MemoryManager``) into system prompts for LLM calls.
+        include_contacts : bool, default ``True``
+            When ``True``, link the root‑level ``Contacts`` table so that
+            tools such as joins and filters can reference it via the special
+            table name ``"Contacts"``.
         """
 
         self._refactor_tools = methods_to_tool_dict(
@@ -79,7 +202,9 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._tables_overview,
                 self._filter,
                 self._search,
+                self._filter_join,
                 self._search_join,
+                self._filter_multi_join,
                 self._search_multi_join,
             ),
         }
@@ -126,16 +251,46 @@ class KnowledgeManager(BaseKnowledgeManager):
             else None
         )
 
+        # Optional: idempotently ensure Contacts exists when linkage enabled
+        if self._contacts_ctx is not None:
+            try:
+                TableStore(
+                    self._contacts_ctx,
+                    unique_keys={"contact_id": "int"},
+                    auto_counting={"contact_id": None},
+                ).ensure_context()
+            except Exception:
+                # Best-effort; KnowledgeManager can still function without immediate Contacts access
+                pass
+
     # Helpers #
     # --------#
 
     def _ctx_for_table(self, table: str) -> str:
-        """Return the correct Unify context for *table*.
+        """
+        Return the fully‑qualified Unify context name for ``table``.
 
         When this instance was created with ``include_contacts=False`` any
-        attempt to reference the *Contacts* table is considered an error to
-        avoid hidden cross-coupling between the knowledge store and the
-        contact book.
+        attempt to reference the ``Contacts`` table is rejected to avoid
+        hidden cross‑coupling.
+
+        Parameters
+        ----------
+        table : str
+            Logical table name as used by this manager (e.g. ``"Products"``).
+            The special name ``"Contacts"`` maps to the root‑level contacts
+            context when contacts linkage is enabled.
+
+        Returns
+        -------
+        str
+            The fully‑qualified Unify context.
+
+        Raises
+        ------
+        ValueError
+            If ``table == "Contacts"`` but this instance was initialised with
+            ``include_contacts=False``.
         """
 
         if table == "Contacts":
@@ -148,10 +303,27 @@ class KnowledgeManager(BaseKnowledgeManager):
         return f"{self._ctx}/{table}"
 
     def _look_first_tool_policy(self, step: int, tls: Dict[str, Callable]):
+        """
+        Prefer lookup/search tools on the first step of a tool loop.
+
+        Parameters
+        ----------
+        step : int
+            Zero‑based tool‑use step index.
+        tls : dict[str, Callable]
+            Full toolset available to the loop.
+
+        Returns
+        -------
+        tuple[str, dict[str, Callable]]
+            A pair ``(mode, tools)`` where ``mode`` is either ``"required"``
+            (first step) or ``"auto"`` (subsequent steps).
+        """
         if step < 1:
             return "required", methods_to_tool_dict(
                 self._filter,
                 self._search,
+                self._filter_join,
                 self._search_join,
                 include_class_name=False,
             )
@@ -173,6 +345,33 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
     ) -> "SteerableToolHandle":
+        """
+        English‑text command interface for schema/data refactoring.
+
+        Parameters
+        ----------
+        text : str
+            Natural‑language instruction (e.g. “create a table … then move column …”).
+        _return_reasoning_steps : bool, default ``False``
+            When ``True``, wrap ``handle.result()`` to also return internal
+            LLM messages for debugging.
+        parent_chat_context : list[dict] | None, default ``None``
+            Optional prior chat context to seed the conversation.
+        clarification_up_q : asyncio.Queue[str] | None, default ``None``
+            When provided together with ``clarification_down_q``, enables
+            interactive clarification requests.
+        clarification_down_q : asyncio.Queue[str] | None, default ``None``
+            Response queue paired with ``clarification_up_q``.
+        rolling_summary_in_prompts : bool | None, default ``None``
+            Overrides the instance‑level ``rolling_summary_in_prompts`` for
+            this call only when not ``None``.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A handle that allows interjection, pause/resume, and awaiting the
+            final result.
+        """
 
         # ── 0.  Emit *incoming* ManagerMethod event ──────────────────────
         call_id = new_call_id()
@@ -196,6 +395,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
+                """Bubble a clarification question upward and await the answer.
+
+                Note: If the enclosing loop has no clarification queues, callers
+                must not ask the user questions in the final response. Proceed
+                with sensible defaults or best guesses instead.
+                """
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError(
                         "KnowledgeManager.refactor was invoked without both "
@@ -227,6 +432,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             tool_policy=self._look_first_tool_policy,
             preprocess_msgs=self._inject_broader_context,
@@ -263,6 +469,33 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
     ) -> "SteerableToolHandle":
+        """
+        Modify tables/rows based on a natural‑language request.
+
+        Parameters
+        ----------
+        text : str
+            User request describing the desired update.
+        _return_reasoning_steps : bool, default ``False``
+            When ``True``, wrap ``handle.result()`` to also return internal
+            LLM messages for debugging.
+        parent_chat_context : list[dict] | None, default ``None``
+            Optional prior chat context to seed the conversation.
+        clarification_up_q : asyncio.Queue[str] | None, default ``None``
+            When provided together with ``clarification_down_q``, enables
+            interactive clarification requests.
+        clarification_down_q : asyncio.Queue[str] | None, default ``None``
+            Response queue paired with ``clarification_up_q``.
+        rolling_summary_in_prompts : bool | None, default ``None``
+            Overrides the instance‑level ``rolling_summary_in_prompts`` for
+            this call only when not ``None``.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A handle that allows interjection, pause/resume, and awaiting the
+            final result.
+        """
 
         call_id = new_call_id()
         await publish_manager_method_event(
@@ -285,7 +518,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                """Query the user for more information, and wait for the reply."""
+                """Query the user for more information, and wait for the reply.
+
+                If clarification queues are not present, higher‑level logic must
+                continue with sensible defaults and should not ask questions in
+                the final response.
+                """
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError(
                         "TranscriptManager.ask was called without both "
@@ -318,6 +556,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             tool_policy=self._look_first_tool_policy,
             preprocess_msgs=self._inject_broader_context,
@@ -354,6 +593,33 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
     ) -> "SteerableToolHandle":
+        """
+        Retrieve information from knowledge tables using natural language.
+
+        Parameters
+        ----------
+        text : str
+            User question or retrieval instruction.
+        _return_reasoning_steps : bool, default ``False``
+            When ``True``, wrap ``handle.result()`` to also return internal
+            LLM messages for debugging.
+        parent_chat_context : list[dict] | None, default ``None``
+            Optional prior chat context to seed the conversation.
+        clarification_up_q : asyncio.Queue[str] | None, default ``None``
+            When provided together with ``clarification_down_q``, enables
+            interactive clarification requests.
+        clarification_down_q : asyncio.Queue[str] | None, default ``None``
+            Response queue paired with ``clarification_up_q``.
+        rolling_summary_in_prompts : bool | None, default ``None``
+            Overrides the instance‑level ``rolling_summary_in_prompts`` for
+            this call only when not ``None``.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A handle that allows interjection, pause/resume, and awaiting the
+            final result.
+        """
         call_id = new_call_id()
         await publish_manager_method_event(
             call_id,
@@ -375,7 +641,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                """Query the user for more information, and wait for the reply."""
+                """Query the user for more information, and wait for the reply.
+
+                If queues are unavailable, do not ask questions in the outer
+                response; proceed with sensible defaults or best guesses.
+                """
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError(
                         "KnowledgeManager.retrieve was called without both "
@@ -407,6 +677,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
             preprocess_msgs=self._inject_broader_context,
@@ -436,11 +707,25 @@ class KnowledgeManager(BaseKnowledgeManager):
     # --------#
 
     def _get_columns(self, *, table: str) -> Dict[str, str]:
+        """
+        Return ``{column_name: column_type}`` for the given table.
+
+        Parameters
+        ----------
+        table : str
+            Logical table name (e.g. ``"Products"`` or ``"Contacts"`` when
+            linkage is enabled).
+
+        Returns
+        -------
+        dict[str, str]
+            Mapping of column names to their Unify data types.
+        """
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
-        response = requests.request("GET", url, headers=headers)
+        response = http_request("GET", url, headers=headers)
         _handle_exceptions(response)
         ret = response.json()
         return {k: v["data_type"] for k, v in ret.items()}
@@ -450,13 +735,14 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Tables
 
+    @_km_log_tool_runtime
     def _create_table(
         self,
         *,
         name: str,
         description: str | None = None,
         columns: Dict[str, ColumnType] | None = None,
-        unique_column_name: str = "row_id",
+        unique_key_name: str = "row_id",
     ) -> Dict[str, str]:
         """
         **Create** a brand-new table in the knowledge store.
@@ -464,32 +750,33 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         name : str
-            Canonical table name (must be unique within this manager).
+                Canonical table name (must be unique within this manager).
         description : str | None, default ``None``
-            Human-readable explanation of the table's purpose.
+                Human-readable explanation of the table's purpose.
         columns : dict[str, ColumnType] | None
-            Optional initial schema – mapping *column → type*.  If omitted an
-            empty table is created and columns can be added later with
-            :pyfunc:`_create_empty_column`. Colums names MUST be *snake case*.
-            The column name `id` is reserved for internals, do *not* use this name.
-        unique_column_name : str
-            Every table *must* have a unique integer column which auto-increments
-            upwards from 0. By default this is called `row_id`, but the name can
-            be customized to be more descriptive for the table. For example,
-            `team_id`, `company_id`, `product_id`, or anything else. This is
-            managed automatically, it should not be included in the `columns`
-            argument, and data is *never written* to this unique column.
+                Optional initial schema – mapping *column → type*.  If omitted an
+                empty table is created and columns can be added later with
+                :pyfunc:`_create_empty_column`. Colums names MUST be *snake case*.
+                The column name `id` is reserved for internals, do *not* use this name.
+        unique_key_name : str
+                Every table *must* have a unique integer column which auto-increments
+                upwards from 0. By default this is called `row_id`, but the name can
+                be customized to be more descriptive for the table. For example,
+                `team_id`, `company_id`, `product_id`, or anything else. This is
+                managed automatically, it should not be included in the `columns`
+                argument, and data is *never written* to this unique column.
 
         Returns
         -------
         dict[str, str]
-            Backend response describing success or failure (driver specific).
+                Backend response describing success or failure (driver specific).
         """
         proj = unify.active_project()
         ctx = f"{self._ctx}/{name}"
         unify.create_context(
             ctx,
-            unique_column_ids=unique_column_name,
+            unique_keys={unique_key_name: "int"},
+            auto_counting={unique_key_name: None},
             description=description,
         )
 
@@ -499,10 +786,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {"project": proj, "context": ctx, "fields": columns}
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
+    @_km_log_tool_runtime
     def _tables_overview(
         self,
         *,
@@ -514,14 +802,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         include_column_info : bool, default ``True``
-            When *True* each table entry also contains a
-            ``"columns": {name: type}`` mapping.
+                When *True* each table entry also contains a
+                ``"columns": {name: type}`` mapping.
 
         Returns
         -------
         dict[str, dict]
-            Mapping ``table_name → {"description": str, "columns": {...}}``.
-            If *include_column_info* is *False* the ``"columns"`` key is omitted.
+                Mapping ``table_name → {"description": str, "columns": {...}}``.
+                If *include_column_info* is *False* the ``"columns"`` key is omitted.
         """
         tables = {
             k[len(f"{self._ctx}/") :]: {"description": v}
@@ -543,6 +831,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             k: {**v, "columns": self._get_columns(table=k)} for k, v in tables.items()
         }
 
+    @_km_log_tool_runtime
     def _rename_table(
         self,
         *,
@@ -555,14 +844,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         old_name : str
-            Current table identifier.
+                Current table identifier.
         new_name : str
-            New identifier (must not clash with existing tables).
+                New identifier (must not clash with existing tables).
 
         Returns
         -------
         dict[str, str]
-            Backend acknowledgement / error message.
+                Backend acknowledgement / error message.
         """
         proj = unify.active_project()
         old_name = f"{self._ctx}/{old_name}"
@@ -570,10 +859,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         url = f"{unify.BASE_URL}/project/{proj}/contexts/{old_name}/rename"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {"name": new_name}
-        response = requests.request("PATCH", url, json=json_input, headers=headers)
+        response = http_request("PATCH", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
+    @_km_log_tool_runtime
     def _delete_tables(
         self,
         *,
@@ -586,14 +876,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         tables : str | list[str]
-            Target table name(s).
+                Target table name(s).
         startswith : str | None, default None
-            If provided, also delete all tables whose names start with this prefix.
+                If provided, also delete all tables whose names start with this prefix.
 
         Returns
         -------
         list[dict[str, str]]
-            Confirmations / errors from the backend.
+                Confirmations / errors from the backend.
         """
         if isinstance(tables, str):
             tables = [tables]
@@ -609,6 +899,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Columns
 
+    @_km_log_tool_runtime
     def _create_empty_column(
         self,
         *,
@@ -622,17 +913,17 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Target table.
+                Target table.
         column_name : str
-            New column identifier, MUST be *snake case*.
-            The column name `id` is reserved for internals, do *not* use this name.
+                New column identifier, MUST be *snake case*.
+                The column name `id` is reserved for internals, do *not* use this name.
         column_type : ColumnType | str
-            Logical type, e.g. ``"str"``, ``"float"``, ``"datetime"``.
+                Logical type, e.g. ``"str"``, ``"float"``, ``"datetime"``.
 
         Returns
         -------
         dict[str, str]
-            Backend response.
+                Backend response.
         """
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
@@ -643,10 +934,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             "context": ctx,
             "fields": {column_name: column_type},
         }
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
+    @_km_log_tool_runtime
     def _create_derived_column(
         self,
         *,
@@ -661,18 +953,18 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Table to modify.
+                Table to modify.
         column_name : str
-            Name of the new derived column, MUST be *snake case*.
-            The column name `id` is reserved for internals, do *not* use this name.
+                Name of the new derived column, MUST be *snake case*.
+                The column name `id` is reserved for internals, do *not* use this name.
         equation : str
-            Python expression evaluated per-row (column names appear as
-            variables).  Example: ``(x**2 + y**2) ** 0.5``.
+                Python expression evaluated per-row (column names appear as
+                variables).  Example: ``(x**2 + y**2) ** 0.5``.
 
         Returns
         -------
         dict[str, str]
-            Backend acknowledgement.
+                Backend acknowledgement.
         """
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
@@ -687,6 +979,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         response = requests.request("POST", url, json=json_input, headers=headers)
         return response.json()
 
+    @_km_log_tool_runtime
     def _delete_column(
         self,
         *,
@@ -699,17 +992,17 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Table name.
+                Table name.
         column_name : str
-            Column to drop, MUST be *snake case*.
+                Column to drop, MUST be *snake case*.
 
         Returns
         -------
         dict[str, str]
-            Backend confirmation or error.
+                Backend confirmation or error.
         """
         table_ctx = unify.get_context(self._ctx_for_table(table))
-        unique_column_name = table_ctx["unique_column_ids"]
+        unique_column_name = table_ctx["unique_keys"]
         # Guard against removal of mandatory columns
         if (table == "Contacts" and column_name in self._CONTACT_REQUIRED_COLUMNS) or (
             table != "Contacts" and column_name == unique_column_name
@@ -726,10 +1019,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             "ids_and_fields": [[None, column_name]],
             "source_type": "all",
         }
-        response = requests.request("DELETE", url, json=json_input, headers=headers)
+        response = http_request("DELETE", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
+    @_km_log_tool_runtime
     def _rename_column(
         self,
         *,
@@ -743,17 +1037,17 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Table identifier.
+                Table identifier.
         old_name : str
-            Existing column name, MUST be *snake case*.
+                Existing column name, MUST be *snake case*.
         new_name : str
-            Desired new name, MUST be *snake case*.
-            The column name `id` is reserved for internals, do *not* use this name.
+                Desired new name, MUST be *snake case*.
+                The column name `id` is reserved for internals, do *not* use this name.
 
         Returns
         -------
         dict[str, str]
-            Backend response.
+                Backend response.
         """
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
@@ -765,10 +1059,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             "old_field_name": old_name,
             "new_field_name": new_name,
         }
-        response = requests.request("PATCH", url, json=json_input, headers=headers)
+        response = http_request("PATCH", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
+    @_km_log_tool_runtime
     def _copy_column(
         self,
         *,
@@ -777,11 +1072,26 @@ class KnowledgeManager(BaseKnowledgeManager):
         dest_table: str,
     ) -> Dict[str, str]:
         """
-        **Copy** *column_name* from *source_table* to *dest_table*.
+        Copy a column's values from one table to another.
 
-        Internally this attaches every log in *source_table* that contains
-        *column_name* to the destination context via
-        :pyfunc:`unify.add_logs_to_context`.
+        Parameters
+        ----------
+        source_table : str
+            Table to read values from.
+        column_name : str
+            Column to copy.
+        dest_table : str
+            Destination table that will receive rows containing ``column_name``.
+
+        Returns
+        -------
+        dict[str, str]
+            Summary of the copy operation including counts and source/dest info.
+
+        Notes
+        -----
+        Implemented by attaching the matching logs to the destination context
+        via ``unify.add_logs_to_context``.
         """
         src_ctx = self._ctx_for_table(source_table)
         dest_ctx = self._ctx_for_table(dest_table)
@@ -805,6 +1115,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "column": column_name,
         }
 
+    @_km_log_tool_runtime
     def _move_column(
         self,
         *,
@@ -813,9 +1124,26 @@ class KnowledgeManager(BaseKnowledgeManager):
         dest_table: str,
     ) -> Dict[str, str]:
         """
-        **Move** *column_name* from *source_table* to *dest_table*.
+        Move a column from one table to another.
 
-        Implemented as `_copy_column` + `_delete_column`.
+        Parameters
+        ----------
+        source_table : str
+            Source table.
+        column_name : str
+            Column to move.
+        dest_table : str
+            Destination table.
+
+        Returns
+        -------
+        dict[str, str]
+            Summary containing the copy and delete sub‑results.
+
+        Notes
+        -----
+        Implemented as ``_copy_column`` followed by ``_delete_column`` on the
+        source table.
         """
         copy_res = self._copy_column(
             source_table=source_table,
@@ -829,6 +1157,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "delete_result": str(del_res),
         }
 
+    @_km_log_tool_runtime
     def _transform_column(
         self,
         *,
@@ -837,12 +1166,28 @@ class KnowledgeManager(BaseKnowledgeManager):
         equation: str,
     ) -> Dict[str, str]:
         """
-        **Transform** *column_name* in-place according to *equation*.
+        Transform a column in‑place according to a Python ``equation``.
 
-        Steps:
-        1. Create a temporary derived column from *equation*.
+        Parameters
+        ----------
+        table : str
+            Table to modify.
+        column_name : str
+            Column to transform.
+        equation : str
+            Per‑row Python expression where column names are variables.
+
+        Returns
+        -------
+        dict[str, str]
+            Summary of the create/delete/rename steps.
+
+        Notes
+        -----
+        The operation is implemented as:
+        1. Create a temporary derived column from ``equation``.
         2. Delete the original column.
-        3. Rename the temporary column back to the original name.
+        3. Rename the temporary column back to ``column_name``.
         """
         tmp_name = f"tmp_{column_name}_{uuid.uuid4().hex[:8]}"
 
@@ -866,6 +1211,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     #  Row-level deletion
 
+    @_km_log_tool_runtime
     def _delete_rows(
         self,
         *,
@@ -875,9 +1221,25 @@ class KnowledgeManager(BaseKnowledgeManager):
         tables: Optional[List[str]] = None,
     ) -> Dict[str, str]:
         """
-        Delete every log **matching *filter*** across the chosen tables.
+        Delete every log matching ``filter`` across one or more tables.
 
-        Argspec mirrors `_search_knowledge`.
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            Row‑level predicate evaluated per table. ``None`` deletes nothing
+            (no predicate).
+        offset : int, default ``0``
+            Pagination offset into each table before applying deletion.
+        limit : int, default ``100``
+            Maximum number of rows considered per table.
+        tables : list[str] | None, default ``None``
+            Subset of tables to scan; ``None`` means all tables managed by this
+            instance (and optionally ``Contacts`` when linked).
+
+        Returns
+        -------
+        dict[str, str]
+            Mapping ``table_name → backend message / "no-op"``.
         """
         if tables is None:
             tables = list(self._tables_overview().keys())
@@ -910,6 +1272,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Row creation / update
 
+    @_km_log_tool_runtime
     def _add_rows(
         self,
         *,
@@ -925,14 +1288,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         table : str
-            Destination table.
+                Destination table.
         rows : list[dict[str, Any]]
-            Sequence of row dictionaries. Dictionary keys (column names) MUST be *snake case*.
+                Sequence of row dictionaries. Dictionary keys (column names) MUST be *snake case*.
 
         Returns
         -------
         dict[str, str]
-            Backend confirmation.
+                Backend confirmation.
         """
         return unify.create_logs(
             context=self._ctx_for_table(table),
@@ -940,6 +1303,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             batched=True,
         )
 
+    @_km_log_tool_runtime
     def _update_rows(
         self,
         *,
@@ -947,21 +1311,24 @@ class KnowledgeManager(BaseKnowledgeManager):
         updates: Dict[int, Dict[str, Any]],
     ) -> Dict[str, str]:
         """
-        **Update** existing rows identified by their *unique_id*.
+        Update existing rows identified by their table‑specific unique id.
 
         Parameters
         ----------
         table : str
             Target table.
         updates : dict[int, dict[str, Any]]
-            Mapping of unique `row_id` rows to update (might be named `team_id`, `product_id` etc.)
-            to the dict of new field values mapping column names to the new overwriting values.
-        overwrite : bool, default ``False``
-            When *True*, fields **not** mentioned in *entries* are cleared.
+            Mapping of unique row ids (e.g. ``row_id``, ``team_id``) to a dict
+            of new field values. Unspecified fields are left unchanged.
+
+        Returns
+        -------
+        dict[str, str]
+            Backend response from ``unify.update_logs``.
         """
         ctx = self._ctx_for_table(table)
         ctx_info = unify.get_context(ctx)
-        unique_column_name = ctx_info["unique_column_ids"][0]
+        unique_column_name = ctx_info["unique_keys"][0]
         unique_ids = sorted([int(k) for k in updates.keys()])
         log_ids: List[int] = sorted(
             unify.get_logs(
@@ -980,6 +1347,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         return res
 
     # Vector Search Helpers
+    @_km_log_tool_runtime
     def _vectorize_column(
         self,
         table: str,
@@ -987,13 +1355,20 @@ class KnowledgeManager(BaseKnowledgeManager):
         target_column_name: str,
     ) -> None:
         """
-        Ensure that a vector column exists in the given table. If it doesn't exist,
-        create it as a derived column from the source column.
+        Ensure a vector column exists, creating it if necessary.
 
-        Args:
-            table (str): The name of the table to ensure the vector column in.
-            source (str): The name of the column to derive the vector column from.
-            column (str): The name of the vector column to ensure, MUST be *snake case*.
+        Parameters
+        ----------
+        table : str
+            The table to ensure the vector column in.
+        source_column : str
+            The existing column whose text will be embedded.
+        target_column_name : str
+            Name of the embedding column to create/ensure (snake case).
+
+        Returns
+        -------
+        None
         """
         context = self._ctx_for_table(table)
         ensure_vector_column(
@@ -1002,61 +1377,262 @@ class KnowledgeManager(BaseKnowledgeManager):
             source_column=source_column,
         )
 
+    @_km_log_tool_runtime
     def _search(
         self,
         *,
-        tables: Optional[Union[str, List[str]]],
-        source: str,
-        text: str,
-        k: int = 5,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+        table: str,
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+    ) -> List[Dict[str, Any]]:
         """
-        Perform a **semantic nearest-neighbour search** over one or more
-        tables using cosine similarity in embedding space.
+        Semantic search within a single knowledge table using one or more source expressions.
 
         Parameters
         ----------
-        tables : str | list[str]
-            Candidate tables (each must contain *source* column); ``None`` → all tables.
-        source : str
-            Text column to embed (an auxiliary ``_<source>_emb`` column is
-            auto-created if missing). MUST be *snake case*.
-        text : str
-            Query text to embed and compare against.
-        k : int, default ``5``
-            Number of nearest rows to return *per table*.
+        table : str
+                The table to search within.
+        references : Dict[str, str]
+                Mapping from a source expression (plain column or derived Unify expression) to the
+                reference text to compare against. Supports multiple expressions; when more than one
+                is provided the ranking uses a sum of cosine distances over all terms.
+        k : int, default 5
+                Maximum number of rows to return.
 
         Returns
         -------
-        dict[str, list[dict[str, Any]]]
-            Mapping ``table_name → [row, …]`` sorted by ascending distance.
+        list[dict[str, Any]]
+                Up to ``k`` rows sorted by ascending semantic distance (best match first).
+                If similarity search yields fewer than ``k`` rows and there are more rows
+                overall, the remainder is backfilled from ``unify.get_logs(limit=k)`` in
+                returned order, skipping duplicates based on each table's unique id.
         """
-        # ToDo: convert to map function
-        if tables is None:
-            tables = self._tables_overview()
-        elif isinstance(tables, str):
-            tables = [tables]
-        results = dict()
-        for table in tables:
-            context = self._ctx_for_table(table)
-            column_emb = f"_{source}_emb"
-            self._vectorize_column(table, source, column_emb)
-            results[table] = [
-                log.entries
-                for log in unify.get_logs(
-                    context=context,
-                    sorting={
-                        f"cosine({column_emb}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
-                    },
-                    limit=k,
-                    exclude_fields=[
-                        k
-                        for k in unify.get_fields(context=context).keys()
-                        if k.endswith("_emb")
-                    ],
+        context = self._ctx_for_table(table)
+
+        rows: List[Dict[str, Any]] = fetch_top_k_by_references(context, references, k=k)
+        return backfill_rows(context, rows, k)
+
+    @_km_log_tool_runtime
+    def _search_join(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Perform a semantic search over the result of joining two tables.
+
+        Parameters
+        ----------
+        tables : list[str]
+            Exactly two table names, e.g. `["A", "B"]`.
+
+        join_expr : str
+            Boolean join condition using the same table identifiers given in
+            `tables`, e.g. `"A.user_id == B.user_id"`.
+
+        select : dict[str, str]
+            Mapping of source columns to output column names in the join
+            result, e.g. `{ "A.user_id": "user_identifier", "B.score":
+            "user_score" }`.
+
+        mode : str, default "inner"
+            Join mode. Typical values: "inner", "left", "right", "outer".
+
+        left_where : str | None, default None
+            Optional row-level predicate applied to the left table before the
+            join, e.g. `"user_id == 1"`.
+
+        right_where : str | None, default None
+            Optional row-level predicate applied to the right table before the
+            join.
+
+        references : dict[str, str]
+            Mapping of source expressions (columns or expressions in the join
+            result) to reference text for semantic similarity. When multiple
+            entries are provided, their scores are combined for ranking.
+
+        k : int, default 5
+            Maximum number of rows to return.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Up to `k` rows from the joined result, sorted by best semantic
+            match first. If the similarity search yields fewer than `k` rows and
+            there are more rows overall in the joined context, the remainder is
+            backfilled from `unify.get_logs(limit=k)` in returned order, skipping
+            duplicates based on the joined table's unique id.
+        """
+
+        # 1️⃣  Materialize the join into a temporary context
+        dest_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
+        dest_ctx = self._create_join(
+            dest_table=dest_table,
+            tables=tables,
+            join_expr=join_expr,
+            select=select,
+            mode=mode,
+            left_where=left_where,
+            right_where=right_where,
+        )
+
+        try:
+            # 2️⃣  Primary similarity-ranked results
+            rows: List[Dict[str, Any]] = fetch_top_k_by_references(
+                dest_ctx,
+                references,
+                k=k,
+            )
+            return backfill_rows(dest_ctx, rows, k)
+        finally:
+            # 4️⃣  Clean up the temporary context best-effort
+            try:
+                unify.delete_context(dest_ctx)
+            except Exception:
+                pass
+
+    @_km_log_tool_runtime
+    def _search_multi_join(
+        self,
+        *,
+        joins: List[Dict[str, Any]],
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Perform a semantic search over the result of chaining multiple joins.
+
+        Parameters
+        ----------
+        joins : list[dict]
+            Ordered list of join steps. Each step supports the keys:
+
+            - "tables" (list[str], required): Exactly two table names for this
+              step. The special placeholder values "$prev", "__prev__", or
+              "_" may be used to refer to the result of the previous step (not
+              allowed in the first step).
+            - "join_expr" (str, required): Join predicate for this step using
+              the table identifiers declared in "tables".
+            - "select" (dict[str, str], required): Mapping of source columns to
+              output names for this step's result.
+            - "mode" (str, optional): Join mode for this step (default:
+              "inner").
+            - "left_where" (str | None, optional): Row-level predicate applied
+              to the left table of this step before joining.
+            - "right_where" (str | None, optional): Row-level predicate applied
+              to the right table of this step before joining.
+
+        references : dict[str, str]
+            Mapping of expressions in the final result to reference text for
+            semantic similarity. Multiple entries are combined for ranking.
+
+        k : int, default 5
+            Maximum number of rows to return.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Up to `k` rows from the final joined result, best semantic match
+            first. If the similarity search yields fewer than `k` rows and
+            there are more rows overall in the final joined context, the
+            remainder is backfilled from `unify.get_logs(limit=k)` in returned
+            order, skipping duplicates based on the final context's unique id.
+        """
+
+        if not joins:
+            raise ValueError("`joins` must contain at least one join step.")
+        # `references` may be None/empty; in that case semantic search returns [], and
+        # we rely entirely on backfill from the final joined context.
+
+        tmp_prefix = f"_tmp_mjoin_{uuid.uuid4().hex[:6]}"
+        tmp_tables: List[str] = []
+        previous_table: Optional[str] = None
+
+        for idx, step in enumerate(joins):
+            local_step = step.copy()  # do not mutate caller's dict
+            raw_tables = local_step.get("tables")
+            raw_tables = [raw_tables] if isinstance(raw_tables, str) else raw_tables
+            if not isinstance(raw_tables, list) or len(raw_tables) != 2:
+                raise ValueError(
+                    f"Step {idx} must specify exactly TWO tables – got {raw_tables!r}",
                 )
+
+            # Substitute `$prev` placeholder
+            step_tables = [
+                (previous_table if t in {"$prev", "__prev__", "_"} else t)
+                for t in raw_tables
             ]
-        return results
+            if any(t is None for t in step_tables):
+                raise ValueError(
+                    "Misplaced `$prev` in first join – there is no previous result.",
+                )
+
+            # Fix-up join_expr & columns that reference `$prev`
+            def _replace_prev(
+                s: Optional[Union[str, List[str], Dict[str, str]]],
+            ) -> Optional[Union[str, List[str], Dict[str, str]]]:
+                if s is None or previous_table is None:
+                    return s
+
+                def repl(txt: str) -> str:
+                    return (
+                        txt.replace("$prev", previous_table)
+                        .replace("__prev__", previous_table)
+                        .replace("_.", f"{previous_table}.")
+                    )
+
+                if isinstance(s, str):
+                    return repl(s)
+                elif isinstance(s, dict):
+                    return {repl(k): v for k, v in s.items()}
+                return [repl(c) for c in s]
+
+            join_expr = _replace_prev(local_step.get("join_expr"))
+            select = _replace_prev(local_step.get("select"))
+
+            # Destination table for this hop
+            is_last = idx == len(joins) - 1
+            dest_table = f"{tmp_prefix}_final" if is_last else f"{tmp_prefix}_{idx}"
+            tmp_tables.append(dest_table)
+
+            # Materialise the join (no reads yet)
+            self._create_join(
+                dest_table=dest_table,
+                tables=step_tables,
+                join_expr=join_expr,  # type: ignore[arg-type]
+                select=select,  # type: ignore[arg-type]
+                mode=local_step.get("mode", "inner"),
+                left_where=local_step.get("left_where"),
+                right_where=local_step.get("right_where"),
+            )
+
+            previous_table = dest_table
+
+        assert previous_table is not None  # mypy guard
+
+        final_ctx = self._ctx_for_table(previous_table)
+
+        try:
+            # 1) Primary similarity-ranked results from the final joined context
+            rows: List[Dict[str, Any]] = fetch_top_k_by_references(
+                final_ctx,
+                references,
+                k=k,
+            )
+            return backfill_rows(final_ctx, rows, k)
+        finally:
+            # Clean up temporary contexts (best-effort)
+            try:
+                self._delete_tables(tables=tmp_tables)
+            except Exception:
+                pass
 
     # Search
 
@@ -1074,13 +1650,41 @@ class KnowledgeManager(BaseKnowledgeManager):
         right_where: Optional[str] = None,
     ) -> str:
         """
-        Create **one** temporary joined table on the Unify backend and return
-        its fully-qualified context.
+        Create one derived table by joining two source tables.
 
-        This helper is intentionally *side-effect-only*: it **does not** read
-        from or delete the created context.  Those concerns are left to the
-        public APIs so they can enforce their own life-cycle semantics
-        (single-use for `_search_join`, multi-step for `_search_multi_join`).
+        Parameters
+        ----------
+        dest_table : str
+            Name for the derived table to create (e.g. a unique temporary name
+            such as `"_tmp_join_<id>"`).
+
+        tables : list[str]
+            Exactly two table names, e.g. `["A", "B"]`.
+
+        join_expr : str
+            Boolean join condition using the same table identifiers as in
+            `tables`, e.g. `"A.user_id == B.user_id"`.
+
+        select : dict[str, str]
+            Mapping of source columns to output column names in the derived
+            table, e.g. `{ "A.user_id": "user_identifier", "B.score":
+            "user_score" }`.
+
+        mode : str, default "inner"
+            Join mode. Typical values: "inner", "left", "right", "outer".
+
+        left_where : str | None, default None
+            Optional row-level predicate applied to the left table before the
+            join, e.g. `"user_id == 1"`.
+
+        right_where : str | None, default None
+            Optional row-level predicate applied to the right table before the
+            join.
+
+        Returns
+        -------
+        str
+            The name of the derived table that was created.
         """
         # 1️⃣  Resolve & validate the inputs
         if isinstance(tables, str):
@@ -1137,11 +1741,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             "columns": select,
         }
 
-        resp = requests.request("POST", url, json=payload, headers=headers)
+        resp = http_request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
 
         return dest_ctx
 
+    @_km_log_tool_runtime
     def _filter(
         self,
         *,
@@ -1157,19 +1762,19 @@ class KnowledgeManager(BaseKnowledgeManager):
         Parameters
         ----------
         filter : str | None, default ``None``
-            Row-level predicate (evaluated with column names as variables).
-            *None* returns all rows.
+                Row-level predicate (evaluated with column names as variables).
+                *None* returns all rows.
         offset : int, default ``0``
-            Pagination offset (0-based).
+                Pagination offset (0-based).
         limit : int, default ``100``
-            Maximum rows per table.
+                Maximum rows per table.
         tables :  str | list[str]
-            Subset of tables to scan; ``None`` → all tables.
+                Subset of tables to scan; ``None`` → all tables.
 
         Returns
         -------
         dict[str, list[dict[str, Any]]]
-            Mapping ``table_name → [row_dict, …]``.
+                Mapping ``table_name → [row_dict, …]``.
         """
         if tables is None:
             tables = self._tables_overview()
@@ -1178,25 +1783,21 @@ class KnowledgeManager(BaseKnowledgeManager):
         # ToDo: convert to map function
         results = dict()
         for table in tables:
+            ctx = self._ctx_for_table(table)
             results[table] = [
                 log.entries
                 for log in unify.get_logs(
-                    context=self._ctx_for_table(table),
+                    context=ctx,
                     filter=filter,
                     offset=offset,
                     limit=limit,
-                    exclude_fields=[
-                        k
-                        for k in unify.get_fields(
-                            context=self._ctx_for_table(table),
-                        ).keys()
-                        if k.endswith("_emb")
-                    ],
+                    exclude_fields=list_private_fields(ctx),
                 )
             ]
         return results
 
-    def _search_join(
+    @_km_log_tool_runtime
+    def _filter_join(
         self,
         *,
         tables: Union[str, List[str]],
@@ -1210,46 +1811,48 @@ class KnowledgeManager(BaseKnowledgeManager):
         result_offset: int = 0,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        **Join two tables** server-side and query the derived context.
-        Useful for querying data that transcends more than one table.
+        Join two tables and return rows from the joined result with optional filtering.
 
         Parameters
         ----------
-        tables : str | list[str]
-            Exactly **two** table names to join.
-        join_expr : str | None
-            Expression linking aliases in the two tables.
-            For example "Departments.id == Employees.derpartment_id",
+        tables : list[str]
+            Exactly two table names, e.g. `["A", "B"]`.
+
+        join_expr : str
+            Boolean join condition using the same table identifiers given in
+            `tables`, e.g. `"A.user_id == B.user_id"`.
+
         select : dict[str, str]
-            Column names to include in the resultant joined table, keys being the originals and values being the new names.
-            For example: {'Students.id': 'student_id', 'Departments.id': 'department_id'}
-        mode : str
-            Join kind understood by Unify (``"inner"``, ``"left"``, ``"right"``, ``"outer"``).
-        left_filter / right_filter : str | None
-            Optional pre-join predicates on the left / right tables.
-        result_where : str | None
-            Predicate evaluated on the new table *after* the join.
-            Can *only* include columns specified as the *values* in the 'select' argument,
-            which dictates the columns that are present in the final joined table.
-        result_limit, result_offset : int
-            Pagination of the post-join rows.
+            Mapping of source columns to output column names in the joined
+            result, e.g. `{ "A.user_id": "user_identifier", "B.score":
+            "user_score" }`.
+
+        mode : str, default "inner"
+            Join mode. Typical values: "inner", "left", "right", "outer".
+
+        left_where : str | None, default None
+            Optional row-level predicate applied to the left table before the
+            join.
+
+        right_where : str | None, default None
+            Optional row-level predicate applied to the right table before the
+            join.
+
+        result_where : str | None, default None
+            Optional row-level predicate applied to the joined result when
+            returning rows. This predicate may only reference the output column
+            names created by `select`.
+
+        result_limit : int, default 100
+            Maximum number of rows to return.
+
+        result_offset : int, default 0
+            Pagination offset into the result set.
 
         Returns
         -------
         list[dict[str, Any]]
-            Rows from the *temporary* table following the join operation and
-            then the `result_where` filtering and `result_limit` and `result_offset` pagination.
-            The table is deleted immediately afterwards – this method is therefore **read-only**.
-
-        Notes
-        -----
-        • *left_where* / *right_where* are applied **before** the join, one
-          predicate per input table.
-        • *result_where* is evaluated **after** the join on the **columns that
-          survived projection** (``select``).
-        • If you provide ``select=[]`` make sure every column mentioned in
-          *result_where* is also listed there – otherwise you will receive a
-          ``ValueError`` telling you which column(s) you forgot to project.
+            Rows from the joined result matching the provided filters.
         """
 
         # ── helper to catch mismatches early ────────────────────────────
@@ -1290,6 +1893,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 filter=result_where,
                 offset=result_offset,
                 limit=result_limit,
+                exclude_fields=list_private_fields(dest_ctx),
             )
         ]
 
@@ -1302,7 +1906,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return rows
 
-    def _search_multi_join(
+    @_km_log_tool_runtime
+    def _filter_multi_join(
         self,
         *,
         joins: List[Dict[str, Any]],
@@ -1311,38 +1916,43 @@ class KnowledgeManager(BaseKnowledgeManager):
         result_offset: int = 0,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        **Chain together an arbitrary number of joins in one call**.
+        Chain together multiple joins, then return rows from the final joined result.
 
         Parameters
         ----------
         joins : list[dict]
-            An *ordered* list where **each element mirrors the kwargs of
-            `_search_join` except that chained tables use the '$prev' placeholder.
-            Every dict *requires* the three arguments: "tables", "join_expr" and "select" as a minimum.
+            Ordered list of join steps. Each step supports the keys:
 
-            Example::
+            - "tables" (list[str], required): Exactly two table names for this
+              step. The placeholders "$prev", "__prev__", or "_" may be used
+              to refer to the result of the previous step (not valid in the
+              first step).
+            - "join_expr" (str, required): Join predicate for this step using
+              the table identifiers declared in "tables".
+            - "select" (dict[str, str], required): Mapping of source columns to
+              output names for this step's result.
+            - "mode" (str, optional): Join mode for this step (default:
+              "inner").
+            - "left_where" (str | None, optional): Row-level predicate applied
+              to the left table of this step before joining.
+            - "right_where" (str | None, optional): Row-level predicate applied
+              to the right table of this step before joining.
 
-                joins = [
-                    {
-                        "tables": ["Authors", "Books"],
-                        "join_expr": "Authors.id == Books.author_id",
-                        "select": {"Authors.id": "author_id", "Books.title": "book_title", "Books.id": "book_id"},
-                        "mode": "inner",
-                    },
-                    {
-                        "tables": ["$prev", "Reviews"],   # $prev → last result
-                        "join_expr": "$prev.book_id == Reviews.book_id",
-                        "select": {"$prev.book_title": "book_title", "Reviews.content": "review"}
-                    },
-                ]
+        result_where : str | None, default None
+            Optional row-level predicate applied when returning rows from the
+            final joined result. This predicate may only reference the output
+            column names created by the final step's `select` mapping.
 
-        result_where, result_limit, result_offset
-            Standard projection / pagination applied *after* the final join.
+        result_limit : int, default 100
+            Maximum number of rows to return.
+
+        result_offset : int, default 0
+            Pagination offset into the final result set.
 
         Returns
         -------
         list[dict[str, Any]]
-            The resultant data following the search operation on the serial table joins ``[row, …]``.
+            Rows from the final joined result matching the provided filters.
         """
 
         if not joins:
@@ -1412,13 +2022,15 @@ class KnowledgeManager(BaseKnowledgeManager):
         assert previous_table is not None  # mypy guard
 
         # -------- 4.  Read final result ---------------------------------
+        final_ctx = self._ctx_for_table(previous_table)
         rows: List[Dict[str, Any]] = [
             log.entries
             for log in unify.get_logs(
-                context=self._ctx_for_table(previous_table),
+                context=final_ctx,
                 filter=result_where,
                 offset=result_offset,
                 limit=result_limit,
+                exclude_fields=list_private_fields(final_ctx),
             )
         ]
 

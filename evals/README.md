@@ -1,6 +1,6 @@
-# HierarchicalPlanner Initial Plan Generator
+# HierarchicalActor Initial Plan Generator
 
-This directory contains scripts for generating initial HierarchicalPlanner plans for evaluation tasks.
+This directory contains scripts for generating initial HierarchicalActor plans for evaluation tasks.
 
 ## Overview
 
@@ -96,7 +96,7 @@ import asyncio
 import re
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from unity.planner.action_provider import ActionProvider
+from unity.actor.action_provider import ActionProvider
 ```
 
 2. **Action Provider Initialization**:

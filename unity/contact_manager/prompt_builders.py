@@ -54,6 +54,9 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
     _shared_require_tools(pairs, tools)
 
 
+# Replace build_ask_prompt with a space-indented version including improved guidance
+
+
 def build_ask_prompt(
     tools: Dict[str, Callable],
     num_contacts: int,
@@ -99,63 +102,104 @@ def build_ask_prompt(
         else ""
     )
 
+    # Strongly emphasize correct tool selection and realistic semantic-search usage
     usage_examples_base = f"""
-        Examples
-        --------
+Examples
+--------
 
-        ─ Columns ─
-        • Inspect schema
-          `{list_columns_fname}()`
+─ Columns ─
+• Inspect schema
+  `{list_columns_fname}()`
 
-        ─ Semantic search ─
-        • Find contacts *similar* to "machine-learning expert" in the *bio* field
-          `{search_contacts_fname}(source='bio', text='machine-learning expert')`
+─ Tool selection (read carefully) ─
+• For ANY semantic question over free‑form text (bio, rolling_summary, custom text columns), ALWAYS use `{search_contacts_fname}`. Never try to approximate meaning with brittle substring filters.
+• Use `{filter_contacts_fname}` only for exact/boolean logic over structured fields (emails, phone numbers, null checks) or for narrow, constrained text where substring checks make sense (e.g., case‑insensitive contains on first_name).
 
-        ─ Filtering ─
-        • Find contacts with first name **John**
-          `{filter_contacts_fname}(filter="first_name == 'John'")`
-        • Find surname **Doe**
-          `{filter_contacts_fname}(filter="surname == 'Doe'")`
-        • Specific email **john.doe@example.com**
-          `{filter_contacts_fname}(filter="email_address == 'john.doe@example.com'")`
-        • Phone containing **555**
-          `{filter_contacts_fname}(filter="'555' in phone_number")`
-        • Exact phone **+14445556666**
-          `{filter_contacts_fname}(filter="phone_number == '+14445556666'")`
-        • Name **Alice Smith**
-          `{filter_contacts_fname}(filter="surname == 'Smith' and first_name == 'Alice'")`
-        • Email **a@b.com** *or* phone **123-456-7890**
-          `{filter_contacts_fname}(filter="email_address == 'a@b.com' or phone_number == '123-456-7890'")`
-        • Missing phone number
-          `{filter_contacts_fname}(filter="phone_number is None")`
-        • Has any email (not None)
-          `{filter_contacts_fname}(filter="email_address is not None")`
+─ Semantic search: targeted references across columns (ranked by SUM of cosine distances) ─
+• When the clue could appear across several free‑form fields, provide separate, surgical references instead of one catch‑all. This yields stronger ranking than concatenating everything into one giant string. For example, find the San Francisco software engineer we worked on onboarding with last week:
+  `{search_contacts_fname}(references={{'bio': 'San Francisco software engineer', 'rolling_summary': 'worked on onboarding last week'}}, k=2)`
+
+• Find someone based in Berlin working as a product designer (signal lives in `bio`)
+  `{search_contacts_fname}(references={{'bio': 'based in Berlin product designer'}}, k=3)`
+
+• Find the accountant who we had a call with last week
+  `{search_contacts_fname}(references={{'occupation': 'accountant', 'rolling_summary': 'had a call last week'}}, k=3)`
+
+─ Derived expression (fallback, when you truly cannot target columns) ─
+• Build one composite expression spanning likely fields, then search it. Prefer multi‑column references when you know where the signal lives.
+  `expr = "str({{skills}}) + ' ' + str({{occupation}}) "`
+  `{search_contacts_fname}(references={{expr: 'Software engineering'}}, k=2)`
+
+─ Filtering (exact/boolean or constrained text only; not semantic) ─
+• Exact email match
+  `{filter_contacts_fname}(filter="email_address == 'jane.roe@example.com'")`
+• Has no phone number
+  `{filter_contacts_fname}(filter="phone_number is None")`
+• Case‑insensitive first‑name contains (acceptable because the field is short and constrained)
+  `{filter_contacts_fname}(filter="first_name is not None and 'dan' in first_name.lower()")`
+
+Anti‑patterns to avoid
+---------------------
+• Avoid the default search behaviour of concatenating every column into one long string and comparing a single embedding of the whole question. Instead, pass multiple, focused reference texts keyed by their specific columns. The ranking minimizes the sum of cosine distances and is more accurate and robust.
+• Avoid filtering for text-heavy columns, sub-string matching is *very* brittle
+• Avoid making another search/filter call to reconfirm information that a previous step already established clearly (e.g., the same contact_id and fields); proceed with the established result unless new ambiguity arises.
+• Do not automatically chain a filter immediately after a successful semantic search unless you need an exact, structured constraint that the search result does not provide.
     """
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
-
-    if num_contacts < 50:
-        guidance = f"given that the number of contacts is so small, you should simply use {filter_contacts_fname} with *no filter arguments* for now, so you can unpack the *full* contact list and answer the question directly."
     else:
-        guidance = "\n".join(
+        # No clarification tool – append conditional anti‑pattern bullets (no extra heading)
+        usage_examples = "\n".join(
             [
-                "If the question is open-ended or doesn't clearly match any of the column names,",
-                f"then try {search_contacts_fname} on the most relevant column(s) and see if you can find any semantic match.",
+                usage_examples,
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+                "• Avoid repeating `ask` within the same reasoning chain when earlier calls already surfaced the required contact(s) and no new ambiguity has been introduced.",
             ],
         )
 
     # ─ Clarification guidance ─
     clar_section = clarification_guidance(tools)
 
+    # Conditional guidance about asking questions in final responses
+    clar_sentence = (
+        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
+        if request_clar_fname
+        else (
+            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
+        )
+    )
+
+    # ─ Special contacts guidance ─
+    special_contacts_block = textwrap.dedent(
+        """
+        Special contacts
+        ----------------
+        • contact_id==0 is the assistant (this agent). Do not include the assistant in suggestions, rankings, or comparisons unless it makes sense from the broader context.
+        • contact_id==1 is the central user (the assistant's supervisor). Many requests originate from this user; do not propose the central user as a candidate unless it makes sense from the broader context.
+        """,
+    ).strip()
+
     activity_block = "{broader_context}" if include_activity else ""
+    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
+    parallelism_block = textwrap.dedent(
+        """
+        Parallelism and single‑call preference
+        -------------------------------------
+        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
+        • When you need multiple independent reads or small writes, plan them together and run them in parallel rather than a serial drip of micro‑calls.
+        • Batch arguments where possible (set multiple fields in one `_update_contact` call) and avoid confirmatory re‑queries unless new ambiguity arises.
+        """,
+    ).strip()
 
     return "\n".join(
         [
             activity_block,
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
-            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best method yourself.",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
+            clar_sentence,
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
             "use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
             "",
@@ -165,9 +209,12 @@ def build_ask_prompt(
             "Tools (name → argspec):",
             sig_json,
             "",
-            usage_examples if num_contacts >= 50 else "",
+            special_contacts_block,
             "",
-            guidance,
+            usage_examples,
+            "",
+            parallelism_block,
+            "",
             clar_section,
             "",
             f"Current UTC time is {_now()}.",
@@ -177,6 +224,8 @@ def build_ask_prompt(
 
 def build_update_prompt(
     tools: Dict[str, Callable],
+    num_contacts: int,
+    columns: List[Dict[str, str]],
     *,
     include_activity: bool = True,
 ) -> str:
@@ -186,13 +235,13 @@ def build_update_prompt(
     # Pick out canonical names heuristically (all dynamic)
     create_fname = _tool_name(tools, "create_contact")
     update_fname = _tool_name(tools, "update_contact")
+    delete_fname = _tool_name(tools, "delete_contact")
+    merge_fname = _tool_name(tools, "merge_contacts")
     ask_fname = _tool_name(tools, "ask")
 
     # Custom-column helpers (dynamic)
     create_custom_fname = _tool_name(tools, "create_custom_column")
     delete_custom_fname = _tool_name(tools, "delete_custom_column")
-    # Note: list/search/filter tools are not required on the update path and
-    # may not be present in the toolset. We therefore avoid referencing them.
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "request_clarification")
@@ -202,6 +251,8 @@ def build_update_prompt(
         {
             "create_contact": create_fname,
             "update_contact": update_fname,
+            "delete_contact": delete_fname,
+            "merge_contacts": merge_fname,
             "create_custom_column": create_custom_fname,
             "delete_custom_column": delete_custom_fname,
             "ask": ask_fname,
@@ -212,75 +263,164 @@ def build_update_prompt(
     clarification_block = (
         textwrap.dedent(
             f"""
-            ─ Clarification ─
-            • If any request is ambiguous, ask the user to disambiguate before changing data
-              `{request_clar_fname}(question="There are several possible matches. Which contact did you mean?")`
+Clarification
+-------------
+• If any request is ambiguous, ask the user to disambiguate before changing data
+  `{request_clar_fname}(question="There are several possible matches. Which contact did you mean?")`
             """,
         ).strip()
         if request_clar_fname
         else ""
     )
 
+    # Conditional guidance about asking questions in final responses
+    clar_sentence_upd = (
+        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
+        if request_clar_fname
+        else (
+            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
+        )
+    )
+
     usage_examples_base = f"""
-        Examples
-        --------
-        • **Create** a new contact
-          `{create_fname}(first_name='Jane', surname='Roe', email_address='jane.roe@example.com')`
+Tool selection
+--------------
+• Prefer `{update_fname}` when you know the exact `contact_id` for a mutation.
+• When the user refers to a contact semantically (e.g., "the footballer who wrapped up a kickoff call last week"), first ask a freeform question with `{ask_fname}` to identify the correct `contact_id`, then call `{update_fname}`.
 
-        • **Update** John Doe's phone '+1 55512-345-67' when you already know the ID is *42*
-          `{update_fname}(contact_id=42, phone_number='+15551234567')` (note spaces and dashes removed)
+Ask vs Clarification
+----------------------
+• `{ask_fname}` is ONLY for inspecting/locating contacts that ALREADY EXIST (e.g., to find `contact_id`, verify fields).
+• Do NOT use `{ask_fname}` to ask the human for details about NEW contacts being created/changed in this update request.
+• For human clarifications about prospective/new contacts (e.g., name spelling, missing numbers, preferred channel), call `{request_clar_fname}` when available.
+• If the schema lacks a field the user wants to set, create it with `{create_custom_fname}` (typically `column_type='str'`) before updating.
+• Use `{merge_fname}` only when the user explicitly asks to combine two known contacts or when duplicates are clearly identified.
+• Use `{delete_fname}` only on explicit deletion requests. Never delete system contacts with id 0 or 1.
 
-        • **Update** a contact referred to only by name
-          1 Find ID → `{ask_fname}(text="What is the contact_id for John Doe?")`
-          2 Then update → `{update_fname}(contact_id=<returned_id>, email_address='john.new@example.com')`
+Realistic find-then-update flows
+--------------------------------
+• Set a policy for the contact living in Berlin working as a product designer
+  1 Ask a freeform question (no instructions about how to answer):
+    `{ask_fname}(text="Who is the contact living in Berlin working as a product designer?")`
+  2 Update the returned id:
+    `{update_fname}(contact_id=<id>, response_policy="Share design updates weekly")`
 
-        • **Parse** a full name on create
-          `"Frank P. Castle"` → `{create_fname}(first_name='Frank P.', surname='Castle')`
+• Mark respond_to=True for the contact who is a footballer and recently wrapped up a kickoff call
+  1 Ask a freeform question (no instructions about how to answer):
+    `{ask_fname}(text="Which footballer wrapped up a kickoff call last week?")`
+  2 Update the returned id:
+    `{update_fname}(contact_id=<id>, respond_to=True)`
 
-        ─ Custom columns ─
-        • New column "department"
-          `{create_custom_fname}(column_name='department', column_type='str')`
-        • Update a contact's department
-          `{update_fname}(contact_id=42, department='Engineering')`
-        • Remove the column later
-          `{delete_custom_fname}(column_name='department')`
+• Query may span multiple freeform fields (derived expression)
+  1 Build a composite expression across `bio`, `rolling_summary`, and a custom field like `occupation`:
+    `expr = "str({{bio}}) + ' ' + str({{rolling_summary}}) + ' ' + str({{occupation}})"`
+  2 Ask a freeform question referring to the same clues:
+    `{ask_fname}(text="Who is the London-based 28-year-old software engineer?")`
+  3 Update the found record as requested.
 
-        (If you need to locate contacts by fuzzy criteria, first use `{ask_fname}` to retrieve candidate contact_id(s) and then perform the update.)
+Schema evolution and custom columns
+----------------------------------
+• If the user asks to store a new attribute that does not map to built-ins, create a custom column first:
+  `{create_custom_fname}(column_name='occupation', column_type='str')`
+  Then apply the update:
+  `{update_fname}(contact_id=42, occupation='Designer')`
+• Required columns ({_permanent_columns()}) cannot be deleted. Remove optional columns with `{delete_custom_fname}(column_name=...)` only when explicitly asked.
+
+Merge and delete
+----------------
+• Merge two contacts when instructed. Use the `overrides` map to choose winners; include "contact_id" set to 1 or 2 to select the surviving id. For each field, use 1 or 2 to select from the corresponding source (never literal ids). Protect ids 0 and 1 from deletion:
+  `{merge_fname}(contact_id_1=12, contact_id_2=34, overrides={{'contact_id': 1, 'email_address': 2}})`
+• Delete a contact only when clearly requested (never ids 0 or 1):
+  `{delete_fname}(contact_id=77)`
+
+Basic create/update
+-------------------
+• Create a new contact
+  `{create_fname}(first_name='Jane', surname='Roe', email_address='jane.roe@example.com')`
+• Update a known contact id
+  `{update_fname}(contact_id=42, phone_number='+15551234567')`
+
+Asking Questions
+----------------
+• It can often be very difficult to keep track of your own 'update' progress purely via tool call histories. If you're unsure, always just `ask`!
+  `{ask_fname}(text="I think I've now updated all of the contact 'occupation' columns to engineer, but I might have missed some. Could you list all engineers in the contact list so I can check my progress?")`
+
+Anti‑patterns to avoid
+---------------------
+• Repeating the exact same tool call with the same arguments as a means to 'make sure it has completed', just call `ask` to check the latest state of the contacts list
+• Making *any* assumptions about the current state of the contacts list, instead you should make liberal use of the `ask` tool
+
+(When locating a record by semantics, always do a quick `{ask_fname}` step to resolve `contact_id` before mutating. Prefer updating in place over recreating.)
     """
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
+    else:
+        usage_examples = "\n".join(
+            [
+                usage_examples,
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+            ],
+        )
 
     activity_block = "{broader_context}" if include_activity else ""
+    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
+    parallelism_block = textwrap.dedent(
+        """
+        Parallelism and single‑call preference
+        -------------------------------------
+        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
+        • When several reads or writes are independent, plan them together and run them in parallel rather than a serial drip of micro‑calls.
+        • Batch arguments where possible (set multiple fields in one `_update_contact` call) and avoid confirmatory re‑queries unless new ambiguity arises.
+        """,
+    ).strip()
     clar_section = clarification_guidance(tools)
+
+    # ─ Special contacts guidance ─
+    special_contacts_block = textwrap.dedent(
+        """
+        Special contacts
+        ----------------
+        • contact_id==0 is the assistant (this agent). Do not include the assistant in suggestions, rankings, or comparisons unless it makes sense from the broader context.
+        • contact_id==1 is the central user (the assistant's supervisor). Many requests originate from this user; do not propose the central user as a candidate unless it makes sense from the broader context.
+        """,
+    ).strip()
 
     return "\n".join(
         [
             activity_block,
             "You are an assistant in charge of **creating or editing contacts**.",
-            "Use the tools provided to create new entries or update existing ones.",
-            "Disregard any explicit instructions about *how* you should implement the change or which tools to use; decide the best method yourself.",
-            "You should attempt to perform *any* request as best you can, even if it seems out of scope.",
-            "use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
-            "",
-            "Custom columns:",
-            "---------------",
-            f"• Required columns ({_permanent_columns()}) **cannot** be deleted.",
-            f"• Add a new column with `{create_custom_fname}(…)`, remove with `{delete_custom_fname}(…)`.",
+            "Choose tools based on the user's intent and the specificity of the target record.",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.",
+            f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect contacts that already exist. For human clarifications about new contacts or missing creation details, call `{request_clar_fname}` when available.",
+            clar_sentence_upd,
+            "Prefer minimal, precise mutations to existing records identified by contact_id.",
+            "When the user describes a contact semantically, resolve the id first by requesting the contact_id from the ask method, then perform the update via the contact_id.",
+            "use the `ask` method to see if you can find any missing context *before* you consider asking the user for clarifications.",
+            "If the `ask` method is the only available tool, then ask a *read-only question*, mutation-capable tools will be exposed in subsequent turns.",
             "",
             "Tools (name → argspec):",
             sig_json,
             "",
+            special_contacts_block,
+            "",
             usage_examples,
+            "",
+            parallelism_block,
+            "",
+            clar_section,
             "",
             "Contact schema:",
             json.dumps(Contact.model_json_schema(), indent=4),
             "",
+            f"There are currently {num_contacts} contacts are stored in a table with the following colums:",
+            json.dumps(columns, indent=4),
+            "",
             "ColumnType schema (for custom columns):",
             json.dumps(column_type_schema, indent=4),
-            "",
+            "Do not create new columns if an alias already exists.",
             f"Current UTC time is {_now()}.",
-            clar_section,
             "",
         ],
     )

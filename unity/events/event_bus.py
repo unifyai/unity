@@ -292,7 +292,8 @@ class EventBus:
         if self._callbacks_ctx not in upstream_ctxs:
             unify.create_context(
                 self._callbacks_ctx,
-                unique_column_ids="row_id",
+                unique_keys={"row_id": "int"},
+                auto_counting={"row_id": None},
             )
         ctxs = unify.get_contexts(prefix=f"{self._global_ctx}/")
         self._window_sizes: Dict[str, int] = {
@@ -1040,7 +1041,7 @@ class EventBus:
         return self._specific_ctxs
 
     # ------------------------------------------------------------------
-    def reset(self) -> None:
+    def reset(self, delete_contexts: bool = True) -> None:
         """
         Bring the *singleton* back to its "just-instantiated" state
         **and** remove all Unify contexts that were created by the previous
@@ -1064,26 +1065,27 @@ class EventBus:
             pass
 
         # 2. Delete all Unify contexts owned by this EventBus instance
-        try:
-            # First remove children (…/Events/<TYPE>, …/Events/_callbacks, …)
-            prefix = f"{self._global_ctx}/"
-            for ctx in list(unify.get_contexts(prefix=prefix)):
-                try:
-                    unify.delete_context(ctx)
-                except Exception:
-                    # Context might already have been removed; ignore
-                    pass
+        if delete_contexts:
+            try:
+                # First remove children (…/Events/<TYPE>, …/Events/_callbacks, …)
+                upstream_ctxs = list(unify.get_contexts(prefix=self._global_ctx))
+                for ctx in upstream_ctxs:
+                    try:
+                        unify.delete_context(ctx)
+                    except Exception:
+                        # Context might already have been removed; ignore
+                        pass
 
-            # Finally remove the global Events context itself
-            if self._global_ctx in unify.get_contexts():
-                try:
-                    unify.delete_context(self._global_ctx)
-                except Exception:
-                    pass
-        except Exception:  # pragma: no cover – defensive
-            # Failing to clean up contexts must not break the reset; we still
-            # proceed with re-initialisation.
-            pass
+                # Finally remove the global Events context itself
+                if self._global_ctx in upstream_ctxs:
+                    try:
+                        unify.delete_context(self._global_ctx)
+                    except Exception:
+                        pass
+            except Exception:  # pragma: no cover – defensive
+                # Failing to clean up contexts must not break the reset; we still
+                # proceed with re-initialisation.
+                pass
 
         # 3. Re-initialise this *same* instance
         self._get_logger().clear_queue()  # *IMPORTANT* This will IMPACT all instances of EventBus

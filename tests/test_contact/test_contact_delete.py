@@ -46,6 +46,7 @@ def test_delete_system_contacts_raises():
 # ────────────────────────────────────────────────────────────────────────────
 # 3.  Natural-language deletion via update()                                 #
 # ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project

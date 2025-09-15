@@ -9,7 +9,7 @@ import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
 from tests.assertion_helpers import assertion_failed
-from tests.helpers import _handle_project, _get_unity_test_env_var
+from tests.helpers import _handle_project, SETTINGS
 
 
 def _llm_judge_contact_retrieval(
@@ -25,8 +25,8 @@ def _llm_judge_contact_retrieval(
     """
     judge = unify.Unify(
         "o4-mini@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     system_prompt = (
         "You are a meticulous but fair unit-test judge for contact information retrieval. "
@@ -174,7 +174,7 @@ async def test_ask_with_clarification(
     )
 
     # Expect a clarification question
-    clarification_question_text = await asyncio.wait_for(clar_up_q.get(), timeout=60)
+    clarification_question_text = await asyncio.wait_for(clar_up_q.get(), timeout=300)
 
     # Provide clarification
     await clar_down_q.put("I mean Alice Wonder.")

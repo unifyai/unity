@@ -293,7 +293,6 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
             # Attribute mutations
             TaskScheduler._update_task_name,
             TaskScheduler._update_task_description,
-            TaskScheduler._update_task_status,
             TaskScheduler._update_task_start_at,
             TaskScheduler._update_task_deadline,
             TaskScheduler._update_task_repetition,
@@ -350,8 +349,8 @@ def mirror_knowledge_manager_tools(kind: str) -> Dict[str, Any]:
             KM._tables_overview,
             KM._filter,
             KM._search,
-            KM._search_join,
-            KM._search_multi_join,
+            KM._filter_join,
+            KM._filter_multi_join,
             include_class_name=False,
         )
     if kind == "refactor":
@@ -382,3 +381,60 @@ def mirror_knowledge_manager_tools(kind: str) -> Dict[str, Any]:
     merged.update(ref_tools)
     merged.update(add_rows_tools)
     return merged
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FileManager mirroring
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
+    """Build a tool-dict mirroring the real FileManager's tool exposure.
+
+    kind: "ask" or "update". Uses AST reflection with a static fallback.
+    """
+    from unity.common.llm_helpers import methods_to_tool_dict
+    from unity.file_manager.file_manager import FileManager
+
+    target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
+
+    try:
+        pairs = _extract_owner_method_pairs(
+            FileManager,
+            target_attr,
+            self_external_map=None,
+            extra_class_names={"FileManager": FileManager},
+        )
+        if pairs:
+            tools = _build_tool_dict(pairs)
+            if tools:
+                return tools
+    except Exception:
+        pass
+
+    # Fallback – current canonical tool sets
+    if kind == "ask":
+        return methods_to_tool_dict(
+            FileManager.list,
+            FileManager.exists,
+            FileManager.parse,
+            FileManager._filter_files,
+            FileManager._search_files,
+            FileManager._list_columns,
+            FileManager.import_file,
+            FileManager.import_directory,
+            include_class_name=False,
+        )
+    else:
+        # For FileManager, update tools are the same as ask tools since we don't have write operations
+        return methods_to_tool_dict(
+            FileManager.list,
+            FileManager.exists,
+            FileManager.parse,
+            FileManager._filter_files,
+            FileManager._search_files,
+            FileManager._list_columns,
+            FileManager.import_file,
+            FileManager.import_directory,
+            include_class_name=False,
+        )

@@ -26,69 +26,58 @@ RUN apt-get update && apt-get install -y \
 
 
 # Virtual devices and remote browser setup
-# Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
 
-# Install system dependencies
+# System dependencies for virtual desktop/devices, browser runtime, and native modules
 RUN apt-get update && apt-get install -y \
-    curl wget unzip gnupg2 \
-    xvfb x11vnc fluxbox \
-    libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
-    libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
-    libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
-    ffmpeg git ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-
-# Dependencies for virtual audio
-RUN apt update && apt install -y \
-    pipewire pipewire-audio pipewire-bin pipewire-pulse wireplumber \
-    libpipewire-0.3-modules libportaudio2 portaudio19-dev \
-    pulseaudio-utils alsa-utils alsa-oss alsa-tools \
-    dbus dbus-x11 python3-pip \
+    curl wget unzip git gnupg2 \
+    xvfb x11vnc fluxbox xdotool wmctrl xterm dbus dbus-x11 websockify \
     xdg-desktop-portal xdg-desktop-portal-gtk \
+    libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
+    libasound2 libasound2-plugins libxshmfence1 libxcomposite1 libxdamage1 \
+    libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
+    ffmpeg ca-certificates \
+    pipewire pipewire-pulse pipewire-alsa wireplumber pulseaudio-utils alsa-utils \
+    libportaudio2 libpulse0 \
+    fuse3 libfuse2 squashfs-tools \
+    build-essential python3 pkg-config libvips \
     && rm -rf /var/lib/apt/lists/*
 
-# Dependencies for virtual camera
-RUN apt-get update && apt-get install -y \
-    gstreamer1.0-tools \
-    gstreamer1.0-plugins-base \
-    gstreamer1.0-plugins-good \
-    gstreamer1.0-plugins-bad \
-    gstreamer1.0-plugins-ugly \
-    gstreamer1.0-libav \
-    gstreamer1.0-pipewire \
-    gstreamer1.0-libcamera \
-    python3-gi \
-    gir1.2-gtk-3.0 \
-    libgirepository1.0-dev \
-    libcairo2-dev \
-    pkg-config \
-    build-essential \
-    cmake \
-    v4l-utils \
-    libspa-0.2-modules \
-    libcamera0.0.3 \
-    libcamera-tools \
-    gir1.2-gst-plugins-base-1.0 \
-    gir1.2-gstreamer-1.0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Chromium
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
-    chromium-driver \
-    fonts-liberation fonts-noto-color-emoji fonts-noto-core fonts-noto-ui-core fonts-freefont-ttf \
-    libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 libnss3 libxrandr2 libasound2 \
-    libpangocairo-1.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 libxshmfence1
-
-# Download noVNC
+# noVNC static files
 RUN mkdir -p /opt/novnc && \
     wget https://github.com/novnc/noVNC/archive/refs/heads/master.zip && \
     unzip master.zip && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
 
+# Dependencies for virtual camera
+# RUN apt-get update && apt-get install -y \
+#     gstreamer1.0-tools \
+#     gstreamer1.0-plugins-base \
+#     gstreamer1.0-plugins-good \
+#     gstreamer1.0-plugins-bad \
+#     gstreamer1.0-plugins-ugly \
+#     gstreamer1.0-libav \
+#     gstreamer1.0-pipewire \
+#     gstreamer1.0-libcamera \
+#     python3-gi \
+#     gir1.2-gtk-3.0 \
+#     libgirepository1.0-dev \
+#     libcairo2-dev \
+#     pkg-config \
+#     build-essential \
+#     cmake \
+#     v4l-utils \
+#     libspa-0.2-modules \
+#     libcamera-tools \
+#     gir1.2-gst-plugins-base-1.0 \
+#     gir1.2-gstreamer-1.0 \
+#     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js & npm for agent-service
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs
 
 # Copy requirements file
 COPY requirements.txt .
@@ -100,11 +89,28 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy all application files
-COPY . .
+COPY . /app
+
+# After the other apt-get installs in Dockerfile
+RUN apt-get update && apt-get install -y \
+    libgtk-4-1 \
+    libharfbuzz-icu0 \
+    libenchant-2-2 \
+    libsecret-1-0 \
+    libhyphen0 \
+    libmanette-0.2-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build agent-service
+WORKDIR /app/agent-service
+RUN npm ci
+WORKDIR /app
+
 
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV UNIFY_KEY=${UNIFY_KEY}
+RUN install -m 0755 /app/scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 
 # Download the turn detector model files
 # Set memory-efficient environment variables for model loading

@@ -14,7 +14,29 @@ from tests.helpers import _handle_project
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 1.  Basic start-and-ask                                                    #
+# 1.  Doc-string inheritance                                                 #
+# ────────────────────────────────────────────────────────────────────────────
+def test_simulated_cm_docstrings_match_base():
+    """
+    Public methods in SimulatedContactManager should copy the real
+    BaseContactManager doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.contact_manager.base import BaseContactManager
+    from unity.contact_manager.simulated import SimulatedContactManager
+
+    assert (
+        BaseContactManager.ask.__doc__.strip()
+        in SimulatedContactManager.ask.__doc__.strip()
+    ), ".store doc-string was not copied correctly"
+
+    assert (
+        BaseContactManager.update.__doc__.strip()
+        in SimulatedContactManager.update.__doc__.strip()
+    ), ".retrieve doc-string was not copied correctly"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 2.  Basic start-and-ask                                                    #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
@@ -26,74 +48,7 @@ async def test_start_and_ask_simulated_cm():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 2.  Interject                                                             #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_interject_simulated_cm(monkeypatch):
-    calls = {"interject": 0}
-    orig = _SimulatedContactHandle.interject
-
-    @functools.wraps(orig)
-    def wrapped(self, msg: str) -> str:  # type: ignore[override]
-        calls["interject"] += 1
-        return orig(self, msg)
-
-    monkeypatch.setattr(_SimulatedContactHandle, "interject", wrapped, raising=True)
-
-    cm = SimulatedContactManager()
-    h = await cm.ask("Show me all contacts created this quarter.")
-    await asyncio.sleep(0.05)
-    reply = h.interject("Filter only VIP customers.")
-    assert "ack" in reply.lower() or "noted" in reply.lower()
-    await h.result()
-    assert calls["interject"] == 1, ".interject should be invoked exactly once"
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 3.  Stop                                                                  #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_stop_simulated_cm():
-    cm = SimulatedContactManager()
-    h = await cm.ask("Generate a full CRM export.")
-    await asyncio.sleep(0.05)
-    h.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await h.result()
-    assert h.done(), "Handle should report done after stop()"
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 4.  Clarification handshake                                               #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_cm_requests_clarification():
-    cm = SimulatedContactManager()
-
-    up_q: asyncio.Queue[str] = asyncio.Queue()
-    down_q: asyncio.Queue[str] = asyncio.Queue()
-
-    h = await cm.ask(
-        "Please update my client list.",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
-        _requests_clarification=True,
-    )
-
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
-    assert "clarify" in question.lower()
-    await down_q.put("Yes – focus on European clients.")
-
-    answer = await h.result()
-    assert isinstance(answer, str) and answer.strip()
-    assert "europe" in answer.lower()
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 5.  Stateful memory – serial asks                                         #
+# 3.  Stateful memory – serial asks                                         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
@@ -117,7 +72,7 @@ async def test_cm_stateful_memory_serial_asks():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 6.  Update then ask – state carries through                                #
+# 4.  Update then ask – state carries through                                #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
@@ -141,25 +96,75 @@ async def test_cm_stateful_update_then_ask():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 7.  Doc-string inheritance                                                 #
+# Steerable handle tests                                                     #
 # ────────────────────────────────────────────────────────────────────────────
-def test_simulated_cm_docstrings_match_base():
-    """
-    Public methods in SimulatedContactManager should copy the real
-    BaseContactManager doc-strings one-for-one (via functools.wraps).
-    """
-    from unity.contact_manager.base import BaseContactManager
-    from unity.contact_manager.simulated import SimulatedContactManager
 
-    assert (
-        SimulatedContactManager.ask.__doc__.strip()
-        == BaseContactManager.ask.__doc__.strip()
-    ), ".store doc-string was not copied correctly"
 
-    assert (
-        SimulatedContactManager.update.__doc__.strip()
-        == BaseContactManager.update.__doc__.strip()
-    ), ".retrieve doc-string was not copied correctly"
+# ────────────────────────────────────────────────────────────────────────────
+# 5.  Interject                                                             #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_interject(monkeypatch):
+    calls = {"interject": 0}
+    orig = _SimulatedContactHandle.interject
+
+    @functools.wraps(orig)
+    def wrapped(self, msg: str) -> str:  # type: ignore[override]
+        calls["interject"] += 1
+        return orig(self, msg)
+
+    monkeypatch.setattr(_SimulatedContactHandle, "interject", wrapped, raising=True)
+
+    cm = SimulatedContactManager()
+    h = await cm.ask("Show me all contacts created this quarter.")
+    await asyncio.sleep(0.05)
+    reply = h.interject("Filter only VIP customers.")
+    assert "ack" in reply.lower() or "noted" in reply.lower()
+    await h.result()
+    assert calls["interject"] == 1, ".interject should be invoked exactly once"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 6.  Stop                                                                  #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_stop():
+    cm = SimulatedContactManager()
+    h = await cm.ask("Generate a full CRM export.")
+    await asyncio.sleep(0.05)
+    h.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await h.result()
+    assert h.done(), "Handle should report done after stop()"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7.  Clarification handshake                                               #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_requests_clarification():
+    cm = SimulatedContactManager()
+
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+
+    h = await cm.ask(
+        "Please update my client list.",
+        clarification_up_q=up_q,
+        clarification_down_q=down_q,
+        _requests_clarification=True,
+    )
+
+    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    assert "clarify" in question.lower()
+    await down_q.put("Yes – focus on European clients.")
+
+    answer = await h.result()
+    assert isinstance(answer, str) and answer.strip()
+    assert "europe" in answer.lower()
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -167,7 +172,7 @@ def test_simulated_cm_docstrings_match_base():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_pause_and_resume_simulated_cm(monkeypatch):
+async def test_handle_pause_and_resume(monkeypatch):
     """
     Verify that a `_SimulatedContactHandle` can be paused and later resumed
     and that the *result()* coroutine blocks while the handle is paused.
@@ -245,3 +250,38 @@ async def test_pause_and_resume_simulated_cm(monkeypatch):
         "pause": 1,
         "resume": 1,
     }, "pause / resume should each be invoked exactly once"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 9.  Nested ask on handle                                                   #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_ask():
+    """
+    The internal handle returned by SimulatedContactManager.ask exposes a
+    dynamic ask() method that should produce a nested handle whose result can
+    be awaited independently of the parent.
+    """
+    cm = SimulatedContactManager()
+
+    # Start an initial ask to obtain the live handle
+    handle = await cm.ask("Summarize all open opportunities this quarter.")
+
+    # Add extra context to ensure nested prompt includes it
+    handle.interject("Focus on European enterprise accounts.")
+
+    # Invoke the dynamic ask on the running handle
+    nested = await handle.ask("What is the key point to emphasize?")
+
+    nested_answer = await nested.result()
+    assert isinstance(nested_answer, str) and nested_answer.strip(), (
+        "Nested ask() should yield a non-empty string answer",
+    )
+    assert "europe" in nested_answer.lower()
+
+    # The original handle should still be awaitable and produce an answer
+    handle_answer = await handle.result()
+    assert isinstance(handle_answer, str) and handle_answer.strip(), (
+        "Handle should still yield a non-empty answer after nested ask",
+    )

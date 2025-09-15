@@ -15,7 +15,6 @@ from .prompt_builders import (
     build_update_prompt,
     build_simulated_method_prompt,
 )
-from ..planner.simulated import SimulatedPlanner
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
@@ -112,11 +111,16 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         self._interjections.append(message)
         return "Noted."
 
-    def stop(self) -> str:
-        """Cancel further processing so `.result()` raises."""
+    def stop(self, *, cancel: bool, reason: Optional[str] = None) -> str:
+        """Cancel further processing so `.result()` raises.
+
+        The signature mirrors the real ActiveTask handle: a keyword-only
+        `cancel` flag is required. In this simulated handle the flag does
+        not change behaviour – the interaction is always cancelled.
+        """
         self._cancelled = True
         self._done_event.set()
-        return "Stopped."
+        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     def pause(self) -> str:
         if self._paused:
@@ -145,7 +149,12 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             tools[self.pause.__name__] = self.pause
         return tools
 
-    async def ask(self, question: str) -> "SteerableToolHandle":
+    async def ask(
+        self,
+        question: str,
+        *,
+        _return_reasoning_steps: bool = False,
+    ) -> "SteerableToolHandle":
         q_msg = (
             f"Your only task is to simulate an answer to the following question: {question}\n\n"
             "However, there is a also ongoing simulated process which had the instructions given below. "
@@ -153,8 +162,8 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         )
         follow_up_prompt = "\n\n---\n\n".join(
             [q_msg]
-            + [self._initial]
-            + self._extra_msgs
+            + [self._initial_text]
+            + self._interjections
             + [f"Question to answer (as a reminder!): {question}"],
         )
 
@@ -162,7 +171,9 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             self._llm,
             follow_up_prompt,
             mode=self._mode,
-            _return_reasoning_steps=self._ret_steps,
+            _return_reasoning_steps=(
+                _return_reasoning_steps if _return_reasoning_steps else self._ret_steps
+            ),
             _requests_clarification=False,
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
@@ -182,10 +193,12 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         *,
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
+        simulation_guidance: Optional[str] = None,
     ) -> None:
         self._description = description
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self._simulation_guidance = simulation_guidance
 
         # One shared, *stateful* LLM for *everything*
         self._llm = unify.AsyncUnify(
@@ -198,12 +211,24 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         # so prompts always reflect the current surface.
         ask_tools = mirror_task_scheduler_tools("ask")
         update_tools = mirror_task_scheduler_tools("update")
+
+        # Provide placeholder counts/columns for the simulated environment
+        from .types.task import Task as _Task
+
+        fake_task_columns = [
+            {k: str(v.annotation)} for k, v in _Task.model_fields.items()
+        ]
+
         ask_msg = build_ask_prompt(
             ask_tools,
+            num_tasks=10,
+            columns=fake_task_columns,
             include_activity=self._rolling_summary_in_prompts,
         )
         update_msg = build_update_prompt(
             update_tools,
+            num_tasks=10,
+            columns=fake_task_columns,
             include_activity=self._rolling_summary_in_prompts,
         )
 
@@ -275,6 +300,13 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         return handle
 
+    # Provide guidance for outer orchestrators via tool description (read-only ask)
+    ask.__doc__ = (ask.__doc__ or "") + (
+        "\n\nOuter-orchestrator guidance: Avoid invoking this tool repeatedly with the same "
+        "arguments within the same conversation. Prefer reusing prior results and "
+        "compose the final answer once sufficient information has been gathered."
+    )
+
     # ------------------------------------------------------------------ #
     #  update                                                            #
     # ------------------------------------------------------------------ #
@@ -330,14 +362,21 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         return handle
 
+    # Provide guidance for outer orchestrators (mutation idempotence)
+    update.__doc__ = (update.__doc__ or "") + (
+        "\n\nOuter-orchestrator guidance: Avoid invoking this mutation with the same arguments multiple times in the same "
+        "conversation. Treat this operation as idempotent; if confirmation is needed, perform a single read to verify the outcome."
+    )
+
     # ------------------------------------------------------------------ #
-    #  execite_task – delegate to SimulatedPlanner.execute                     #
+    #  execite_task – delegate to SimulatedActor.act                     #
     # ------------------------------------------------------------------ #
-    @functools.wraps(BaseTaskScheduler.execute_task, updated=())
-    async def execute_task(
+    @functools.wraps(BaseTaskScheduler.execute, updated=())
+    async def execute(
         self,
         text: str,
         *,
+        isolated: Optional[bool] = None,
         parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
@@ -349,7 +388,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         The implementation pretends that the supplied *text* uniquely
         identifies the task – no attempt is made to reconcile with a real data
-        store.  A new :class:`unity.planner.simulated.SimulatedPlan` is spun up
+        store.  A new :class:`unity.actor.simulated.SimulatedPlan` is spun up
         and its handle returned.
         """
         should_log = self._log_events or log_events
@@ -360,17 +399,20 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             await publish_manager_method_event(
                 call_id,
                 "TaskScheduler",
-                "execute_task",
+                "execute",
                 phase="incoming",
                 request=text,
             )
 
         task_description = f"{text} (simulated)"
-        planner = SimulatedPlanner(
-            timeout=10,
+        from ..actor.simulated import SimulatedActor
+
+        actor = SimulatedActor(
+            duration=10,
             _requests_clarification=_requests_clarification,
+            simulation_guidance=self._simulation_guidance,
         )
-        handle = await planner.execute(
+        handle = await actor.act(
             task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
@@ -382,7 +424,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 handle,
                 call_id,
                 "TaskScheduler",
-                "execute_task",
+                "execute",
             )
 
         return handle

@@ -24,7 +24,7 @@ from unity.task_scheduler.types.priority import Priority
 from unity.task_scheduler.types.schedule import Schedule
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
-from tests.helpers import _get_unity_test_env_var
+from tests.helpers import SETTINGS
 
 
 class ScenarioBuilder:
@@ -121,8 +121,8 @@ def _llm_assert_correct(
 
     judge = unify.Unify(
         "o4-mini@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     judge.set_system_message(
         "You are a strict unit-test judge. "
@@ -249,7 +249,7 @@ async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
 
         # Give the LLM a moment to start processing, then stop it
         await asyncio.sleep(0.05)
-        handle.stop()
+        handle.stop(cancel=True)
 
         with pytest.raises(asyncio.CancelledError):
             await handle.result()

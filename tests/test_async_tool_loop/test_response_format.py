@@ -5,7 +5,7 @@ import unify
 from pydantic import BaseModel, Field
 
 from unity.common.llm_helpers import start_async_tool_use_loop
-from tests.helpers import _handle_project, _get_unity_test_env_var
+from tests.helpers import _handle_project, SETTINGS
 
 
 class SimpleGreeting(BaseModel):
@@ -31,8 +31,8 @@ async def test_structured_output_response_format() -> None:
 
     client = unify.AsyncUnify(
         "o4-mini@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
 
     client.set_system_message(
@@ -87,8 +87,8 @@ async def test_no_additional_formatting_roundtrip() -> None:  # noqa: D401
 
     client = unify.AsyncUnify(
         "o4-mini@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
 
     # Prompt the model so that it can satisfy the schema in one go.

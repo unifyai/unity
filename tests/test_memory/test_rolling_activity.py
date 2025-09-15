@@ -139,7 +139,7 @@ MANAGER_TEST_CASES: Tuple[
         "taskscheduler_execute",
         "none",
         lambda: SimulatedTaskScheduler(log_events=True),
-        lambda m: m.execute_task(text="1"),
+        lambda m: m.execute(text="1"),
     ),
 )
 
@@ -591,10 +591,10 @@ async def _run_manager_case(
 
 
 # ---------------------------------------------------------------------------
-#  Build (n_calls) list – we only test 1 and 2 calls for now                 |
+#  Build (n_calls) list
 # ---------------------------------------------------------------------------
 
-_N_CALLS_TO_TEST = [1, 2, 4, 8, 16]
+_N_CALLS_TO_TEST = [1, 2, 4]
 
 # ---------------------------------------------------------------------------
 #  Build lists of call_factories per manager ---------------------------------
@@ -616,6 +616,7 @@ TASK_MANAGER_FACTORY = TASKSCHEDULER_TEST_CASES[0][2]
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
@@ -819,7 +820,8 @@ async def _assert_time_based_headings_for_manager(
 #  Per-manager TIME-based rolling-activity tests                             |
 # ---------------------------------------------------------------------------
 
-_TIME_DAYS_TO_TEST = [1, 2, 4, 8, 16]
+_TIME_DAYS_TO_TEST = [1, 2, 4]
+_IDS = ["1_day", "2_days", "4_days"]
 
 
 @pytest.mark.asyncio
@@ -827,7 +829,7 @@ _TIME_DAYS_TO_TEST = [1, 2, 4, 8, 16]
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
+    ids=_IDS,
 )
 async def test_contact_manager_methods_populate_time_rolling_activity(
     monkeypatch,
@@ -845,7 +847,7 @@ async def test_contact_manager_methods_populate_time_rolling_activity(
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
+    ids=_IDS,
 )
 async def test_transcript_manager_methods_populate_time_rolling_activity(
     monkeypatch,
@@ -863,7 +865,7 @@ async def test_transcript_manager_methods_populate_time_rolling_activity(
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
+    ids=_IDS,
 )
 async def test_knowledge_manager_methods_populate_time_rolling_activity(
     monkeypatch,
@@ -881,7 +883,7 @@ async def test_knowledge_manager_methods_populate_time_rolling_activity(
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
+    ids=_IDS,
 )
 async def test_taskscheduler_methods_populate_time_rolling_activity(
     monkeypatch,

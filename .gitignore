@@ -2,7 +2,7 @@
 .sensitive_data
 __pycache__/
 implementations.py
-.cache.json
+.cache.ndjson
 .log.txt
 log.txt
 .logs.txt
@@ -15,6 +15,7 @@ test.py
 dump.rdb
 *venv/
 .hypothesis
-.cache.json
 .async_trace.html
 .unity_plans
+*.txt
+parsed_results_output/
