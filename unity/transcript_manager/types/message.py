@@ -28,9 +28,9 @@ class Message(BaseModel):
         description="When the message was sent/received in ISO-8601 format",
     )
     content: str = Field(description="The actual text content of the message")
-    exchange_id: int | None = Field(
-        default=None,
+    exchange_id: int = Field(
         description="ID of the conversation thread this message belongs to",
+        ge=-1,
     )
 
     @model_validator(mode="before")
