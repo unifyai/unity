@@ -1526,6 +1526,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
     clarification_down_q: Optional[asyncio.Queue[str]] = None,
     clarifications_enabled: bool = True,
     chat_context: Optional[list[dict]] = None,
+    persist_mode: bool = False,
 ) -> str:
     """
     **Common wrapper** used by all interactive sandboxes.
@@ -1764,22 +1765,30 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         # Forward the user's text exactly as provided
                         run_in_loop(handle.interject(arg))
                         print("✅ Interjection sent.")
+
                         if enable_voice_steering:
                             speak("Interjection sent")
-                            _wait_for_tts_end()
-                            print(
-                                steering_controls_hint(
-                                    pending_clarification=(pending_clar_q is not None),
-                                    voice_enabled=enable_voice_steering,
-                                ),
-                            )
-                        else:
-                            print(
-                                steering_controls_hint(
-                                    pending_clarification=(pending_clar_q is not None),
-                                    voice_enabled=enable_voice_steering,
-                                ),
-                            )
+                        # -----------------------------------------
+                        if persist_mode:
+                            print("⏳ Processing interjection...")
+                            if hasattr(handle, "awaiting_next_instruction"):
+                                try:
+                                    summary = await handle.awaiting_next_instruction()
+                                    print(f"✅ {summary}")
+                                    if enable_voice_steering:
+                                        speak(f"{summary}")
+                                except Exception as e:
+                                    print(f"❌ Error while awaiting summary: {e}")
+
+                        if enable_voice_steering:
+                            _wait_for_tts_end()  # Wait for any speaking to finish
+
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     continue
                 if cmd in {"ask", "?"}:
                     if not arg.strip():
@@ -2007,6 +2016,7 @@ async def call_manager_with_optional_clarifications(
     parent_chat_context: list[dict],
     return_reasoning_steps: bool = False,
     clarifications_enabled: bool = True,
+    **kwargs,
 ):
     """
     Call a manager method (e.g., ask/update) with context and, when supported,
@@ -2020,9 +2030,10 @@ async def call_manager_with_optional_clarifications(
     clar_up_q: Optional[asyncio.Queue[str]] = None  # type: ignore[name-defined]
     clar_down_q: Optional[asyncio.Queue[str]] = None  # type: ignore[name-defined]
 
-    kwargs: Dict[str, Any] = {
+    fn_kwargs: Dict[str, Any] = {
         "parent_chat_context": parent_chat_context,
         "_return_reasoning_steps": return_reasoning_steps,
+        **kwargs,
     }
 
     try:
@@ -2038,10 +2049,10 @@ async def call_manager_with_optional_clarifications(
     ):
         clar_up_q = _asyncio.Queue()
         clar_down_q = _asyncio.Queue()
-        kwargs["clarification_up_q"] = clar_up_q
-        kwargs["clarification_down_q"] = clar_down_q
+        fn_kwargs["clarification_up_q"] = clar_up_q
+        fn_kwargs["clarification_down_q"] = clar_down_q
 
-    handle = await fn(text, **kwargs)
+    handle = await fn(text, **fn_kwargs)
     return handle, clar_up_q, clar_down_q
 
 
