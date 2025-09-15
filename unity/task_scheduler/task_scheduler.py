@@ -117,8 +117,13 @@ def _ts_log_tool_runtime(func):
     @functools.wraps(func, updated=())
     def _wrapper(self: "TaskScheduler", *args, **kwargs):
         start = time.perf_counter()
+        res = None
         try:
-            return func(self, *args, **kwargs)
+            # Any explicit returns from the finally block override the
+            # return from the try block so we store it here and
+            # return it in the finally block if needed
+            res = func(self, *args, **kwargs)
+            return res
         finally:
             try:
                 elapsed_ms = (time.perf_counter() - start) * 1000.0
@@ -132,7 +137,7 @@ def _ts_log_tool_runtime(func):
                     pass
 
             if not _ts_timing_enabled():
-                return
+                return res
 
             # Determine category best-effort at runtime
             try:
