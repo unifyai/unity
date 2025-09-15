@@ -1238,32 +1238,39 @@ class TranscriptManager(BaseTranscriptManager):
         combined.sort(key=lambda t: t[1])
         top_ids = [mid for mid, _ in combined[:k]]
 
-        # Build lookup from candidate rows to avoid re-fetching
+        # Build final results: fetch full Message rows for the selected ids
         if not top_ids:
             return (
                 self._format_contacts_and_messages([])
                 if return_with_contacts_table
                 else []
             )
-        msg_field_keys = set(Message.model_fields.keys())
-        row_by_id: dict[int, dict] = {}
-        for row in candidate_rows:
-            mid = row.get("message_id")
-            if mid is None:
-                continue
+
+        # Fetch the complete message payloads in one go
+        ids_expr = ", ".join(str(i) for i in top_ids)
+        full_rows = unify.get_logs(
+            context=left_ctx,
+            filter=f"message_id in [{ids_expr}]",
+            from_fields=list(Message.model_fields.keys()),
+            limit=len(top_ids),
+        )
+        full_by_id: dict[int, dict] = {}
+        for lg in full_rows:
             try:
-                mid_int = int(mid)
+                mid_val = int(lg.entries.get("message_id"))
             except Exception:
                 continue
-            row_by_id[mid_int] = {k: row.get(k) for k in msg_field_keys if k in row}
+            full_by_id[mid_val] = dict(lg.entries)
+
         results: List[Message] = []
         for mid in top_ids:
-            payload = row_by_id.get(mid)
+            payload = full_by_id.get(mid)
             if not payload:
                 continue
             try:
                 results.append(Message(**payload))
             except Exception:
+                # Defensive: skip malformed rows rather than failing the whole search
                 continue
 
         return (
