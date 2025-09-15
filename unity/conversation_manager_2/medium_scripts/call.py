@@ -259,14 +259,14 @@ async def entrypoint(ctx: agents.JobContext):
                             }
                     asyncio.create_task(
                         event_broker.publish("app:comms:phone_utterance",
-                            {
+                            json.dumps({
                                 "to": "past",
                                 "topic": from_number,
                                 "event": PhoneUtteranceEvent(
                                     role="Assistant",
                                     content=phone_utterance,
                                 ).to_dict(),
-                            },
+                            }),
                         ),
                     )
                     # Update activity time on assistant response
@@ -285,7 +285,7 @@ async def entrypoint(ctx: agents.JobContext):
                         asyncio.create_task(
                             event_broker.publish(
                                 "app:comms:interrupt",
-                                msg
+                                json.dumps(msg)
                             ),
                         )
         except asyncio.CancelledError:
@@ -296,10 +296,14 @@ async def entrypoint(ctx: agents.JobContext):
         global chunk_queue
 
         async with event_broker.pubsub() as pubsub:
+            await pubsub.subscribe("app:call:response_gen")
             while True:
                 try:
-                    await pubsub.subscribe("app:call:response_gen")
-                    msg = await pubsub.get_message(ignore_subscribe_messages=True)
+                    print("waiting for events...")
+                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=None)
+                    if msg is None:
+                        continue
+                    print("done", msg)
                     msg = json.loads(msg["data"])
                     print("GOT", msg)
                     # Update activity time on any event

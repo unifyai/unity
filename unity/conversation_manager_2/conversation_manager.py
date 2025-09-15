@@ -208,15 +208,27 @@ Reply to the user using the following format:
                 input=input_messages,
                 text_format=Response
             ) as stream:
+                first_chunk = True
                 async for event in stream:
                     if event.type == "response.output_text.delta":
                         # print(event.delta)
                         out += event.delta
                         parsed_out = from_json(out, allow_partial="trailing-strings")
                         if parsed_out.get("phone_utterance"):
-                            # publish the new chunk here
-                            # publish(parsed_out["phone_utterance"][len(last_response):]
+                            if first_chunk:
+                                await self.event_broker.publish("app:call:response_gen", json.dumps({
+                                    "type": "start_gen"
+                                }))
+                                first_chunk = False
+                            if len(last_phone_utterance) != len(parsed_out["phone_utterance"]):
+                                await self.event_broker.publish("app:call:response_gen", json.dumps({
+                                    "type": "gen_chunk",
+                                    "chunk": parsed_out["phone_utterance"][len(last_phone_utterance):]
+                                }))
                             last_phone_utterance = parsed_out["phone_utterance"]
+            await self.event_broker.publish("app:call:response_gen", json.dumps({
+                                    "type": "end_gen"
+                                }))
             print(parsed_out)
             self.past_events.extend(self.inflight_events.copy())
             self.inflight_events.clear()
@@ -262,14 +274,14 @@ Reply to the user using the following format:
             while True:
                 msg = await pubsub.get_message(timeout=2, ignore_subscribe_messages=True)
                 
-                if msg is not None: print(msg)
+                # if msg is not None: print(msg)
 
                 # there are still pending messages and no scheduled responses or currently running responses
                 if msg is None:
-                    if (
-                        self.pending_events and (not self.schedueled_response or self.schedueled_response.done()) 
-                        and (not self.current_response or self.current_response.done())
-                    ):
+                    # if (
+                    #     self.pending_events and (not self.schedueled_response or self.schedueled_response.done()) 
+                    #     and (not self.current_response or self.current_response.done())
+                    # ):
                         # await self.scheduele_llm_run(0)
                         ...
                 else:
@@ -285,6 +297,7 @@ Reply to the user using the following format:
                             # can't make the call
                             ...
                         else:
+                            print("I WAS HERE...")
                             if self.schedueled_response and not self.schedueled_response.done():
                                 self.schedueled_response.cancel()
                                 with contextlib.suppress(asyncio.CancelledError):
@@ -304,12 +317,14 @@ Reply to the user using the following format:
                                 "None",
                                 str(False),
                             )
-                    if isinstance(event, PhoneCallStartedEvent):
+                    elif isinstance(event, PhoneCallStartedEvent):
                         self.mode = "call"
-                    elif isinstance(event, PhoneCallEndedEvent):
-                        ...
-                    elif event.is_urgent or isinstance(event, PhoneUtteranceEvent):
                         await self.scheduele_llm_run(0, cancel_running=True)
+                    elif isinstance(event, PhoneCallEndedEvent):
+                        terminate_process(self.call_proc)
+                    elif event.is_urgent or isinstance(event, PhoneUtteranceEvent):
+                        if event.role == "user":
+                            await self.scheduele_llm_run(0, cancel_running=True)
                     elif len(self.pending_events) >= MAX_PENDING_EVENTS:
                         # check if there is any running responses, wait for the response and then run
                         # this should also probably wait for the run to fully complete to avoid filling pending events
