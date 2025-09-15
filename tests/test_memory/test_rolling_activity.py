@@ -616,6 +616,7 @@ TASK_MANAGER_FACTORY = TASKSCHEDULER_TEST_CASES[0][2]
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
