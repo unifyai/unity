@@ -1023,17 +1023,21 @@ class TranscriptManager(BaseTranscriptManager):
 
         sender_join_ctx = f"{left_ctx}__sender_join__{query_hash}"
 
-        # Perform sender join selecting derived embedding columns directly
-        # Use copy=False to avoid creating copies of logs; pass a list of columns.
-        select_cols: list[str] = []
+        # Perform sender join selecting derived embedding columns directly.
+        # IMPORTANT: alias columns so the join context exposes the exact
+        # embedding column names expected by the ranking step. Passing a
+        # plain list (without aliases) means the columns may only be
+        # accessible via fully-qualified names, breaking downstream
+        # expressions that reference just `embed_col`.
+        select: Dict[str, str] = {}
         # Include all message fields so we can reconstruct results without a second fetch
         for mf in Message.model_fields.keys():
-            select_cols.append(f"{left_ctx}.{mf}")
-        # Include required embedding columns for ranking
+            select[f"{left_ctx}.{mf}"] = mf
+        # Include required embedding columns for ranking (alias to bare names)
         for embed_col, _ in msg_embed_columns:
-            select_cols.append(f"{left_ctx}.{embed_col}")
+            select[f"{left_ctx}.{embed_col}"] = embed_col
         for embed_col, _ in sender_contact_embed_columns:
-            select_cols.append(f"{right_ctx}.{embed_col}")
+            select[f"{right_ctx}.{embed_col}"] = embed_col
 
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
         headers = {
@@ -1049,8 +1053,12 @@ class TranscriptManager(BaseTranscriptManager):
             "join_expr": f"{left_ctx}.sender_id == {right_ctx}.contact_id",
             "mode": "inner",
             "new_context": sender_join_ctx,
-            "columns": select_cols,
-            "copy": False,
+            # Use aliased column mapping so downstream sorting can reference
+            # bare embedding column names.
+            "columns": select,
+            # Aliases require a materialized copy in the backend; enable it so
+            # the joined context exposes the expected bare column names.
+            "copy": True,
         }
         resp = http_request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
