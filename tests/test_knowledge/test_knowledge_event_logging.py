@@ -110,7 +110,7 @@ async def test_managermethod_events_for_refactor():
         if e.payload.get("manager") == "KnowledgeManager"
         and e.payload.get("method") == "refactor"
         and e.payload.get("phase") == "incoming"
-        and e.payload.get("command") == cmd
+        and e.payload.get("request") == cmd
     ]
     assert incoming, "No incoming ManagerMethod event for refactor()"
     call_id = incoming[0].calling_id
