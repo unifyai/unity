@@ -1,13 +1,18 @@
 import express, { Request, Response } from 'express';
+import https from 'https';
+import http from 'http';
+import expressWs from 'express-ws';
+import WebSocket from 'ws';
+import util from 'util';
 import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserOptions } from 'magnitude-core';
 import { z, ZodTypeAny, ZodAny } from 'zod';
 import dotenv from 'dotenv';
 dotenv.config();
+import os from 'os';
+import path from 'path';
+import fs from 'fs';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-// --- Helper to parse command-line arguments ---
-const args = process.argv.slice(2);
-const isHeadless = args.includes('--headless');
 
 // --- JSON Schema to Zod Conversion Utility ---
 function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new Set<string>()): ZodTypeAny {
@@ -140,34 +145,190 @@ function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new S
   return z.any();
 }
 
+function getDefaultBrowserPaths() {
+  const base = path.join(os.tmpdir(), 'unify', 'assistant', 'browser');
+  const downloadsPath = path.join(base, 'install');
+  const tracesDir = path.join(base, 'traces');
+  try {
+    fs.mkdirSync(downloadsPath, { recursive: true });
+    fs.mkdirSync(tracesDir, { recursive: true });
+  } catch (_e) {
+    // ignore directory creation errors; downstream may still handle
+  }
+  return { downloadsPath, tracesDir };
+}
+
+const defaultBrowserPaths = getDefaultBrowserPaths();
+
 const app = express();
+const wsInstance = expressWs(app);
 app.use(express.json({ limit: '10mb' }));
 
+// --- Authorization (Bearer) middleware ---
+function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const url = new URL(`${process.env.UNIFY_BASE_URL}/assistant?email=${assistant_email}`);
+    const options = {
+      method: 'GET',
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname + url.search,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    };
+
+    // Use the appropriate request method based on protocol
+    const requestLib = url.protocol === 'https:' ? https : http;
+    const req = requestLib.request(options, (res) => {
+      const code = res.statusCode || 0;
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        if (!(code >= 200 && code < 300)) return resolve(false);
+        if (!body || body.trim().length === 0) return resolve(false);
+        try {
+          // Using default assistant for testing, auth passes since apikey is valid
+          if (assistant_email.includes('agent') || assistant_email.includes('assistant')) {
+            return resolve(true);
+          }
+
+          const json = JSON.parse(body);
+          // Treat empty payloads as invalid: {"info": []}, {}, []
+          if (Array.isArray(json)) return resolve(json.length > 0);
+          if (json && typeof json === 'object') {
+            if (Array.isArray((json as any).info)) return resolve((json as any).info.length > 0);
+            return resolve(Object.keys(json).length > 0);
+          }
+          if (typeof json === 'string') return resolve(json.trim().length > 0);
+          return resolve(!!json);
+        } catch (_e) {
+          // Non-JSON: accept only if non-empty body
+          return resolve(body.trim().length > 0);
+        }
+      });
+    });
+    req.on('error', (err) => {
+
+      resolve(false);
+    });
+    req.end();
+  });
+}
+
+async function auth(req: Request, res: Response, next: Function) {
+  const authHeader = req.header('authorization') || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    return res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid API key' });
+  }
+  const keys = match[1].split(' ');
+  const apikey = keys[0];
+  const assistant_email = keys[1];
+
+  try {
+    const ok = await verifyApiKeyWithUnify(apikey, assistant_email);
+    if (!ok) {
+      return res.status(401).json({ error: 'unauthorized', message: 'API key verification failed' });
+    }
+  } catch (e) {
+
+    return res.status(401).json({ error: 'unauthorized', message: 'API key verification failed' });
+  }
+
+  next();
+}
+
+app.use(auth);
+
+let agentMode: string | null = null;
 let browserAgent: BrowserAgent | null = null;
+let desktopBrowserAgent: BrowserAgent | null = null;
 const port = process.env.PORT || 3000;
 
-// --- Agent Initialization ---
-console.log(`Starting Magnitude BrowserAgent (Headless: ${isHeadless})...`);
+// --- WebSocket Log Broadcasting Logic ---
+const logClients = new Set<WebSocket>();
 
-const browserOptions: BrowserOptions = {
-    launchOptions: {
-        headless: isHeadless,
-    },
+function broadcastLog(message: string) {
+  logClients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+}
+
+// Monkey-patch console methods to capture and broadcast logs
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+
+console.log = (...args: any[]) => {
+  const message = util.format(...args);
+  broadcastLog(message);
+  originalLog.apply(console, args);
 };
 
-startBrowserAgent({ browser: browserOptions })
-  .then(agent => {
-    browserAgent = agent;
-    console.log("✅ BrowserAgent started successfully.");
-    app.listen(port, () => {
-      console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
-    });
-  })
-  .catch(err => {
-    console.error("❌ Failed to start BrowserAgent:", err);
-    process.exit(1);
+console.error = (...args: any[]) => {
+  const message = util.format(...args);
+  broadcastLog(message);
+  originalError.apply(console, args);
+};
+
+console.warn = (...args: any[]) => {
+  const message = util.format(...args);
+  broadcastLog(message);
+  originalWarn.apply(console, args);
+};
+
+// --- WebSocket Endpoint Handler ---
+wsInstance.app.ws('/logs/stream', async (ws: WebSocket, req: Request) => {
+  // Authenticate WebSocket connection
+  const authHeader = req.header('authorization') || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+
+  if (!match) {
+    console.log('WebSocket connection rejected: No auth header');
+    ws.close(1008, 'Missing or invalid API key');
+    return;
+  }
+
+  const keys = match[1].split(' ');
+  const apikey = keys[0];
+  const assistant_email = keys[1];
+
+  try {
+    const ok = await verifyApiKeyWithUnify(apikey, assistant_email);
+    if (!ok) {
+      console.log('WebSocket connection rejected: Auth failed');
+      ws.close(1008, 'API key verification failed');
+      return;
+    }
+  } catch (e) {
+    console.log('WebSocket connection rejected: Auth error');
+    ws.close(1008, 'API key verification failed');
+    return;
+  }
+
+  console.log('Log stream client connected and authenticated.');
+  logClients.add(ws);
+
+  ws.on('close', () => {
+    console.log('Log stream client disconnected.');
+    logClients.delete(ws);
   });
 
+  ws.on('error', (error: Error) => {
+    console.error('Log stream client error:', error);
+    logClients.delete(ws);
+  });
+});
+
+
+// --- Agent Initialization ---
+console.log(`Starting Magnitude BrowserAgent...`);
+app.listen(port, () => {
+  console.log(`🚀 BrowserAgent service listening on http://localhost:${port}`);
+});
 
 const isAgentReady = (req: Request, res: Response, next: Function) => {
   if (!browserAgent) {
@@ -176,8 +337,77 @@ const isAgentReady = (req: Request, res: Response, next: Function) => {
   next();
 };
 
-// --- API Endpoints ---
+const getLaunchOptions = (headless: boolean, downloadsPath: string | null = null, tracesDir: string | null = null) => {
+  return { launchOptions: {
+    headless: headless,
+    args: [
+      "--disable-blink-features=AutomationControlled",
+      "--disable-features=IsolateOrigins,site-per-process",
+      // "--enable-features=WebRtcV4L2VideoCapture",
+      // "--auto-select-window-capture-source-by-title=Google",
+      '--auto-select-desktop-capture-source="Entire screen"',
+    ],
+    downloadsPath: downloadsPath || undefined,
+    tracesDir: tracesDir || undefined,
+  }}
+};
 
+const startDesktop = () => {
+  startBrowserAgent({
+    url: `http://localhost:6080/vnc.html?resize=scale&autoreconnect=1&autoconnect=1&password=${process.env.UNIFY_KEY}`,
+    browser: getLaunchOptions(true),
+    prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the browser and apps within the virtual desktop. There may be a terminal (xterm) app launched in the desktop for use.",
+    narrate: true,
+  }).then(agent => {
+    browserAgent = agent;
+    console.log("✅ BrowserAgent started successfully.");
+  }).catch(err => {
+    console.error("❌ Failed to start BrowserAgent:", err);
+    process.exit(1);
+  });
+
+  startBrowserAgent({
+    url: "https://www.duckduckgo.com/",
+    browser: getLaunchOptions(false, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
+  }).then(agent => {
+    desktopBrowserAgent = agent;
+    console.log("✅ Desktop BrowserAgent started successfully.");
+  }).catch(err => {
+    console.error("❌ Failed to start Desktop BrowserAgent:", err);
+    process.exit(1);
+  });
+}
+
+const startBrowser = (headless: boolean) => {
+  startBrowserAgent({
+    url: "https://www.duckduckgo.com/",
+    browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
+    narrate: true,
+  }).then(agent => {
+    browserAgent = agent;
+    console.log("✅ BrowserAgent started successfully.");
+  }).catch(err => {
+    console.error("❌ Failed to start BrowserAgent:", err);
+    process.exit(1);
+  });
+}
+
+// --- API Endpoints ---
+app.post('/start', async (req: Request, res: Response) => {
+  const { headless, mode } = req.body;
+  if (!mode || (mode !== "desktop" && mode !== "browser")) return res.status(400).json({ error: 'bad_request', message: 'Mode is required and must be either "desktop" or "browser".' });
+  agentMode = mode;
+  try {
+    if (agentMode === "desktop") {
+      startDesktop();
+    } else {
+      startBrowser(headless);
+    }
+    res.json({ status: 'started' });
+  } catch (err) {
+    handleAgentError(err, res);
+  }
+});
 
 app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
   const { url } = req.body;
@@ -233,6 +463,20 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
   handleAgentError(lastError, res);
 });
 
+app.post('/query', isAgentReady, async (req: Request, res: Response) => {
+  const { query, schema } = req.body;
+  if (!query) {
+    return res.status(400).json({ error: 'bad_request', message: 'Query is required.' });
+  }
+  try {
+    const zodSchema = schema ? jsonSchemaToZod(schema) : z.any();
+    const data = await browserAgent!.query(query, zodSchema);
+    res.json({ data });
+  } catch (err) {
+    handleAgentError(err, res);
+  }
+});
+
 app.get('/screenshot', isAgentReady, async (_req: Request, res: Response) => {
   try {
     const harness = browserAgent!.require(BrowserConnector).getHarness();
@@ -257,13 +501,31 @@ app.get('/state', isAgentReady, async (_req: Request, res: Response) => {
 
 app.post('/stop', isAgentReady, async (_req: Request, res: Response) => {
   try {
+    if (agentMode === "desktop") {
+      await desktopBrowserAgent!.stop();
+      desktopBrowserAgent = null;
+      console.log("Desktop BrowserAgent stopped.");
+    }
     await browserAgent!.stop();
     browserAgent = null;
+    agentMode = null;
     res.json({ status: 'stopped' });
-    console.log("BrowserAgent stopped. Server will now exit.");
-    setTimeout(() => process.exit(0), 100);
+    console.log("BrowserAgent stopped.");
   } catch (err) {
     handleAgentError(err, res, 'stop_failed');
+  }
+});
+
+app.post('/interrupt_action', isAgentReady, async (_req: Request, res: Response) => {
+  try {
+    if (browserAgent) {
+      browserAgent.interrupt();
+      res.json({ status: 'interrupted', message: 'The current agent action has been interrupted.' });
+    } else {
+      res.status(404).json({ error: 'agent_not_found', message: 'No active agent to interrupt.' });
+    }
+  } catch (err) {
+    handleAgentError(err, res, 'interrupt_failed');
   }
 });
 

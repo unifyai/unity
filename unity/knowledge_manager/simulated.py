@@ -5,7 +5,7 @@ import json
 import os
 import functools
 import threading
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import unify
 from .base import BaseKnowledgeManager
@@ -107,10 +107,10 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
         self._extra_msgs.append(message)
         return "Acknowledged."
 
-    def stop(self) -> str:
+    def stop(self, reason: str | None = None) -> str:
         self._cancelled = True
         self._done_event.set()
-        return "Stopped."
+        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     def pause(self) -> str:
         if self._paused:
@@ -177,10 +177,12 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         *,
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
+        simulation_guidance: Optional[str] = None,
     ) -> None:
         self._description = description
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self._simulation_guidance = simulation_guidance
 
         # One shared, memory-retaining LLM
         self._llm = unify.AsyncUnify(
@@ -278,6 +280,12 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
 
         return handle
 
+    # Append guidance for outer orchestrators (mutation idempotence)
+    refactor.__doc__ = (refactor.__doc__ or "") + (
+        "\n\nOuter-orchestrator guidance: Avoid invoking this mutation with the same arguments multiple times in the same "
+        "conversation. Treat this operation as idempotent; if confirmation is needed, perform a single read to verify the outcome."
+    )
+
     # ------------------------------------------------------------------ #
     #  store                                                             #
     # ------------------------------------------------------------------ #
@@ -335,6 +343,12 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
 
         return handle
 
+    # Append guidance for outer orchestrators (mutation idempotence)
+    update.__doc__ = (update.__doc__ or "") + (
+        "\n\nOuter-orchestrator guidance: Avoid invoking this mutation with the same arguments multiple times in the same "
+        "conversation. Treat this operation as idempotent; if confirmation is needed, perform a single read to verify the outcome."
+    )
+
     # ------------------------------------------------------------------ #
     #  retrieve                                                          #
     # ------------------------------------------------------------------ #
@@ -386,3 +400,10 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             )
 
         return handle
+
+    # Provide guidance for outer loops via tool description
+    ask.__doc__ = (ask.__doc__ or "") + (
+        "\n\nOuter-orchestrator guidance: Avoid invoking this tool repeatedly with the same "
+        "arguments within the same conversation. Prefer reusing prior results and "
+        "compose the final answer once sufficient information has been gathered."
+    )

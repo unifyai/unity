@@ -107,10 +107,10 @@ class _SimulatedContactHandle(SteerableToolHandle):
         self._extra_msgs.append(message)
         return "Acknowledged."
 
-    def stop(self) -> str:
+    def stop(self, reason: str | None = None) -> str:
         self._cancelled = True
         self._done.set()
-        return "Stopped."
+        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     def pause(self) -> str:
         if self._paused:
@@ -179,9 +179,11 @@ class SimulatedContactManager(BaseContactManager):
         *,
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
+        simulation_guidance: Optional[str] = None,
     ) -> None:
         self._description = description
         self._log_events = log_events
+        self._simulation_guidance = simulation_guidance
 
         # Shared, *stateful* **asynchronous** LLM
         self._llm = unify.AsyncUnify(
@@ -204,6 +206,8 @@ class SimulatedContactManager(BaseContactManager):
         )
         upd_msg = build_update_prompt(
             upd_tools,
+            10,
+            [{k: str(v.annotation)} for k, v in Contact.model_fields.items()],
             include_activity=self._rolling_summary_in_prompts,
         )
 
@@ -270,6 +274,13 @@ class SimulatedContactManager(BaseContactManager):
 
         return handle
 
+    # Append guidance to influence outer orchestrators via tool descriptions
+    ask.__doc__ = (ask.__doc__ or "") + (
+        "\n\nOuter-orchestrator guidance: Avoid invoking this tool repeatedly with the same "
+        "arguments within the same conversation. Prefer reusing prior results and "
+        "compose the final answer once sufficient information has been gathered."
+    )
+
     # --------------------------------------------------------------------- #
     # update                                                                #
     # --------------------------------------------------------------------- #
@@ -321,6 +332,12 @@ class SimulatedContactManager(BaseContactManager):
             )
 
         return handle
+
+    # Provide guidance for outer orchestrators via tool description on mutation methods
+    update.__doc__ = (update.__doc__ or "") + (
+        "\n\nOuter-orchestrator guidance: Avoid invoking this mutation with the same arguments multiple times in the same "
+        "conversation. Treat this operation as idempotent; if confirmation is needed, perform a single read to verify the outcome."
+    )
 
     def _filter_contacts(
         self,

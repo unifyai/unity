@@ -1,7 +1,10 @@
 import functools
+import asyncio
 from typing import Optional, Dict, Callable, TYPE_CHECKING
 
-from ..planner.base import BaseActiveTask
+from .base import BaseActiveTask
+from ..actor.base import BaseActor
+from unity.common.llm_helpers import SteerableToolHandle
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
@@ -10,68 +13,218 @@ if TYPE_CHECKING:
 class ActiveTask(BaseActiveTask):
     def __init__(
         self,
-        active_task: BaseActiveTask,
+        actor_handle: SteerableToolHandle,
         *,
         task_id: Optional[int] = None,
         instance_id: Optional[int] = None,
         scheduler: Optional["TaskScheduler"] = None,
     ):
         """
-        Thin wrapper that:
-        • exposes the underlying plan's steer-controls and\
-        • **optionally** keeps the task table in sync when a *scheduler* is supplied.
+        Thin wrapper around an actor-backed active plan handle, keeping the
+        corresponding Tasks row in sync when a scheduler is provided.
 
-        Parameters
-        ----------
-        description
-            Human-readable task description (passed straight to the planner).
-        planner
-            The concrete planner implementation responsible for spawning an active task.
-        task_id, instance_id, scheduler
-            When provided, every lifecycle transition (pause/resume/stop/finish)
-            is mirrored back into the task list via ``scheduler._update_task_status``.
+        Use ``ActiveTask.create(...)`` to construct an instance from a
+        ``BaseActor`` and a task description.
         """
-        self._active_task = active_task
+        self._actor_handle = actor_handle
         self._scheduler: Optional["TaskScheduler"] = scheduler
         self._task_id: Optional[int] = task_id
         self._instance_id: Optional[int] = instance_id
+        self._was_stopped: bool = False
+        self._last_intent: Optional[str] = None
+        self._last_intent_reason: Optional[str] = None
+
+    @classmethod
+    async def create(
+        cls,
+        actor: BaseActor,
+        *,
+        task_description: str,
+        parent_chat_context: Optional[list[dict]] = None,
+        clarification_up_q: Optional["asyncio.Queue[str]"] = None,
+        clarification_down_q: Optional["asyncio.Queue[str]"] = None,
+        task_id: Optional[int] = None,
+        instance_id: Optional[int] = None,
+        scheduler: Optional["TaskScheduler"] = None,
+    ) -> "ActiveTask":
+        """
+        Create an ActiveTask by starting work on the provided ``actor``.
+
+        This is the preferred constructor: it ensures the underlying active
+        handle is running before returning an instance.
+        """
+        actor_steerable_handle = await actor.act(
+            task_description,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+        return cls(
+            actor_steerable_handle,  # type: ignore[arg-type]
+            task_id=task_id,
+            instance_id=instance_id,
+            scheduler=scheduler,
+        )
 
     @functools.wraps(BaseActiveTask.ask, updated=())
-    async def ask(self, message: str) -> str:
-        return await self._active_task.ask(message)
+    async def ask(
+        self,
+        message: str,
+        *,
+        _return_reasoning_steps: bool = False,
+    ) -> SteerableToolHandle:
+        """Answer a read-only question about the live activity and return a handle."""
+        answer: str = await self._actor_handle.ask(message)
+
+        # Lightweight static handle that simply returns the captured answer
+        class _AnswerHandle(SteerableToolHandle):  # type: ignore[abstract-method]
+            def __init__(self) -> None:
+                pass
+
+            async def interject(self, message: str): ...
+
+            def stop(self, reason: Optional[str] = None): ...
+
+            def pause(self): ...
+
+            def resume(self): ...
+
+            def done(self) -> bool:
+                return True
+
+            async def result(self) -> str:
+                # Ignoring _return_reasoning_steps for ActiveTask.ask; only answer string is returned.
+                return answer
+
+            async def ask(self, question: str) -> "SteerableToolHandle":  # type: ignore[override]
+                return self
+
+        return _AnswerHandle()
 
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> None:
-        await self._active_task.interject(message)
+        # Classify steering intent and enforce lifecycle synchronization for stop/defer/cancel.
+        intent: Optional[str] = None
+        reason: Optional[str] = None
+
+        try:
+            if self._scheduler is not None:
+                intent, reason = await self._scheduler._classify_steering_intent(  # type: ignore[attr-defined]
+                    message,
+                    parent_chat_context=None,
+                )
+        except Exception:
+            intent, reason = None, None
+
+        self._last_intent = intent
+        self._last_intent_reason = reason or message
+
+        # If the interjection semantically requests stopping, enforce correct lifecycle handling.
+        if intent in ("cancel", "defer"):
+            try:
+                if hasattr(self._actor_handle, "stop"):
+                    self._actor_handle.stop(reason)  # type: ignore[call-arg]
+            except Exception:
+                pass
+
+            self._was_stopped = True  # prevents result() from marking 'completed'
+
+            try:
+                if self._scheduler and self._task_id is not None:
+                    if intent == "cancel":
+                        # Explicit cancellation: mark cancelled.
+                        self._mirror_status("cancelled")
+                    else:
+                        # Defer: restore prior queue/schedule position via public API when available.
+                        try:
+                            self._call_reinstate_public(task_id=self._task_id)
+                        except Exception:
+                            # Fallback: downgrade status to prior state from plan or 'queued'.
+                            try:
+                                plan = None
+                                if self._instance_id is not None:
+                                    plan = (self._scheduler._reintegration_plans or {}).get(  # type: ignore[attr-defined]
+                                        (self._task_id, self._instance_id),
+                                    )
+                                prior_status = (
+                                    str(getattr(plan, "original_status", ""))
+                                    if plan is not None
+                                    else ""
+                                )
+                                target_status = (
+                                    prior_status if prior_status else "queued"
+                                )
+                                if self._instance_id is not None:
+                                    self._scheduler._update_task_status_instance(  # type: ignore[attr-defined]
+                                        task_id=self._task_id,
+                                        instance_id=self._instance_id,
+                                        new_status=target_status,
+                                    )
+                            except Exception:
+                                pass
+            except Exception:
+                # Best-effort: failure to reinstate or fallback must not break stop semantics
+                pass
+
+            self._clear_active_pointer()
+            return
+
+        # No stop/defer/cancel intent ⇒ forward interjection to the actor.
+        await self._actor_handle.interject(message)
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    def stop(self) -> Optional[str]:
-        ret = self._active_task.stop()
-        self._mirror_status("cancelled")
+    def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:
+        """Stop the running activity with explicit intent.
+
+        When ``cancel`` is True the task instance is marked cancelled. When False, the
+        task is deferred and we attempt to reinstate it to its previous queue/schedule
+        position using the stored reintegration plan (when available).
+        """
+        # Be tolerant if the underlying actor has already finished; treat stop as a no-op.
+        try:
+            ret = self._actor_handle.stop(reason)  # type: ignore[call-arg]
+        except Exception:
+            ret = "Stopped."
+        self._was_stopped = True
+
+        # Cancel → mark cancelled; Defer → try reinstatement
+        if cancel:
+            self._mirror_status("cancelled")
+        else:
+            try:
+                if self._scheduler and self._task_id is not None:
+                    # Prefer strict reinstatement using the stored plan when present.
+                    self._call_reinstate_public(task_id=self._task_id)
+            except Exception:
+                # Best-effort – failure to reinstate must not break stop semantics
+                pass
+
         self._clear_active_pointer()
         return ret
 
     @functools.wraps(BaseActiveTask.pause, updated=())
     def pause(self) -> Optional[str]:
-        ret = self._active_task.pause()
+        ret = self._actor_handle.pause()
         self._mirror_status("paused")
         return ret
 
     @functools.wraps(BaseActiveTask.resume, updated=())
     def resume(self) -> Optional[str]:
-        return self._active_task.resume()
+        ret = self._actor_handle.resume()
+        self._mirror_status("active")
+        return ret
 
     @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
-        ret = self._active_task.done()
+        ret = self._actor_handle.done()
         self._mirror_status("active")
         return ret
 
     @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
-        ret = await self._active_task.result()
+        ret = await self._actor_handle.result()
         # If the task wasn't explicitly cancelled/failed, mark as completed.
-        if self._scheduler and self._task_id is not None:
+        if self._scheduler and self._task_id is not None and not self._was_stopped:
             row = self._scheduler._filter_tasks(  # type: ignore[attr-defined]
                 filter=f"task_id == {self._task_id} and instance_id == {self._instance_id}",
                 limit=1,
@@ -103,15 +256,34 @@ class ActiveTask(BaseActiveTask):
         if self._scheduler and getattr(self._scheduler, "_active_task", None):
             active = self._scheduler._active_task  # type: ignore[attr-defined]
             if (
-                active["task_id"] == self._task_id
-                and active["instance_id"] == self._instance_id
+                getattr(active, "task_id", None) == self._task_id
+                and getattr(active, "instance_id", None) == self._instance_id
             ):
                 self._scheduler._active_task = None  # type: ignore[attr-defined]
 
-    # ── handy passthrough also exposed to the LLM ──────────────────────────
-    def ask(self, question: str) -> str:  # type: ignore[override]
-        """Ask the running plan a question (simply forwards the call)."""
-        return self._active_task.ask(question)
+    # Centralised reinstate caller to avoid duplication and tolerate older signatures
+    def _call_reinstate_public(self, *, task_id: int) -> None:
+        sched = self._scheduler
+        if sched is None:
+            return
+        try:
+            # Prefer public API when available
+            if hasattr(sched, "reinstate_to_previous_queue"):
+                try:
+                    # Try with allow_active=True
+                    sched.reinstate_to_previous_queue(task_id=task_id, allow_active=True)  # type: ignore[attr-defined]
+                except TypeError:
+                    # Fallback without allow_active (defensive)
+                    sched.reinstate_to_previous_queue(task_id=task_id)  # type: ignore[attr-defined]
+                return
+        except Exception:
+            pass
+
+        # Backwards compatibility: private method, with graceful arg fallback
+        try:
+            sched._reinstate_task_to_previous_queue(task_id=task_id, _allow_active=True)  # type: ignore[attr-defined]
+        except TypeError:
+            sched._reinstate_task_to_previous_queue(task_id=task_id)  # type: ignore[attr-defined]
 
     @property
     @functools.wraps(BaseActiveTask.valid_tools, updated=())
@@ -120,7 +292,9 @@ class ActiveTask(BaseActiveTask):
             self.interject.__name__: self.interject,
             self.stop.__name__: self.stop,
         }
-        if self._paused:
+        # Reflect paused state from the underlying task handle when available.
+        paused_flag = getattr(self._actor_handle, "_paused", False)
+        if paused_flag:
             tools[self.resume.__name__] = self.resume
         else:
             tools[self.pause.__name__] = self.pause

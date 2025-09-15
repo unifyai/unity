@@ -32,36 +32,62 @@ class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Answer a **natural-language** question about the stored transcripts
-        (emails, chats, calls …) and return a *live* ``SteerableToolHandle``
-        to the LLM reasoning session.
+        Interrogate the **existing transcripts** (read‑only) and obtain a live
+        :class:`SteerableToolHandle`.
+
+        Purpose
+        -------
+        Use this method to locate and analyse messages that already exist in the
+        store: retrieve messages for a contact or exchange, filter by channel or
+        time, perform semantic searches over content (and, when available, sender
+        contact attributes), or summarise/compare existing entries in prose. This
+        call must never create, modify or delete messages.
+
+        Clarifications
+        --------------
+        Do not use this method to ask the human follow‑up questions. If the
+        caller needs clarification about what to retrieve (e.g., which
+        conversation, which date range, which person), route the question via a
+        dedicated ``request_clarification`` tool when available. If no
+        clarification channel exists, proceed with sensible defaults/best‑guess
+        values and state those assumptions in the outer loop's final reply.
 
         Do *not* request *how* the question should be answered; just ask the
-        question in natural language and allow the `ask` method to determine
+        question in natural language and allow this `ask` method to determine
         the best method to answer it.
+
+        Examples
+        --------
+        • Good: "Show me the latest WhatsApp message from Alice" → identify by
+          contact and medium, then fetch the most recent message (mention the
+          relevant ``message_id``/``exchange_id`` when possible).
+        • Bad:  "Should I email them again?" → this is a human decision/clarification;
+          use ``request_clarification`` instead.
 
         Parameters
         ----------
         text : str
-            The user's free-form question (e.g. *"Show me the latest WhatsApp
-            message from Alice"*).
+            Plain‑English question about existing transcripts, e.g. "Show me the
+            latest WhatsApp message from Alice".
         _return_reasoning_steps : bool, default ``False``
             When ``True`` the handle's :pyfunc:`~SteerableToolHandle.result`
-            yields ``(answer, messages)`` where *messages* is the complete
-            internal chat (useful for debugging).
+            yields ``(answer, messages)`` – the first element is the assistant's
+            reply, the second the hidden chain‑of‑thought (useful for debugging).
         parent_chat_context : list[dict] | None
-            Optional *read-only* chat history that will be provided to all
-            nested tool calls.
+            Optional read‑only chat history that will be provided to all nested
+            tool calls.
         clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
-            Duplex channels enabling the LLM to **ask** the human for missing
-            details (push to *up_q*) and **receive** the reply (read from
-            *down_q*).
+            Duplex channels enabling interactive clarification questions. If
+            supplied the LLM may push a follow‑up question onto
+            *clarification_up_q* and must read the human's answer from
+            *clarification_down_q*.
 
         Returns
         -------
         SteerableToolHandle
-            A steerable handle that can be awaited, paused/resumed, stopped,
-            or interjected with extra user turns.
+            Await :pymeth:`SteerableToolHandle.result` for the final answer or
+            steer the interaction via ``pause()``, ``resume()``, ``interject()``
+            or ``stop()``.
         """
 
     async def summarize(

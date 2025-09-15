@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from argparse import ArgumentParser
-import asyncio
 from datetime import datetime, timezone
 from google.cloud import storage
 import os
@@ -17,7 +16,6 @@ import time
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static, Header, Footer
-from textual.reactive import reactive
 
 unify.activate("Assistants")
 
@@ -32,10 +30,11 @@ def fetch_nearest_recording(assistant_id: str, timestamp: datetime):
         abs(
             (
                 datetime.strptime(
-                    recording["created_at"], "%Y-%m-%dT%H:%M:%S.%f"
+                    recording["created_at"],
+                    "%Y-%m-%dT%H:%M:%S.%f",
                 ).replace(tzinfo=timezone.utc)
                 - timestamp
-            ).total_seconds()
+            ).total_seconds(),
         )
         for recording in recordings
     ]
@@ -80,7 +79,7 @@ class TranscriptDisplay(Static):
                 and i not in self.displayed_utterances
             ):
                 new_content.append(
-                    f"[{utterance['second']:02d}s] {utterance['role']}: {utterance['content']}"
+                    f"[{utterance['second']:02d}s] {utterance['role']}: {utterance['content']}",
                 )
                 self.displayed_utterances.add(i)
 
@@ -100,31 +99,31 @@ class AudioPlayer(App):
         grid-size: 1;
         grid-rows: 1fr auto;
     }
-    
+
     .main-container {
         layout: vertical;
         height: 100%;
     }
-    
+
     .controls {
         layout: horizontal;
         height: auto;
         padding: 1;
         border-bottom: solid green;
     }
-    
+
     .transcript-container {
         height: 1fr;
         border: solid blue;
         padding: 1;
     }
-    
+
     TranscriptDisplay {
         background: $surface;
         color: $text;
         min-height: 100%;
     }
-    
+
     Button {
         margin: 0 1;
     }
@@ -195,22 +194,24 @@ class AudioPlayer(App):
 
             if phone_utterance_events:
                 phone_utterance_events = list(
-                    map(lambda x: x.entries, phone_utterance_events)
+                    map(lambda x: x.entries, phone_utterance_events),
                 )
 
                 # Calculate timing
                 current_second = 0
                 current_timestamp = datetime.strptime(
-                    phone_utterance_events[0]["timestamp"], "%Y-%m-%dT%H:%M:%S.%f%z"
+                    phone_utterance_events[0]["timestamp"],
+                    "%Y-%m-%dT%H:%M:%S.%f%z",
                 )
 
                 for event in phone_utterance_events:
                     new_timestamp = datetime.strptime(
-                        event["timestamp"], "%Y-%m-%dT%H:%M:%S.%f%z"
+                        event["timestamp"],
+                        "%Y-%m-%dT%H:%M:%S.%f%z",
                     )
                     current_second = int(
                         current_second
-                        + (new_timestamp - current_timestamp).total_seconds()
+                        + (new_timestamp - current_timestamp).total_seconds(),
                     )
                     current_timestamp = new_timestamp
                     self.phone_utterance_seconds.append(
@@ -218,7 +219,7 @@ class AudioPlayer(App):
                             "second": current_second,
                             "role": event["role"],
                             "content": event["content"],
-                        }
+                        },
                     )
 
                 # Update transcript display
@@ -291,7 +292,9 @@ class AudioPlayer(App):
 
             except Exception as e:
                 self.call_from_thread(
-                    self.notify, f"Audio error: {e}", severity="error"
+                    self.notify,
+                    f"Audio error: {e}",
+                    severity="error",
                 )
 
         self.audio_thread = threading.Thread(target=audio_worker, daemon=True)

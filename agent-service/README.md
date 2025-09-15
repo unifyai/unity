@@ -1,6 +1,6 @@
 # Magnitude BrowserAgent Service
 
-This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, allowing a Python client (like the Hierarchical Planner) to perform autonomous web automation tasks.
+This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, allowing a Python client (like the Hierarchical Actor) to perform autonomous web automation tasks.
 
 ## Setup
 
@@ -13,21 +13,17 @@ This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, a
     ```
     # agent-service/.env
     ANTHROPIC_API_KEY="sk-ant-..."
+    UNIFY_BASE_URL="..."
+    UNIFY_KEY="..."
     ```
 
 ## Running the Service
 
-You can run the service in two modes:
+You can run the service by:
 
--   **Development Mode (Visible Browser)**:
-    ```bash
-    npx ts-node src/index.ts
-    ```
-
--   **Headless Mode (No Visible Browser)**:
-    ```bash
-    npx ts-node src/index.ts --headless
-    ```
+```bash
+npx ts-node src/index.ts
+```
 
 The service will start and listen on `http://localhost:3000`.
 

@@ -43,12 +43,17 @@ class Message(BaseModel):
         """
         # Guarantee sentinel for id ------------------------------------------------
         data.setdefault("message_id", UNASSIGNED)
+        data.setdefault("exchange_id", UNASSIGNED)
         return data
 
     # Don’t serialise the sentinel value when POSTing
     def to_post_json(self) -> dict:
         """Dump payload for POST; omit the dummy id."""
-        exclude = {"message_id"} if self.message_id == UNASSIGNED else {}
+        exclude = set()
+        if self.exchange_id == UNASSIGNED:
+            exclude.add("exchange_id")
+        if self.message_id == UNASSIGNED:
+            exclude.add("message_id")
 
         payload = self.model_dump(mode="json", exclude=exclude)
 

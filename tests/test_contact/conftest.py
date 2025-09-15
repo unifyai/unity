@@ -151,8 +151,8 @@ async def contact_scenario(
     """
     os.environ["TQDM_DISABLE"] = "1"
 
-    ctx = "test_contact/Scenario"
-    unify.set_context(ctx)
+    ctx = "tests/test_contact/Scenario"
+    unify.set_context(ctx, relative=False)
     existing_contexts = unify.get_contexts(prefix=ctx)
     no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
 
@@ -171,11 +171,13 @@ async def contact_scenario(
             except Exception as e:
                 pass
 
-        unify.map(
-            recreate_contexts,
-            list(existing_contexts.keys()),
-            mode="asyncio",
-        )
+        existing_ctx_names = list(existing_contexts.keys())
+        if existing_ctx_names:
+            unify.map(
+                recreate_contexts,
+                existing_ctx_names,
+                mode="asyncio",
+            )
 
     if reuse_scenario and not SCENARIO_COMMIT_HASHES:
 
@@ -188,11 +190,13 @@ async def contact_scenario(
                 )
                 SCENARIO_COMMIT_HASHES[ctx] = history[0]["commit_hash"]
 
-        unify.map(
-            get_context_commits_and_rollback,
-            list(existing_contexts.keys()),
-            mode="asyncio",
-        )
+        existing_ctx_names = list(existing_contexts.keys())
+        if existing_ctx_names:
+            unify.map(
+                get_context_commits_and_rollback,
+                existing_ctx_names,
+                mode="asyncio",
+            )
 
     # --- One-time setup (per session) ---
     builder = ScenarioBuilderContacts()
@@ -211,11 +215,13 @@ async def contact_scenario(
             )
             SCENARIO_COMMIT_HASHES[ctx] = commit_info["commit_hash"]
 
-        unify.map(
-            commit_context_and_store,
-            list(existing_contexts.keys()),
-            mode="asyncio",
-        )
+        existing_ctx_names = list(existing_contexts.keys())
+        if existing_ctx_names:
+            unify.map(
+                commit_context_and_store,
+                existing_ctx_names,
+                mode="asyncio",
+            )
 
     unify.unset_context()
     return builder.cm, _ID_BY_NAME_CONTACTS
@@ -236,6 +242,8 @@ def contact_manager_scenario(contact_scenario):
         )
 
     # Rollback to clean state before test
-    unify.map(rollback_context, list(SCENARIO_COMMIT_HASHES.keys()), mode="asyncio")
+    ctx_names = list(SCENARIO_COMMIT_HASHES.keys())
+    if ctx_names:
+        unify.map(rollback_context, ctx_names, mode="asyncio")
 
     yield cm, id_map

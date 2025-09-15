@@ -261,13 +261,36 @@ def build_update_prompt(
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
+    # Conditional guidance about asking questions in final responses (local to update prompt)
+    clar_sentence_upd = (
+        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
+        if request_clar_fname
+        else (
+            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
+        )
+    )
+
+    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
+    parallelism_block = textwrap.dedent(
+        """
+        Parallelism and single‑call preference
+        -------------------------------------
+        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
+        • When multiple independent reads or writes are needed, plan them together and run them in parallel rather than a serial drip of micro‑calls.
+        • Batch arguments where possible and avoid confirmatory re‑queries unless new ambiguity arises.
+        """,
+    ).strip()
+
     parts: list[str] = [
         activity_block,
         core_instructions,
+        clar_sentence_upd,
         clar_section,
         "",
         "Tools (name → argspec):",
         sig_json,
+        "",
+        parallelism_block,
         "",
         "ColumnType Schema",
         "-----------------",
@@ -282,6 +305,13 @@ def build_update_prompt(
 
     if clarification_block:
         parts.extend(["", clarification_block])
+    else:
+        parts.extend(
+            [
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+            ],
+        )
 
     parts.append("")
 
@@ -343,6 +373,14 @@ def build_ask_prompt(
 
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
+    # Conditional guidance about asking questions in final responses
+    clar_sentence_ask = (
+        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
+        if request_clar_fname
+        else (
+            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
+        )
+    )
 
     clarification_block = (
         textwrap.dedent(
@@ -357,13 +395,27 @@ def build_ask_prompt(
         else ""
     )
 
+    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
+    parallelism_block = textwrap.dedent(
+        """
+        Parallelism and single‑call preference
+        -------------------------------------
+        • Prefer a single comprehensive search call over several surgical calls when a tool can safely do the whole job.
+        • When multiple independent reads are needed, plan them together and run them in parallel rather than a serial drip of micro‑calls.
+        • Avoid confirmatory re‑queries unless new ambiguity arises.
+        """,
+    ).strip()
+
     parts: list[str] = [
         activity_block,
         core_instructions,
+        clar_sentence_ask,
         clar_section,
         "",
         "Tools (name → argspec):",
         sig_json,
+        "",
+        parallelism_block,
         "",
         "ColumnType Schema",
         "-----------------",
@@ -378,6 +430,13 @@ def build_ask_prompt(
 
     if clarification_block:
         parts.extend(["", clarification_block])
+    else:
+        parts.extend(
+            [
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
+            ],
+        )
 
     parts.append("")
 

@@ -6,7 +6,7 @@ from typing import Optional
 import pytest
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
-from tests.helpers import _handle_project, _get_unity_test_env_var
+from tests.helpers import _handle_project, SETTINGS
 
 # ──────────────────────────────────────────────────────────────────────────
 # Small helpers
@@ -17,8 +17,8 @@ def make_llm(system_message: Optional[str] = None) -> unify.AsyncUnify:
     return unify.AsyncUnify(
         endpoint="o4-mini@openai",
         system_message=system_message,
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
 
 

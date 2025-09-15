@@ -3,9 +3,11 @@ import inspect
 import threading
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
-from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
+from ..common.embed_utils import EMBED_MODEL, ensure_vector_column, list_private_fields
+from ..common.sandbox_utils import create_sandbox_globals
 from .types.function import Function
 from ..common.model_to_fields import model_to_fields
+from ..common.context_store import TableStore
 
 
 class FunctionManager(threading.Thread):
@@ -51,17 +53,15 @@ class FunctionManager(threading.Thread):
         ), "read and write contexts must be the same when instantiating a FunctionManager."
         self._ctx = f"{read_ctx}/Functions" if read_ctx else "Functions"
 
-        if self._ctx not in unify.get_contexts():
-            unify.create_context(
-                self._ctx,
-                unique_column_ids="function_id",
-                description="List of functions, with all function details stored.",
-            )
-            fields = model_to_fields(Function)
-            unify.create_fields(
-                fields,
-                context=self._ctx,
-            )
+        # Ensure functions context and fields exist deterministically
+        self._store = TableStore(
+            self._ctx,
+            unique_keys={"function_id": "int"},
+            auto_counting={"function_id": None},
+            description="List of functions, with all function details stored.",
+            fields=model_to_fields(Function),
+        )
+        self._store.ensure_context()
         # Add tracing
         if traced:
             self = unify.traced(self)
@@ -216,6 +216,7 @@ class FunctionManager(threading.Thread):
         logs = unify.get_logs(
             context=self._ctx,
             filter=f"function_id == {function_id}",
+            exclude_fields=list_private_fields(self._ctx),
         )
         assert len(logs) == 1, f"No function with id {function_id!r} exists."
         return logs[0]
@@ -259,7 +260,7 @@ class FunctionManager(threading.Thread):
         results: Dict[str, str] = {}
 
         for name, _, node, source in parsed:
-            namespace: Dict[str, object] = {}
+            namespace = create_sandbox_globals()
             exec(source, namespace)
             fn_obj = namespace[name]
 
@@ -300,14 +301,19 @@ class FunctionManager(threading.Thread):
 
         Each value contains:
 
+        * **function_id** – unique identifier for the function
         * **argspec** – full signature, e.g. ``(x: int, y: int) -> int``
         * **docstring** – cleaned docstring or empty string
         * **implementation** – full source code (only when
           ``include_implementations=True``)
         """
         entries: Dict[str, Dict[str, Any]] = {}
-        for log in unify.get_logs(context=self._ctx):
+        for log in unify.get_logs(
+            context=self._ctx,
+            exclude_fields=list_private_fields(self._ctx),
+        ):
             data = {
+                "function_id": log.entries["function_id"],
                 "argspec": log.entries["argspec"],
                 "docstring": log.entries["docstring"],
             }
@@ -330,6 +336,7 @@ class FunctionManager(threading.Thread):
             context=self._ctx,
             filter=f"name == '{function_name}'",
             limit=1,
+            exclude_fields=list_private_fields(self._ctx),
         )
         if not logs:
             return None
@@ -395,6 +402,7 @@ class FunctionManager(threading.Thread):
             filter=filter,
             offset=offset,
             limit=limit,
+            exclude_fields=list_private_fields(self._ctx),
         )
         return [lg.entries for lg in logs]
 
@@ -438,6 +446,6 @@ class FunctionManager(threading.Thread):
                 f"cosine({self._FUNC_EMB}, embed('{escaped_query}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=n,
-            exclude_fields=[self._FUNC_EMB],
+            exclude_fields=list_private_fields(self._ctx),
         )
         return [lg.entries for lg in logs]

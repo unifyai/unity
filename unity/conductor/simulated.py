@@ -8,6 +8,7 @@ import json
 import os
 
 import unify
+import functools
 
 from typing import Callable, Dict
 
@@ -17,6 +18,7 @@ from ..common.llm_helpers import (
     ToolSpec,
 )
 from .prompt_builders import build_ask_prompt, build_request_prompt
+from .base import BaseConductor
 from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
@@ -45,6 +47,7 @@ class SimulatedConductor:
         *,
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
+        simulation_guidance: Optional[str] = None,
     ) -> None:
         """
         Args:
@@ -53,27 +56,32 @@ class SimulatedConductor:
         """
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self._simulation_guidance = simulation_guidance
 
         # ── Simulated façade (pure-LLM back-ends) ────────────────────
         self._contact_manager = SimulatedContactManager(
             description=description,
             log_events=log_events,
             rolling_summary_in_prompts=rolling_summary_in_prompts,
+            simulation_guidance=simulation_guidance,
         )
         self._transcript_manager = SimulatedTranscriptManager(
             description=description,
             log_events=log_events,
             rolling_summary_in_prompts=rolling_summary_in_prompts,
+            simulation_guidance=simulation_guidance,
         )
         self._knowledge_manager = SimulatedKnowledgeManager(
             description=description,
             log_events=log_events,
             rolling_summary_in_prompts=rolling_summary_in_prompts,
+            simulation_guidance=simulation_guidance,
         )
         self._task_scheduler = SimulatedTaskScheduler(
             description=description,
             log_events=log_events,
             rolling_summary_in_prompts=rolling_summary_in_prompts,
+            simulation_guidance=simulation_guidance,
         )
 
         #  Run-time state & tool-dict helpers
@@ -111,10 +119,9 @@ class SimulatedConductor:
             **passive,  # read-only tools are also valid here
             **methods_to_tool_dict(
                 self._contact_manager.update,
-                self._transcript_manager.summarize,
                 self._knowledge_manager.update,
                 self._task_scheduler.update,
-                ToolSpec(self._task_scheduler.execute_task, max_concurrent=1),
+                ToolSpec(self._task_scheduler.execute, max_concurrent=1),
                 include_class_name=True,
             ),
         }
@@ -125,6 +132,7 @@ class SimulatedConductor:
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
+    @functools.wraps(BaseConductor.ask, updated=())
     async def ask(
         self,
         text: str,
@@ -167,9 +175,11 @@ class SimulatedConductor:
             tools["request_clarification"] = request_clarification
 
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         include_activity = (
             self._rolling_summary_in_prompts
@@ -187,6 +197,8 @@ class SimulatedConductor:
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
+            # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         if should_log and call_id is not None:
@@ -212,6 +224,7 @@ class SimulatedConductor:
     #  request  (write-capable)                                          #
     # ------------------------------------------------------------------ #
 
+    @functools.wraps(BaseConductor.request, updated=())
     async def request(
         self,
         text: str,
@@ -226,7 +239,7 @@ class SimulatedConductor:
     ):
         """
         Full-access entry-point – exposes every passive tool **plus** all
-        write-capable helpers and `execute_task` (which unlocks plan steering).
+        write-capable helpers and `execute` (which unlocks plan steering).
         """
         should_log = self._log_events or log_events
         call_id = None
@@ -254,9 +267,11 @@ class SimulatedConductor:
             tools["request_clarification"] = request_clarification
 
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         include_activity = (
             self._rolling_summary_in_prompts
@@ -274,6 +289,8 @@ class SimulatedConductor:
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
+            # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         if should_log and call_id is not None:

@@ -57,12 +57,12 @@ on:
         description: "Test session timeout in minutes (for all tests)"
         required: false
         type: number
-        default: 120
+        default: 180
       runner_timeout:
         description: "Runner timeout in minutes"
         required: false
         type: number
-        default: 130
+        default: 190
 
 jobs:
   black:
@@ -84,7 +84,7 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     environment: unity-testing
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 130 }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 190 }}
     steps:
     - uses: actions/checkout@v2
 
@@ -123,8 +123,20 @@ jobs:
         # 5) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 6) cleanup
+        # 6) Install docling package
+        uv pip install "docling>=2.49.0"
+
+        # 7) cleanup
         rm temp_requirements.txt
+
+    - name: Restore .cache.ndjson
+      id: cache-read
+      uses: actions/cache/restore@v4
+      with:
+        path: .cache.ndjson
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+        restore-keys: |
+          cache-ndjson-${{ runner.os }}-
 
     - name: Run unit tests
       run: |
@@ -142,7 +154,7 @@ jobs:
           --session-timeout=$((UNITY_TESTS_SESSION_TIMEOUT * 60)) \
           --test-log-file="tests.log" ${{ inputs.test_path || '.' }}
       env:
-        UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 120 }}
+        UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 180 }}
         UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
         UNIFY_TESTS_RAND_PROJ: true
         UNIFY_TESTS_DELETE_PROJ_ON_EXIT: true
@@ -150,8 +162,10 @@ jobs:
         UNIFY_BASE_URL: https://api.unify.ai/v0
         UNIFY_CACHE: true
         UNIFY_TRACED: false
-        UNIFY_DELETE_CONTEXT_ON_EXIT: true
+        UNIFY_DELETE_CONTEXT_ON_EXIT: false
         UNIFY_OVERWRITE_PROJECT: true
+        UNIFY_CACHE_BENCHMARK: true
+        UNIFY_PRETEST_CONTEXT_CREATE: true
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         FIRST_NAME: Rick
         AGENT_FIRST: Rick
@@ -162,13 +176,22 @@ jobs:
         REGISTER_SUMMARY_CALLBACKS: false
         REGISTER_UPDATE_CALLBACKS: false
 
-    - name: Upload test results
+    - name: Save updated .cache.ndjson
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: .cache.ndjson
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+
+    - name: Upload test artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: test-results
+        include-hidden-files: true
         path: |
           tests.log
           report.xml
           report.html
+          .cache.ndjson
         retention-days: 7

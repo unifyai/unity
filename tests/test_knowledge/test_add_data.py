@@ -14,6 +14,7 @@ def test_add_data():
     )
     data = knowledge_manager._filter()
     assert data == {
+        "Contacts": [],
         "MyTable": [
             {"row_id": 1, "item": "WidgetB", "units": 25},
             {"row_id": 0, "item": "WidgetA", "units": 30},
@@ -36,6 +37,7 @@ def test_add_more_data():
     )
     data = knowledge_manager._filter()
     assert data == {
+        "Contacts": [],
         "MyTable": [
             {"row_id": 1, "item": "WidgetB", "units": 25},
             {"row_id": 0, "item": "WidgetA", "units": 30},

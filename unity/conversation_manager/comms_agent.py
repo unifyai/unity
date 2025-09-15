@@ -9,6 +9,7 @@ from typing import Callable
 from pathlib import Path
 from pydantic_core import from_json
 import unify
+from collections import deque
 from unity.helpers import run_script, terminate_process
 from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
 from unity.memory_manager.broader_context import get_broader_context
@@ -16,6 +17,9 @@ from unity.conversation_manager.debug_logger import log_job_startup, mark_job_do
 from unity.conversation_manager.comms_actions import (
     _start_call,
     _join_meet_call,
+    _send_email_via_address,
+    _send_sms_message_via_number,
+    _send_whatsapp_message_via_number,
     Call,
     send_email,
     send_sms_message,
@@ -28,6 +32,12 @@ from unity.conversation_manager.prompt_builders import (
     build_non_call_sys_prompt,
     build_user_agent_prompt,
     build_action_prompt,
+)
+from unity.conversation_manager.utils import (
+    enter_name_with_retry,
+    get_meet_join_state,
+    join_meet_on_browser,
+    ensure_captions_enabled,
 )
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -81,7 +91,7 @@ class CommsAgent:
         assistant_number: str,
         assistant_email: str,
         user_number: str,
-        user_phone_call_number: str = None,
+        user_whatsapp_number: str,
         user_email: str = None,
         tts_provider: str = "cartesia",
         voice_id: str = None,
@@ -110,9 +120,14 @@ class CommsAgent:
         self.user_name = user_name
         self.user_number = user_number
         self.user_email = user_email
-        self.user_phone_call_number = (
-            user_phone_call_number if user_phone_call_number else user_number
-        )
+        self.user_whatsapp_number = user_whatsapp_number
+        self.current_user = {
+            "contact_id": 1,
+            "user_name": user_name,
+            "user_number": user_number,
+            "user_whatsapp_number": user_whatsapp_number,
+            "user_email": user_email,
+        }
 
         # events (history)
         self.conv_context_length = conv_context_length
@@ -124,8 +139,7 @@ class CommsAgent:
 
         self.current_llm_run = None
 
-        # switches to "True" when in a call
-        self.call_mode = False
+        # call config
         self.call_purpose = "general"
         self.task_context = task_context
         self.user_turn_end_callback = user_turn_end_callback
@@ -148,10 +162,25 @@ class CommsAgent:
         # logging
         self.loop = asyncio.get_event_loop()
         self.transcript_manager = None
+        self.contact_manager = None
+        self._cm_init_lock = threading.Lock()
         self.redis = None
         self.broader_context = ""
         self.project_name = project_name
         self.logging_lock = threading.Lock()
+
+        # speaker tracking
+        self.current_speaker = None
+        self.speaker_buffer = deque(maxlen=50)
+
+    def _ensure_contact_manager(self):
+        """Thread-safe lazy init of shared ContactManager."""
+        with self._cm_init_lock:
+            print("Contact Manager Init Lock")
+            if self.contact_manager is None:
+                from unity.contact_manager.contact_manager import ContactManager
+
+                self.contact_manager = ContactManager()
 
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
@@ -163,20 +192,34 @@ class CommsAgent:
             return
 
         if "conductor" in self.enabled_tools:
-            # if conductor is enabled, add its methods only as it has all other tools
-            from unity.conductor.conductor import Conductor
+            # # if conductor is enabled, add its methods only as it has all other tools
+            # from unity.conductor.conductor import Conductor
+            # from unity.transcript_manager.transcript_manager import TranscriptManager
 
-            self.conductor = Conductor()
+            # if self.transcript_manager is None and self.contact_manager is None:
+            #     try:
+            #         self.transcript_manager = TranscriptManager()
+            #     except AssertionError as e:
+            #         # only needed temporarily until we move init to the start anyway
+            #         print("Assertion error in transcript manager", e)
+
+            # self.conductor = Conductor()
             self.enabled_tools = methods_to_tool_dict(
-                self.conductor.ask,
-                self.conductor.request,
-                self._start_screen_share,
-                self._stop_screen_share,
+                # self.conductor.ask,
+                # self.conductor.request,
+                # self.transcript_manager.ask,
+                # self._start_screen_share,
+                # self._stop_screen_share,
                 self._send_call,
                 self._send_sms,
                 self._send_email,
                 self._send_whatsapp,
+                self._send_call_to_third_party,
+                self._send_sms_to_third_party,
+                self._send_email_to_third_party,
+                self._send_whatsapp_to_third_party,
                 self._join_meet,
+                self._implicit_contact_creation
             )
             return
 
@@ -226,10 +269,10 @@ class CommsAgent:
                 ]
 
             elif tool == "browser":
-                from unity.planner.hierarchical_planner import HierarchicalPlanner
+                from unity.actor.hierarchical_actor import HierarchicalActor
 
-                self.planner = HierarchicalPlanner()
-                tools_list += [self.planner.execute]
+                self.actor = HierarchicalActor()
+                tools_list += [self.actor.execute]
 
         self.enabled_tools = methods_to_tool_dict(*tools_list)
 
@@ -256,33 +299,110 @@ class CommsAgent:
         return chat_history
 
     async def inactivity_check_for_meet(self):
-        # wait for the agent to be admitted into the meet
-        await asyncio.sleep(20)
-
-        while True:
+        while self.meet_browser:
             await asyncio.sleep(10)  # Check every 10 seconds
-            if self.meet_browser is None:
-                break  # meet call ended, exit the loop
             ret = await self.meet_browser.observe(
-                f"Is {self.assistant_name} the only participant in the meeting?",
+                f"Is {self.assistant_name} the only participant in the meeting? Ignoring screen share display and captions.",
                 bool,
             )
             print("ASSISTANT ONLY PARTICIPANT:", ret)
             if ret:
-                print("All participants left, shutting down agent...")
+                print("All participants left, shutting down agent and leaving meet...")
                 await self.publish(
                     {
-                        "topic": self.user_phone_call_number,
+                        "topic": self.user_number,
                         "event": PhoneCallStopEvent().to_dict(),
                     },
                 )
                 break  # Exit the loop after shutdown
+
+    async def popup_check_for_meet(self):
+        while self.meet_browser:
+            ret = await self.meet_browser.observe(
+                f"Are there any popups on the screen?",
+                bool,
+            )
+            print("POPUPS:", ret)
+            if ret:
+                print("Popups detected, closing popups...")
+                await self.meet_browser.act(
+                    "Close any popup on the screen, usually related to clicking 'OK' or 'Got it'.",
+                )
+            await asyncio.sleep(2)
+
+    async def track_active_speaker(self):
+        """Track active speaker using Meet captions via screenshot-based observation.
+
+        Attempts to enable captions once, then polls the UI for the current caption
+        speaker label and records it with a timestamp.
+        """
+        if not self.meet_browser:
+            return
+
+        await ensure_captions_enabled(self.meet_browser)
+
+        while self.meet_browser:
+            try:
+                # Build recent buffers as context (avoid repeats / omissions)
+                recent_entries = list(self.speaker_buffer)[-5:]
+                recent_caps = [(s, c) for _, s, c in recent_entries if c]
+                prompt = (
+                    "From the current Google Meet screen, determine the CURRENT speaker and latest caption using BOTH sources: "
+                    "(1) live captions/subtitles (use the speaker label preceding the caption), and (2) visual active-speaker indicators "
+                    "(bold outline, speaker badge, audio indicator). Use the following previous context to avoid repeats: "
+                    f"recent_speakers_and_captions={json.dumps(recent_caps)}. "
+                    "Return STRICT JSON with keys: speaker (string, empty if none), caption (string, empty if none). "
+                    "If the detected caption equals the most recent in recent_captions, set caption to an empty string. "
+                    "Do not include any other keys or any explanatory text."
+                )
+
+                result = await self.meet_browser.observe(prompt, str)
+                speaker_name, caption_text = "", ""
+                if isinstance(result, str):
+                    result = result.strip()
+                    try:
+                        parsed = json.loads(result)
+                        speaker_name = (parsed.get("speaker") or "").strip()
+                        caption_text = (parsed.get("caption") or "").strip()
+                    except Exception:
+                        # fallback: treat plain string as speaker name if non-empty
+                        speaker_name = result
+
+                now_ts = asyncio.get_event_loop().time()
+                # Normalize speaker (ignore self/"you")
+                speaker_name = speaker_name.strip()
+                if speaker_name.lower() == "you":
+                    speaker_name = self.assistant_name
+
+                last_entry = self.speaker_buffer[-1] if self.speaker_buffer else None
+                last_speaker = last_entry[1] if last_entry else ""
+                last_caption = last_entry[2] if last_entry else ""
+                if speaker_name != last_speaker or (caption_text or "") != last_caption:
+                    self.speaker_buffer.append((now_ts, speaker_name, caption_text))
+                if speaker_name != self.assistant_name:
+                    self.current_speaker = speaker_name
+
+                print("\ncurrent user speaker (observe)", self.current_speaker)
+                print("speaker buffer", self.speaker_buffer)
+                if caption_text:
+                    print("caption", caption_text)
+            except Exception:
+                print("\nTRACKING ACTIVE SPEAKER ERROR!\n")
 
     async def listen_for_events(self):
         print("COLLECTING...")
         while True:
             try:
                 new_event = await asyncio.wait_for(self.events_queue.get(), 1)
+                call_mode = new_event["payload"].get("call_mode") or new_event[
+                    "event_name"
+                ] in [
+                    "PhoneCallStartedEvent",
+                    "PhoneCallInitiatedEvent",
+                    "PhoneCallEndedEvent",
+                    "PhoneCallStopEvent",
+                    "PhoneUtteranceEvent",
+                ]
                 # print("comm agent got", new_event)
                 # continue
                 if new_event["payload"]["transient"]:
@@ -294,37 +414,38 @@ class CommsAgent:
                         self.task_context = new_event["payload"]["task_context"]
                         target_number = new_event["payload"]["target_number"]
                         self.meet_id = new_event["payload"]["meet_id"]
+                        outbound = str(new_event["payload"]["outbound"])
 
                         print("call_requested", self.assistant_number)
                         print("new_event", new_event)
                         if not self.start_local:
                             target_path = Path(__file__).parent.resolve() / "call.py"
-
                             self.call_proc = run_script(
                                 str(target_path),
                                 "dev",
                                 (
                                     target_number
                                     if target_number
-                                    else self.user_phone_call_number
+                                    else self.current_user["user_number"]
                                 ),
                                 self.assistant_number,
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
                                 self.meet_id if self.meet_id else "None",
+                                outbound,
                             )
                         else:
                             target_path = Path(__file__).parent.resolve() / "call.py"
                             self.call_proc = run_script(
                                 str(target_path),
                                 "console",
-                                self.user_phone_call_number,
+                                self.current_user["user_number"],
                                 self.assistant_number,
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
                                 self.meet_id if self.meet_id else "None",
+                                outbound,
                             )
-                        self.call_mode = True
                         ONGOING_CALL = True
 
                         # Join meet conference programatically
@@ -337,40 +458,24 @@ class CommsAgent:
                             self.meet_browser.start()
 
                             # Join meet
-                            await self.meet_browser.act(
-                                f"Go to the page: https://meet.google.com/{self.meet_id}",
-                            )
-                            await asyncio.sleep(2)
-
-                            # Set agent mic
-                            await self.meet_browser.act(
-                                "Click on microphone default",
-                            )
-                            await asyncio.sleep(1)
-                            await self.meet_browser.act(
-                                "Select 'agent_sink.monitor'",
+                            await join_meet_on_browser(self.meet_browser, self.meet_id)
+                            await enter_name_with_retry(
+                                self.meet_browser,
+                                self.assistant_name,
+                                max_attempts=3,
                             )
 
-                            # Set user speaker
-                            await self.meet_browser.act(
-                                "Click on speaker default",
-                            )
-                            await asyncio.sleep(1)
-                            await self.meet_browser.act("Select 'meet_sink'")
+                            # Check if agent has been admitted into the meet
+                            while (
+                                await get_meet_join_state(self.meet_browser) != "joined"
+                            ):
+                                await asyncio.sleep(0.5)
 
-                            # Enter name and join
-                            await self.meet_browser.act(
-                                "Click 'your name' textbox",
-                            )
-                            await self.meet_browser.act(
-                                f"Enter your name as {self.assistant_name} and press enter",
-                            )
-
-                            # await self.meet_browser.act("Click the 'Join' button")
-
-                            asyncio.create_task(self.inactivity_check_for_meet())
-                            await asyncio.sleep(5)
+                            # start checks in the background
                             self.meet_joined.set()
+                            asyncio.create_task(self.popup_check_for_meet())
+                            asyncio.create_task(self.inactivity_check_for_meet())
+                            asyncio.create_task(self.track_active_speaker())
 
                         continue
                     else:
@@ -394,14 +499,16 @@ class CommsAgent:
                             ]
                     else:
                         self.inflight_events = self.pending_events.copy()
-
                     self.current_llm_run = asyncio.create_task(
                         self.run(
                             add_filler=new_event["event_name"]
                             != "PhoneCallStartedEvent",
+                            call_mode=call_mode,
                         ),
                     )
-                    self.current_llm_run.add_done_callback(self.on_run_end)
+                    self.current_llm_run.add_done_callback(
+                        lambda t: self.on_run_end(t, call_mode),
+                    )
                     self.pending_events.clear()
             except asyncio.TimeoutError:
                 if not self.pending_events:
@@ -410,7 +517,9 @@ class CommsAgent:
                     continue
 
                 self.inflight_events = self.pending_events.copy()
-                self.current_llm_run = asyncio.create_task(self.run())
+                self.current_llm_run = asyncio.create_task(
+                    self.run(call_mode=call_mode),
+                )
                 self.current_llm_run.add_done_callback(self.on_run_end)
 
                 self.pending_events.clear()
@@ -441,7 +550,7 @@ class CommsAgent:
 
         return patched
 
-    async def tool_use_action(self, action: ToolUseAction):
+    async def tool_use_action(self, action: ToolUseAction, call_mode: bool = False):
         """Handle tool_use actions asynchronously"""
 
         if isinstance(self.enabled_tools, list):
@@ -487,6 +596,7 @@ class CommsAgent:
                     chat_history,
                     action.query,
                     handle_id,
+                    call_mode=call_mode,
                 ).to_dict(),
             },
         )
@@ -506,11 +616,19 @@ class CommsAgent:
         self.publish(
             {
                 "topic": "tool_use",
-                "event": ToolUseEndedEvent(answer, handle_id).to_dict(),
+                "event": ToolUseEndedEvent(
+                    answer,
+                    handle_id,
+                    call_mode=call_mode,
+                ).to_dict(),
             },
         )
 
-    async def tool_use_handle_action(self, action: ToolUseHandleAction):
+    async def tool_use_handle_action(
+        self,
+        action: ToolUseHandleAction,
+        call_mode: bool = False,
+    ):
         """Handle tool_use handle actions asynchronously"""
         # check if the tool_use is running
         if self.tool_use_handles is None or not self.tool_use_handles.get(
@@ -522,6 +640,7 @@ class CommsAgent:
                     f"tool_use is not running currently, "
                     "please create a new action instead",
                     action.type,
+                    call_mode=call_mode,
                 ).to_dict(),
             }
         else:
@@ -548,17 +667,17 @@ class CommsAgent:
                 "event": ToolUseHandleSuccessEvent(
                     action.query,
                     action.type,
+                    call_mode=call_mode,
                 ).to_dict(),
                 "to": "past",
             }
         self.publish({"topic": "tool_use", **event_data})
 
-    def on_run_end(self, t: asyncio.Task):
+    def on_run_end(self, t: asyncio.Task, call_mode: bool = False):
         try:
             t: AssistantOutput | CallAssistantOutput | None = t.result()
             # everything is fine, just run the actions and add stuff to past events
             if t:
-                # if self.call_mode:
                 self.past_events.extend(self.inflight_events.copy())
                 self.inflight_events.clear()
 
@@ -567,10 +686,10 @@ class CommsAgent:
                     print("actions", t.actions)
                     for action in t.actions:
                         if isinstance(action, ToolUseAction):
-                            asyncio.create_task(self.tool_use_action(action))
+                            asyncio.create_task(self.tool_use_action(action, call_mode))
                         elif isinstance(action, ToolUseHandleAction):
                             asyncio.create_task(
-                                self.tool_use_handle_action(action),
+                                self.tool_use_handle_action(action, call_mode),
                             )
 
         except asyncio.CancelledError:
@@ -578,11 +697,11 @@ class CommsAgent:
         finally:
             ...
 
-    async def run(self, add_filler: bool = False):
+    async def run(self, add_filler: bool = False, call_mode: bool = False):
         if self.past_events is None:
             self.past_events = await self.get_bus_events()
 
-        if self.call_mode:
+        if call_mode:
             if self.meet_id:
                 await self.meet_joined.wait()
             return await self.phone_call_llm_run(add_filler=add_filler)
@@ -592,7 +711,10 @@ class CommsAgent:
     # response handling
     async def non_phone_call_llm_run(self):
         non_call_sys = build_non_call_sys_prompt(
-            self.user_name,
+            self.current_user["user_name"],
+            self.current_user["user_number"],
+            self.current_user["user_whatsapp_number"],
+            self.current_user["user_email"],
             self.assistant_name,
             self.assistant_age,
             self.assistant_region,
@@ -618,6 +740,8 @@ class CommsAgent:
             return message.parsed
 
     async def phone_call_llm_run(self, add_filler: bool = False):
+        global ONGOING_CALL
+
         first_ev = {"topic": "call_process", "type": "start_gen"}
         self.publish(first_ev)
 
@@ -631,7 +755,10 @@ class CommsAgent:
             self.publish(ev)
 
         call_sys = build_call_sys_prompt(
-            self.user_name,
+            self.current_user["user_name"],
+            self.current_user["user_number"],
+            self.current_user["user_whatsapp_number"],
+            self.current_user["user_email"],
             self.assistant_name,
             self.assistant_age,
             self.assistant_region,
@@ -654,6 +781,9 @@ class CommsAgent:
             acc_text = ""
             last_response = ""
             async for event in stream:
+                if not ONGOING_CALL:
+                    print("call ended, stopping stream")
+                    return None
                 # print(event)
                 if event.type == "content.delta":
                     if event.delta:
@@ -739,69 +869,199 @@ class CommsAgent:
 
         await self.meet_browser.act("Click on the 'Stop presenting' button")
 
-    # outer communications
+    # inner communications (to the current user)
     async def _send_call(
         self,
-        to_number: str,
         purpose: str = "general",
         task_context: Dict[str, str] = None,
     ):
         """
-        Sends a call from the assistant's number to the user's number.
+        Sends a call from the assistant's number to the current user's number.
+        This tool is particularly used when you need to send a "DIRECT" call.
 
         Args:
             to_number (str): The number to call prefixed with +.
             purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
             task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
         """
-        await Call.create(
+        from unity.contact_manager.contact_manager import ContactManager
+
+        if self.contact_manager is None:
+            self.contact_manager = ContactManager()
+        return await Call.create(
+            self.current_user["user_number"],
+            purpose,
+            task_context,
+            tools=methods_to_tool_dict(self.contact_manager.ask),
+        )
+
+    async def _send_sms(self, message: str):
+        """
+        Sends an SMS message from the assistant's number to the current user's number.
+        This tool is particularly used when you need to send a "DIRECT" SMS.
+
+        Args:
+            message (str): The message to send.
+        """
+        return await _send_sms_message_via_number(
+            self.current_user["user_number"],
+            message,
+        )
+
+    async def _send_email(self, subject: str, message: str, message_id: str = None):
+        """
+        Sends an email from the assistant's email address to the current user's email
+        address.
+        This tool is particularly used when you need to send a "DIRECT" email.
+
+        Args:
+            subject (str): The subject of the email.
+            message (str): The message of the email.
+            message_id (str): The message id of the email to reply to (ignore for now).
+        """
+        # ToDo: Add this back to the docstring once the message_id works
+        # If you are asked to reply to an email rather than sending a new email,
+        # use the transcript manager to get the message id for the email you want to reply
+        # to.
+        #
+        # You should ask the transcript manager based on the contents of the original
+        # mail, and get the message_id from the "_metadata" field of that transcript and
+        # pass that as the message_id to this tool.
+        return await _send_email_via_address(
+            self.current_user["user_email"],
+            subject,
+            message,
+            message_id,
+        )
+
+    async def _send_whatsapp(self, message: str, reply_to_user: bool = False):
+        """
+        Sends a WhatsApp message from the assistant's number to the current user's number.
+        This tool is particularly used when you need to send a "DIRECT" WhatsApp message.
+
+        Args:
+            message (str): The message to send.
+            reply_to_user (bool): `True` if replying to user's message. `False` if starting a new conversation.
+        """
+        return await _send_whatsapp_message_via_number(
+            self.current_user["user_number"],
+            message,
+            reply_to_user,
+        )
+
+    # outer communications (to a third party)
+    async def _send_call_to_third_party(
+        self,
+        to_number: str,
+        purpose: str = "general",
+        task_context: Dict[str, str] = None,
+    ):
+        """
+        Sends a call from the assistant's number to a third party.
+        This tool is particularly used when you need to send a "THIRD PARTY" call.
+
+        Args:
+            to_number (str): The number to call prefixed with +.
+            purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
+            task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
+        """
+        from unity.contact_manager.contact_manager import ContactManager
+
+        if self.contact_manager is None:
+            self.contact_manager = ContactManager()
+        return await Call.create(
             to_number,
             purpose,
             task_context,
             tools=methods_to_tool_dict(self.contact_manager.ask),
         )
 
-    async def _send_sms(
+    async def _send_sms_to_third_party(
         self,
         description: str,
         parent_chat_context: list[dict] | None = None,
     ):
         """
-        Sends an SMS message from the assistant's number to the intended recipient.
+        Sends an SMS message from the assistant's number to a third party.
+        This tool is particularly used when you need to send a "THIRD PARTY" SMS.
 
         Args:
             description (str): The description of the contact and content of the SMS message.
             parent_chat_context (list[dict]): The parent chat context.
         """
-        await send_sms_message(description, parent_chat_context)
+        return await send_sms_message(description, parent_chat_context)
 
-    async def _send_email(
+    async def _send_email_to_third_party(
         self,
         description: str,
         parent_chat_context: list[dict] | None = None,
     ):
         """
-        Sends an email from the assistant's email address to the intended recipient.
+        Sends an email from the assistant's email address to a third party.
+        This tool is particularly used when you need to send a "THIRD PARTY" email.
+        You are the sender and the receiver is the third party.
 
         Args:
             description (str): The description of the contact and content of the email.
             parent_chat_context (list[dict]): The parent chat context.
         """
-        await send_email(description, parent_chat_context)
+        return await send_email(description, parent_chat_context)
 
-    async def _send_whatsapp(
+    async def _send_whatsapp_to_third_party(
         self,
         description: str,
         parent_chat_context: list[dict] | None = None,
     ):
         """
-        Sends a WhatsApp message from the assistant's number to the user's number.
+        Sends a WhatsApp message from the assistant's number to a third party.
+        This tool is particularly used when you need to send a "THIRD PARTY" WhatsApp
+        message.
 
         Args:
             description (str): The description of the WhatsApp message.
             parent_chat_context (list[dict]): The parent chat context.
         """
-        await send_whatsapp_message(description, parent_chat_context)
+        return await send_whatsapp_message(description, parent_chat_context)
+
+    async def _implicit_contact_creation(
+        self,
+        description: str
+    ):
+        """
+        Creates a new contact implicitly.
+        This is used when some new individual is mentioned during the conversation.
+        If the individual has been mentioned before, then DO NOT create a new contact.
+        """
+        self._ensure_contact_manager()
+        contacts = [
+            contact.model_dump() for contact in self.contact_manager._filter_contacts()
+        ]
+        res = await client.beta.chat.completions.parse(
+            model="gpt-4.1",
+            messages=[
+                {"role": "system", "content": (
+                    "You've been provided with a list of contacts and a description of "
+                    "a new individual. Create a new contact with the information in the"
+                    " description if its not in the list already. If the new contact is"
+                    " not in the list, return a new contact with the information in the"
+                    " description. If the new contact is in the list, return the"
+                    " contact from the list."
+                )},
+                {"role": "user", "content": (
+                    f"Contacts: {contacts}\n"
+                    f"New Contact Description: {description}"
+                )},
+            ],
+            response_format=ImplicitContactOutput,
+        )
+        print("Response", res)
+        if res.choices[0].message.parsed.new_contact:
+            self.contact_manager._create_contact(
+                **res.choices[0].message.parsed.contact.model_dump()
+            )
+            return "Contact Created Successfully"
+        else:
+            return "Contact Already Exists"
 
     async def wait_for_seconds_or_next_event(self, time: int): ...
 
@@ -831,13 +1091,21 @@ class CommsAgent:
         self.assistant_email = payload["assistant_email"]
         self.user_name = payload["user_name"]
         self.user_number = payload["user_number"]
-        self.user_phone_call_number = payload["user_phone_number"]
+        self.user_whatsapp_number = payload["user_whatsapp_number"]
         self.user_email = payload["user_email"]
+        self.current_user = {
+            "user_name": self.user_name,
+            "user_number": self.user_number,
+            "user_whatsapp_number": self.user_whatsapp_number,
+            "user_email": self.user_email,
+        }
         self.tts_provider = payload["tts_provider"]
         self.voice_id = payload["voice_id"]
         os.environ["UNIFY_KEY"] = payload.pop("api_key")
+        os.environ["USER_ID"] = self.user_id
         os.environ["USER_NAME"] = self.user_name
-        os.environ["USER_PHONE_NUMBER"] = self.user_phone_call_number
+        os.environ["USER_NUMBER"] = self.user_number
+        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
         os.environ["USER_EMAIL"] = self.user_email
         os.environ["ASSISTANT_NAME"] = self.assistant_name
         os.environ["ASSISTANT_NUMBER"] = self.assistant_number
@@ -905,7 +1173,6 @@ class CommsAgent:
             try:
                 terminate_process(self.call_proc)
                 self.call_proc = None
-                self.call_mode = False
                 global ONGOING_CALL
                 ONGOING_CALL = False
                 print(f"Call process terminated")
@@ -922,7 +1189,6 @@ class CommsAgent:
         with self.logging_lock:
             import unity
             from unity.transcript_manager.transcript_manager import TranscriptManager
-            from unity.transcript_manager.types.message import Message
             from unity.events.event_bus import EVENT_BUS
 
             try:
@@ -931,7 +1197,9 @@ class CommsAgent:
                     assistant_id = os.environ.get("ASSISTANT_ID", "0")
                     unity.init(
                         project_name=self.project_name,
-                        assistant_id=int(assistant_id.replace("default-assistant-", "")),
+                        assistant_id=int(
+                            assistant_id.replace("default-assistant-", ""),
+                        ),
                         default_assistant={
                             **DEFAULT_ASSISTANT_PAYLOAD,
                             "agent_id": assistant_id,
@@ -942,7 +1210,7 @@ class CommsAgent:
                             "phone": self.assistant_number,
                             "email": self.assistant_email,
                             "user_phone": self.user_number,
-                            "user_whatsapp_number": self.user_phone_call_number,
+                            "user_whatsapp_number": self.user_whatsapp_number,
                             "assistant_whatsapp_number": self.assistant_number,
                             "api_key": os.environ.get("UNIFY_KEY"),
                         },
@@ -971,7 +1239,12 @@ class CommsAgent:
                 return
 
             if self.transcript_manager is None:
-                self.transcript_manager = TranscriptManager()
+                print("handle_logging: Contact Manager")
+                self._ensure_contact_manager()
+                print("handle_logging: Contact Manager Initialized")
+                self.transcript_manager = TranscriptManager(
+                    contact_manager=self.contact_manager
+                )
                 self.transcript_manager._get_logger().session.headers[
                     "Authorization"
                 ] = f"Bearer {os.environ['UNIFY_KEY']}"
@@ -979,13 +1252,16 @@ class CommsAgent:
             try:
                 bus_event = Event.from_dict(event["event"]).to_bus_event()
                 bus_event.payload.pop("api_key", None)
+                message_id = bus_event.payload.pop("message_id", None)
                 self.loop.create_task(EVENT_BUS.publish(bus_event))
                 if event["event"]["event_name"] in [
                     "PhoneUtteranceEvent",
                     "WhatsappMessageSentEvent",
                     "SMSMessageSentEvent",
+                    "EmailSentEvent",
                     "WhatsappMessageRecievedEvent",
                     "SMSMessageRecievedEvent",
+                    "EmailRecievedEvent",
                 ]:
                     event_name = event["event"]["event_name"].lower()
                     role = event["event"]["payload"]["role"]
@@ -994,31 +1270,42 @@ class CommsAgent:
                     medium = (
                         "phone_call"
                         if "phone" in event_name
-                        else "sms_message" if "sms" in event_name else "whatsapp_message"
+                        else (
+                            "sms_message"
+                            if "sms" in event_name
+                            else (
+                                "email" if "email" in event_name else "whatsapp_message"
+                            )
+                        )
                     )
                     sender_id, receiver_ids = "", [""]
-                    if medium == "phone_call":
+                    user_contact_id = self.current_user.get("contact_id", 1)
+                    if medium == "whatsapp_message":
                         if role == "Assistant":
-                            sender_id = self.assistant_number
-                            receiver_ids = [self.user_phone_call_number]
+                            sender_id = 0
+                            receiver_ids = [user_contact_id]
                         else:
-                            sender_id = self.user_phone_call_number
-                            receiver_ids = [self.assistant_number]
+                            sender_id = user_contact_id
+                            receiver_ids = [0]
                     else:
                         if "recieved" in event_name:
-                            sender_id = self.user_number
-                            receiver_ids = [self.assistant_number]
+                            sender_id = user_contact_id
+                            receiver_ids = [0]
                         else:
-                            sender_id = self.assistant_number
-                            receiver_ids = [self.user_number]
+                            sender_id = 0
+                            receiver_ids = [user_contact_id]
+                    metadata = None
+                    if medium == "email":
+                        metadata = {"message_id": message_id}
                     self.transcript_manager.log_messages(
-                        Message(
-                            medium=medium,
-                            sender_id=sender_id,
-                            receiver_ids=receiver_ids,
-                            timestamp=timestamp,
-                            content=content,
-                        ),
+                        {
+                            "medium": medium,
+                            "sender_id": sender_id,
+                            "receiver_ids": receiver_ids,
+                            "timestamp": timestamp,
+                            "content": content,
+                            "_metadata": metadata,
+                        },
                     )
             except Exception as e:
                 print(f"Error handling logging: {e}")
@@ -1032,9 +1319,15 @@ class CommsAgent:
         while True:
             try:
                 self.past_events = await self.get_bus_events()
-                self.broader_context = await asyncio.to_thread(get_broader_context)
+                print("handle_past_events: Contact Manager")
+                self._ensure_contact_manager()
+                print("handle_past_events: Contact Manager Initialized")
+                self.broader_context = await asyncio.to_thread(
+                    get_broader_context, self.contact_manager
+                )
             except Exception as e:
                 print(f"Error fetching bus events: {e}")
+                traceback.print_exc()
             await asyncio.sleep(2)
 
     def handle_event(self, event: dict):
@@ -1047,21 +1340,21 @@ class CommsAgent:
                 print(f"Error setting details: {e}")
                 traceback.print_exc()
                 return
-            asyncio.create_task(
-                asyncio.to_thread(
-                    log_job_startup,
-                    job_name=self.job_name,
-                    timestamp=event["event"]["payload"]["timestamp"],
-                    medium=event["event"]["payload"]["medium"],
-                    user_id=self.user_id,
-                    assistant_id=self.assistant_id,
-                    user_name=self.user_name,
-                    assistant_name=self.assistant_name,
-                    user_number=self.user_number,
-                    user_phone_call_number=self.user_phone_call_number,
-                    assistant_number=self.assistant_number,
-                ),
-            )
+            kwargs = {
+                "job_name": self.job_name,
+                "timestamp": event["event"]["payload"]["timestamp"],
+                "medium": event["event"]["payload"]["medium"],
+                "user_id": self.user_id,
+                "assistant_id": self.assistant_id,
+                "user_name": self.user_name,
+                "assistant_name": self.assistant_name,
+                "user_number": self.user_number,
+                "user_whatsapp_number": self.user_whatsapp_number,
+                "assistant_number": self.assistant_number,
+                "user_email": self.user_email,
+                "assistant_email": self.assistant_email,
+            }
+            asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.meet_browser:
@@ -1104,6 +1397,39 @@ class CommsAgent:
                     "type": "stop",
                 },
             )
+
+        if event["event"].get("contact_details"):
+            self.current_user = {
+                "contact_id": event["event"]["payload"]["contact_details"][
+                    "contact_id"
+                ],
+                "user_name": (
+                    event["event"]["payload"]["contact_details"]["first_name"]
+                    + " "
+                    + event["event"]["payload"]["contact_details"]["surname"]
+                ),
+                "user_number": event["event"]["payload"]["contact_details"][
+                    "phone_number"
+                ],
+                "user_whatsapp_number": event["event"]["payload"]["contact_details"][
+                    "whatsapp_number"
+                ],
+                "user_email": event["event"]["payload"]["contact_details"][
+                    "email_address"
+                ],
+            }
+
+        # Attach speaker metadata to user phone utterances using recent captions
+        try:
+            if (
+                self.meet_browser is not None
+                and event["event"]["event_name"] == "PhoneUtteranceEvent"
+                and event["event"]["payload"].get("role") == "User"
+            ):
+                event["event"]["payload"]["role"] = f"User: {self.current_speaker}"
+                print("\n\nuser speaker", self.current_speaker, "\n\n")
+        except Exception:
+            ...
 
         if to == "past":
             self.past_events.append(event["event"])

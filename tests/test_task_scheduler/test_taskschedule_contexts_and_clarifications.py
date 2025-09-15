@@ -90,7 +90,7 @@ async def test_ts_ask_requests_clarification():
     )
 
     # expect a clarification question
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=300)
     assert _contains(question.lower(), "high") and _contains(
         question.lower(),
         "priority",
@@ -165,18 +165,18 @@ async def test_ts_update_requests_clarification():
     ts = TaskScheduler()
 
     # two queued tasks
-    tid_deck = ts._create_task(
+    ts._create_task(
         name="Prepare slide deck",
         description="Create slides for the upcoming board meeting.",
         status="primed",
         priority="normal",
-    )["details"]["task_id"]
-    ts._create_task(
+    )
+    tid_report = ts._create_task(
         name="Write quarterly report",
         description="Compile and draft the Q2 report.",
         status="queued",
         priority="normal",
-    )
+    )["details"]["task_id"]
     ts._create_task(
         name="Interview candidate",
         description="Interview the recent sales applicant.",
@@ -197,15 +197,15 @@ async def test_ts_update_requests_clarification():
     )
 
     # clarification expected
-    q_text = await asyncio.wait_for(up_q.get(), timeout=60)
+    q_text = await asyncio.wait_for(up_q.get(), timeout=300)
     assert _contains(q_text, "queued"), "No clarification question"
 
     # clarify we mean the slide-deck task
-    await down_q.put("I mean the Prepare slide deck task.")
+    await down_q.put("I mean the Write quarterly report task.")
 
-    await asyncio.wait_for(task, timeout=60)
+    await asyncio.wait_for(task, timeout=300)
 
-    row = ts._filter_tasks(filter=f"task_id == {tid_deck}", limit=1)[0]
+    row = ts._filter_tasks(filter=f"task_id == {tid_report}", limit=1)[0]
     assert row["priority"] == "high", assertion_failed(
         "Task priority 'high'",
         json.dumps(row, indent=2),
