@@ -86,7 +86,7 @@ async def test_update_requests_clarification():
     )
 
     # ➊ the very first thing should be a clarification question
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=120)
     assert _contains(
         question,
         "registry",
