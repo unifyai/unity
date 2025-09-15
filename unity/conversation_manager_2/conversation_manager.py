@@ -2,7 +2,7 @@ import os
 import asyncio
 # import threading
 import json
-from typing import Dict, Callable, Literal
+from typing import Dict, Callable, Literal, Union, Optional
 import contextlib
 from pathlib import Path
 
@@ -15,8 +15,14 @@ from unity.helpers import run_script, terminate_process
 
 
 import redis.asyncio as redis
-import openai
+from openai import AsyncOpenAI
 
+
+class ActionEvent:
+    def __init__(self, action):
+        self.action = action
+    def __str__(self):
+        return self.action
 
 MAX_PENDING_EVENTS = 10
 
@@ -35,22 +41,30 @@ class WaitForNextEvent(BaseModel):
     action_name: Literal["wait"]
 
 # comms actions (main user)
-class SendWhatsapp(BaseModel):
-    ...
+# whatsapp has some issues, will deal with it later
+# class SendWhatsapp(BaseModel):
+#     ...
 
 class SendEmail(BaseModel):
-    ...
+    action_name: Literal["send_email"]
+    subject: str
+    body: str
 
 class SendSMS(BaseModel):
-    ...
+    action_name: Literal["send_sms"]
+    message: str
+
 
 class MakeCall(BaseModel):
-    ...
+    action_name: Literal["make_call"]
 
 # comms actions (other users)
 ...
 
-
+actions = Union[AskConductor, WaitForNextEvent, SendSMS, SendEmail, MakeCall]
+class Response(BaseModel):
+    phone_utterance: str
+    actions: Optional[list[actions]]
 
 
 
@@ -152,7 +166,7 @@ class ConversationManager:
         # asyncio.create_task(self._init_past_events())
 
         self.event_broker = event_broker
-        self.openai_client = openai.AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'])
+        self.openai_client = AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'])
     
     async def _init_past_events(self):
         # TODO: this should be generalized to retrieve the entire
@@ -168,8 +182,48 @@ class ConversationManager:
         self.is_past_events_init.set()
     
     async def run_llm(self):
-        await asyncio.sleep(3)
-        print("test")
+        # format events as message
+        input_messages = []
+        for e in self.past_events + self.inflight_events:
+            if isinstance(e, ActionEvent):
+                input_messages.append({"role": "assistant", "content": str(e)})
+            else:
+                input_messages.append({"role": "user", "content": str(e)})
+        print(input_messages)
+        if self.mode in ["call", "gmeet"]:
+            print("running...")
+            last_phone_utterance = ""
+            out = ""
+            async with self.openai_client.responses.stream(
+                model="gpt-4.1",
+                instructions="""
+You are a general purpose assistant that is conversing with a user on a call.
+You will recieve a bunch of user events, these are events such as the user's phone utterance, whatsapp messages recieved, etc.
+Reply to the user using the following format:
+{
+    "phone_utterance": <YOUR RESPONSE TO THE USER OVER THE PHONE>,
+    "actions": <ACTION TO TAKE BASED ON USER INPUTS>
+}
+""".strip(),
+                input=input_messages,
+                text_format=Response
+            ) as stream:
+                async for event in stream:
+                    if event.type == "response.output_text.delta":
+                        # print(event.delta)
+                        out += event.delta
+                        parsed_out = from_json(out, allow_partial="trailing-strings")
+                        if parsed_out.get("phone_utterance"):
+                            # publish the new chunk here
+                            # publish(parsed_out["phone_utterance"][len(last_response):]
+                            last_phone_utterance = parsed_out["phone_utterance"]
+            print(parsed_out)
+            self.past_events.extend(self.inflight_events.copy())
+            self.inflight_events.clear()
+            self.past_events.append(ActionEvent(out))
+                         
+        else:
+            ...
     
     async def scheduele_llm_run(self, delay=1, cancel_running=False):
         self.inflight_events = self.pending_events.copy()
@@ -216,12 +270,13 @@ class ConversationManager:
                         self.pending_events and (not self.schedueled_response or self.schedueled_response.done()) 
                         and (not self.current_response or self.current_response.done())
                     ):
-                        await self.scheduele_llm_run(0)
+                        # await self.scheduele_llm_run(0)
+                        ...
                 else:
                     event = Event.from_dict(json.loads(msg["data"])["event"])
                     if event.transient:
                         continue
-                    # self.pending_events.append(event.to_dict())
+                    self.pending_events.append(event)
                     if isinstance(event, PhoneCallInitiatedEvent):
                         # start phone call process and wait untils its done, we should probably make sure
                         # first that any running llm calls are awaited, and any schedueled llm calls are canceled
@@ -249,6 +304,10 @@ class ConversationManager:
                                 "None",
                                 str(False),
                             )
+                    if isinstance(event, PhoneCallStartedEvent):
+                        self.mode = "call"
+                    elif isinstance(event, PhoneCallEndedEvent):
+                        ...
                     elif event.is_urgent or isinstance(event, PhoneUtteranceEvent):
                         await self.scheduele_llm_run(0, cancel_running=True)
                     elif len(self.pending_events) >= MAX_PENDING_EVENTS:
