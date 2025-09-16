@@ -39,6 +39,7 @@ from unity.conversation_manager.utils import (
     join_meet_on_browser,
     ensure_captions_enabled,
 )
+from unity.transcript_manager.types.message import UNASSIGNED
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -168,6 +169,7 @@ class CommsAgent:
         self.broader_context = ""
         self.project_name = project_name
         self.logging_lock = threading.Lock()
+        self.call_exchange_id = UNASSIGNED
 
         # speaker tracking
         self.current_speaker = None
@@ -1176,6 +1178,7 @@ class CommsAgent:
             try:
                 terminate_process(self.call_proc)
                 self.call_proc = None
+                self.call_exchange_id = UNASSIGNED
                 global ONGOING_CALL
                 ONGOING_CALL = False
                 print(f"Call process terminated")
@@ -1300,16 +1303,25 @@ class CommsAgent:
                     metadata = None
                     if medium == "email":
                         metadata = {"message_id": message_id}
-                    self.transcript_manager.log_messages(
+                    exchange_id = UNASSIGNED
+                    if medium == "phone_call":
+                        exchange_id = self.call_exchange_id
+                    message = self.transcript_manager.log_messages(
                         {
                             "medium": medium,
                             "sender_id": sender_id,
                             "receiver_ids": receiver_ids,
                             "timestamp": timestamp,
                             "content": content,
+                            "exchange_id": exchange_id,
                             "_metadata": metadata,
                         },
-                    )
+                    )[0]
+                    # ToDo: Get this working for email and whatsapp as well
+                    # Email: Replying to the same thread
+                    # Whatsapp: Managing different kinds of chat such as groups, etc.
+                    if medium == "phone_call" and self.call_exchange_id == UNASSIGNED:
+                        self.call_exchange_id = message.exchange_id
             except Exception as e:
                 print(f"Error handling logging: {e}")
                 traceback.print_exc()
