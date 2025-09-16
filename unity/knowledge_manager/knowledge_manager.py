@@ -830,17 +830,26 @@ class KnowledgeManager(BaseKnowledgeManager):
             description=description,
         )
 
-        # Always add the generated primary-key unless the caller supplied it.
-        if columns is None:
-            columns = {}
-        # Make sure fields are always mutable by default
-        columns = {k: {"type": v, "mutable": True} for k, v in columns.items()}
+        # If no initial columns are provided, avoid an unnecessary fields call.
+        if not columns:
+            return {"info": "Context created", "context": ctx, "project": proj}
+
+        # Make sure fields are always mutable by default and skip backfill for a new context
+        materialized_fields = {
+            k: {"type": v, "mutable": True} for k, v in columns.items()
+        }
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {
             "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
             "Content-Type": "application/json",
         }
-        json_input = {"project": proj, "context": ctx, "fields": columns}
+        json_input = {
+            "project": proj,
+            "context": ctx,
+            "fields": materialized_fields,
+            # Creating a brand-new context implies no logs to backfill; skip for speed.
+            "backfill_logs": False,
+        }
         response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
