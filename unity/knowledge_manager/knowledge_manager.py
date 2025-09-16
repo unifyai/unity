@@ -956,7 +956,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         *,
         tables: Union[str, List[str]],
         startswith: Optional[str] = None,
-    ) -> Dict[str, str]:
+    ) -> List[Dict[str, str]]:
         """
         **Drop** an entire table *and* all its rows.
 
@@ -970,19 +970,47 @@ class KnowledgeManager(BaseKnowledgeManager):
         Returns
         -------
         list[dict[str, str]]
-                Confirmations / errors from the backend.
+            Confirmations / errors from the backend.
         """
+        # Build a single, de-duplicated list of fully-qualified contexts to delete
+        contexts_to_delete: List[str] = []
+
         if isinstance(tables, str):
-            tables = [tables]
-        rets = list()
-        for table in tables:
-            rets.append(unify.delete_context(self._ctx_for_table(table)))
-        if startswith is None:
-            return rets
-        contexts = unify.get_contexts(prefix=f"{self._ctx}/{startswith}")
-        for ctx in contexts:
-            rets.append(unify.delete_context(ctx))
-        return rets
+            if tables:
+                contexts_to_delete.append(self._ctx_for_table(tables))
+        elif tables:
+            contexts_to_delete.extend(self._ctx_for_table(t) for t in tables)
+
+        if startswith:
+            # One backend read to expand the prefix – avoid any further metadata calls
+            ctx_map = unify.get_contexts(prefix=f"{self._ctx}/{startswith}")
+            # Keys are full context names
+            contexts_to_delete.extend(list(ctx_map.keys()))
+
+        # De-duplicate while preserving order (explicit tables first, then prefix matches)
+        seen: set[str] = set()
+        contexts_to_delete = [
+            c for c in contexts_to_delete if not (c in seen or seen.add(c))
+        ]
+
+        if not contexts_to_delete:
+            return []
+
+        # Fast-path: single deletion avoids thread-pool overhead
+        if len(contexts_to_delete) == 1:
+            return [unify.delete_context(contexts_to_delete[0])]
+
+        # Parallelise deletions to minimise wall-clock time across multiple contexts
+        results: List[Dict[str, str]] = []
+        max_workers = min(8, len(contexts_to_delete))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [
+                pool.submit(unify.delete_context, ctx) for ctx in contexts_to_delete
+            ]
+            for fut in as_completed(futures):
+                results.append(fut.result())
+
+        return results
 
     # Columns
 
