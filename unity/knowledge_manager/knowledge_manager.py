@@ -1871,8 +1871,116 @@ class KnowledgeManager(BaseKnowledgeManager):
             duplicates based on the joined table's unique id.
         """
 
+        # 0️⃣  Optional pre-filter: if all references point to a single side, reduce
+        #     the join input on that side using a single-table semantic search.
+        try:
+            left_table, right_table = (
+                [tables] if isinstance(tables, str) else list(tables)
+            )
+            # Build alias -> source map (e.g. {"content": "Left.content"})
+            alias_to_source: Dict[str, str] = {v: k for k, v in select.items()}
+            ref_keys = list(references.keys()) if isinstance(references, dict) else []
+            ref_sources = [alias_to_source.get(a) for a in ref_keys]
+            ref_on_left = (
+                all(
+                    (s is not None) and (str(s).split(".")[0] == left_table)
+                    for s in ref_sources
+                )
+                and len(ref_keys) > 0
+            )
+            ref_on_right = (
+                all(
+                    (s is not None) and (str(s).split(".")[0] == right_table)
+                    for s in ref_sources
+                )
+                and len(ref_keys) > 0
+            )
+
+            def _unique_key_for(table_name: str) -> Optional[str]:
+                try:
+                    ctx = self._ctx_for_table(table_name)
+                    info = unify.get_context(ctx)
+                    uk = info.get("unique_keys")
+                    if isinstance(uk, list):
+                        return uk[0] if uk else None
+                    return uk
+                except Exception:
+                    return None
+
+            # If references are single-sided, preselect candidates on that side
+            if ref_on_left or ref_on_right:
+                side_table = left_table if ref_on_left else right_table
+                side_ctx = self._ctx_for_table(side_table)
+                side_unique = _unique_key_for(side_table)
+                # Map aliases back to columns within the side table
+                side_refs: Dict[str, str] = {}
+                for alias, text in (references or {}).items():
+                    src = alias_to_source.get(alias)
+                    if src and src.split(".")[0] == side_table:
+                        side_refs[src.split(".")[1]] = text
+                # Only proceed if we could resolve all keys to this side
+                if side_refs and side_unique:
+                    # Slightly over-fetch to give the join some headroom
+                    pre_k = min(max(k * 3, 30), 200)
+                    # Only fetch the unique id field to minimise payload and avoid extra field reads
+                    cand_rows = fetch_top_k_by_references(
+                        side_ctx,
+                        side_refs,
+                        k=pre_k,
+                        allowed_fields=[side_unique],
+                    )
+                    candidate_ids = [
+                        r.get(side_unique)
+                        for r in cand_rows
+                        if r.get(side_unique) is not None
+                    ]
+                    # Build a compact OR filter for the side
+                    if candidate_ids:
+                        id_filter = " or ".join(
+                            [
+                                f"{side_unique} == {int(v)}"
+                                for v in candidate_ids
+                                if isinstance(v, (int, float, str))
+                            ],
+                        )
+                        if side_table == left_table:
+                            left_where = (
+                                f"(({id_filter})) and ({left_where})"
+                                if left_where
+                                else f"({id_filter})"
+                            )
+                        else:
+                            right_where = (
+                                f"(({id_filter})) and ({right_where})"
+                                if right_where
+                                else f"({id_filter})"
+                            )
+        except Exception:
+            # If anything goes wrong, fall back to the unfiltered join
+            pass
+
         # 1️⃣  Materialize the join into a temporary context
         dest_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
+
+        # Heuristic: when aliases equal original column names and there are no
+        # collisions across left/right, we can request a reference join
+        # (copy=False) to avoid copying logs.
+        def _col_of(src: str) -> str:
+            return str(src).split(".")[-1]
+
+        try:
+            left_table, right_table = (
+                [tables] if isinstance(tables, str) else list(tables)
+            )
+            identity_aliases = all(
+                _col_of(src) == alias for src, alias in select.items()
+            )
+            cols_only = [_col_of(src) for src in select.keys()]
+            no_collisions = len(set(cols_only)) == len(cols_only)
+            prefer_reference_join = bool(identity_aliases and no_collisions)
+        except Exception:
+            prefer_reference_join = False
+
         dest_ctx = self._create_join(
             dest_table=dest_table,
             tables=tables,
@@ -1881,17 +1989,38 @@ class KnowledgeManager(BaseKnowledgeManager):
             mode=mode,
             left_where=left_where,
             right_where=right_where,
+            copy=(False if prefer_reference_join else True),
         )
 
         try:
-            # 2️⃣  Primary similarity-ranked results
+            # 2️⃣  Primary similarity-ranked results (minimise payload fields)
+            try:
+                dest_ctx_info = unify.get_context(dest_ctx)
+                dest_unique = dest_ctx_info.get("unique_keys")
+                if isinstance(dest_unique, list):
+                    dest_unique = dest_unique[0] if dest_unique else None
+            except Exception:
+                dest_unique = None
+
+            allowed_fields = list(select.values())
+            if dest_unique and dest_unique not in allowed_fields:
+                allowed_fields.append(dest_unique)
+
             rows: List[Dict[str, Any]] = fetch_top_k_by_references(
                 dest_ctx,
                 references,
                 k=k,
                 row_filter=filter,
+                allowed_fields=allowed_fields,
             )
-            return backfill_rows(dest_ctx, rows, k)
+            return backfill_rows(
+                dest_ctx,
+                rows,
+                k,
+                row_filter=filter,
+                unique_id_field=dest_unique,
+                allowed_fields=allowed_fields,
+            )
         finally:
             # 4️⃣  Clean up the temporary context best-effort
             try:
@@ -2051,6 +2180,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         mode: str = "inner",
         left_where: Optional[str] = None,
         right_where: Optional[str] = None,
+        copy: bool = True,
     ) -> str:
         """
         Create one derived table by joining two source tables.
@@ -2126,6 +2256,13 @@ class KnowledgeManager(BaseKnowledgeManager):
             "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
             "Content-Type": "application/json",
         }
+        # Prepare columns payload depending on copy strategy
+        columns_payload: Union[Dict[str, str], List[str]]
+        if copy:
+            columns_payload = select
+        else:
+            columns_payload = list(select.keys())
+
         payload: Dict[str, Any] = {
             "project": unify.active_project(),
             "pair_of_args": (
@@ -2141,8 +2278,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             "join_expr": join_expr,
             "mode": mode,
             "new_context": dest_ctx,
-            "columns": select,
+            "columns": columns_payload,
         }
+
+        # Prefer reference join when requested
+        if copy is not None:
+            payload["copy"] = bool(copy)
 
         resp = http_request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
