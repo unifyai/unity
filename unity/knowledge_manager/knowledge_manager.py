@@ -1371,12 +1371,30 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         if limit > 1000:
             raise ValueError("Limit must be less than 1000")
-        if tables is None:
-            tables = list(self._tables_overview().keys())
 
-        summaries: Dict[str, str] = {}
-        for table in tables:
-            ctx = self._ctx_for_table(table)
+        # Resolve target tables without incurring per-table field lookups.
+        if tables is None:
+            km_prefix = f"{self._ctx}/"
+            ctxs = unify.get_contexts(prefix=km_prefix)
+            resolved_tables: List[str] = [k[len(km_prefix) :] for k in ctxs.keys()]
+            # Optionally expose root-level Contacts when linkage is enabled
+            if self._include_contacts and self._contacts_ctx is not None:
+                try:
+                    contacts_info = unify.get_context(self._contacts_ctx)
+                    if isinstance(contacts_info, dict):
+                        resolved_tables.append("Contacts")
+                except Exception:
+                    pass
+        else:
+            resolved_tables = list(tables)
+
+        if not resolved_tables:
+            return {}
+
+        project_name = unify.active_project()
+
+        def _delete_for_table(table_name: str) -> tuple[str, str]:
+            ctx = self._ctx_for_table(table_name)
             log_ids = list(
                 unify.get_logs(
                     context=ctx,
@@ -1387,16 +1405,31 @@ class KnowledgeManager(BaseKnowledgeManager):
                 ),
             )
             if not log_ids:
-                summaries[table] = "no-op"
-                continue
+                return table_name, "no-op"
 
             res = unify.delete_logs(
                 logs=log_ids,
                 context=ctx,
-                project=unify.active_project(),
+                project=project_name,
                 delete_empty_logs=True,
             )
-            summaries[table] = res.get("message", str(res))
+            return table_name, res.get("message", str(res))
+
+        # Parallelise across tables to minimise wall-clock time when multiple tables are targeted.
+        if len(resolved_tables) == 1:
+            name, msg = _delete_for_table(resolved_tables[0])
+            return {name: msg}
+
+        summaries: Dict[str, str] = {}
+        max_workers = min(8, max(1, len(resolved_tables)))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(_delete_for_table, table_name): table_name
+                for table_name in resolved_tables
+            }
+            for fut in as_completed(futures):
+                name, msg = fut.result()
+                summaries[name] = msg
 
         return summaries
 
