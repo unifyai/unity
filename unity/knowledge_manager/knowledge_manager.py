@@ -39,6 +39,7 @@ from ..common.http import request as http_request
 # Optional per-tool runtime logging (KnowledgeManager)               #
 # ------------------------------------------------------------------ #
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def _env_truthy(name: str, default: bool = False) -> bool:
@@ -865,24 +866,44 @@ class KnowledgeManager(BaseKnowledgeManager):
                 Mapping ``table_name → {"description": str, "columns": {...}}``.
                 If *include_column_info* is *False* the ``"columns"`` key is omitted.
         """
+        # Single read for Knowledge contexts under this manager
+        km_contexts = unify.get_contexts(prefix=f"{self._ctx}/")
         tables = {
             k[len(f"{self._ctx}/") :]: {"description": v}
-            for k, v in unify.get_contexts(prefix=f"{self._ctx}/").items()
+            for k, v in km_contexts.items()
         }
 
-        # Optionally expose root-level Contacts when linkage is enabled.
-        if (
-            self._include_contacts
-            and self._contacts_ctx is not None
-            and self._contacts_ctx in unify.get_contexts()
-        ):
-            tables["Contacts"] = {
-                "description": unify.get_contexts()[self._contacts_ctx],
-            }
-        if not include_column_info:
+        # Optionally expose root-level Contacts when linkage is enabled (single call)
+        if self._include_contacts and self._contacts_ctx is not None:
+            try:
+                contacts_info = unify.get_context(self._contacts_ctx)
+                if isinstance(contacts_info, dict):
+                    tables["Contacts"] = {
+                        "description": contacts_info.get("description", ""),
+                    }
+            except Exception:
+                # Best-effort: absence of Contacts must not fail overview
+                pass
+
+        if not include_column_info or not tables:
             return tables
+
+        # Fetch column metadata in parallel to avoid N sequential REST calls
+        columns_by_table: Dict[str, Dict[str, str]] = {}
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(tables)))) as pool:
+            futures = {
+                pool.submit(self._get_columns, table=table_name): table_name
+                for table_name in tables.keys()
+            }
+            for fut in as_completed(futures):
+                table_name = futures[fut]
+                # Propagate exceptions to match prior behaviour (fail fast)
+                cols = fut.result()
+                columns_by_table[table_name] = cols
+
         return {
-            k: {**v, "columns": self._get_columns(table=k)} for k, v in tables.items()
+            name: {**meta, "columns": columns_by_table.get(name, {})}
+            for name, meta in tables.items()
         }
 
     @_km_log_tool_runtime
