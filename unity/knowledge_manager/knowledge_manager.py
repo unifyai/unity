@@ -1123,7 +1123,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                 ),
             )
 
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
+        # Prefer field-level deletion endpoint for efficiency; avoids per-log scans
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {
             "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
             "Content-Type": "application/json",
@@ -1131,8 +1132,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         json_input = {
             "project": unify.active_project(),
             "context": self._ctx_for_table(table),
-            "ids_and_fields": [[None, column_name]],
-            "source_type": "all",
+            "fields": [column_name],
         }
         response = http_request("DELETE", url, json=json_input, headers=headers)
         _handle_exceptions(response)
