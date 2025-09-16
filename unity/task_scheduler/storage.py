@@ -41,6 +41,16 @@ class TasksStore:
                 description=description,
             )
             unify.create_fields(fields, context=self._ctx)
+            # Prime the local fields cache to avoid an immediate second get_fields call.
+            try:
+                primed = {
+                    k: (v.get("data_type") if isinstance(v, dict) else str(v))
+                    for k, v in (fields or {}).items()
+                }
+            except Exception:
+                primed = {k: str(v) for k, v in (fields or {}).items()}
+            # cached_property can be pre-populated by writing into __dict__
+            self.__dict__["fields"] = primed
             return
 
         try:
@@ -50,6 +60,23 @@ class TasksStore:
         missing = {k: v for k, v in fields.items() if k not in existing}
         if missing:
             unify.create_fields(missing, context=self._ctx)
+        # Prime/refresh the local fields cache with a normalised view combining existing + newly created
+        try:
+            normalised = {
+                k: (v.get("data_type") if isinstance(v, dict) else str(v))
+                for k, v in existing.items()
+            }
+        except Exception:
+            normalised = {k: str(v) for k, v in existing.items()}
+        for k, v in (missing or {}).items():
+            if k not in normalised:
+                try:
+                    normalised[k] = (
+                        v.get("data_type") if isinstance(v, dict) else str(v)
+                    )
+                except Exception:
+                    normalised[k] = str(v)
+        self.__dict__["fields"] = normalised
 
     # ------------------------------- Reads ---------------------------------
     @cached_property
