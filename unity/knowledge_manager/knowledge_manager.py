@@ -1164,10 +1164,23 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend response.
         """
+        # Short-circuit obvious no-op and invalid rename targets to avoid any backend call
+        if old_name == new_name:
+            return {
+                "info": "no-op: old and new names are identical",
+                "old_name": old_name,
+                "new_name": new_name,
+            }
+        if new_name == "id":
+            raise ValueError("Cannot rename a column to reserved name 'id'.")
+
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/rename_field"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         json_input = {
             "project": proj,
             "context": ctx,
