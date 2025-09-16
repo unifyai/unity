@@ -68,16 +68,11 @@ def ensure_derived_column(
     - By default, scopes placeholders to a local alias `lg` referencing the
       provided `context` when `referenced_logs_context` is not specified.
     """
-    existing = unify.get_fields(context=context)
-    if key in existing:
-        return
-
+    # Attempt creation under a process-local lock to avoid races. We intentionally
+    # do not pre-read fields here to minimise backend calls; the server will
+    # reject duplicates and we treat those as success.
     lock = _get_column_lock(context, key)
     with lock:
-        existing = unify.get_fields(context=context)
-        if key in existing:
-            return
-
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
         headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input: dict = {
@@ -120,34 +115,18 @@ def ensure_vector_column(
         derived_expr Optional(str): An optional expression to dynamically derive the source column
             (in case it's not already present) (eg: "str({name}) + ' || ' + str({description})")
     """
-    # Retrieve existing columns and their types
-    existing = unify.get_fields(context=context)
+    # If a derived expression was provided for the source, ensure the source column exists.
     if derived_expr is not None:
         # Scope placeholder references to the local logs alias
         derived_expr = derived_expr.replace("{", "{lg:")
-
-    # Ensure the derived source column exists (when required)
-    if source_column not in existing:
-        if derived_expr is None:
-            raise ValueError(
-                f"Source column '{source_column}' does not exist in context '{context}' "
-                f"and no derived_expr was provided to create it.",
-            )
         ensure_derived_column(
             context=context,
             key=source_column,
             equation=derived_expr,
         )
 
-    # Ensure the embedding column exists
-    # Refresh existing fields view
-    existing = unify.get_fields(context=context)
-    if embed_column in existing:
-        return
-
-    # Define the embedding equation, with explicit lg scoping
+    # Define the embedding equation with explicit lg scoping and ensure the embedding column.
     embed_expr = f"embed({{lg:{source_column}}}, model='{EMBED_MODEL}')"
-
     ensure_derived_column(
         context=context,
         key=embed_column,
