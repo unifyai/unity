@@ -2104,24 +2104,63 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         if limit > 1000:
             raise ValueError("Limit must be less than 1000")
+
+        # Resolve target tables without triggering per-table field reads.
+        # When the caller does not specify tables, list contexts directly
+        # rather than calling `_tables_overview(include_column_info=True)`,
+        # which would fetch columns for every table (unnecessary here).
         if tables is None:
-            tables = self._tables_overview()
+            km_prefix = f"{self._ctx}/"
+            ctxs = unify.get_contexts(prefix=km_prefix)
+            resolved_tables: List[str] = [k[len(km_prefix) :] for k in ctxs.keys()]
+            # Optionally expose root-level Contacts when linkage is enabled
+            if self._include_contacts and self._contacts_ctx is not None:
+                try:
+                    contacts_info = unify.get_context(self._contacts_ctx)
+                    if isinstance(contacts_info, dict):
+                        resolved_tables.append("Contacts")
+                except Exception:
+                    pass
         elif isinstance(tables, str):
-            tables = [tables]
-        # ToDo: convert to map function
-        results = dict()
-        for table in tables:
-            ctx = self._ctx_for_table(table)
-            results[table] = [
+            resolved_tables = [tables]
+        else:
+            resolved_tables = list(tables)
+
+        # Fetch private-field lists and rows per table without serial stalls.
+        # Each table performs at most two backend reads: fields (once) and logs.
+        def _fetch_one(table_name: str) -> tuple[str, List[Dict[str, Any]]]:
+            ctx = self._ctx_for_table(table_name)
+            excl = list_private_fields(ctx)
+            rows: List[Dict[str, Any]] = [
                 log.entries
                 for log in unify.get_logs(
                     context=ctx,
                     filter=filter,
                     offset=offset,
                     limit=limit,
-                    exclude_fields=list_private_fields(ctx),
+                    exclude_fields=excl,
                 )
             ]
+            return table_name, rows
+
+        results: Dict[str, List[Dict[str, Any]]] = {}
+        # Parallelise when scanning multiple tables to reduce wall-clock time.
+        max_workers = min(8, max(1, len(resolved_tables)))
+        if len(resolved_tables) <= 1:
+            # Avoid thread-pool overhead for the common single-table case
+            name, rows = _fetch_one(resolved_tables[0])
+            results[name] = rows
+            return results
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(_fetch_one, table_name): table_name
+                for table_name in resolved_tables
+            }
+            for fut in as_completed(futures):
+                name, rows = fut.result()
+                results[name] = rows
+
         return results
 
     @_km_log_tool_runtime
