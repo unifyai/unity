@@ -1012,17 +1012,20 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend response.
         """
-        if column_name in self._get_columns(table=table):
-            raise ValueError(f"Column '{column_name}' already exists.")
-
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         json_input = {
             "project": proj,
             "context": ctx,
+            # Do not pre-read fields for existence; the backend handles idempotence
+            # and updating metadata. Avoid expensive backfills for large tables.
             "fields": {column_name: {"type": column_type, "mutable": True}},
+            "backfill_logs": False,
         }
         response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
