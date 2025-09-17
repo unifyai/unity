@@ -205,7 +205,7 @@ def build_update_prompt(
     create_tasks_fname = _tool_name(tools, "create_tasks")
     delete_task_fname = _tool_name(tools, "delete_task")
     cancel_tasks_fname = _tool_name(tools, "cancel_tasks")
-    update_task_queue_fname = _tool_name(tools, "update_task_queue")
+    # legacy: update_task_queue has been removed; keep lookup variable unused
     # Multi-queue helpers (optional if not present)
     list_queues_fname = _tool_name(tools, "list_queues")
     get_queue_fname = _tool_name(tools, "get_queue")
@@ -213,7 +213,8 @@ def build_update_prompt(
     move_tasks_to_queue_fname = _tool_name(tools, "move_tasks_to_queue")
     partition_queue_fname = _tool_name(tools, "partition_queue")
     update_task_fname = _tool_name(tools, "update_task")
-    get_task_queue_fname = _tool_name(tools, "get_task_queue")
+    # legacy: get_task_queue has been removed; use get_queue or get_queue_for_task instead
+    # legacy: get_task_queue has been removed; keep lookup variable unused
     reinstate_task_fname = _tool_name(tools, "reinstate_task_to_previous_queue")
 
     # Clarification helper (optional)
@@ -450,8 +451,6 @@ def build_execute_prompt(
 
     # Resolve names dynamically
     ask_fname = _tool_name(tools, "ask")
-    get_task_queue_fname = _tool_name(tools, "get_task_queue")
-    update_task_queue_fname = _tool_name(tools, "update_task_queue")
     execute_by_id_fname = _tool_name(tools, "execute_by_id")
     execute_isolated_by_id_fname = _tool_name(tools, "execute_isolated_by_id")
     create_task_fname = _tool_name(tools, "create_task")
