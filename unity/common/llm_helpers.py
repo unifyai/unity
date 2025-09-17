@@ -13,6 +13,8 @@ from enum import Enum
 from pydantic import BaseModel
 import time
 from typing import (
+    TypedDict,
+    Literal,
     Tuple,
     List,
     Dict,
@@ -934,12 +936,11 @@ async def _emit_completion_pair(
         ],
         "content": "",
     }
-    tool_msg = {
-        "role": "tool",
-        "tool_call_id": dummy_id,
-        "name": f"check_status_{call_id}",
-        "content": result,
-    }
+    tool_msg = create_tool_call_message(
+        name=f"check_status_{call_id}",
+        call_id=dummy_id,
+        content=result,
+    )
 
     await msg_dispatcher.append_msgs([assistant_stub, tool_msg])
     return tool_msg
@@ -949,7 +950,7 @@ async def _emit_completion_pair(
 async def _insert_after_assistant(
     assistant_meta: dict,
     parent_msg: dict,
-    tool_msg: dict,
+    tool_msg: ToolCallMessage,
     client,
     msg_dispatcher: _AsyncToolLoopMessageDispatcher,
 ) -> None:
@@ -1013,12 +1014,11 @@ async def _acknowledge_helper_call(
     client,
     msg_dispatcher,
 ) -> None:
-    tool_msg = {
-        "role": "tool",
-        "tool_call_id": call_id,
-        "name": name,
-        "content": _build_helper_ack_content(name, args_json),
-    }
+    tool_msg = create_tool_call_message(
+        name=name,
+        call_id=call_id,
+        content=_build_helper_ack_content(name, args_json),
+    )
     await _insert_after_assistant(
         assistant_meta,
         asst_msg,
@@ -1056,12 +1056,11 @@ async def _ensure_placeholders_for_pending(
         if _inf.tool_reply_msg or _inf.continue_msg or _inf.clarify_placeholder:
             continue
 
-        placeholder = {
-            "role": "tool",
-            "tool_call_id": _inf.call_id,
-            "name": _inf.name,
-            "content": placeholder_content,
-        }
+        placeholder = create_tool_call_message(
+            name=_inf.name,
+            call_id=_inf.call_id,
+            content=placeholder_content,
+        )
         await _insert_after_assistant(
             assistant_meta,
             _inf.assistant_msg,
@@ -1575,14 +1574,11 @@ class _ToolsData:
                 # 2️⃣ insert / update a single placeholder
                 ph = info.tool_reply_msg
                 if ph is None:
-                    ph = {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "name": info.name,
-                        "content": (
-                            "Nested async tool loop started… waiting for result."
-                        ),
-                    }
+                    ph = create_tool_call_message(
+                        name=info.name,
+                        call_id=call_id,
+                        content="Nested async tool loop started… waiting for result.",
+                    )
                     await _insert_after_assistant(
                         assistant_meta,
                         info.assistant_msg,
@@ -1697,12 +1693,7 @@ class _ToolsData:
                 tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
 
         else:
-            tool_msg = {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "name": name,
-                "content": result,
-            }
+            tool_msg = create_tool_call_message(name, call_id, result)
             await _insert_after_assistant(
                 assistant_meta,
                 asst_msg,
@@ -1786,6 +1777,22 @@ class ToolCallMetadata:
     clar_down_queue: asyncio.Queue[str] | None = None
     pause_event: asyncio.Event | None = None
     scheduled_time: float = field(default_factory=time.perf_counter)
+
+
+class ToolCallMessage(TypedDict):
+    role: Literal["tool"]
+    tool_call_id: str
+    name: str
+    content: str
+
+
+def create_tool_call_message(name: str, call_id: str, content: str) -> ToolCallMessage:
+    return {
+        "role": "tool",
+        "tool_call_id": call_id,
+        "name": name,
+        "content": content,
+    }
 
 
 class DynamicToolFactory:
@@ -2756,12 +2763,11 @@ async def _async_tool_use_loop_inner(
                         ph = tools_data.info[src_task].tool_reply_msg
                         if ph is None:
                             # no placeholder yet → create one exactly once
-                            ph = {
-                                "role": "tool",
-                                "tool_call_id": call_id,
-                                "name": f"clarification_request_{call_id}",
-                                "content": "",  # will fill below
-                            }
+                            ph = create_tool_call_message(
+                                name=f"clarification_request_{call_id}",
+                                call_id=call_id,
+                                content="",  # will fill below
+                            )
                             await _insert_after_assistant(
                                 assistant_meta,
                                 tools_data.info[src_task].assistant_msg,
@@ -3105,12 +3111,12 @@ async def _async_tool_use_loop_inner(
                             # Validate payload with the provided Pydantic model.
                             response_format.model_validate(payload)
 
-                            tool_msg = {
-                                "role": "tool",
-                                "tool_call_id": call["id"],
-                                "name": "final_answer",
-                                "content": _dumps(payload, indent=4),
-                            }
+                            tool_msg = create_tool_call_message(
+                                name="final_answer",
+                                call_id=call["id"],
+                                content=_dumps(payload, indent=4),
+                            )
+
                             await _insert_after_assistant(
                                 assistant_meta,
                                 msg,
@@ -3121,15 +3127,14 @@ async def _async_tool_use_loop_inner(
 
                             return json.dumps(payload)
                         except Exception as _exc:
-                            tool_msg = {
-                                "role": "tool",
-                                "tool_call_id": call["id"],
-                                "name": "final_answer",
-                                "content": (
+                            tool_msg = create_tool_call_message(
+                                name="final_answer",
+                                call_id=call["id"],
+                                content=(
                                     "⚠️ Validation failed – proceeding with standard formatting step.\n"
                                     + str(_exc)
                                 ),
-                            }
+                            )
                             await _insert_after_assistant(
                                 assistant_meta,
                                 msg,
@@ -3169,18 +3174,17 @@ async def _async_tool_use_loop_inner(
                             info = tools_data.info[tgt_task]
                             name = info.name
                             arg_json = info.call_dict["function"]["arguments"]
-                            tool_reply_msg = {
-                                "role": "tool",
-                                "tool_call_id": call["id"],
-                                "name": name,
-                                "content": (
+                            tool_reply_msg = create_tool_call_message(
+                                name=name,
+                                call_id=call["id"],
+                                content=(
                                     "The following tool calls are still running. If any of them are no longer "
                                     "relevant to the sequence of user requests, then you can call their "
                                     f"`_cancel_*` helper, otherwise feel free to call the corresponding "
                                     f"`_continue_*` helper to keep waiting:\n"
                                     f" • {name}({arg_json}) → cancel_{call['id']} / continue_{call['id']}"
                                 ),
-                            }
+                            )
                             await _insert_after_assistant(
                                 assistant_meta,
                                 msg,
@@ -3206,12 +3210,11 @@ async def _async_tool_use_loop_inner(
                                     indent=4,
                                 ),
                             )
-                            tool_msg = {
-                                "role": "tool",
-                                "tool_call_id": call["id"],
-                                "name": pretty_name,
-                                "content": finished,
-                            }
+                            tool_msg = create_tool_call_message(
+                                name=pretty_name,
+                                call_id=call["id"],
+                                content=finished,
+                            )
                             await _insert_after_assistant(
                                 assistant_meta,
                                 msg,
@@ -3275,14 +3278,11 @@ async def _async_tool_use_loop_inner(
                         if task_to_cancel:
                             tools_data.pop_task(task_to_cancel)
 
-                        tool_msg = {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "name": pretty_name,
-                            "content": (
-                                f"The tool call [{call_id_suffix}] has been stopped successfully."
-                            ),
-                        }
+                        tool_msg = create_tool_call_message(
+                            name=pretty_name,
+                            call_id=call["id"],
+                            content=f"The tool call [{call_id_suffix}] has been stopped successfully.",
+                        )
                         await _insert_after_assistant(
                             assistant_meta,
                             msg,
@@ -3330,12 +3330,11 @@ async def _async_tool_use_loop_inner(
                             elif ev is not None:
                                 ev.clear()
 
-                        tool_msg = {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "name": pretty_name,
-                            "content": f"The tool call [{call_id_suffix}] has been paused successfully.",
-                        }
+                        tool_msg = create_tool_call_message(
+                            name=pretty_name,
+                            call_id=call["id"],
+                            content=f"The tool call [{call_id_suffix}] has been paused successfully.",
+                        )
                         await _insert_after_assistant(
                             assistant_meta,
                             msg,
@@ -3382,12 +3381,11 @@ async def _async_tool_use_loop_inner(
                             elif ev is not None:
                                 ev.set()
 
-                        tool_msg = {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "name": pretty_name,
-                            "content": f"The tool call [{call_id_suffix}] has been resumed successfully.",
-                        }
+                        tool_msg = create_tool_call_message(
+                            name=pretty_name,
+                            call_id=call["id"],
+                            content=f"The tool call [{call_id_suffix}] has been resumed successfully.",
+                        )
                         await _insert_after_assistant(
                             assistant_meta,
                             msg,
@@ -3432,15 +3430,14 @@ async def _async_tool_use_loop_inner(
                                 ):
                                     _inf.waiting_for_clarification = False
                                     break
-                        tool_reply_msg = {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "name": name,
-                            "content": (
+                        tool_reply_msg = create_tool_call_message(
+                            name=name,
+                            call_id=call["id"],
+                            content=(
                                 f"Clarification answer sent upstream: {ans!r}\n"
                                 "⏳ Waiting for the original tool to finish…"
                             ),
-                        }
+                        )
                         await _insert_after_assistant(
                             assistant_meta,
                             msg,
@@ -3500,12 +3497,11 @@ async def _async_tool_use_loop_inner(
                                 )
 
                         # ― emit a tool message so the chat log stays tidy ---
-                        tool_msg = {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "name": pretty_name,
-                            "content": f'Guidance "{new_text}" forwarded to the running tool.',
-                        }
+                        tool_msg = create_tool_call_message(
+                            name=pretty_name,
+                            call_id=call["id"],
+                            content=f'Guidance "{new_text}" forwarded to the running tool.',
+                        )
                         await _insert_after_assistant(
                             assistant_meta,
                             msg,
@@ -3534,17 +3530,16 @@ async def _async_tool_use_loop_inner(
                     ):
                         # Concurrency cap reached → immediately insert a
                         # *tool-error* message and **do not** schedule.
-                        tool_msg = {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "name": name,
-                            "content": (
+                        tool_msg = create_tool_call_message(
+                            name=name,
+                            call_id=call["id"],
+                            content=(
                                 f"⚠️ Cannot start '{name}': "
                                 f"max_concurrent={tools_data.normalized[name].max_concurrent} "
                                 "already reached. Wait for an existing call to "
                                 "finish or stop one before retrying."
                             ),
-                        }
+                        )
                         await _insert_after_assistant(
                             assistant_meta,
                             msg,
@@ -3599,15 +3594,14 @@ async def _async_tool_use_loop_inner(
                         # and run fire-and-forget without tracking in pending/task_info.
                         if getattr(fn, "__write_only__", False):
                             with suppress(Exception):
-                                tool_msg = {
-                                    "role": "tool",
-                                    "tool_call_id": call["id"],
-                                    "name": name,
-                                    "content": _build_helper_ack_content(
+                                tool_msg = create_tool_call_message(
+                                    name=name,
+                                    call_id=call["id"],
+                                    content=_build_helper_ack_content(
                                         name,
                                         call["function"]["arguments"],
                                     ),
-                                }
+                                )
                                 await _insert_after_assistant(
                                     assistant_meta,
                                     msg,
