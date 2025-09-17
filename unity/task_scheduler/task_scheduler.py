@@ -74,6 +74,9 @@ from .reintegration import ReintegrationManager
 from .queue_engine import plan_reorder_queue
 
 
+# Sentinel for optional-argument presence detection
+_UNSET = object()
+
 # ------------------------------------------------------------------ #
 #  Optional per-tool runtime logging (TaskScheduler)                 #
 # ------------------------------------------------------------------ #
@@ -3617,7 +3620,7 @@ class TaskScheduler(BaseTaskScheduler):
         deadline: Optional[Union[str, "datetime"]] = None,
         repeat: Optional[List[Union["RepeatPattern", Dict[str, Any]]]] = None,
         priority: Optional[Union["Priority", str]] = None,
-        trigger: Optional[Union["Trigger", Dict[str, Any], None]] = None,
+        trigger: Any = _UNSET,
     ) -> Dict[str, Any]:
         """
         Update one or more fields of an existing task.
@@ -3653,7 +3656,15 @@ class TaskScheduler(BaseTaskScheduler):
         # Forbid edits on the currently active task via scheduler APIs
         self._ensure_not_active_task(task_id)
 
-        # No-op guard
+        # Was 'trigger' explicitly provided (even if None)?
+        _trigger_provided = trigger is not _UNSET
+
+        # Fetch current row for invariants/derivations
+        row = self._get_single_row_or_raise(int(task_id))
+        current_sched = row.get("schedule") or {}
+
+        # No-op guard – allow updates when at least one field is provided OR when
+        # the caller explicitly provided 'trigger' (even if None, meaning clear it).
         if (
             name is None
             and description is None
@@ -3662,16 +3673,12 @@ class TaskScheduler(BaseTaskScheduler):
             and deadline is None
             and repeat is None
             and priority is None
-            and (trigger is None)
+            and not _trigger_provided
         ):
             raise ValueError("At least one field must be provided for an update.")
 
-        # Fetch current row for invariants/derivations
-        row = self._get_single_row_or_raise(int(task_id))
-        current_sched = row.get("schedule") or {}
-
         # Mutually exclusive guard: trigger with any schedule/start_at
-        if trigger is not None:
+        if _trigger_provided and trigger is not None:
             # If the update itself adds a start_at or the current schedule is present, reject
             if start_at is not None:
                 raise ValueError("Cannot set a trigger alongside a start_at schedule.")
@@ -3684,7 +3691,10 @@ class TaskScheduler(BaseTaskScheduler):
         schedule_payload: Optional[Dict[str, Any]] = None
         if start_at is not None:
             # Disallow start_at when the task is trigger-based
-            if row.get("trigger") is not None:
+            # Allow when the update explicitly clears the trigger in the same call
+            if row.get("trigger") is not None and not (
+                _trigger_provided and trigger is None
+            ):
                 raise ValueError(
                     "Cannot add/update *start_at* – the task is trigger-based.",
                 )
@@ -3717,7 +3727,7 @@ class TaskScheduler(BaseTaskScheduler):
             desired_status = status_enum
         else:
             # Infer from trigger/start_at when caller didn't specify a status
-            if trigger is not None:
+            if _trigger_provided and trigger is not None:
                 desired_status = Status.triggerable
             elif (
                 schedule_payload is not None
@@ -3756,10 +3766,13 @@ class TaskScheduler(BaseTaskScheduler):
             entries["repeat"] = norm_repeat
         if priority is not None:
             entries["priority"] = priority
-        if trigger is not None:
-            if isinstance(trigger, dict):
-                trigger = Trigger(**trigger)
-            entries["trigger"] = trigger.model_dump() if trigger is not None else None
+        if _trigger_provided:
+            if trigger is None:
+                entries["trigger"] = None
+            else:
+                if isinstance(trigger, dict):
+                    trigger = Trigger(**trigger)
+                entries["trigger"] = trigger.model_dump()
         if schedule_payload is not None:
             entries["schedule"] = schedule_payload
         if desired_status is not None:
@@ -3767,7 +3780,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         # If clearing a trigger (trigger explicitly None) and current status is triggerable
         if (
-            (trigger is None)
+            _trigger_provided
+            and (trigger is None)
             and (status is None)
             and self._to_status(row.get("status")) == Status.triggerable
         ):
