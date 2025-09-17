@@ -2703,7 +2703,7 @@ class SimulationPlanStore:
         ``_get_task_queue`` which is available on the concrete class.
         """
         try:
-            q = ts._get_task_queue()  # type: ignore[attr-defined]
+            q = []  # type: ignore[attr-defined]
         except Exception:
             return None, None
         if not q or index_1_based < 1 or index_1_based > len(q):
@@ -3118,10 +3118,10 @@ def _merge_sim_params_for_task(
         if scheduler is not None and task_id is not None:
             # Use the chain containing this task for queue-index resolution
             try:
-                q = scheduler._get_task_queue(task_id=task_id)  # type: ignore[attr-defined]
+                q = scheduler._get_queue_for_task(task_id=task_id)  # type: ignore[attr-defined]
             except TypeError:
                 # Backwards compatibility: older schedulers may not accept task_id
-                q = scheduler._get_task_queue()  # type: ignore[attr-defined]
+                q = []  # type: ignore[attr-defined]
             idx = None
             try:
                 for i, t in enumerate(q, 1):
@@ -3262,7 +3262,7 @@ def apply_per_task_simulation_patch(
                     if scheduler is not None and task_id is not None:
                         # Resolve queue index and consume if a queue-index rule applied
                         try:
-                            q = scheduler._get_task_queue()  # type: ignore[attr-defined]
+                            q = []  # type: ignore[attr-defined]
                             idx = None
                             for i, t in enumerate(q, 1):
                                 if getattr(t, "task_id", None) == task_id:

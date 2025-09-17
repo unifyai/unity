@@ -232,15 +232,19 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         The execute flow no longer uses implicit routing modes. Instead, it
         exposes queue inspection and an explicit reorder primitive so the agent
         can express desired behaviour directly:
-        - Use `get_task_queue()` to read the current order.
-        - Use `update_task_queue(original=[...], new=[...])` to place the desired
-          subset/order at the head (e.g., "just X", "first two now", or "all").
+        - Use `_get_queue(queue_id=...)` or `_get_queue_for_task(task_id=...)` to
+          read the current order.
+        - Use `_reorder_queue(queue_id=..., new_order=[...])` when membership is
+          unchanged or `_set_queue(queue_id=..., order=[...])` when membership
+          changes to place the desired subset/order at the head (e.g., "just X",
+          "first two now", or "all").
         - Then call `execute_by_id(task_id=<head>)` to start.
 
         Never rewrite a task's `start_at` purely to begin execution, and do not
         write lifecycle `status` fields directly.
         - `ask` – to discover the relevant task and queue context
-        - `get_task_queue` / `update_task_queue` – to explicitly shape the queue
+        - `_get_queue` / `_get_queue_for_task` – to inspect queue membership/order
+        - `_reorder_queue` / `_set_queue` – to explicitly shape the queue
         - `execute_by_id(task_id)` – to start the head after any necessary reordering
 
         Implementations MUST return a *live* steerable handle whose public

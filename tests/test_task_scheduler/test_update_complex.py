@@ -85,7 +85,7 @@ async def test_update_lower_priority_for_future_date(basic_task_scenario):
     ts, ids = basic_task_scenario
 
     # create one future scheduled task with high priority
-    # Use an explicit queue id as default queue does not exist
+    # Use an explicit queue id; no implicit default exists
     row0 = ts._filter_tasks(limit=1)[0]
     existing_qid = row0.get("queue_id")
     # If no existing queue, allocate one

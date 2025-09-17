@@ -67,7 +67,6 @@ from ._queue_utils import (
     sync_adjacent_links as _q_sync_adjacent_links,
 )
 from ._queue_ops import (
-    get_task_queue as _ops_get_task_queue,
     detach_from_queue_for_activation as _ops_detach_for_activation,
     attach_with_links as _ops_attach_with_links,
 )
@@ -1037,9 +1036,9 @@ class TaskScheduler(BaseTaskScheduler):
 
             Strategy:
             - Use `_partition_queue` when there are any later groups to split the
-              default queue into [now] and later queues with optional dates.
-            - Otherwise, reorder the default queue so that `now` is the head
-              (dropping other runnable tasks from default queue).
+              source queue into [now] and later queues with optional dates.
+            - Otherwise, reorder the chosen queue so that `now` is the head
+              (dropping other runnable tasks from that queue).
             After success, automatically create a checkpoint to allow revert.
             """
             import json as _json
@@ -1057,7 +1056,7 @@ class TaskScheduler(BaseTaskScheduler):
                 ]
                 self._partition_queue(parts=parts, strategy="preserve_order")
             else:
-                # Only reorder default queue to contain exactly `now`
+                # Only reorder the selected queue to contain exactly `now`
                 if model.now:
                     self._reorder_queue(queue_id=None, new_order=list(model.now))
             # Auto-checkpoint
@@ -1831,12 +1830,7 @@ class TaskScheduler(BaseTaskScheduler):
                     "outcome": "task created successfully",
                     "details": {"task_id": task_id},
                 }
-            original_q = [t.task_id for t in self._get_task_queue()]
-
-            # Only insert if the new task isn't already in that list
-            if task_id not in original_q:
-                new_q = original_q + [task_id]
-                self._update_task_queue(original=original_q, new=new_q)
+            # Creation should not auto-append to any queue.
 
         return {
             "outcome": "task created successfully",
@@ -2277,7 +2271,7 @@ class TaskScheduler(BaseTaskScheduler):
     @_ts_log_tool_runtime
     def _list_queues(self) -> List[Dict[str, Any]]:
         """
-        List all runnable queues. There is no default queue; every queue must have a numeric ``queue_id``.
+        List all runnable queues. Every queue must have a numeric ``queue_id``.
 
         Returns
         -------
@@ -2291,9 +2285,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         Notes
         -----
-        Queues are implicit in the data model: a queue exists when at least one
-        runnable task has ``schedule.prev_task is None``. The "default" queue is
-        the one where tasks have ``schedule.queue_id is None``.
+        Queues are explicit by `queue_id`. This method lists queues whose heads
+        are non-terminal tasks with `schedule.prev_task is None` and a numeric
+        `queue_id`.
         """
         rows = [
             r
@@ -2338,8 +2332,8 @@ class TaskScheduler(BaseTaskScheduler):
         Parameters
         ----------
         queue_id : int | None, default ``None``
-            Identifier of the queue. ``None`` denotes the default queue (legacy
-            single-queue behaviour).
+            Identifier of the queue. When ``None``, no implicit default is
+            assumed; this returns an empty list.
 
         Returns
         -------
@@ -2349,10 +2343,10 @@ class TaskScheduler(BaseTaskScheduler):
 
         Notes
         -----
-        - ``queue_id=None`` denotes the default queue. This method returns a
-          strict view of that queue with consistent membership (no cross‑queue
-          adjacency is ever collapsed).
+        - This method operates on explicit queues only; pass a numeric `queue_id`.
         """
+        if queue_id is None:
+            return []
         head = self._head_row_for_queue(queue_id)
         if head is None:
             return []
@@ -2369,6 +2363,90 @@ class TaskScheduler(BaseTaskScheduler):
                     _row.pop("activated_by", None)
             ordered.append(Task(**_row))
         return ordered
+
+    @_ts_log_tool_runtime
+    def _walk_queue_from_task(self, *, task_id: int) -> List[Task]:
+        """
+        Walk the chain that contains `task_id` by following schedule.prev_task to
+        the head and then schedule.next_task forward, returning rows as `Task`.
+
+        This helper ignores the top-level queue_id and is used when a task does
+        not carry a numeric queue_id but still belongs to a linked chain.
+        """
+        # Locate the starting row
+        try:
+            cur_row = self._get_single_row_or_raise(int(task_id))
+        except Exception:
+            return []
+
+        # Walk to head using prev_task pointers
+        head = cur_row
+        try:
+            while head is not None:
+                prev_id = (head.get("schedule") or {}).get("prev_task")
+                if prev_id is None:
+                    break
+                prev_rows = self._filter_tasks(
+                    filter=f"task_id == {int(prev_id)}",
+                    limit=1,
+                )
+                head = prev_rows[0] if prev_rows else None
+        except Exception:
+            pass
+
+        if head is None:
+            return []
+
+        # Walk forward using next_task pointers; include terminal rows for context
+        ordered: List[Task] = []
+        node = head
+        seen: set[int] = set()
+        while node is not None:
+            tid = node.get("task_id")
+            try:
+                tid_int = int(tid) if tid is not None else None
+            except Exception:
+                tid_int = None  # type: ignore[assignment]
+            if tid_int is not None and tid_int in seen:
+                break
+            if tid_int is not None:
+                seen.add(tid_int)
+            # Strip stale activation metadata on non-active rows
+            _row = dict(node)
+            try:
+                if self._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
+                    _row.pop("activated_by", None)
+            except Exception:
+                if str(_row.get("status")) != str(Status.active):
+                    _row.pop("activated_by", None)
+            ordered.append(Task(**_row))
+            nxt_id = (node.get("schedule") or {}).get("next_task")
+            if nxt_id is None:
+                break
+            nxt_rows = self._filter_tasks(filter=f"task_id == {int(nxt_id)}", limit=1)
+            node = nxt_rows[0] if nxt_rows else None
+
+        return ordered
+
+    @_ts_log_tool_runtime
+    def _get_queue_for_task(self, *, task_id: int) -> List[Task]:
+        """
+        Return the runnable queue (head→tail) containing `task_id`.
+
+        Strategy
+        --------
+        - If the row has a numeric `queue_id`, delegate to `_get_queue(queue_id)`.
+        - Otherwise, walk the chain ignoring queue_id via `_walk_queue_from_task`.
+        """
+        try:
+            row = self._get_single_row_or_raise(int(task_id))
+        except Exception:
+            return []
+
+        qid = row.get("queue_id")
+        if isinstance(qid, int):
+            return self._get_queue(queue_id=qid)
+        return self._walk_queue_from_task(task_id=int(task_id))
 
     @_ts_log_tool_runtime
     def _reorder_queue(
@@ -2391,7 +2469,7 @@ class TaskScheduler(BaseTaskScheduler):
         Parameters
         ----------
         queue_id : int | None
-            Target queue identifier (``None`` for the default queue).
+            Target queue identifier.
         new_order : list[int]
             Complete desired order of all runnable tasks within this queue.
             This tool does not add or remove tasks across queues; every task in
@@ -2515,7 +2593,7 @@ class TaskScheduler(BaseTaskScheduler):
             Identifiers of tasks to move. All tasks must be non-terminal. The
             currently active task cannot be moved.
         queue_id : int | None, default ``None``
-            Target queue identifier. ``None`` denotes the default queue.  When
+            Target queue identifier. When
             you intend to create a brand-new queue, pass ``queue_id=None`` and
             this tool will allocate a fresh identifier automatically and return
             it in the details payload.
@@ -3066,18 +3144,7 @@ class TaskScheduler(BaseTaskScheduler):
     #  Diagnostics                                                        #
     # ------------------------------------------------------------------ #
 
-    @_ts_log_tool_runtime
-    def _explain_queue(self, *, queue_id: Optional[int] = None) -> Dict[str, Any]:
-        """Return a compact diagnostic view of a queue."""
-        order = [t.task_id for t in self._get_queue(queue_id=queue_id)]
-        head = self._head_row_for_queue(queue_id)
-        start_at = (head.get("schedule") or {}).get("start_at") if head else None
-        return {
-            "queue_id": queue_id,
-            "order": order,
-            "head_id": (head.get("task_id") if head else None),
-            "start_at": start_at,
-        }
+    # Deprecated: _explain_queue removed. Compose using _list_queues() and _get_queue().
 
     @_ts_log_tool_runtime
     def _partition_queue(
@@ -3100,21 +3167,21 @@ class TaskScheduler(BaseTaskScheduler):
             - ``queue_name`` (str | None, optional): unused metadata; accepted for
               future compatibility.
 
-            The first part is applied to the default (legacy) queue. Subsequent
+            The first part is applied to the identified source queue. Subsequent
             parts are materialised as new queues (fresh ``queue_id``s).
 
         strategy : {"preserve_order", "as_list"}
             - ``preserve_order`` (default): within each part, preserve the relative
-              order as found in the original default queue;
+              order as found in the original source queue;
             - ``as_list``: use the exact ``task_ids`` order provided for each part.
 
         Behaviour
         ---------
-        - Tasks mentioned in later parts are detached from the default queue and
+        - Tasks mentioned in later parts are detached from the source queue and
           moved to newly created queues.
-        - The original default queue is reduced to the tasks in the first part.
+        - The original source queue is reduced to the tasks in the first part.
         - Queue-level ``start_at`` is set from each part's ``queue_start_at`` (if
-          provided); otherwise, the original default queue's timestamp is retained
+          provided); otherwise, the original source queue's timestamp is retained
           on the new head of the first part only.
 
         Notes
@@ -3124,7 +3191,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         # Determine the source queue id:
         # - Prefer the queue that contains the first task listed in the first part
-        # - Fallback to legacy default queue (queue_id=None) when unavailable
+        # - Fallback to source queue heuristics when unavailable
         source_qid: Optional[int] = None
         try:
             if parts and parts[0].get("task_ids"):
@@ -3189,7 +3256,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # 2) Reduce the source queue to the first part (in chosen order)
         first_list = _ordered(list(first_ids))
-        # Reorder default queue to include only these tasks: move out everything else already done
+        # Reorder source queue to include only these tasks: move out everything else already done
         if first_list:
             self._set_queue(queue_id=source_qid, order=first_list)
             # apply provided start_at or carry the original one
@@ -3423,30 +3490,7 @@ class TaskScheduler(BaseTaskScheduler):
         else:
             self._primed_task = None
 
-    @_ts_log_tool_runtime
-    def _get_task_queue(
-        self,
-        task_id: Optional[int] = None,
-    ) -> List[Task]:
-        """
-        Return the runnable task queue from head to tail.
-
-        Parameters
-        ----------
-        task_id : int | None, default ``None``
-            Optional starting node. When omitted the queue head is derived
-            (prefer primed task, else first runnable with no ``prev_task``).
-
-        Returns
-        -------
-        list[Task]
-            Ordered list of non‑terminal tasks from head to tail.
-
-        Notes
-        -----
-        Only rows actually traversed are loaded; the full table is not materialised.
-        """
-        return _ops_get_task_queue(self, task_id=task_id)
+    # Deprecated: _get_task_queue removed in favor of explicit helpers.
 
     # Small helper for ActiveQueue to await linkage stabilisation
     @_ts_log_tool_runtime
@@ -3518,51 +3562,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         return final_prev, final_next
 
-    @_ts_log_tool_runtime
-    def _update_task_queue(
-        self,
-        *,
-        original: List[int],
-        new: List[int],
-    ) -> ToolOutcome:
-        """
-        Update the default runnable queue to match ``new``.
-
-        Behaviour
-        ---------
-        - Duplicates are rejected.
-        - Removals are not allowed (``original`` must be a subset of ``new``).
-        - Trigger-based tasks cannot be placed into a runnable queue.
-        - If membership is unchanged (set equality), delegate to ``_reorder_queue``.
-        - If membership changed (inserts), delegate to ``_set_queue`` to
-          materialize the exact order and preserve head ``start_at``.
-        """
-        # -------  sanity checks  -------
-        assert len(set(original)) == len(
-            original,
-        ), f"'original' contains duplicates: {original}"
-        assert len(set(new)) == len(new), f"'new' contains duplicates: {new}"
-        # Only inserts are permitted via this API
-        assert set(original).issubset(
-            set(new),
-        ), f"update cannot remove existing tasks; cancel them first. Missing tasks: {set(original) - set(new)}"
-
-        # Reject placing trigger-based tasks into the runnable queue
-        for tid in new:
-            rows = self._filter_tasks(filter=f"task_id == {tid}", limit=1)
-            if not rows:
-                raise ValueError(f"Unknown task id: {tid}")
-            if rows[0].get("trigger") is not None:
-                raise ValueError(
-                    f"Task {tid} is trigger-based and cannot be placed in the queue.",
-                )
-
-        if set(original) == set(new):
-            # Pure reorder within the same membership
-            return self._reorder_queue(queue_id=None, new_order=list(new))
-
-        # Membership changed (insert-only) → materialize exact order
-        return self._set_queue(queue_id=None, order=list(new))
+    # Deprecated: _update_task_queue removed. Use _reorder_queue/_set_queue directly.
 
     # Legacy per-field updaters are no longer exposed as tools. Unified into _update_task.
 
