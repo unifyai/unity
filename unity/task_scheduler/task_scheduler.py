@@ -1661,19 +1661,25 @@ class TaskScheduler(BaseTaskScheduler):
         if not name or not description:
             raise ValueError("Both 'name' and 'description' are required")
 
-        # uniqueness (name / description)
-        # Escape *value* via ``repr`` so that any internal quotes (like apostrophes)
-        # do **not** break the filter expression.  Using ``!r`` ensures that we
-        # always generate a *valid* Python string literal regardless of the
-        # characters contained in *value*.
-        for key, value in {"name": name, "description": description}.items():
-            clashes = self._store.get_rows(
-                filter=f"{key} == {value!r}",
-                limit=1,
-                return_ids_only=False,
-            )
-            if clashes:
-                raise ValueError(f"A task with {key!r} = {value!r} already exists")
+        # Uniqueness (name/description) – single read covering both columns within this tool call
+        # Escape values via repr to keep a valid filter string regardless of content.
+        _name_lit = f"{name!r}"
+        _desc_lit = f"{description!r}"
+        _dupe_rows = self._store.get_entries(
+            filter=f"name == {_name_lit} or description == {_desc_lit}",
+            limit=2,
+        )
+        if _dupe_rows:
+            # Identify which field(s) collide for precise errors
+            for _r in _dupe_rows:
+                if _r.get("name") == name:
+                    raise ValueError(
+                        f"A task with {'name'!r} = {name!r} already exists",
+                    )
+                if _r.get("description") == description:
+                    raise ValueError(
+                        f"A task with {'description'!r} = {description!r} already exists",
+                    )
 
         # ----------------------------------- #
         #  derive status when caller omitted   #
@@ -1721,21 +1727,18 @@ class TaskScheduler(BaseTaskScheduler):
                 # Already queued behind another runnable task → never primed
                 status = Status.scheduled if future_start else Status.queued
             else:
-                # No predecessor pointer – determine priming based on the
-                # actual presence of a primed row, not just the internal cache.
+                # No predecessor pointer – prefer the in-memory primed pointer to avoid an extra read
                 if future_start:
                     status = Status.scheduled
                 else:
                     try:
-                        primed_exists = bool(
-                            self._filter_tasks(filter="status == 'primed'", limit=1),
-                        )
-                    except Exception:
                         primed_exists = (
                             self._primed_task is not None
                             and self._to_status(self._primed_task.get("status"))
                             == Status.primed
                         )
+                    except Exception:
+                        primed_exists = False
 
                     if self._active_task is None and not primed_exists:
                         status = Status.primed
@@ -1812,7 +1815,20 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ── Ensure the in-memory cache reflects any linkage tweaks ──
         if status == Status.primed:
-            self._refresh_primed_cache(task_id)
+            # Avoid a backend read: populate primed pointer directly from the created log
+            try:
+                primed_row = dict(log.entries)
+                # Ensure required keys are present on the cached row
+                primed_row["task_id"] = task_id
+                if "instance_id" not in primed_row:
+                    primed_row["instance_id"] = getattr(log, "entries", {}).get(
+                        "instance_id",
+                        task_details.get("instance_id"),
+                    )
+                self._primed_task = primed_row
+            except Exception:
+                # Fallback to lazy refresh if direct population fails
+                self._refresh_primed_cache(task_id)
 
         # ------------------  queue insertion (if relevant)  ---------- #
         if status == Status.queued:
