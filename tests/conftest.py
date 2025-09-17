@@ -261,6 +261,9 @@ def pytest_sessionstart(session):
         else "UnityTests"
     )
 
+    if os.environ.get("CI"):
+        unify.set_cache_backend("local_separate")
+
     unify.activate(
         project_name,
         overwrite=SETTINGS.UNIFY_OVERWRITE_PROJECT,
