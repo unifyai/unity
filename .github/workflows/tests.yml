@@ -208,12 +208,21 @@ jobs:
         REGISTER_SUMMARY_CALLBACKS: false
         REGISTER_UPDATE_CALLBACKS: false
 
-    - name: Save updated .cache.ndjson
+    - name: Prepare cache file for upload
       if: always()
-      uses: actions/cache/save@v4
+      run: |
+        if [ -f .cache.ndjson ]; then
+          mv .cache.ndjson ".cache.${{ steps.normalize-path.outputs.test_path_normalized }}.ndjson"
+        fi
+
+    - name: Upload cache artifact
+      if: always()
+      uses: actions/upload-artifact@v4
       with:
-        path: .cache.ndjson
-        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
+        name: cache-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
+        path: .cache.${{ steps.normalize-path.outputs.test_path_normalized }}.ndjson
+        if-no-files-found: ignore
+        retention-days: 7
 
     - name: Upload test artifact
       if: always()
@@ -225,5 +234,28 @@ jobs:
           tests.log
           report.xml
           report.html
-          .cache.ndjson
         retention-days: 7
+
+  cache-consolidation:
+    name: Consolidate and store cache
+    runs-on: ubuntu-latest
+    needs: pytest
+    if: always()
+    steps:
+    - name: Download cache artifacts from current run
+      uses: actions/download-artifact@v4
+      with:
+        pattern: cache-*
+        path: cache-artifacts
+        merge-multiple: true
+
+    - name: Consolidate .cache.ndjson files
+      run: |
+        python3 .github/scripts/consolidate_cache.py \
+          --artifacts-dir cache-artifacts
+
+    - name: Store consolidated cache
+      uses: actions/cache/save@v4
+      with:
+        path: .cache.ndjson
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
