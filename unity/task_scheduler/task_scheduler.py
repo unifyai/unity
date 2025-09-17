@@ -394,6 +394,14 @@ class TaskScheduler(BaseTaskScheduler):
         self._reintegration_plans: dict[int, "ReintegrationPlan"] = {}
         self._reintegration_manager = ReintegrationManager(self)
 
+        # In-memory acceleration: map task_id → log_event_id for fast deletes and updates
+        # within a single process lifetime. This avoids an extra get_logs lookup when we
+        # already know the backing log id (e.g., immediately after creation).
+        self._task_log_id_cache: Dict[int, int] = {}
+        # Track task_ids that are known to have multiple instances so we don't
+        # attempt single-id fast paths when deleting.
+        self._multi_instance_tasks: set[int] = set()
+
         # Linkage barriers: per-task events set after queue linkage updates
         # complete for a given activation. ActiveQueue can await these to avoid
         # racing reads before symmetric neighbour writes are visible.
@@ -1808,6 +1816,13 @@ class TaskScheduler(BaseTaskScheduler):
         log = self._store.log(entries=task_details, new=True)
         task_id = log.entries["task_id"]
         task_details["task_id"] = task_id
+        # Cache the backing log id for fast single-call delete/updates.
+        try:
+            _lid = getattr(log, "id", None)
+            if isinstance(_lid, int):
+                self._task_log_id_cache[int(task_id)] = int(_lid)
+        except Exception:
+            pass
 
         # Keep linkage symmetric right after creation
         self._sync_adjacent_links(task_id=task_id, schedule=schedule)
@@ -2093,7 +2108,16 @@ class TaskScheduler(BaseTaskScheduler):
                     e = getattr(lg, "entries", {}) or {}
                     nm = str(e.get("name"))
                     ds = str(e.get("description"))
-                    by_key[(nm, ds)] = int(e.get("task_id"))
+                    tid_maybe = e.get("task_id")
+                    if tid_maybe is not None:
+                        by_key[(nm, ds)] = int(tid_maybe)
+                        # Also cache task_id → log_id mapping while we have both
+                        try:
+                            _lid = getattr(lg, "id", None)
+                            if isinstance(_lid, int):
+                                self._task_log_id_cache[int(tid_maybe)] = int(_lid)
+                        except Exception:
+                            pass
                 except Exception:
                     continue
             created_ids = []
@@ -2314,9 +2338,30 @@ class TaskScheduler(BaseTaskScheduler):
             If the task is currently *active* (active tasks cannot be deleted).
         """
         self._ensure_not_active_task(task_id)
-        # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1awp] is done
-        log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        self._store.delete(logs=log_id)
+        # Fast path: if we know the backing log id for this task, delete directly
+        try:
+            cached_log_id = self._task_log_id_cache.get(int(task_id))
+        except Exception:
+            cached_log_id = None
+
+        if isinstance(cached_log_id, int):
+            try:
+                self._store.delete(logs=cached_log_id)
+            finally:
+                # Remove cache entry regardless of backend outcome to avoid stale ids
+                try:
+                    self._task_log_id_cache.pop(int(task_id), None)
+                except Exception:
+                    pass
+        else:
+            # Fallback: resolve the log id via a single lookup then delete
+            log_id = self._get_logs_by_task_ids(task_ids=task_id)
+            self._store.delete(logs=log_id)
+            # Best-effort cache clean-up
+            try:
+                self._task_log_id_cache.pop(int(task_id), None)
+            except Exception:
+                pass
         return {
             "outcome": "task deleted",
             "details": {"task_id": task_id},
