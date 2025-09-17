@@ -5,25 +5,10 @@ This directory provides a Node-based runtime that launches:
 - Virtual audio devices (PipeWire/WirePlumber + PulseAudio modules)
 - The Magnitude BrowserAgent (`agent-service`)
 
-## What’s included
-- Dockerfile: Based on `node:20-bookworm-slim` with only the required deps
-  - Virtual desktop/remote view (Xvfb, Fluxbox, x11vnc, websockify, noVNC assets)
-  - Browser runtime libraries (Chromium/Playwright)
-  - Virtual audio stack (pipewire, wireplumber, pulseaudio/alsa utils)
-  - Native module toolchain/runtime (`build-essential`, `python3`, `pkg-config`, `libvips`)
-- desktop.sh: Starts Xvfb, window manager, x11vnc, noVNC, xdg-desktop-portal; creates `/tmp/unify/assistant/install`
-- device.sh: Initializes PipeWire/WirePlumber and null-sink routing via PulseAudio
-- startup.sh: Orchestrates startup and clean shutdown (traps SIGTERM/SIGINT)
-
-### Exposed ports
-- 6080/tcp: noVNC web UI
-- 5900/tcp: x11vnc server
-- 3000/tcp: agent-service HTTP API
-
-### Shutdown behavior
-startup.sh records PIDs of desktop, device and agent processes and on SIGTERM/SIGINT sends TERM and waits for each to exit, ensuring a clean shutdown.
-
 ## Setup
+
+Watch these videos for [setup](https://www.loom.com/share/ad1a9b9c4e6e4de1a9b5012523a34049?sid=974205eb-28ad-4f91-9752-dfe722fed214) and [controls](https://www.loom.com/share/654bcf321cd24a698032dab5e7e45059?sid=ea521290-cf86-425c-8308-6845864c86ee).
+
 - Build: `docker build -t unity-desktop -f desktop/Dockerfile .`
 - Run: `docker run --rm -p 6080:6080 -p 5900:5900 -p 3000:3000 --env-file .env unity-desktop`
 - Open `http://localhost:6080/vnc.html?resize=scale&autoconnect=1&autoreconnect=1` to view the desktop

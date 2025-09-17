@@ -4,17 +4,25 @@
 
 1. Homebrew
 
+`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
+
 ### Setup
 
 1. Install the required package
 
 `bash install.sh`
 
-2. Start the remote client app.
+2. Create a user profile for the agent with the following details:
 
-`bash remote.sh $UNIFY_KEY`
+Username: `<AGENT_NAME_FIRST_LAST>`
 
-3. Tunnel the service to HTTPS.
+Password: `<UNIFY_KEY>`
+
+3. Start the remote client app.
+
+`bash remote.sh`
+
+4. Tunnel the service to HTTPS.
 
 a. For testing
 
@@ -38,11 +46,11 @@ b. For production - WIP
 
 `bash liveview.sh`
 
-2. View and control the desktop through the URL below. When prompted for password, input your Unify API key.
+2. View and control the desktop through the URL below. When prompted for username and password, use the details above.
 
 `<cloudflared-url>/vnc.html?resize=scale&autoreconnect=1&autoconnect=1`
 
 ### Troubleshooting
 
-- Make sure `ANTHROPIC_API_KEY`, `UNIFY_BASE_URL` and `UNIFY_KEY` are in your `.env` file when starting the Docker container.
+- Make sure `ANTHROPIC_API_KEY`, `UNIFY_BASE_URL` and `UNIFY_KEY` are in your `.env` file when starting the service.
 - When running with Actor, make sure `UNIFY_KEY` and at least `ASSISTANT_EMAIL=unity.agent@unity.ai` are present in your unity `.env` for the magnitude server auth to work.
