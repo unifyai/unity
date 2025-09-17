@@ -307,14 +307,8 @@ class TaskScheduler(BaseTaskScheduler):
                 self._partition_queue,
                 # Reintegration
                 self._reinstate_task_to_previous_queue,
-                # Attribute mutations
-                self._update_task_name,
-                self._update_task_description,
-                self._update_task_start_at,
-                self._update_task_deadline,
-                self._update_task_repetition,
-                self._update_task_priority,
-                self._update_task_trigger,
+                # Attribute mutations (single general-purpose updater)
+                self._update_task,
                 include_class_name=False,  # redundant, all same class (this one)
             ),
             **methods_to_tool_dict(
@@ -2878,7 +2872,7 @@ class TaskScheduler(BaseTaskScheduler):
                         )
                     except Exception:
                         dt = source_start  # type: ignore[assignment]
-                    self._update_task_start_at(task_id=head_tid, new_start_at=dt)  # type: ignore[arg-type]
+                    self._update_task(task_id=head_tid, start_at=dt)  # type: ignore[arg-type]
         except Exception:
             pass
 
@@ -3190,7 +3184,7 @@ class TaskScheduler(BaseTaskScheduler):
             if qstart is not None and ordered:
                 # Set via central helper to preserve invariants
                 head_tid = ordered[0]
-                self._update_task_start_at(task_id=head_tid, new_start_at=qstart)
+                self._update_task(task_id=head_tid, start_at=qstart)
             created.append({"queue_id": qid, "task_ids": ordered})
 
         # 2) Reduce the source queue to the first part (in chosen order)
@@ -3206,7 +3200,7 @@ class TaskScheduler(BaseTaskScheduler):
                 fstart = queue_start_ts
             if fstart is not None:
                 head_tid = first_list[0]
-                self._update_task_start_at(task_id=head_tid, new_start_at=fstart)
+                self._update_task(task_id=head_tid, start_at=fstart)
 
         details = {"default_queue": first_list, "new_queues": created}
         # Auto-checkpoint after successful edit (best-effort)
@@ -3570,132 +3564,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Membership changed (insert-only) → materialize exact order
         return self._set_queue(queue_id=None, order=list(new))
 
-    @_ts_log_tool_runtime
-    def _update_task_trigger(
-        self,
-        *,
-        task_id: int,
-        new_trigger: TriggerLike,
-    ) -> ToolOutcome:
-        """
-        Set, replace or clear a task's trigger.
-
-        Parameters
-        ----------
-        task_id : int
-            Identifier of the task to update.
-        new_trigger : Trigger | dict | None
-            Replacement trigger or ``None`` to remove it.
-
-        Returns
-        -------
-        ToolOutcome
-            Outcome payload with the updated task id.
-
-        Raises
-        ------
-        ValueError
-            If a trigger is added while a schedule exists.
-        """
-
-        self._ensure_not_active_task(task_id)
-
-        current_rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
-        if not current_rows:
-            raise ValueError(f"No task found with id={task_id}")
-
-        current = current_rows[0]
-
-        if current.get("schedule") is not None and new_trigger is not None:
-            raise ValueError(
-                "Cannot add a *trigger* while a *schedule* exists. "
-                "Remove the schedule first.",
-            )
-
-        if isinstance(new_trigger, dict):
-            new_trigger = Trigger(**new_trigger)
-
-        # Ensure JSON-serialisable payload (pydantic → dict)
-        entries: Dict[str, Any] = {
-            "trigger": new_trigger.model_dump() if new_trigger is not None else None,
-        }
-
-        # ── status transitions ───────────────────────────────────────────
-        cur_status = self._to_status(current["status"])
-        if new_trigger is not None and cur_status != Status.triggerable:
-            entries["status"] = Status.triggerable
-        elif new_trigger is None and cur_status == Status.triggerable:
-            entries["status"] = Status.queued
-
-        log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        self._write_log_entries(logs=log_id, entries=entries, overwrite=True)
-
-        return {
-            "outcome": "trigger updated",
-            "details": {"task_id": task_id},
-        }
-
-    # Update Name / Description
-
-    @_ts_log_tool_runtime
-    def _update_task_name(
-        self,
-        *,
-        task_id: int,
-        new_name: str,
-    ) -> Dict[str, str]:
-        """
-        Change the **name** (title) of an existing task.
-
-        Parameters
-        ----------
-        task_id : int
-            Identifier of the task to rename.
-        new_name : str
-            New unique name.
-
-        Returns
-        -------
-        dict[str, str]
-            Confirmation payload from :pyfunc:`unify.update_logs`.
-        """
-        return self._update_fields_if_not_active(
-            task_id=task_id,
-            entries={"name": new_name},
-        )
-
-    @_ts_log_tool_runtime
-    def _update_task_description(
-        self,
-        *,
-        task_id: int,
-        new_description: str,
-    ) -> Dict[str, str]:
-        """
-        Replace the **description** of an existing task.
-
-        Parameters
-        ----------
-        task_id : int
-            Identifier of the task to modify.
-        new_description : str
-            Fresh free-text description (no length limit, Markdown allowed).
-
-        Returns
-        -------
-        dict[str, str]
-            Confirmation payload as returned by :pyfunc:`unify.update_logs`.
-
-        Raises
-        ------
-        RuntimeError
-            If the referenced task is currently *active* – active tasks are
-            immutable from the scheduler's perspective.
-        """
-        return self._update_fields_if_not_active(
-            task_id=task_id,
-            entries={"description": new_description},
-        )
+    # Legacy per-field updaters are no longer exposed as tools. Unified into _update_task.
 
     # Update Task(s) Status / Schedule / Deadline / Repetition / Priority
 
@@ -3741,173 +3610,187 @@ class TaskScheduler(BaseTaskScheduler):
         return self._write_log_entries(logs=log_ids, entries=entries, overwrite=True)
 
     @_ts_log_tool_runtime
-    def _update_task_start_at(
+    def _update_task(
         self,
         *,
         task_id: int,
-        new_start_at: datetime,
-    ) -> Dict[str, str]:
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        status: Optional[Union["Status", str]] = None,
+        start_at: Optional[Union[str, "datetime"]] = None,
+        deadline: Optional[Union[str, "datetime"]] = None,
+        repeat: Optional[List[Union["RepeatPattern", Dict[str, Any]]]] = None,
+        priority: Optional[Union["Priority", str]] = None,
+        trigger: Optional[Union["Trigger", Dict[str, Any], None]] = None,
+    ) -> Dict[str, Any]:
         """
-        Set or change a task's **scheduled start-time** (UTC).
-
-        Parameters
-        ----------
-        task_id : int
-            Identifier of the task to reschedule.
-        new_start_at : datetime
-            Exact moment the task becomes *eligible* for activation.  A naive
-            datetime is assumed to be UTC; otherwise the value is preserved
-            verbatim.
-
-        Returns
-        -------
-        dict[str, str]
-            Confirmation payload from :pyfunc:`unify.update_logs`.
-
-        Notes
-        -----
-        * The method **preserves** any existing queue linkage
-          (``prev_task`` / ``next_task``).
-        * When the task previously had *no* schedule, a minimal one is
-          created with linkage fields set to ``None`` (task is *not*
-          inserted into the runnable queue automatically).
-        """
-        self._ensure_not_active_task(task_id)
-        # Coerce to ISO-8601 string (Unify stores plain serialisable values)
-        if isinstance(new_start_at, datetime):
-            new_start_at = new_start_at.isoformat()
-
-        # Fetch current row (needed for invariants & trigger check)
-        current_rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
-
-        if current_rows and current_rows[0].get("trigger") is not None:
-            raise ValueError(
-                "Cannot add/update *start_at* – the task is trigger-based.",
-            )
-        current_sched = current_rows[0].get("schedule") if current_rows else None
-
-        # Guard-rail: tasks inside a queue can't own a start_at
-        if self._sched_prev(current_sched) is not None:
-            raise ValueError(
-                "Cannot set 'start_at' when the task has 'prev_task'. "
-                "Move it to the queue head first.",
-            )
-
-        if current_sched is None:
-            current_sched = {}
-
-        # Preserve queue linkage if it exists, otherwise default to None
-        sched_payload = {
-            "prev_task": self._sched_prev(current_sched),
-            "next_task": self._sched_next(current_sched),
-            "start_at": new_start_at,
-        }
-
-        # Determine desired status first, then validate invariants against that status
-        desired_status = self._to_status(current_rows[0]["status"])  # type: ignore[arg-type]
-        if self._sched_prev(current_sched) is None and new_start_at is not None:
-            desired_status = Status.scheduled
-
-        # Validate using desired status so head+start_at is allowed
-        self._validate_scheduled_invariants(
-            status=desired_status,
-            schedule=sched_payload,
-            err_prefix=f"While updating start_at for task {task_id}:",
-        )
-
-        entries: Dict[str, Any] = {"schedule": sched_payload}
-        if desired_status != self._to_status(current_rows[0]["status"]):  # type: ignore[arg-type]
-            entries["status"] = desired_status
-
-        return self._validated_write(
-            task_id=task_id,
-            entries=entries,
-            err_prefix=f"While updating start_at for task {task_id}:",
-        )
-
-    @_ts_log_tool_runtime
-    def _update_task_deadline(
-        self,
-        *,
-        task_id: int,
-        new_deadline: datetime,
-    ) -> Dict[str, str]:
-        """
-        Adjust a task's **hard deadline** (UTC ISO-8601 timestamp).
-
-        Parameters
-        ----------
-        task_id : int
-            Task identifier.
-        new_deadline : datetime
-            Absolute "must-finish-by" moment.  Naive datetimes are coerced to
-            UTC; timezone-aware values are stored unchanged.
-
-        Returns
-        -------
-        dict[str, str]
-            Confirmation from :pyfunc:`unify.update_logs`.
-        """
-        return self._update_fields_if_not_active(
-            task_id=task_id,
-            entries={"deadline": new_deadline},
-        )
-
-    @_ts_log_tool_runtime
-    def _update_task_repetition(
-        self,
-        *,
-        task_id: int,
-        new_repeat: List[RepeatPattern],
-    ) -> Dict[str, str]:
-        """
-        Replace the **recurrence rules** associated with a task.
+        Update one or more fields of an existing task.
 
         Parameters
         ----------
         task_id : int
             Identifier of the task to modify.
-        new_repeat : list[RepeatPattern]
-            Complete list of replacement recurrence definitions.  Pass an
-            empty list to *disable* repetition.
+        name : str | None
+            New task name.
+        description : str | None
+            New task description.
+        status : Status | str | None
+            Lifecycle status. Setting to 'active' is not allowed here.
+        start_at : datetime | str | None
+            Queue head start timestamp. Only valid when the task is at the head
+            (no prev_task). Mutually exclusive with trigger.
+        deadline : datetime | str | None
+            Hard deadline.
+        repeat : list[RepeatPattern | dict] | None
+            Replacement repetition rules. Use an empty list to clear.
+        priority : Priority | str | None
+            Importance level.
+        trigger : Trigger | dict | None
+            Replacement trigger. Mutually exclusive with any schedule/start_at.
 
         Returns
         -------
-        dict[str, str]
-            Confirmation payload from :pyfunc:`unify.update_logs`.
+        dict
+            Confirmation payload from the write operation.
         """
-        return self._update_fields_if_not_active(
-            task_id=task_id,
-            entries={"repeat": [r.model_dump() for r in new_repeat]},
-        )
 
-    @_ts_log_tool_runtime
-    def _update_task_priority(
-        self,
-        *,
-        task_id: int,
-        new_priority: Priority,
-    ) -> Dict[str, str]:
-        """
-        Set a task's **priority** (relative importance cue for queueing).
+        # Forbid edits on the currently active task via scheduler APIs
+        self._ensure_not_active_task(task_id)
 
-        Parameters
-        ----------
-        task_id : int
-            Task identifier.
-        new_priority : Priority
-            One of the enumeration values from
-            :class:`~task_scheduler.types.priority.Priority`.
+        # No-op guard
+        if (
+            name is None
+            and description is None
+            and status is None
+            and start_at is None
+            and deadline is None
+            and repeat is None
+            and priority is None
+            and (trigger is None)
+        ):
+            raise ValueError("At least one field must be provided for an update.")
 
-        Returns
-        -------
-        dict[str, str]
-            Confirmation payload from :pyfunc:`unify.update_logs`.
-        """
-        return self._update_fields_if_not_active(
-            task_id=task_id,
-            entries={"priority": new_priority},
-        )
+        # Fetch current row for invariants/derivations
+        row = self._get_single_row_or_raise(int(task_id))
+        current_sched = row.get("schedule") or {}
+
+        # Mutually exclusive guard: trigger with any schedule/start_at
+        if trigger is not None:
+            # If the update itself adds a start_at or the current schedule is present, reject
+            if start_at is not None:
+                raise ValueError("Cannot set a trigger alongside a start_at schedule.")
+            if row.get("schedule") is not None:
+                raise ValueError(
+                    "Cannot add a trigger while a schedule exists. Remove schedule first.",
+                )
+
+        # Build prospective schedule if start_at is supplied
+        schedule_payload: Optional[Dict[str, Any]] = None
+        if start_at is not None:
+            # Disallow start_at when the task is trigger-based
+            if row.get("trigger") is not None:
+                raise ValueError(
+                    "Cannot add/update *start_at* – the task is trigger-based.",
+                )
+            # Guard-rail: tasks with a predecessor cannot own start_at
+            if self._sched_prev(current_sched) is not None:
+                raise ValueError(
+                    "Cannot set 'start_at' when the task has 'prev_task'. Move it to the queue head first.",
+                )
+            # Coerce datetime to ISO-8601 string if needed
+            if not isinstance(start_at, str):
+                try:
+                    start_at = start_at.isoformat()  # type: ignore[assignment]
+                except Exception:
+                    pass
+            schedule_payload = {
+                "prev_task": self._sched_prev(current_sched),
+                "next_task": self._sched_next(current_sched),
+                "start_at": start_at,
+            }
+
+        # Determine desired status
+        desired_status: Optional["Status"] = None
+        if status is not None:
+            # Forbid forcing 'active'
+            status_enum = self._to_status(status)  # type: ignore[arg-type]
+            if status_enum == Status.active:
+                raise ValueError(
+                    "Direct status changes to 'active' are not allowed; use the execution method.",
+                )
+            desired_status = status_enum
+        else:
+            # Infer from trigger/start_at when caller didn't specify a status
+            if trigger is not None:
+                desired_status = Status.triggerable
+            elif (
+                schedule_payload is not None
+                and schedule_payload.get("start_at") is not None
+            ):
+                desired_status = Status.scheduled
+
+        # Validate queue/schedule invariants when status or start_at provided
+        if desired_status is not None or schedule_payload is not None:
+            self._validate_scheduled_invariants(
+                status=(
+                    desired_status if desired_status is not None else row.get("status")
+                ),
+                schedule=(
+                    schedule_payload if schedule_payload is not None else current_sched
+                ),
+                err_prefix=f"While updating task {task_id}:",
+            )
+
+        # Compose entries
+        entries: Dict[str, Any] = {}
+        if name is not None:
+            entries["name"] = name
+        if description is not None:
+            entries["description"] = description
+        if deadline is not None:
+            entries["deadline"] = deadline
+        if repeat is not None:
+            # Normalise RepeatPattern objects to plain dicts
+            norm_repeat: List[Dict[str, Any]] = []
+            for r in repeat:
+                if hasattr(r, "model_dump"):
+                    norm_repeat.append(r.model_dump())  # type: ignore[assignment]
+                else:
+                    norm_repeat.append(dict(r))  # type: ignore[arg-type]
+            entries["repeat"] = norm_repeat
+        if priority is not None:
+            entries["priority"] = priority
+        if trigger is not None:
+            if isinstance(trigger, dict):
+                trigger = Trigger(**trigger)
+            entries["trigger"] = trigger.model_dump() if trigger is not None else None
+        if schedule_payload is not None:
+            entries["schedule"] = schedule_payload
+        if desired_status is not None:
+            entries["status"] = desired_status
+
+        # If clearing a trigger (trigger explicitly None) and current status is triggerable
+        if (
+            (trigger is None)
+            and (status is None)
+            and self._to_status(row.get("status")) == Status.triggerable
+        ):
+            # Downgrade to queued when trigger removed (and not setting start_at)
+            if schedule_payload is None:
+                entries["status"] = Status.queued
+
+        # Persist via central validated funnel when schedule/status involved; otherwise a direct write is fine
+        if ("schedule" in entries) or ("status" in entries):
+            return self._validated_write(
+                task_id=task_id,
+                entries=entries,
+                err_prefix=f"While updating task {task_id}:",
+            )
+        else:
+            log_id = self._get_logs_by_task_ids(task_ids=task_id)
+            return self._write_log_entries(logs=log_id, entries=entries, overwrite=True)
+
+    # Legacy per-field updaters are kept above as comments; use _update_task instead.
 
     # ────────────────────────────────────────────────────────────────────
     # Small internal helpers

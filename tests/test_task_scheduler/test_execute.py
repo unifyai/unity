@@ -65,7 +65,7 @@ async def _make_ordered_queue(ts: TaskScheduler, names: List[str]) -> List[int]:
     ts._set_queue(queue_id=qid, order=ids)
 
     # Put a start_at timestamp on the head only
-    ts._update_task_start_at(task_id=ids[0], new_start_at=datetime.now(timezone.utc))
+    ts._update_task(task_id=ids[0], start_at=datetime.now(timezone.utc))
     return ids
 
 
@@ -415,7 +415,7 @@ async def test_update_status_cannot_force_active_and_does_not_set_activation_met
 
     # Attempt to force 'active' via status update should fail
     with pytest.raises(ValueError):
-        ts._update_task_status(task_ids=task_id, new_status="active")
+        ts._update_task(task_id=task_id, status="active")
 
     # Ensure no activation metadata exists prior to activation
     rows = ts._filter_tasks(filter=f"task_id == {task_id}")
@@ -423,7 +423,7 @@ async def test_update_status_cannot_force_active_and_does_not_set_activation_met
     assert rows[0].get("activated_by") in (None, "")
 
     # Change a non-active status and ensure activated_by remains unset
-    ts._update_task_status(task_ids=task_id, new_status="paused")
+    ts._update_task(task_id=task_id, status="paused")
     rows2 = ts._filter_tasks(filter=f"task_id == {task_id}")
     assert rows2[0].get("status") == "paused"
     assert rows2[0].get("activated_by") in (None, "")
