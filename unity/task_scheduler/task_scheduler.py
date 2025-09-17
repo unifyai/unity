@@ -1936,15 +1936,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Pre‑validate names/descriptions to avoid partial creation on obvious duplicates
         seen_names: set[str] = set()
         seen_descs: set[str] = set()
-        # Capture whether a primed task existed BEFORE this batch, so we don't
-        # count any auto-primed rows created within this call when validating
-        # primed head policy.
-        try:
-            _primed_existed_before = bool(
-                self._filter_tasks(filter="status == 'primed'", limit=1),
-            )
-        except Exception:
-            _primed_existed_before = self._primed_task is not None
+        # Defer checking existing primed state until needed (only when queue_ordering is provided).
         for idx, spec in enumerate(tasks):
             name = spec.get("name")
             desc = spec.get("description")
@@ -1964,30 +1956,171 @@ class TaskScheduler(BaseTaskScheduler):
             seen_names.add(str(name))
             seen_descs.add(str(desc))
 
-        # Create tasks sequentially to preserve ascending id assignment
+        # Batched fast path: simple specs (no schedule/trigger/queue edits) and no explicit ordering
+        simple_allowed = queue_ordering is None and all(
+            not any(
+                k in spec
+                for k in (
+                    "schedule",
+                    "trigger",
+                    "deadline",
+                    "repeat",
+                    "priority",
+                    "response_policy",
+                    "status",
+                    "queue_id",
+                )
+            )
+            for spec in tasks
+        )
+
         created_ids: List[int] = []
-        for spec in tasks:
-            # Whitelist supported fields mirroring _create_task signature
-            payload: Dict[str, Any] = {}
-            for key in (
-                "name",
-                "description",
-                "status",
-                "schedule",
-                "trigger",
-                "deadline",
-                "repeat",
-                "priority",
-                "response_policy",
-            ):
-                if key in spec:
-                    payload[key] = spec[key]
-            out = self._create_task(**payload)
-            created_ids.append(int(out["details"]["task_id"]))
+        if simple_allowed:
+            # Single deduplication read across all names/descriptions
+            try:
+                # Build a single OR-chain filter across provided names/descriptions
+                clauses: list[str] = []
+                for spec in tasks:
+                    nm = spec.get("name")
+                    ds = spec.get("description")
+                    if nm:
+                        clauses.append(f"name == {nm!r}")
+                    if ds:
+                        clauses.append(f"description == {ds!r}")
+                filter_expr = " or ".join(clauses) if clauses else None
+                existing = (
+                    self._store.get_entries(filter=filter_expr, limit=len(tasks) + 1)
+                    if filter_expr
+                    else []
+                )
+            except Exception:
+                existing = []
+            # Check collisions precisely
+            if existing:
+                existing_names = {r.get("name") for r in existing}
+                existing_descs = {r.get("description") for r in existing}
+                for idx, spec in enumerate(tasks):
+                    if spec.get("name") in existing_names:
+                        raise ValueError(
+                            f"A task with {'name'!r} = {spec.get('name')!r} already exists",
+                        )
+                    if spec.get("description") in existing_descs:
+                        raise ValueError(
+                            f"A task with {'description'!r} = {spec.get('description')!r} already exists",
+                        )
+
+            # Decide statuses once (no extra reads within this tool call)
+            assign_primed = self._active_task is None and (
+                self._primed_task is None
+                or self._to_status(self._primed_task.get("status")) != Status.primed
+            )  # type: ignore[arg-type]
+
+            entries_list: List[Dict[str, Any]] = []
+            primed_index: Optional[int] = (
+                0 if assign_primed and len(tasks) > 0 else None
+            )
+            for idx, spec in enumerate(tasks):
+                desired_status = (
+                    Status.primed
+                    if primed_index is not None and idx == primed_index
+                    else Status.queued
+                )
+                task_payload = Task(
+                    name=str(spec.get("name")),
+                    description=str(spec.get("description")),
+                    status=desired_status,
+                    schedule=None,
+                    trigger=None,
+                    deadline=None,
+                    repeat=None,
+                    priority=Priority.normal,
+                    response_policy=None,
+                    queue_id=None,
+                ).to_post_json()
+                entries_list.append(task_payload)
+
+            # Create all in one backend call, then fetch created rows once
+            resp = self._store.create_many(entries_list=entries_list)
+            created_log_ids: List[int] = []
+            try:
+                created_log_ids = list(resp.get("log_event_ids") or [])
+            except Exception:
+                created_log_ids = []
+            if not created_log_ids:
+                try:
+                    rid = resp.get("row_ids", {})
+                    created_log_ids = list(rid.get("ids") or [])
+                except Exception:
+                    created_log_ids = []
+
+            rows = []
+            try:
+                if created_log_ids:
+                    rows = self._store.get_rows_by_log_ids(log_ids=created_log_ids)
+            except Exception:
+                rows = []
+            # Derive task_ids from returned rows in the same order as input specs
+            by_key: Dict[tuple[str, str], int] = {}
+            for lg in rows:
+                try:
+                    e = getattr(lg, "entries", {}) or {}
+                    nm = str(e.get("name"))
+                    ds = str(e.get("description"))
+                    by_key[(nm, ds)] = int(e.get("task_id"))
+                except Exception:
+                    continue
+            created_ids = []
+            for spec in tasks:
+                tid = by_key.get((str(spec.get("name")), str(spec.get("description"))))
+                if tid is not None:
+                    created_ids.append(int(tid))
+
+            # Reflect primed pointer in memory if we created one
+            if primed_index is not None and rows:
+                try:
+                    primed_rows = [
+                        r
+                        for r in rows
+                        if (getattr(r, "entries", {}) or {}).get("status")
+                        == str(Status.primed)
+                    ]
+                    if primed_rows:
+                        pr = primed_rows[0]
+                        self._primed_task = dict(getattr(pr, "entries", {}))
+                        self._primed_task["task_id"] = self._primed_task.get("task_id")
+                except Exception:
+                    pass
+        else:
+            # Create tasks sequentially to preserve ascending id assignment
+            created_ids = []
+            for spec in tasks:
+                payload: Dict[str, Any] = {}
+                for key in (
+                    "name",
+                    "description",
+                    "status",
+                    "schedule",
+                    "trigger",
+                    "deadline",
+                    "repeat",
+                    "priority",
+                    "response_policy",
+                ):
+                    if key in spec:
+                        payload[key] = spec[key]
+                out = self._create_task(**payload)
+                created_ids.append(int(out["details"]["task_id"]))
 
         queues_report: List[Dict[str, Any]] = []
 
         if queue_ordering:
+            # Single read to determine primed existence for policy validation
+            try:
+                _primed_existed_before = bool(
+                    self._filter_tasks(filter="status == 'primed'", limit=1),
+                )
+            except Exception:
+                _primed_existed_before = self._primed_task is not None
             # Normalise queue_ordering into a list of {order: [...], head_policy: {...}}
             normalised: List[Dict[str, Any]] = []
 
