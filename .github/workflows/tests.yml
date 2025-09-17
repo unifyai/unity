@@ -166,7 +166,7 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: .cache.ndjson
-        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
         restore-keys: |
           cache-ndjson-${{ runner.os }}-
 
@@ -212,7 +212,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: cache-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
+        name: cache-diff-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
         path: .cache.ndjson
         if-no-files-found: ignore
         include-hidden-files: true
@@ -240,7 +240,7 @@ jobs:
     - name: Download cache artifacts from current run
       uses: actions/download-artifact@v4
       with:
-        pattern: cache-*
+        pattern: cache-diff-*
         path: cache-artifacts
 
     - name: Consolidate .cache.ndjson files
