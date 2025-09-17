@@ -1293,9 +1293,13 @@ class _ToolsData:
         limit = self.normalized[task_name].max_concurrent
         return limit is None or self.active_count(task_name) < limit
 
-    def _save_task(self, coro, metadata: ToolCallMetadata):
+    def save_task(self, coro, metadata: ToolCallMetadata):
         self.pending.add(coro)
         self.info[coro] = metadata
+
+    def pop_task(self, coro: asyncio.Task) -> ToolCallMetadata:
+        self.pending.discard(coro)
+        return self.info.pop(coro, None)
 
     def active_count(self, task_name: str) -> int:
         return sum(1 for _t, _inf in self.info.items() if _inf.name == task_name)
@@ -1458,7 +1462,7 @@ class _ToolsData:
             llm_arguments=allowed_call_args,
             raw_arguments_json=args_json,
         )
-        self._save_task(t, metadata)
+        self.save_task(t, metadata)
 
         if self._logger.log_steps:
             self._logger.info(
@@ -1505,8 +1509,7 @@ class _ToolsData:
             """True when *msg* is the very last entry in client.messages."""
             return bool(self._client.messages) and self._client.messages[-1] is msg
 
-        self.pending.discard(task)
-        info: ToolCallMetadata = self.info.pop(task)
+        info: ToolCallMetadata = self.pop_task(task)
         name = info.name
         call_id = info.call_id
         fn = info.call_dict["function"]["name"]
@@ -1596,7 +1599,7 @@ class _ToolsData:
                     clar_up_queue=h_up_q,
                     clar_down_queue=h_down_q,
                 )
-                self._save_task(nested_task, metadata)
+                self.save_task(nested_task, metadata)
                 if h_up_q is not None:
                     self.clarification_channels[call_id] = (h_up_q, h_down_q)
                 return False  # ⬅️  no LLM turn required
@@ -1886,8 +1889,7 @@ class DynamicToolFactory:
                 )
             if not task.done():
                 task.cancel()  # kill the waiter coroutine
-            self.tools_data.pending.discard(task)
-            self.tools_data.info.pop(task, None)
+            self.tools_data.pop_task(task)
             return {"status": "stopped", "call_id": _call_id, **_kw}
 
         self._register_tool(
@@ -3631,7 +3633,7 @@ async def _async_tool_use_loop_inner(
                             llm_arguments=allowed_call_args,
                             raw_arguments_json=call["function"]["arguments"],
                         )
-                        tools_data._save_task(
+                        tools_data.save_task(
                             coro=t,
                             metadata=metadata,
                         )
