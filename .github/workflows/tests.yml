@@ -215,14 +215,14 @@ jobs:
         name: cache-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
         path: .cache.ndjson
         if-no-files-found: ignore
-        retention-days: 7
+        include-hidden-files: true
+        retention-days: 1
 
     - name: Upload test artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: ${{ format('test-results-{0}', steps.normalize-path.outputs.test_path_normalized) }}
-        include-hidden-files: true
         path: |
           tests.log
           report.xml
@@ -235,6 +235,8 @@ jobs:
     needs: pytest
     if: always()
     steps:
+    - uses: actions/checkout@v2
+
     - name: Download cache artifacts from current run
       uses: actions/download-artifact@v4
       with:
