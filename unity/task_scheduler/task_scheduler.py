@@ -672,7 +672,6 @@ class TaskScheduler(BaseTaskScheduler):
                 get_latest_checkpoint,
                 self._set_queue,
                 self._set_schedules_atomic,
-                self._explain_queue,
                 include_class_name=False,
             ),
         )
@@ -1294,9 +1293,6 @@ class TaskScheduler(BaseTaskScheduler):
         tools = methods_to_tool_dict(
             # Read-only helpers
             self.ask,
-            self._get_task_queue,
-            # Queue mutation primitive (explicit reorder)
-            self._update_task_queue,
             # Multi-queue helpers (coarse, invariant-preserving)
             self._list_queues,
             self._get_queue,
@@ -1306,7 +1302,6 @@ class TaskScheduler(BaseTaskScheduler):
             # Atomic queue materialization
             self._set_queue,
             self._set_schedules_atomic,
-            self._explain_queue,
             # Plan helpers
             validate_queue_plan,
             apply_queue_plan,
