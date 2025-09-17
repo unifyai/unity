@@ -2043,15 +2043,19 @@ class TaskScheduler(BaseTaskScheduler):
             resp = self._store.create_many(entries_list=entries_list)
             created_log_ids: List[int] = []
             try:
+                # Primary: explicit log_event_ids from backend
                 created_log_ids = list(resp.get("log_event_ids") or [])
             except Exception:
                 created_log_ids = []
             if not created_log_ids:
-                try:
-                    rid = resp.get("row_ids", {})
-                    created_log_ids = list(rid.get("ids") or [])
-                except Exception:
-                    created_log_ids = []
+                # Some client variants may return a different key
+                for alt in ("ids", "log_ids"):
+                    try:
+                        created_log_ids = list(resp.get(alt) or [])
+                        if created_log_ids:
+                            break
+                    except Exception:
+                        created_log_ids = []
 
             rows = []
             try:
@@ -2059,6 +2063,30 @@ class TaskScheduler(BaseTaskScheduler):
                     rows = self._store.get_rows_by_log_ids(log_ids=created_log_ids)
             except Exception:
                 rows = []
+            # Fallback: fetch by pairwise (name AND description) to avoid collisions
+            if not rows:
+                try:
+                    pair_clauses: list[str] = []
+                    for spec in tasks:
+                        nm = spec.get("name")
+                        ds = spec.get("description")
+                        if nm is None or ds is None:
+                            continue
+                        pair_clauses.append(
+                            f"(name == {nm!r} and description == {ds!r})",
+                        )
+                    filter_expr = " or ".join(pair_clauses) if pair_clauses else None
+                    rows = (
+                        self._store.get_rows(
+                            filter=filter_expr,
+                            limit=max(10, len(tasks) * 2),
+                            return_ids_only=False,
+                        )
+                        if filter_expr
+                        else []
+                    )
+                except Exception:
+                    rows = []
             # Derive task_ids from returned rows in the same order as input specs
             by_key: Dict[tuple[str, str], int] = {}
             for lg in rows:
@@ -2075,19 +2103,50 @@ class TaskScheduler(BaseTaskScheduler):
                 if tid is not None:
                     created_ids.append(int(tid))
 
-            # Reflect primed pointer in memory if we created one
-            if primed_index is not None and rows:
+            # Robust fallback: fetch by names only if mapping failed / partial
+            if len(created_ids) < len(tasks):
                 try:
-                    primed_rows = [
-                        r
-                        for r in rows
-                        if (getattr(r, "entries", {}) or {}).get("status")
-                        == str(Status.primed)
-                    ]
-                    if primed_rows:
-                        pr = primed_rows[0]
-                        self._primed_task = dict(getattr(pr, "entries", {}))
-                        self._primed_task["task_id"] = self._primed_task.get("task_id")
+                    name_list = [str(spec.get("name")) for spec in tasks]
+                    list_literal = "[" + ", ".join(repr(n) for n in name_list) + "]"
+                    expr = f"name in {list_literal}"
+                    ents = self._store.get_entries(filter=expr, limit=len(tasks))
+                except Exception:
+                    ents = []
+                if ents:
+                    by_name: Dict[str, int] = {}
+                    for r in ents:
+                        try:
+                            by_name[str(r.get("name"))] = int(r.get("task_id"))
+                        except Exception:
+                            continue
+                    created_ids = []
+                    for spec in tasks:
+                        nm = str(spec.get("name"))
+                        if nm in by_name:
+                            created_ids.append(int(by_name[nm]))
+
+            # Reflect primed pointer in memory if we created one
+            if primed_index is not None:
+                try:
+                    # Prefer 'rows' if available; else consult 'ents' fallback
+                    primed_found: Optional[Dict[str, Any]] = None
+                    if rows:
+                        for r in rows:
+                            e = getattr(r, "entries", {}) or {}
+                            if e.get("status") == str(Status.primed):
+                                primed_found = e
+                                break
+                    if primed_found is None:
+                        try:
+                            ents  # type: ignore[name-defined]
+                        except Exception:
+                            ents = []  # type: ignore[assignment]
+                        for e in ents or []:
+                            if e.get("status") == str(Status.primed):
+                                primed_found = e
+                                break
+                    if primed_found is not None:
+                        self._primed_task = dict(primed_found)
                 except Exception:
                     pass
         else:
