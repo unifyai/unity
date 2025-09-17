@@ -495,7 +495,9 @@ def test_tool_update_task_trigger_timing():
     t0 = time.perf_counter()
     out = ts._update_task(task_id=tid, trigger={"medium": Medium.EMAIL})
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    assert out["details"]["task_id"] == tid
+    # Validate via read rather than relying on return payload shape
+    row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
+    assert row.get("trigger") is not None
     print(f"elapsed: {elapsed_ms} < X")
 
 
