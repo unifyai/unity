@@ -1311,6 +1311,12 @@ class _ToolsData:
     def concurrency_ok(self, task_name: str) -> bool:
         return task_name not in self.normalized or self._can_offer_tool(task_name)
 
+    async def cancel_pending_tasks(self):
+        for task in self.pending:
+            task.cancel()
+        await asyncio.gather(*self.pending, return_exceptions=True)
+        self.pending.clear()
+
     # Remove any tool_calls in an assistant message that would exceed the
     # hidden per-tool total-call quota. Operates in-place on asst_msg.
     def prune_over_quota_tool_calls(self, asst_msg: dict) -> None:
@@ -3267,8 +3273,7 @@ async def _async_tool_use_loop_inner(
                         if task_to_cancel and not task_to_cancel.done():
                             task_to_cancel.cancel()
                         if task_to_cancel:
-                            tools_data.pending.discard(task_to_cancel)
-                            tools_data.info.pop(task_to_cancel, None)
+                            tools_data.pop_task(task_to_cancel)
 
                         tool_msg = {
                             "role": "tool",
@@ -3771,9 +3776,7 @@ async def _async_tool_use_loop_inner(
                 _stop_forwarded_once,
                 "outer-loop cancelled",
             )
-        for t in tools_data.pending:
-            t.cancel()
-        await asyncio.gather(*tools_data.pending, return_exceptions=True)
+        await tools_data.cancel_pending_tasks()
         raise
     finally:
         with suppress(Exception):
