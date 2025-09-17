@@ -81,10 +81,37 @@ jobs:
     - name: Run black check
       run: black --diff --color --check .
 
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      test_dirs: ${{ steps.set-matrix.outputs.test_dirs }}
+    steps:
+    - uses: actions/checkout@v2
+
+    - id: set-matrix
+      shell: bash
+      run: |
+        # If a specific test_path is provided and not '.', use it; otherwise discover subdirectories one level under tests/
+        if [[ -n "${{ inputs.test_path }}" && "${{ inputs.test_path }}" != "." ]]; then
+          dirs="${{ inputs.test_path }}"
+        else
+          dirs=$(find tests -mindepth 1 -maxdepth 1 -type d -printf '%p\n' | sort)
+        fi
+        echo "Found test dirs:" >&2
+        echo "$dirs" >&2
+        json=$(printf '%s\n' "$dirs" | python3 -c 'import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
+        echo "test_dirs=$json" >> "$GITHUB_OUTPUT"
+
   pytest:
+    name: pytest (${{ matrix.test_path }})
     runs-on: ubuntu-latest
     environment: unity-testing
     timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 190 }}
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix:
+        test_path: ${{ fromJSON(needs.discover.outputs.test_dirs) }}
     steps:
     - uses: actions/checkout@v2
 
@@ -134,7 +161,7 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: .cache.ndjson
-        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ replace(matrix.test_path, '/', '-') }}
         restore-keys: |
           cache-ndjson-${{ runner.os }}-
 
@@ -152,7 +179,7 @@ jobs:
           --self-contained-html \
           --junitxml=report.xml \
           --session-timeout=$((UNITY_TESTS_SESSION_TIMEOUT * 60)) \
-          --test-log-file="tests.log" ${{ inputs.test_path || '.' }}
+          --test-log-file="tests.log" ${{ matrix.test_path }}
       env:
         UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 180 }}
         UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
@@ -181,13 +208,13 @@ jobs:
       uses: actions/cache/save@v4
       with:
         path: .cache.ndjson
-        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ replace(matrix.test_path, '/', '-') }}
 
     - name: Upload test artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results
+        name: ${{ format('test-results-{0}', replace(matrix.test_path, '/', '-')) }}
         include-hidden-files: true
         path: |
           tests.log
