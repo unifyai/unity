@@ -332,11 +332,19 @@ class TasksStore:
         Fetch full log objects by their log-event ids. This avoids filtering by
         field values and allows precise retrieval of freshly-created rows.
         """
-        return unify.get_logs(
+        res = unify.get_logs(
             context=self._ctx,
             from_ids=log_ids,
             return_ids_only=False,
         )
+        # The client may return either a list or a dict with 'logs'
+        try:
+            if isinstance(res, dict):
+                logs = res.get("logs") or []
+                return logs
+        except Exception:
+            pass
+        return res
 
     def delete(self, *, logs: Union[int, List[int]]) -> Dict[str, str]:
         return unify.delete_logs(context=self._ctx, logs=logs)
