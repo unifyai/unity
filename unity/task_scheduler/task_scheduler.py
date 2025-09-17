@@ -2645,6 +2645,12 @@ class TaskScheduler(BaseTaskScheduler):
             assert st not in self._TERMINAL_STATUSES, f"Task {r['task_id']} is terminal"
         # Guard against touching the active task via the central helper
         self._ensure_not_active_task(task_ids)
+        # Reject moving trigger-based tasks into a runnable queue
+        for r in rows:
+            if r.get("trigger") is not None:
+                raise ValueError(
+                    f"Task {r['task_id']} is trigger-based and cannot be placed in the queue.",
+                )
 
         # Allocate queue id when requested
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
@@ -2806,6 +2812,12 @@ class TaskScheduler(BaseTaskScheduler):
         for r in rows:
             st = self._to_status(r.get("status"))
             assert st not in self._TERMINAL_STATUSES, f"Task {r['task_id']} is terminal"
+        # Reject placing trigger-based tasks into a runnable queue
+        for r in rows:
+            if r.get("trigger") is not None:
+                raise ValueError(
+                    f"Task {r['task_id']} is trigger-based and cannot be placed in the queue.",
+                )
         # Allow editing a queue that includes the currently active task; preserve its status below
         active_tid: Optional[int] = None
         try:
@@ -3346,6 +3358,38 @@ class TaskScheduler(BaseTaskScheduler):
             trigger=prospective_trigger,
             err_prefix=err_prefix,
         )
+
+        # Trigger-based tasks must not be members of runnable queues or have start_at.
+        # Enforce against both schedule linkage and assigning a numeric queue_id.
+        try:
+            _sched_dict = (
+                prospective_schedule.model_dump()
+                if hasattr(prospective_schedule, "model_dump")
+                else dict(prospective_schedule or {})
+            )
+        except Exception:
+            _sched_dict = prospective_schedule
+
+        has_membership: bool = False
+        try:
+            if isinstance(_sched_dict, dict):
+                if (
+                    _sched_dict.get("prev_task") is not None
+                    or _sched_dict.get("next_task") is not None
+                    or _sched_dict.get("start_at") is not None
+                ):
+                    has_membership = True
+        except Exception:
+            has_membership = False
+
+        assigned_qid = entries.get("queue_id")
+        assigns_queue = isinstance(assigned_qid, int)
+
+        if prospective_trigger is not None and (has_membership or assigns_queue):
+            raise ValueError(
+                f"{err_prefix} trigger-based tasks cannot be placed in the runnable queue or scheduled. "
+                "Remove the trigger first, or clear schedule/queue.",
+            )
 
         # Cross-queue adjacency guard: when setting prev/next ensure neighbours share queue_id
         if "schedule" in entries and prospective_schedule is not None:
