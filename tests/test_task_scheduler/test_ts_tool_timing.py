@@ -193,7 +193,7 @@ def test_tool_get_task_queue_timing():
     ]
     set_out = ts._set_queue(queue_id=None, order=[a, b])
     t0 = time.perf_counter()
-    q = ts._get_task_queue(task_id=a)
+    q = ts._get_queue_for_task(task_id=a)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert [t.task_id for t in q][:2] == [a, b]
     print(f"elapsed: {elapsed_ms} < X")
@@ -304,7 +304,8 @@ def test_tool_update_task_queue_timing():
     original = []
     new = [a, b]
     t0 = time.perf_counter()
-    out = ts._update_task_queue(original=original, new=new)
+    # Legacy helper removed; emulate with set_queue
+    out = ts._set_queue(queue_id=None, order=new)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"] in {"queue set", "queue reordered"}
     # Confirm a queue exists whose head→tail order starts with our desired order
@@ -345,7 +346,7 @@ def test_tool_partition_queue_timing():
 
 @pytest.mark.unit
 @_handle_project
-def test_tool_explain_queue_timing():
+def test_queue_snapshot_via_list_and_get():
     _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT EQ A " + _uniq(), description="a")["details"][
@@ -357,9 +358,11 @@ def test_tool_explain_queue_timing():
     set_out = ts._set_queue(queue_id=None, order=[a, b])
     qid = set_out["details"]["queue_id"]
     t0 = time.perf_counter()
-    info = ts._explain_queue(queue_id=qid)
+    queues = ts._list_queues()
+    chain = ts._get_queue(queue_id=qid)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    assert info["queue_id"] == qid
+    assert any(q.get("queue_id") == qid for q in queues)
+    assert [t.task_id for t in chain] == [a, b]
     print(f"elapsed: {elapsed_ms} < X")
 
 
@@ -542,7 +545,8 @@ def test_tool_attach_with_links_timing():
         err_prefix="attach",
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    chain = ts._get_task_queue(task_id=a)
+    chain = ts._get_queue_for_task(task_id=a)
+    chain = ts._get_queue_for_task(task_id=a)
     ids = [t.task_id for t in chain]
     assert ids[:3] == [a, b, c]
     print(f"elapsed: {elapsed_ms} < X")

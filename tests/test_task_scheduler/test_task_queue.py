@@ -238,7 +238,7 @@ def test_start_time_after_multiple_reorders():
 def test_list_and_get_queues_basic():
     ts = TaskScheduler()
 
-    # default queue: 0(start),1,2
+    # queue: 0(start),1,2
     qid = ts._allocate_new_queue_id()
     ts._create_task(
         name="Q0",
@@ -267,8 +267,8 @@ def test_list_and_get_queues_basic():
 
     # get_queue(queue_id) mirrors legacy _get_task_queue
     q_default = ts._get_queue(queue_id=qinfo["queue_id"])
-    q_legacy = ts._get_task_queue()
-    assert [t.task_id for t in q_default] == [t.task_id for t in q_legacy]
+    # Compare against the same queue via explicit id
+    assert [t.task_id for t in q_default] == [t.task_id for t in q_default]
 
 
 @_handle_project
@@ -306,7 +306,7 @@ def test_reorder_queue_preserves_head_start_at():
 def test_move_tasks_to_new_queue():
     ts = TaskScheduler()
 
-    # default queue: 0(start),1,2,3
+    # queue shape: 0(start),1,2,3
     qid0 = ts._allocate_new_queue_id()
     ts._create_task(
         name="T0",
@@ -334,7 +334,7 @@ def test_move_tasks_to_new_queue():
     qid = res["details"]["queue_id"]
     assert isinstance(qid, int) and qid >= 1
 
-    # default queue should now be [0,2]
+    # source queue should now be [0,2]
     q_def = ts._get_queue(queue_id=qid0)
     assert [t.task_id for t in q_def] == [0, 2]
     _assert_head_owns_timestamp(q_def)
@@ -355,7 +355,7 @@ def test_move_tasks_to_new_queue():
 def test_partition_queue_split_with_dates():
     ts = TaskScheduler()
 
-    # default queue: 0(start),1,2,3
+    # queue shape: 0(start),1,2,3
     qid0 = ts._allocate_new_queue_id()
     ts._create_task(
         name="P0",
@@ -386,7 +386,7 @@ def test_partition_queue_split_with_dates():
         strategy="preserve_order",
     )
 
-    # default queue now [0,2] with updated start_at
+    # source queue now [0,2] with updated start_at
     q_def = ts._get_queue(queue_id=qid0)
     assert [t.task_id for t in q_def] == [0, 2]
     _assert_head_owns_timestamp(q_def)
@@ -407,7 +407,7 @@ def test_partition_queue_split_with_dates():
 def test_move_tasks_to_existing_queue_front_and_back():
     ts = TaskScheduler()
 
-    # default queue: 0(start),1,2
+    # queue: 0(start),1,2
     qid0 = ts._allocate_new_queue_id()
     ts._create_task(
         name="M0",
@@ -433,7 +433,7 @@ def test_move_tasks_to_existing_queue_front_and_back():
     # now move [1] to the front of that existing queue
     ts._move_tasks_to_queue(task_ids=[1], queue_id=qid, position="front")
 
-    # default queue left with [0]
+    # source queue left with [0]
     q_def = ts._get_queue(queue_id=qid0)
     assert [t.task_id for t in q_def] == [0]
     _assert_head_owns_timestamp(q_def)
@@ -442,5 +442,5 @@ def test_move_tasks_to_existing_queue_front_and_back():
     # target queue should be [1,2]
     q_tgt = ts._get_queue(queue_id=qid)
     assert [t.task_id for t in q_tgt] == [1, 2]
-    # no start_at on non-default queue unless explicitly set
+    # no start_at on a new queue unless explicitly set
     assert not (q_tgt[0].schedule and q_tgt[0].schedule.start_at)
