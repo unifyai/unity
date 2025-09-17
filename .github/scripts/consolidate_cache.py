@@ -3,12 +3,15 @@ import sys
 from pathlib import Path
 from typing import List
 
+CACHE_READ_FILE_NAME = ".cache_write.ndjson"
+CACHE_WRITE_FILE_NAME = ".cache.ndjson"
+
 
 def find_cache_files(artifacts_dir: Path) -> List[Path]:
     """
     Use Path.glob to find all .cache.ndjson files at the root and one-level subdirectories of artifacts_dir.
     """
-    files = list(artifacts_dir.glob("*/.cache.ndjson"))
+    files = list(artifacts_dir.glob(f"*/{CACHE_READ_FILE_NAME}"))
     return sorted(files)
 
 
@@ -39,7 +42,7 @@ def main() -> int:
     args = parser.parse_args()
 
     artifacts_dir: Path = args.artifacts_dir
-    output_file: Path = Path(".cache_write.ndjson")
+    output_file: Path = Path(CACHE_WRITE_FILE_NAME)
 
     if not artifacts_dir.exists() or not artifacts_dir.is_dir():
         print(
@@ -56,6 +59,7 @@ def main() -> int:
             print(f"  {path}")
     else:
         print("  <none>")
+        return 1
 
     total_lines = concatenate_files(cache_files, output_file)
 
