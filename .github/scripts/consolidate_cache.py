@@ -39,7 +39,7 @@ def main() -> int:
     args = parser.parse_args()
 
     artifacts_dir: Path = args.artifacts_dir
-    output_file: Path = Path(".cache.ndjson")
+    output_file: Path = Path(".cache_write.ndjson")
 
     if not artifacts_dir.exists() or not artifacts_dir.is_dir():
         print(

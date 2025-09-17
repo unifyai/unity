@@ -213,7 +213,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: cache-diff-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
-        path: .cache.ndjson
+        path: .cache_write.ndjson
         if-no-files-found: ignore
         include-hidden-files: true
         retention-days: 1
