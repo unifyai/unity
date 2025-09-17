@@ -4439,6 +4439,11 @@ class TaskScheduler(BaseTaskScheduler):
                     else:
                         new_wds.append(wd)
                 out["weekdays"] = new_wds
+            # Ensure optional keys exist to mirror RepeatPattern.model_dump()
+            # (storage normalisation may drop None values; tests expect explicit None keys)
+            for _opt in ("count", "until", "time_of_day"):
+                if _opt not in out:
+                    out[_opt] = None
             return out
 
         for row in rows:
