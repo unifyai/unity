@@ -269,7 +269,8 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
             methods_to_tool_dict(
                 TaskScheduler._filter_tasks,
                 TaskScheduler._search_tasks,
-                TaskScheduler._get_task_queue,
+                TaskScheduler._get_queue,
+                TaskScheduler._get_queue_for_task,
                 include_class_name=False,
             ),
         )
@@ -285,19 +286,23 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
             # Ask entry point is exposed on update side
             TaskScheduler.ask,
             # Creation / deletion / cancellation
+            TaskScheduler._create_tasks,
             TaskScheduler._create_task,
             TaskScheduler._delete_task,
             TaskScheduler._cancel_tasks,
-            # Queue manipulation
-            TaskScheduler._update_task_queue,
-            # Attribute mutations
-            TaskScheduler._update_task_name,
-            TaskScheduler._update_task_description,
-            TaskScheduler._update_task_start_at,
-            TaskScheduler._update_task_deadline,
-            TaskScheduler._update_task_repetition,
-            TaskScheduler._update_task_priority,
-            TaskScheduler._update_task_trigger,
+            # Queue inspection/manipulation
+            TaskScheduler._list_queues,
+            TaskScheduler._get_queue,
+            TaskScheduler._get_queue_for_task,
+            TaskScheduler._reorder_queue,
+            TaskScheduler._move_tasks_to_queue,
+            TaskScheduler._partition_queue,
+            # Reintegration and atomic materialization
+            TaskScheduler._reinstate_task_to_previous_queue,
+            TaskScheduler._set_queue,
+            TaskScheduler._set_schedules_atomic,
+            # Unified attribute updater
+            TaskScheduler._update_task,
             include_class_name=False,
         )
 
