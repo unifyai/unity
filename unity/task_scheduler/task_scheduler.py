@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
 
-from ..common.embed_utils import list_private_fields
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
@@ -4655,7 +4654,13 @@ class TaskScheduler(BaseTaskScheduler):
             filter=filter,
             offset=offset,
             limit=limit,
-            exclude_fields=list_private_fields(self._ctx),
+            # Avoid an extra backend call here by deriving private fields from the
+            # cached schema instead of calling get_fields() again.
+            exclude_fields=[
+                name
+                for name in self._get_columns().keys()
+                if isinstance(name, str) and name.startswith("_")
+            ],
         )
 
         # Rehydrate Enum values inside repetition patterns so callers see
