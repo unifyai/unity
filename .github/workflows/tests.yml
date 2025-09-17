@@ -115,6 +115,11 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
+    - name: Normalize test path
+      id: normalize-path
+      run: |
+        echo "test_path_normalized=$(echo '${{ matrix.test_path }}' | tr '/' '_')" >> $GITHUB_OUTPUT
+
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
@@ -161,7 +166,7 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: .cache.ndjson
-        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ replace(matrix.test_path, '/', '-') }}
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
         restore-keys: |
           cache-ndjson-${{ runner.os }}-
 
@@ -208,13 +213,13 @@ jobs:
       uses: actions/cache/save@v4
       with:
         path: .cache.ndjson
-        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ replace(matrix.test_path, '/', '-') }}
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
 
     - name: Upload test artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ format('test-results-{0}', replace(matrix.test_path, '/', '-')) }}
+        name: ${{ format('test-results-{0}', steps.normalize-path.outputs.test_path_normalized) }}
         include-hidden-files: true
         path: |
           tests.log
