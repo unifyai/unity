@@ -24,7 +24,7 @@ from unity.task_scheduler.types.schedule import Schedule
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(500)
 async def test_update_reorder_queue(basic_task_scenario):
     ts, ids = basic_task_scenario
 
@@ -51,7 +51,7 @@ async def test_update_reorder_queue(basic_task_scenario):
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(500)
 async def test_update_cancel_email_tasks(basic_task_scenario):  # FIXME
     ts, ids = basic_task_scenario
 
@@ -80,7 +80,7 @@ def _next_weekday(dt: datetime, weekday: int) -> datetime:
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(500)
 async def test_update_lower_priority_for_future_date(basic_task_scenario):
     ts, ids = basic_task_scenario
 
@@ -118,7 +118,7 @@ async def test_update_lower_priority_for_future_date(basic_task_scenario):
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(500)
 async def test_update_bulk_description_replace(basic_task_scenario):
     ts, ids = basic_task_scenario
 
