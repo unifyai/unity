@@ -4593,14 +4593,39 @@ class TaskScheduler(BaseTaskScheduler):
             than ``k`` tasks overall, the remainder is backfilled from
             ``unify.get_logs(limit=k)`` in returned order, skipping duplicates.
         """
+        # Use a tight field projection to avoid metadata lookups (get_fields)
+        # and reduce payload sizes during search and backfill.
+        allowed_fields: List[str] = [
+            # Minimal set sufficient to hydrate a Task for search results
+            "task_id",
+            "instance_id",
+            "name",
+            "description",
+            "status",
+            "schedule",
+            "queue_id",
+            # Include activation metadata but drop it below when stale
+            "activated_by",
+            # Small, commonly useful fields (kept lightweight)
+            "deadline",
+            "priority",
+            "response_policy",
+        ]
+
         # 1) Primary: semantic similarity results (ordered). When references is None/empty,
         # the shared helper returns an empty list, and backfill-only logic applies.
-        rows = fetch_top_k_by_references(self._ctx, references, k=k)
+        rows = fetch_top_k_by_references(
+            self._ctx,
+            references,
+            k=k,
+            allowed_fields=allowed_fields,
+        )
         filled = backfill_rows(
             self._ctx,
             rows,
             k,
             unique_id_field="task_id",
+            allowed_fields=allowed_fields,
         )
         # Defensive read: drop stale activation metadata on non-active rows to avoid
         # Pydantic validation errors if any legacy writes left it behind.
