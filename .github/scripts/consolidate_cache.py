@@ -5,9 +5,11 @@ from typing import List
 
 
 def find_cache_files(artifacts_dir: Path) -> List[Path]:
-    # Look for renamed cache files created by the pytest job
-    # Pattern: .cache.<normalized>.ndjson
-    return sorted(artifacts_dir.glob(".cache.*.ndjson"))
+    """
+    Use Path.glob to find all .cache.ndjson files at the root and one-level subdirectories of artifacts_dir.
+    """
+    files = list(artifacts_dir.glob("*/.cache.ndjson"))
+    return sorted(files)
 
 
 def concatenate_files(input_files: List[Path], output_file: Path) -> int:

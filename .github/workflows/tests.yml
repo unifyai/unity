@@ -208,19 +208,12 @@ jobs:
         REGISTER_SUMMARY_CALLBACKS: false
         REGISTER_UPDATE_CALLBACKS: false
 
-    - name: Prepare cache file for upload
-      if: always()
-      run: |
-        if [ -f .cache.ndjson ]; then
-          mv .cache.ndjson ".cache.${{ steps.normalize-path.outputs.test_path_normalized }}.ndjson"
-        fi
-
     - name: Upload cache artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: cache-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
-        path: .cache.${{ steps.normalize-path.outputs.test_path_normalized }}.ndjson
+        path: .cache.ndjson
         if-no-files-found: ignore
         retention-days: 7
 
@@ -247,7 +240,6 @@ jobs:
       with:
         pattern: cache-*
         path: cache-artifacts
-        merge-multiple: true
 
     - name: Consolidate .cache.ndjson files
       run: |
