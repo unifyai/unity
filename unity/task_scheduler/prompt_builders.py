@@ -60,7 +60,9 @@ def build_ask_prompt(
     # Resolve canonical tool names dynamically
     filter_tasks_fname = _tool_name(tools, "filter_tasks")
     search_tasks_fname = _tool_name(tools, "search_tasks")
-    get_task_queue_fname = _tool_name(tools, "get_task_queue")
+    list_queues_fname = _tool_name(tools, "list_queues")
+    get_queue_fname = _tool_name(tools, "get_queue")
+    get_queue_for_task_fname = _tool_name(tools, "get_queue_for_task")
     contact_ask_fname = _tool_name(tools, "contactmanager")  # e.g. "ContactManager_ask"
 
     # Clarification helper (optional)
@@ -71,7 +73,6 @@ def build_ask_prompt(
         {
             "filter_tasks": filter_tasks_fname,
             "search_tasks": search_tasks_fname,
-            "get_task_queue": get_task_queue_fname,
             "ContactManager.ask": contact_ask_fname,
         },
         tools,
@@ -107,7 +108,15 @@ def build_ask_prompt(
             "─ Filtering (exact/boolean; not semantic) ─",
             f"• All queued high‑priority tasks: `{filter_tasks_fname}(filter=\"status == 'queued' and priority == 'high'\")`",
             f"• Tasks due this month: `{filter_tasks_fname}(filter=\"deadline >= '2024-08-01T00:00:00' and deadline < '2024-09-01T00:00:00'\")`",
-            f"• Current runnable queue (head→tail): `{get_task_queue_fname}()`",
+            (
+                f"• Inspect queues: `{list_queues_fname}()`; fetch a specific queue: `{get_queue_fname}(queue_id=<id>)`."
+                if list_queues_fname and get_queue_fname
+                else (
+                    f"• Inspect the queue containing a task: `{get_queue_for_task_fname}(task_id=<id>)`."
+                    if get_queue_for_task_fname
+                    else ""
+                )
+            ),
             "",
             "Anti‑patterns to avoid",
             "---------------------",
@@ -217,7 +226,6 @@ def build_update_prompt(
             "create_tasks": create_tasks_fname,
             "delete_task": delete_task_fname,
             "cancel_tasks": cancel_tasks_fname,
-            "update_task_queue": update_task_queue_fname,
             "update_task": update_task_fname,
         },
         tools,
@@ -261,8 +269,8 @@ def build_update_prompt(
     if list_queues_fname and get_queue_fname and reorder_queue_fname:
         usage_examples_lines.extend(
             [
-                f"• Inspect existing queues: `{list_queues_fname}()`; fetch a specific queue: `{get_queue_fname}(queue_id=None)`.",
-                f"• Reorder a queue explicitly: `{reorder_queue_fname}(queue_id=None, new_order=[...])`.",
+                f"• Inspect existing queues: `{list_queues_fname}()`; fetch a specific queue: `{get_queue_fname}(queue_id=<id>)`.",
+                f"• Reorder a queue explicitly: `{reorder_queue_fname}(queue_id=<id>, new_order=[...])`.",
             ],
         )
 
@@ -284,7 +292,6 @@ def build_update_prompt(
     # Atomic/edit helpers if present
     set_queue_fname = _tool_name(tools, "set_queue")
     set_schedules_atomic_fname = _tool_name(tools, "set_schedules_atomic")
-    explain_queue_fname = _tool_name(tools, "explain_queue")
 
     if set_queue_fname:
         usage_examples_lines.extend(
@@ -316,13 +323,6 @@ def build_update_prompt(
             ],
         )
 
-    if explain_queue_fname:
-        usage_examples_lines.extend(
-            [
-                f"• Diagnose a queue quickly: `{explain_queue_fname}(queue_id=None)` → shows head, order and start_at.",
-            ],
-        )
-
     usage_examples_lines.extend(
         [
             "",
@@ -343,7 +343,7 @@ def build_update_prompt(
                 else (
                     f"• Materialize four tasks for next Monday 09:00 UK time in order A→B→C→D:\n  1 Create the tasks with names/descriptions only.\n  2 `{set_queue_fname}(queue_id=None, order=[A,B,C,D], queue_start_at='2035-06-16T08:00:00Z')`"
                     if set_queue_fname
-                    else f"• Promote a task to the front of the queue:\n  1 Read the current order: `{get_task_queue_fname}()`\n  2 Build the new order and call `{update_task_queue_fname}(original=[...], new=[...])`"
+                    else f"• Inspect queues and reorder explicitly: `{list_queues_fname}()` → `{get_queue_fname}(queue_id=<id>)` → `{reorder_queue_fname}(queue_id=<id>, new_order=[...])`"
                 )
             ),
             "",
@@ -468,11 +468,10 @@ def build_execute_prompt(
     revert_checkpoint_fname = _tool_name(tools, "revert_to_checkpoint")
     latest_checkpoint_fname = _tool_name(tools, "get_latest_checkpoint")
 
+    # For execute, legacy names may be absent; require only the stable set
     _require_tools(
         {
             "ask": ask_fname,
-            "get_task_queue": get_task_queue_fname,
-            "update_task_queue": update_task_queue_fname,
             "execute_by_id": execute_by_id_fname,
             "create_task": create_task_fname,
         },
@@ -506,7 +505,11 @@ def build_execute_prompt(
         f"• `{execute_by_id_fname}(task_id=…)` – queue semantics: start at the head of the chosen queue so followers remain attached and will run afterwards.",
         "\nCRITICAL EXECUTION WORKFLOW (plan → apply → execute):",
         f"0) Immediately create a reversible checkpoint: `{checkpoint_fname}(label='pre-execute')`. You MUST do this at the start of the session.",
-        f"1) Inspect queues: `{list_queues_fname}()` → then `{get_queue_fname}(queue_id=<id>)` to view a specific queue (head→tail).",
+        (
+            f"1) Inspect queues: `{list_queues_fname}()` → then `{get_queue_fname}(queue_id=<id>)` to view a specific queue (head→tail)."
+            if list_queues_fname and get_queue_fname
+            else "1) Inspect the queue containing the target task using the available queue tools."
+        ),
         f"2) PLAN the desired execution scope and timing in your thoughts (subset now vs later).",
         f"   – To move subsets into separate queues with dates, call `{partition_queue_fname}(parts=[{{'task_ids':[...],'queue_start_at':<ISO>|None}}, ...], strategy='preserve_order')`.",
         f"   – To target an existing queue, call `{move_tasks_to_queue_fname}(task_ids=[...], queue_id=<id>, position='front'|'back')` then `{reorder_queue_fname}(queue_id=<id>, new_order=[...])`.",
@@ -525,7 +528,11 @@ def build_execute_prompt(
         "",
         "GENERAL SAFETY RULE (state refresh)",
         "-----------------------------------",
-        f"• After ANY mutating tool call (including `{execute_by_id_fname}`, `{execute_isolated_by_id_fname}`, `{reorder_queue_fname}`, `{move_tasks_to_queue_fname}`, `{partition_queue_fname}`), you MUST re-query the affected queues using `{list_queues_fname}()` and `{get_queue_fname}(queue_id=…)` before issuing further queue edits or building a new_order list.",
+        (
+            f"• After ANY mutating tool call (including `{execute_by_id_fname}`, `{execute_isolated_by_id_fname}`, `{reorder_queue_fname}`, `{move_tasks_to_queue_fname}`, `{partition_queue_fname}`), you MUST re-query the affected queues using `{list_queues_fname}()` and `{get_queue_fname}(queue_id=…)` before issuing further queue edits or building a new_order list."
+            if list_queues_fname and get_queue_fname
+            else "• After ANY mutating tool call, you MUST re-query the affected queues using the available queue inspection tools before issuing further edits."
+        ),
         f"• Never assume prior queue membership or order after detaching or moving tasks. Always refresh first.",
         "",
         "CLARIFICATION POLICY (always prefer tool over prose)",
@@ -537,7 +544,7 @@ def build_execute_prompt(
         ),
         "",
         "A. If the request contains a *numeric task_id*:",
-        f"   • First inspect queues if needed: `{get_task_queue_fname}()`.",
+        "   • First inspect queues if needed using the provided queue tools.",
         (
             f"   • Execute in isolation when intent is single‑task‑now: `{execute_isolated_by_id_fname}(task_id=<id>)`."
             if execute_isolated_by_id_fname
