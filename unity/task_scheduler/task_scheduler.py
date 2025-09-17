@@ -277,7 +277,8 @@ class TaskScheduler(BaseTaskScheduler):
             **methods_to_tool_dict(
                 self._filter_tasks,
                 self._search_tasks,
-                self._get_task_queue,
+                self._get_queue,
+                self._get_queue_for_task,
                 include_class_name=False,  # redundant, all same class (this one)
             ),
             **methods_to_tool_dict(
@@ -297,10 +298,10 @@ class TaskScheduler(BaseTaskScheduler):
                 self._delete_task,
                 self._cancel_tasks,
                 # Queue manipulation
-                self._update_task_queue,
                 # Multi-queue helpers
                 self._list_queues,
                 self._get_queue,
+                self._get_queue_for_task,
                 self._reorder_queue,
                 self._move_tasks_to_queue,
                 self._partition_queue,
