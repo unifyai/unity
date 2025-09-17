@@ -273,5 +273,70 @@ class TasksStore:
         # Create with expanded fields so auto-counting applies when ids are omitted
         return unify.log(context=self._ctx, new=new, **norm_entries)
 
+    def create_many(self, *, entries_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Batch-create multiple logs in a single backend call.
+
+        Returns the raw response from the backend which typically includes
+        'log_event_ids' (ids of created log events) and a 'row_ids' structure
+        with auto-incremented row identifiers.
+        """
+
+        # Normalise all payloads consistently with the single-log path
+        def _norm(v: Any) -> Any:
+            if isinstance(v, Enum):
+                try:
+                    from enum import StrEnum  # py311+
+
+                    if isinstance(v, StrEnum):  # type: ignore[arg-type]
+                        return v.value
+                except Exception:
+                    pass
+                return v.value
+            try:
+                import datetime as _dt
+
+                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+                    return v.isoformat()
+            except Exception:
+                pass
+            try:
+                from pydantic import BaseModel as _BM  # type: ignore
+
+                if isinstance(v, _BM):
+                    return _norm(v.model_dump(mode="json"))
+            except Exception:
+                pass
+            if isinstance(v, dict):
+                return {k: _norm(x) for k, x in v.items()}
+            if isinstance(v, list):
+                return [_norm(x) for x in v]
+            return v
+
+        normalised = [{**_norm(e)} for e in entries_list]
+        try:
+            return unify.create_logs(context=self._ctx, entries=normalised)
+        except Exception:
+            # Fallback: create sequentially (preserves correctness if batch API is unavailable)
+            log_ids: list[int] = []
+            for e in normalised:
+                lg = unify.log(context=self._ctx, new=True, **e)
+                try:
+                    log_ids.append(int(getattr(lg, "id", None)))
+                except Exception:
+                    pass
+            return {"log_event_ids": log_ids}
+
+    def get_rows_by_log_ids(self, *, log_ids: List[int]) -> List[unify.Log]:
+        """
+        Fetch full log objects by their log-event ids. This avoids filtering by
+        field values and allows precise retrieval of freshly-created rows.
+        """
+        return unify.get_logs(
+            context=self._ctx,
+            from_ids=log_ids,
+            return_ids_only=False,
+        )
+
     def delete(self, *, logs: Union[int, List[int]]) -> Dict[str, str]:
         return unify.delete_logs(context=self._ctx, logs=logs)
