@@ -375,7 +375,7 @@ def test_tool_update_task_name_timing():
         "task_id"
     ]
     t0 = time.perf_counter()
-    ts._update_task_name(task_id=tid, new_name="TT Name Renamed " + _uniq())
+    ts._update_task(task_id=tid, name="TT Name Renamed " + _uniq())
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     # sanity read
     row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
@@ -392,7 +392,7 @@ def test_tool_update_task_description_timing():
         "task_id"
     ]
     t0 = time.perf_counter()
-    ts._update_task_description(task_id=tid, new_description="updated desc")
+    ts._update_task(task_id=tid, description="updated desc")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
     assert row["description"] == "updated desc"
@@ -409,7 +409,7 @@ def test_tool_update_task_start_at_timing():
     ]
     when = datetime.now(timezone.utc) + timedelta(minutes=5)
     t0 = time.perf_counter()
-    ts._update_task_start_at(task_id=tid, new_start_at=when)
+    ts._update_task(task_id=tid, start_at=when)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
     assert (row.get("schedule") or {}).get("start_at") is not None
@@ -426,7 +426,7 @@ def test_tool_update_task_deadline_timing():
     ]
     dl = datetime.now(timezone.utc) + timedelta(days=1)
     t0 = time.perf_counter()
-    ts._update_task_deadline(task_id=tid, new_deadline=dl)
+    ts._update_task(task_id=tid, deadline=dl)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
     assert row.get("deadline") is not None
@@ -442,7 +442,7 @@ def test_tool_update_task_priority_timing():
         "task_id"
     ]
     t0 = time.perf_counter()
-    ts._update_task_priority(task_id=tid, new_priority="high")
+    ts._update_task(task_id=tid, priority="high")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
     assert row.get("priority") == "high"
@@ -458,10 +458,7 @@ def test_tool_update_task_repetition_timing():
         "task_id"
     ]
     t0 = time.perf_counter()
-    ts._update_task_repetition(
-        task_id=tid,
-        new_repeat=[RepeatPattern(frequency=Frequency.DAILY)],
-    )
+    ts._update_task(task_id=tid, repeat=[RepeatPattern(frequency=Frequency.DAILY)])
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
     assert row.get("repeat") is not None
@@ -477,7 +474,7 @@ def test_tool_update_task_status_timing():
         "task_id"
     ]
     t0 = time.perf_counter()
-    ts._update_task_status(task_ids=tid, new_status="queued")
+    ts._update_task(task_id=tid, status="queued")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
     assert row.get("status") in {"queued", "primed", "scheduled"}
@@ -493,7 +490,7 @@ def test_tool_update_task_trigger_timing():
         "task_id"
     ]
     t0 = time.perf_counter()
-    out = ts._update_task_trigger(task_id=tid, new_trigger={"medium": Medium.EMAIL})
+    out = ts._update_task(task_id=tid, trigger={"medium": Medium.EMAIL})
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["details"]["task_id"] == tid
     print(f"elapsed: {elapsed_ms} < X")

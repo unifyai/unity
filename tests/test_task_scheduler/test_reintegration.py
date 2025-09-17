@@ -75,7 +75,7 @@ async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
         )  # type: ignore[index]
 
     ts._set_queue(queue_id=qid, order=ids)
-    ts._update_task_start_at(task_id=ids[0], new_start_at=datetime.now(timezone.utc))
+    ts._update_task(task_id=ids[0], start_at=datetime.now(timezone.utc))
     return ids
 
 
@@ -304,7 +304,7 @@ async def test_reinstate_refuses_when_trigger_present():
     await handle.result()
 
     # Add a trigger to the task → schedule restoration should be refused
-    ts._update_task_trigger(task_id=head_id, new_trigger=Trigger(medium=Medium.EMAIL))
+    ts._update_task(task_id=head_id, trigger=Trigger(medium=Medium.EMAIL))
 
     with pytest.raises(ValueError):
         ts._reinstate_task_to_previous_queue(task_id=head_id)
