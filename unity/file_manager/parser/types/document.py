@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field as PydanticField
 
+from ..token_utils import has_meaningful_text
+
 
 class DocumentMetadataExtraction(BaseModel):
     """Pydantic model for LLM-based document metadata extraction."""
@@ -411,7 +413,9 @@ class Document:
                         content_id=f"sent_{sentence.sentence_id}",
                         content_type="sentence",
                         title=f"Sentence {sentence.sentence_index + 1}",
-                        summary=sentence.text,  # For sentences, summary == content_text
+                        summary=(
+                            sentence.text if has_meaningful_text(sentence.text) else ""
+                        ),  # For sentences, summary == content_text
                         content_text=sentence.text,
                         level=4,
                         parent_id=f"para_{paragraph.paragraph_id}",

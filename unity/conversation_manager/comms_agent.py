@@ -39,6 +39,7 @@ from unity.conversation_manager.utils import (
     join_meet_on_browser,
     ensure_captions_enabled,
 )
+from unity.transcript_manager.types.message import UNASSIGNED
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -168,6 +169,7 @@ class CommsAgent:
         self.broader_context = ""
         self.project_name = project_name
         self.logging_lock = threading.Lock()
+        self.call_exchange_id = UNASSIGNED
 
         # speaker tracking
         self.current_speaker = None
@@ -219,7 +221,7 @@ class CommsAgent:
                 self._send_email_to_third_party,
                 self._send_whatsapp_to_third_party,
                 self._join_meet,
-                self._implicit_contact_creation
+                self._implicit_contact_creation,
             )
             return
 
@@ -1023,10 +1025,7 @@ class CommsAgent:
         """
         return await send_whatsapp_message(description, parent_chat_context)
 
-    async def _implicit_contact_creation(
-        self,
-        description: str
-    ):
+    async def _implicit_contact_creation(self, description: str):
         """
         Creates a new contact implicitly.
         This is used when some new individual is mentioned during the conversation.
@@ -1039,25 +1038,31 @@ class CommsAgent:
         res = await client.beta.chat.completions.parse(
             model="gpt-4.1",
             messages=[
-                {"role": "system", "content": (
-                    "You've been provided with a list of contacts and a description of "
-                    "a new individual. Create a new contact with the information in the"
-                    " description if its not in the list already. If the new contact is"
-                    " not in the list, return a new contact with the information in the"
-                    " description. If the new contact is in the list, return the"
-                    " contact from the list."
-                )},
-                {"role": "user", "content": (
-                    f"Contacts: {contacts}\n"
-                    f"New Contact Description: {description}"
-                )},
+                {
+                    "role": "system",
+                    "content": (
+                        "You've been provided with a list of contacts and a description of "
+                        "a new individual. Create a new contact with the information in the"
+                        " description if its not in the list already. If the new contact is"
+                        " not in the list, return a new contact with the information in the"
+                        " description. If the new contact is in the list, return the"
+                        " contact from the list."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Contacts: {contacts}\n"
+                        f"New Contact Description: {description}"
+                    ),
+                },
             ],
             response_format=ImplicitContactOutput,
         )
         print("Response", res)
         if res.choices[0].message.parsed.new_contact:
             self.contact_manager._create_contact(
-                **res.choices[0].message.parsed.contact.model_dump()
+                **res.choices[0].message.parsed.contact.model_dump(),
             )
             return "Contact Created Successfully"
         else:
@@ -1173,6 +1178,7 @@ class CommsAgent:
             try:
                 terminate_process(self.call_proc)
                 self.call_proc = None
+                self.call_exchange_id = UNASSIGNED
                 global ONGOING_CALL
                 ONGOING_CALL = False
                 print(f"Call process terminated")
@@ -1243,7 +1249,7 @@ class CommsAgent:
                 self._ensure_contact_manager()
                 print("handle_logging: Contact Manager Initialized")
                 self.transcript_manager = TranscriptManager(
-                    contact_manager=self.contact_manager
+                    contact_manager=self.contact_manager,
                 )
                 self.transcript_manager._get_logger().session.headers[
                     "Authorization"
@@ -1297,16 +1303,25 @@ class CommsAgent:
                     metadata = None
                     if medium == "email":
                         metadata = {"message_id": message_id}
-                    self.transcript_manager.log_messages(
+                    exchange_id = UNASSIGNED
+                    if medium == "phone_call":
+                        exchange_id = self.call_exchange_id
+                    message = self.transcript_manager.log_messages(
                         {
                             "medium": medium,
                             "sender_id": sender_id,
                             "receiver_ids": receiver_ids,
                             "timestamp": timestamp,
                             "content": content,
+                            "exchange_id": exchange_id,
                             "_metadata": metadata,
                         },
-                    )
+                    )[0]
+                    # ToDo: Get this working for email and whatsapp as well
+                    # Email: Replying to the same thread
+                    # Whatsapp: Managing different kinds of chat such as groups, etc.
+                    if medium == "phone_call" and self.call_exchange_id == UNASSIGNED:
+                        self.call_exchange_id = message.exchange_id
             except Exception as e:
                 print(f"Error handling logging: {e}")
                 traceback.print_exc()
@@ -1323,7 +1338,8 @@ class CommsAgent:
                 self._ensure_contact_manager()
                 print("handle_past_events: Contact Manager Initialized")
                 self.broader_context = await asyncio.to_thread(
-                    get_broader_context, self.contact_manager
+                    get_broader_context,
+                    self.contact_manager,
                 )
             except Exception as e:
                 print(f"Error fetching bus events: {e}")

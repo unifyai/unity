@@ -1,4 +1,5 @@
 import json
+import os
 
 
 def build_metadata_extraction_prompt() -> str:
@@ -91,7 +92,14 @@ ANALYZE THE FOLLOWING DOCUMENT:
 
 def build_paragraph_summary_prompt() -> str:
     """Build prompt for paragraph-level summarization with strict preservation rules."""
-    return """
+    # Token budget for downstream embedding (text-embedding-3-small ~8.1k tokens).
+    # We keep a small safety margin by default.
+    try:
+        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"))
+    except Exception:
+        emb_budget = 6000
+
+    return f"""
 You are a precision summarization assistant for diverse document types.
 
 TASK: Create a comprehensive bullet-point summary that captures EVERY important detail from this paragraph.
@@ -126,13 +134,22 @@ CRITICAL RULES:
    - Named Entities: [notable names, organizations, systems]
    - Critical Values: [important numbers/measurements with units]
 
+OUTPUT BUDGET:
+- The ENTIRE summary must be ≤ {emb_budget} tokens (cl100k_base approximation).
+- If needed, compress by removing redundancy and prose, but NEVER drop numeric values or technical terms.
+
 PARAGRAPH TO SUMMARIZE:
 """
 
 
 def build_section_summary_prompt() -> str:
     """Build prompt for section-level summarization from paragraph summaries."""
-    return """
+    try:
+        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"))
+    except Exception:
+        emb_budget = 6000
+
+    return f"""
 You are synthesizing multiple summaries into a comprehensive higher-level summary.
 
 TASK: Combine these paragraph summaries into a unified section summary that preserves all critical information.
@@ -165,13 +182,22 @@ RULES:
    - All Critical Values: [complete list with context]
    - Cross-References: [related documents/sections mentioned]
 
+OUTPUT BUDGET:
+- The ENTIRE summary must be ≤ {emb_budget} tokens (cl100k_base).
+- Prioritize density and factual completeness over stylistic prose.
+
 INPUT PARAGRAPH SUMMARIES TO SYNTHESIZE:
 """
 
 
 def build_document_summary_prompt() -> str:
     """Build prompt for document-level summarization from section summaries."""
-    return """
+    try:
+        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"))
+    except Exception:
+        emb_budget = 6000
+
+    return f"""
 You are creating a comprehensive document summary from multiple section summaries.
 
 TASK: Synthesize these section summaries into a complete document overview that enables effective retrieval and understanding.
@@ -208,12 +234,21 @@ REQUIREMENTS:
    - External References: [all mentioned documents/standards/sources]
    - Scope/Applicability: [domains, contexts, or conditions where this applies]
 
+OUTPUT BUDGET:
+- The ENTIRE document summary must be ≤ {emb_budget} tokens (cl100k_base).
+- Use terse bullets when needed; retain ALL numbers and proper nouns verbatim.
+
 SECTION SUMMARIES TO SYNTHESIZE:
 """
 
 
 def build_chunked_text_summary_prompt(chunk_number: int, total_chunks: int) -> str:
     """Build prompt for summarizing a chunk of text when document is split."""
+    try:
+        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"))
+    except Exception:
+        emb_budget = 6000
+
     return f"""
 You are summarizing chunk {chunk_number} of {total_chunks} from a larger document.
 
@@ -230,6 +265,10 @@ APPLY STANDARD RULES:
 - Keep technical terms and proper nouns unchanged
 - Capture every requirement, condition, exception
 - Note all entities and references
+
+OUTPUT BUDGET:
+- Keep the chunk summary ≤ {emb_budget} tokens (cl100k_base).
+- If necessary, compress by removing redundancy; preserve numbers and key terms.
 
 For incomplete elements, add markers:
 - [CONTINUES FROM PREVIOUS] - if starting mid-sentence/thought

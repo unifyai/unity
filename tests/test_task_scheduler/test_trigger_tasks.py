@@ -85,9 +85,9 @@ def test_update_trigger_on_scheduled_task_raises():
     )["details"]["task_id"]
 
     with pytest.raises(ValueError):
-        ts._update_task_trigger(
+        ts._update_task(
             task_id=tid,
-            new_trigger=Trigger(medium=Medium.WHATSAPP_MSG),
+            trigger=Trigger(medium=Medium.WHATSAPP_MSG),
         )
 
 
@@ -108,7 +108,7 @@ def test_clear_trigger_transitions_status():
         trigger=trig,
     )["details"]["task_id"]
 
-    ts._update_task_trigger(task_id=tid, new_trigger=None)
+    ts._update_task(task_id=tid, trigger=None)
 
     row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
     assert row["trigger"] is None
@@ -133,9 +133,9 @@ def test_start_at_on_trigger_task_raises():
     )["details"]["task_id"]
 
     with pytest.raises(ValueError):
-        ts._update_task_start_at(
+        ts._update_task(
             task_id=tid,
-            new_start_at=datetime.now(timezone.utc) + timedelta(hours=2),
+            start_at=datetime.now(timezone.utc) + timedelta(hours=2),
         )
 
 

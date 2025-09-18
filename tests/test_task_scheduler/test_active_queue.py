@@ -26,7 +26,7 @@ async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
             ]["task_id"],
         )  # type: ignore[index]
     ts._set_queue(queue_id=qid, order=ids)
-    ts._update_task_start_at(task_id=ids[0], new_start_at=datetime.now(timezone.utc))
+    ts._update_task(task_id=ids[0], start_at=datetime.now(timezone.utc))
     return ids
 
 

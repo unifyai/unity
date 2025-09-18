@@ -1526,6 +1526,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
     clarification_down_q: Optional[asyncio.Queue[str]] = None,
     clarifications_enabled: bool = True,
     chat_context: Optional[list[dict]] = None,
+    persist_mode: bool = False,
 ) -> str:
     """
     **Common wrapper** used by all interactive sandboxes.
@@ -1764,33 +1765,41 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         # Forward the user's text exactly as provided
                         run_in_loop(handle.interject(arg))
                         print("✅ Interjection sent.")
+
                         if enable_voice_steering:
                             speak("Interjection sent")
-                            _wait_for_tts_end()
-                            print(
-                                steering_controls_hint(
-                                    pending_clarification=(pending_clar_q is not None),
-                                    voice_enabled=enable_voice_steering,
-                                ),
-                            )
-                        else:
-                            print(
-                                steering_controls_hint(
-                                    pending_clarification=(pending_clar_q is not None),
-                                    voice_enabled=enable_voice_steering,
-                                ),
-                            )
+                        # -----------------------------------------
+                        if persist_mode:
+                            print("⏳ Processing interjection...")
+                            if hasattr(handle, "awaiting_next_instruction"):
+                                try:
+                                    summary = await handle.awaiting_next_instruction()
+                                    print(f"✅ {summary}")
+                                    if enable_voice_steering:
+                                        speak(f"{summary}")
+                                except Exception as e:
+                                    print(f"❌ Error while awaiting summary: {e}")
+
+                        if enable_voice_steering:
+                            _wait_for_tts_end()  # Wait for any speaking to finish
+
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     continue
                 if cmd in {"ask", "?"}:
                     if not arg.strip():
-                        print("Usage: /ask <question>")
+                        print("Usage: /ask <question>", file=sys.__stdout__)
                     else:
                         try:
-                            print(f"❓ Asking question: {arg}")
+                            print(f"❓ Asking question: {arg}", file=sys.__stdout__)
                             # Forward the question exactly as provided
                             nested = await handle.ask(arg)
                             ans = await nested.result()
-                            print(f"[ask] → {ans}")
+                            print(f"[ask] → {ans}", file=sys.__stdout__)
                             if enable_voice_steering:
                                 speak(str(ans))
                                 _wait_for_tts_end()
@@ -1801,9 +1810,10 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                         ),
                                         voice_enabled=enable_voice_steering,
                                     ),
+                                    file=sys.__stdout__,
                                 )
                         except Exception as exc:
-                            print(f"⚠️  Ask failed: {exc}")
+                            print(f"⚠️  Ask failed: {exc}", file=sys.__stdout__)
                     continue
                 if enable_voice_steering and cmd in {"record", "rec", "r"}:
                     try:
@@ -2007,6 +2017,7 @@ async def call_manager_with_optional_clarifications(
     parent_chat_context: list[dict],
     return_reasoning_steps: bool = False,
     clarifications_enabled: bool = True,
+    **kwargs,
 ):
     """
     Call a manager method (e.g., ask/update) with context and, when supported,
@@ -2020,9 +2031,10 @@ async def call_manager_with_optional_clarifications(
     clar_up_q: Optional[asyncio.Queue[str]] = None  # type: ignore[name-defined]
     clar_down_q: Optional[asyncio.Queue[str]] = None  # type: ignore[name-defined]
 
-    kwargs: Dict[str, Any] = {
+    fn_kwargs: Dict[str, Any] = {
         "parent_chat_context": parent_chat_context,
         "_return_reasoning_steps": return_reasoning_steps,
+        **kwargs,
     }
 
     try:
@@ -2038,10 +2050,10 @@ async def call_manager_with_optional_clarifications(
     ):
         clar_up_q = _asyncio.Queue()
         clar_down_q = _asyncio.Queue()
-        kwargs["clarification_up_q"] = clar_up_q
-        kwargs["clarification_down_q"] = clar_down_q
+        fn_kwargs["clarification_up_q"] = clar_up_q
+        fn_kwargs["clarification_down_q"] = clar_down_q
 
-    handle = await fn(text, **kwargs)
+    handle = await fn(text, **fn_kwargs)
     return handle, clar_up_q, clar_down_q
 
 
@@ -2691,7 +2703,7 @@ class SimulationPlanStore:
         ``_get_task_queue`` which is available on the concrete class.
         """
         try:
-            q = ts._get_task_queue()  # type: ignore[attr-defined]
+            q = []  # type: ignore[attr-defined]
         except Exception:
             return None, None
         if not q or index_1_based < 1 or index_1_based > len(q):
@@ -3106,10 +3118,10 @@ def _merge_sim_params_for_task(
         if scheduler is not None and task_id is not None:
             # Use the chain containing this task for queue-index resolution
             try:
-                q = scheduler._get_task_queue(task_id=task_id)  # type: ignore[attr-defined]
+                q = scheduler._get_queue_for_task(task_id=task_id)  # type: ignore[attr-defined]
             except TypeError:
                 # Backwards compatibility: older schedulers may not accept task_id
-                q = scheduler._get_task_queue()  # type: ignore[attr-defined]
+                q = []  # type: ignore[attr-defined]
             idx = None
             try:
                 for i, t in enumerate(q, 1):
@@ -3250,7 +3262,7 @@ def apply_per_task_simulation_patch(
                     if scheduler is not None and task_id is not None:
                         # Resolve queue index and consume if a queue-index rule applied
                         try:
-                            q = scheduler._get_task_queue()  # type: ignore[attr-defined]
+                            q = []  # type: ignore[attr-defined]
                             idx = None
                             for i, t in enumerate(q, 1):
                                 if getattr(t, "task_id", None) == task_id:

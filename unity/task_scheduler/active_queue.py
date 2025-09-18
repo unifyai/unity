@@ -45,7 +45,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         # single task at creation time; once disabled it never re-enables for the
         # lifetime of this ActiveQueue instance.
         try:
-            initial_q = self._s._get_task_queue(task_id=self._current_task_id)
+            initial_q = self._s._get_queue_for_task(task_id=self._current_task_id)
             self._passthrough_enabled: bool = len(initial_q) == 1
         except Exception:
             self._passthrough_enabled = False
@@ -112,7 +112,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
     # ----------------------------
     def _current_queue_size(self) -> int:
         try:
-            q = self._s._get_task_queue(task_id=self._current_task_id)
+            q = self._s._get_queue_for_task(task_id=self._current_task_id)
             return len(q)
         except Exception:
             return 0
@@ -208,7 +208,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                         pass
 
                 # Find next runnable in the same queue (head->tail from current)
-                queue = self._s._get_task_queue(task_id=self._current_task_id)
+                queue = self._s._get_queue_for_task(task_id=self._current_task_id)
                 next_tid = None
                 for t in queue:
                     if t.task_id != self._current_task_id:
@@ -360,7 +360,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
 
             if not queue_rows:
                 # Fallback to best-effort non-terminal queue snapshot
-                queue = self._s._get_task_queue(task_id=self._current_task_id)
+                queue = self._s._get_queue_for_task(task_id=self._current_task_id)
                 queue_rows = [
                     {
                         "task_id": getattr(t, "task_id", None),
@@ -700,7 +700,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
 
             # Fallback: if queue_rows is empty, try non-terminal queue as a best-effort snapshot
             if not queue_rows:
-                queue = self._s._get_task_queue(task_id=self._current_task_id)
+                queue = self._s._get_queue_for_task(task_id=self._current_task_id)
                 queue_rows = [
                     {
                         # best-effort row-like dict shape

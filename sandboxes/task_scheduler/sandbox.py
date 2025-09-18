@@ -472,7 +472,11 @@ async def _dispatch_with_context(
             if getattr(sel, "position", None) is not None:
                 try:
                     # Build a snapshot of the current runnable queue
-                    queue = ts._get_task_queue()
+                    queue = (
+                        ts._get_queue_for_task(task_id=task_id)
+                        if task_id is not None
+                        else []
+                    )
                     qlen = len(queue)
                     pos = int(sel.position)
                     if pos >= 0:
@@ -508,7 +512,11 @@ async def _dispatch_with_context(
             try:
                 # Resolve to concrete task_ids and bind rules
                 try:
-                    current_queue = ts._get_task_queue()  # head→tail runnable
+                    current_queue = (
+                        ts._get_queue_for_task(task_id=task_id)
+                        if task_id is not None
+                        else []
+                    )  # head→tail runnable
                 except Exception:
                     current_queue = []
                 for idx, params in idx_to_params.items():

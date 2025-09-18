@@ -1139,8 +1139,8 @@ class HierarchicalPlan(BaseActiveTask):
 
         if self.persist:
             self._done_events = asyncio.Queue()
-            self._summary_results = asyncio.Queue()
-            self._last_done_log_index = 0
+            self.cumulative_interactions: List[Tuple] = []
+            self._last_summarized_interaction_count: int = 0
 
         self._child_tasks: set[asyncio.Task] = set()
 
@@ -1291,12 +1291,6 @@ class HierarchicalPlan(BaseActiveTask):
                 if hasattr(self, "_done_events") and not self._done_events.empty():
                     try:
                         event_to_signal = self._done_events.get_nowait()
-                        new_log_entries = self.action_log[self._last_done_log_index :]
-                        self._last_done_log_index = len(self.action_log)
-
-                        summary = await self._summarize_log_chunk(new_log_entries)
-                        await self._summary_results.put(summary)
-
                         event_to_signal.set()
                     except asyncio.QueueEmpty:
                         pass
@@ -1582,50 +1576,67 @@ class HierarchicalPlan(BaseActiveTask):
             or f"Plan finished in state {self._state.name} without a result."
         )
 
-    async def done(self) -> str:
+    def done(self) -> bool:
+        """
+        Checks if the plan has completed.
+
+        Returns:
+            True if the plan is in a terminal state, False otherwise.
+        """
+        return self._is_complete
+
+    async def awaiting_next_instruction(self) -> str:
         """
         Waits until the plan has completed its current unit of work and is
-        paused waiting for the next instruction.
-
-        Returns a concise summary of all actions performed since the last
-        time `done()` was called.
-
-        Raises:
-            RuntimeError: If the plan was not initialized with `persist=True`.
+        paused waiting for the next instruction. Returns a summary of actions
+        performed since the last call to this method.
         """
         if not self.persist:
             raise RuntimeError(
-                "The .done() handle is only available when the plan is started with persist=True.",
+                "The .awaiting_next_instruction() handle is only available when the plan is started with persist=True.",
             )
 
         completion_event = asyncio.Event()
         await self._done_events.put(completion_event)
-
         await completion_event.wait()
 
-        summary = await self._summary_results.get()
+        start_index = self._last_summarized_interaction_count
+        new_interactions = self.cumulative_interactions[start_index:]
+
+        if not new_interactions:
+            return "No new actions were performed since the last update."
+
+        formatted_interactions = []
+        for interaction in new_interactions:
+            kind, act, obs, *logs = interaction
+            logs = logs[0] if logs else []
+            log_entry = f"- Action: `{act}` with result `{obs or 'N/A'}`"
+            if logs:
+                log_details = "\n".join([f"    {line}" for line in logs])
+                log_entry += f"\n  - Agent Logs:\n{log_details}"
+            formatted_interactions.append(log_entry)
+
+        summary = await self._summarize_log_chunk("\n".join(formatted_interactions))
+
+        self._last_summarized_interaction_count = len(self.cumulative_interactions)
         return summary
 
-    async def _summarize_log_chunk(self, log_chunk: list[str]) -> str:
+    async def _summarize_log_chunk(self, summaries: str) -> str:
         """Uses an LLM to summarize a list of action log entries."""
-        if not log_chunk:
-            return "No new actions were taken."
-
-        log_text = "\n".join(log_chunk)
+        if not summaries:
+            return "Actions completed successfully."
 
         prompt = textwrap.dedent(
             f"""
             The following is a log of actions from an autonomous agent.
-            Summarize these actions concisely in a single sentence from the first-person perspective (e.g., "I navigated to the website and then searched for cookies.").
-            Focus on what was accomplished, not on internal states or verification steps.
+            Summarize these actions concisely in a single sentence from the first-person perspective (e.g., "I have successfully navigated to the website and then searched for cookies.").
 
             ACTION LOG:
             ---
-            {log_text}
+            {summaries}
             ---
         """,
         )
-
         summary = await llm_call(self.summarization_client, prompt)
         return summary.strip()
 
@@ -2030,7 +2041,7 @@ class HierarchicalPlan(BaseActiveTask):
                             description="The index of the current tab. Return None if the tab index cannot be determined from the visible content.",
                         )
 
-                    original_tab_index = await self.actor.action_provider.browser_observe(
+                    original_tab_index = await self.actor.action_provider.observe(
                         "Look at the browser tabs at the top of the screen. What is the numerical index (starting from 0) of the currently active/selected tab? If you cannot see clear tab indicators or determine the active tab index, return null for current_tab_index.",
                         response_format=TabState,
                     )
@@ -2045,7 +2056,7 @@ class HierarchicalPlan(BaseActiveTask):
                     )
 
                 self.action_log.append("SANDBOX: Opening new tab for exploration")
-                await self.actor.action_provider.browser_act(
+                await self.actor.action_provider.act(
                     f"Open a new tab navigating to the url {original_url} and ensure the new tab is active",
                 )
 
@@ -2124,7 +2135,7 @@ class HierarchicalPlan(BaseActiveTask):
                         if original_tab_index.current_tab_index is not None
                         else 0
                     )
-                    await self.actor.action_provider.browser_act(
+                    await self.actor.action_provider.act(
                         f"Switch to tab {tab_index} which was on the url {original_url} to go back to the original tab",
                     )
                     self.action_log.append("SANDBOX: Returned to original tab")
@@ -2185,12 +2196,26 @@ class HierarchicalPlan(BaseActiveTask):
         if self.persist:
             self._set_state(_HierarchicalPlanState.COMPLETED)
             self._set_final_result(result_str)
+            try:
+                if hasattr(self, "_done_events") and not self._done_events.empty():
+                    event_to_signal = self._done_events.get_nowait()
+                    event_to_signal.set()
+            except Exception:
+                pass
         else:
             self._set_state(_HierarchicalPlanState.STOPPED)
             if self._execution_task and not self._execution_task.done():
                 self._execution_task.cancel()
             self._set_final_result(result_str)
 
+        try:
+            self.runtime._release_from_checkpoint()
+        except Exception:
+            pass
+        try:
+            self.runtime.resume()
+        except Exception:
+            pass
         return result_str
 
     async def pause(self) -> str:
@@ -2445,7 +2470,7 @@ class HierarchicalActor(BaseActor):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        persist: bool = False,
+        persist: bool = True,
         **kwargs,
     ) -> HierarchicalPlan:
         """
@@ -3139,6 +3164,7 @@ class HierarchicalActor(BaseActor):
                 plan.last_verified_screenshot = (
                     await self.action_provider.browser.get_screenshot()
                 )
+                plan.cumulative_interactions.extend(interactions_for_this_step)
                 logger.info(
                     f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
                 )

@@ -71,7 +71,7 @@ async def test_disallow_internal_status_edits_on_active_task(monkeypatch):
 
     # Attempt to change status away from active via update API should raise
     with pytest.raises(RuntimeError):
-        ts._update_task_status(task_ids=tid, new_status=Status.paused)
+        ts._update_task(task_id=tid, status=Status.paused)
 
     # Clean stop to avoid leaking background threads
     h.stop(cancel=False)

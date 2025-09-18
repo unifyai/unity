@@ -92,13 +92,12 @@ class ReintegrationManager:
                 "Task currently has a trigger; remove the trigger before restoring its schedule/queue position.",
             )
 
-        # Use queue_id from plan when present to choose the correct queue
+        # Use the plan's queue_id when present, otherwise derive from the current task
         qid = getattr(plan, "queue_id", None)
-        queue_list = (
-            self._s._get_queue(queue_id=qid)
-            if hasattr(self._s, "_get_queue")
-            else self._s._get_task_queue()
-        )
+        if qid is not None:
+            queue_list = self._s._get_queue(queue_id=qid)
+        else:
+            queue_list = self._s._get_queue_for_task(task_id=tid)
         queue_ids = [t.task_id for t in queue_list]
 
         final_prev, final_next = self._s._select_final_neighbours(

@@ -19,3 +19,4 @@ dump.rdb
 .unity_plans
 *.txt
 parsed_results_output/
+evals/

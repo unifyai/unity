@@ -1,1 +1,8 @@
-{}
+{
+    "ev_knowledge": [
+      "us Please create a knowledge base for electric vehicles with these tables and columns:\n\n• Companies (company_id, name, hq_country, founded_year)\n• Models (model_id, company_id -> Companies, name, body_type, battery_kwh, efficiency_km_per_kwh, warranty_years, warranty_coverage)\n• Markets (market_id, name, region)\n• Sales (sales_id, model_id -> Models, market_id -> Markets, year, units)\n\nPopulate ~6 companies, ~15 models, and 5 markets. Insert Sales rows for years 2022–2024 across all markets with varied unit volumes. Add a derived column on Models: range_km = battery_kwh * efficiency_km_per_kwh. Use realistic-looking numeric/text values. Avoid duplicates by using `ask` to verify before adding, and ensure foreign keys link correctly (company_id, market_id, model_id)."
+    ],
+    "ai_papers": [
+      "us Please create a knowledge base of AI research papers with the following normalized schema:\n\n• Authors (author_id, full_name, affiliation)\n• Venues (venue_id, name, type)\n• Papers (paper_id, title, year, venue_id -> Venues, arxiv_id, url, method_tags:list, dataset:str, metrics:dict)\n• Authorship (paper_id -> Papers, author_id -> Authors, author_order:int)\n\nPopulate ~20 papers from 2019–2024 across 3 venues (e.g., NeurIPS, ICML, ICLR), ~30 authors with mixed affiliations, and realistic method_tags (e.g., diffusion, LLM, RLHF) and metrics (e.g., accuracy/F1/BLEU in the metrics dict). Use `ask` to check for existing rows before inserting to avoid duplicates, and ensure all foreign-key links are valid."
+    ]
+}

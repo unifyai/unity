@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
+from typing import Optional, Dict, Any, TYPE_CHECKING
 
 import unify
 
@@ -9,113 +9,19 @@ from ._queue_utils import (
     sched_next as _q_next,
     attach_with_links as _q_attach_with_links,
 )
-from .types.task import Task
-from .types.status import Status
 from .types.reintegration_plan import ReintegrationPlan
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 
 
-def get_task_queue(
-    scheduler: "TaskScheduler",
-    *,
-    task_id: Optional[int] = None,
-) -> List[Task]:
-    """Return the runnable task queue from head to tail.
-
-    Mirrors TaskScheduler._get_task_queue but lives in a separate module to
-    keep the main scheduler lean.
-    """
-
-    def _get_task_by_task_id(tid: int) -> Optional[dict]:
-        rows = scheduler._filter_tasks(filter=f"task_id == {tid}", limit=1)
-        return rows[0] if rows else None
-
-    def _choose_start_node(tid: Optional[int]) -> Optional[dict]:
-        if tid is not None:
-            row = _get_task_by_task_id(tid)
-            if row is not None:
-                return row
-        else:
-            if scheduler._primed_task:
-                # Validate that the cached primed task still exists in storage.
-                primed_id = scheduler._primed_task.get("task_id")
-                primed_row = (
-                    _get_task_by_task_id(primed_id) if primed_id is not None else None
-                )
-                if primed_row is not None:
-                    return primed_row
-                # Stale cache – clear it so we fall back to detecting the head from storage.
-                try:
-                    scheduler._refresh_primed_cache()
-                except Exception:
-                    scheduler._primed_task = None
-
-        head_candidates = scheduler._filter_tasks(
-            filter=scheduler._HEAD_FILTER,
-            limit=2,
-        )
-        if not head_candidates:
-            return None
-        assert len(head_candidates) == 1, f"Multiple heads detected: {head_candidates}"
-        return head_candidates[0]
-
-    def _walk_to_head(row: dict) -> dict:
-        cur = row
-        while True:
-            prev_id = _q_prev(cur.get("schedule"))
-            if prev_id is None:
-                break
-            prev_row = _get_task_by_task_id(prev_id)
-            if prev_row is None:
-                break
-            cur = prev_row
-        return cur
-
-    def _walk_forward(head_row: dict) -> List[Task]:
-        ordered: List[Task] = []
-        cur = head_row
-        while cur:
-            if scheduler._to_status(cur.get("status")) not in {
-                Status.completed,
-                Status.cancelled,
-                Status.failed,
-            }:
-                # Defensive read: drop stale activation metadata on non-active rows
-                _row = dict(cur)
-                try:
-                    if scheduler._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
-                        _row.pop("activated_by", None)
-                except Exception:
-                    if str(_row.get("status")) != str(Status.active):
-                        _row.pop("activated_by", None)
-                ordered.append(Task(**_row))
-
-            nxt_id = _q_next(cur.get("schedule"))
-            if nxt_id is None:
-                break
-            cur = _get_task_by_task_id(nxt_id)
-            if cur is None:
-                break
-        return ordered
-
-    start_row = _choose_start_node(task_id)
-    if start_row is None:
-        return []
-
-    if start_row.get("schedule") is None:
-        _row = dict(start_row)
-        try:
-            if scheduler._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
-                _row.pop("activated_by", None)
-        except Exception:
-            if str(_row.get("status")) != str(Status.active):
-                _row.pop("activated_by", None)
-        return [Task(**_row)]
-
-    head_row = _walk_to_head(start_row)
-    return _walk_forward(head_row)
+"""
+This module previously exposed a `get_task_queue` helper used by
+`TaskScheduler._get_task_queue`. The scheduler now provides explicit helpers:
+`_get_queue(queue_id=...)`, `_walk_queue_from_task(task_id=...)`, and
+`_get_queue_for_task(task_id=...)`. The generic traversal is kept within the
+scheduler to ensure a single invariant funnel for reads and writes.
+"""
 
 
 def detach_from_queue_for_activation(

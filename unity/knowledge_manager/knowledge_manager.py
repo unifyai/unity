@@ -3,9 +3,12 @@ import asyncio
 import uuid
 import unify
 import functools
-from typing import Any, Dict, List, Optional, Callable, Union
+from typing import Any, Dict, List, Optional, Union
 
 import json
+
+from unity.file_manager.base import BaseFileManager
+from unity.file_manager.file_manager import FileManager
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..helpers import _handle_exceptions
 from .types import ColumnType
@@ -13,19 +16,16 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
     methods_to_tool_dict,
+    inject_broader_context,
+    make_request_clarification_tool,
     TOOL_LOOP_LINEAGE,
 )
-from ..helpers import _handle_exceptions
 from .base import BaseKnowledgeManager
+from ..events.manager_event_logging import log_manager_call
 from .prompt_builders import (
     build_update_prompt,
     build_ask_prompt,
     build_refactor_prompt,
-)
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
 )
 from ..common.semantic_search import (
     fetch_top_k_by_references,
@@ -39,6 +39,7 @@ from ..common.http import request as http_request
 # Optional per-tool runtime logging (KnowledgeManager)               #
 # ------------------------------------------------------------------ #
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def _env_truthy(name: str, default: bool = False) -> bool:
@@ -76,8 +77,13 @@ def _km_log_tool_runtime(func):
     @functools.wraps(func, updated=())
     def _wrapper(self: "KnowledgeManager", *args, **kwargs):
         start = time.perf_counter()
+        res = None
         try:
-            return func(self, *args, **kwargs)
+            # Any explicit returns from the finally block override the
+            # return from the try block so we store it here and
+            # return it in the finally block if needed
+            res = func(self, *args, **kwargs)
+            return res
         finally:
             try:
                 elapsed_ms = (time.perf_counter() - start) * 1000.0
@@ -91,7 +97,7 @@ def _km_log_tool_runtime(func):
                     pass
 
             if not _km_timing_enabled():
-                return
+                return res
 
             # Determine category best-effort at runtime
             try:
@@ -143,6 +149,7 @@ class KnowledgeManager(BaseKnowledgeManager):
     def __init__(
         self,
         *,
+        file_manager: Optional[BaseFileManager] = None,
         rolling_summary_in_prompts: bool = True,
         include_contacts: bool = True,
     ) -> None:
@@ -155,6 +162,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         Parameters
         ----------
+        file_manager: Optional[BaseFileManager], default ``None``
+            Optional file manager to use for file-related operations.
         rolling_summary_in_prompts : bool, default ``True``
             When enabled, inject a short rolling activity summary (sourced
             from ``MemoryManager``) into system prompts for LLM calls.
@@ -163,7 +172,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools such as joins and filters can reference it via the special
             table name ``"Contacts"``.
         """
+        if file_manager is not None:
+            self._file_manager = file_manager
+        else:
+            self._file_manager = FileManager()
 
+        # Allow ingestion/deprecation only within update/refactor flows
         self._refactor_tools = methods_to_tool_dict(
             # Ask
             self.ask,
@@ -183,19 +197,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             # Rows
             self._delete_rows,
             self._update_rows,
+            # Files
+            self._ingest_documents,
             include_class_name=False,
         )
-
-        # ── immutable built-ins for *Contacts* ───────────────────────────
-        self._CONTACT_REQUIRED_COLUMNS: set[str] = {
-            "contact_id",
-            "first_name",
-            "surname",
-            "email_address",
-            "phone_number",
-            "whatsapp_number",
-            "description",
-        }
 
         self._ask_tools = {
             **methods_to_tool_dict(
@@ -302,32 +307,35 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return f"{self._ctx}/{table}"
 
-    def _look_first_tool_policy(self, step: int, tls: Dict[str, Callable]):
-        """
-        Prefer lookup/search tools on the first step of a tool loop.
+    @staticmethod
+    def _default_ask_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require search on the first step; auto thereafter."""
+        if step_index < 1 and "search" in current_tools:
+            return ("required", {"search": current_tools["search"]})
+        return ("auto", current_tools)
 
-        Parameters
-        ----------
-        step : int
-            Zero‑based tool‑use step index.
-        tls : dict[str, Callable]
-            Full toolset available to the loop.
+    @staticmethod
+    def _default_update_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require ask on the first step; auto thereafter."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
+        return ("auto", current_tools)
 
-        Returns
-        -------
-        tuple[str, dict[str, Callable]]
-            A pair ``(mode, tools)`` where ``mode`` is either ``"required"``
-            (first step) or ``"auto"`` (subsequent steps).
-        """
-        if step < 1:
-            return "required", methods_to_tool_dict(
-                self._filter,
-                self._search,
-                self._filter_join,
-                self._search_join,
-                include_class_name=False,
-            )
-        return "auto", tls
+    @staticmethod
+    def _default_refactor_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require ask on the first step; auto thereafter."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
+        return ("auto", current_tools)
 
     # Public #
     # -------#
@@ -335,6 +343,7 @@ class KnowledgeManager(BaseKnowledgeManager):
     # English-Text Command
 
     @functools.wraps(BaseKnowledgeManager.refactor, updated=())
+    @log_manager_call("KnowledgeManager", "refactor", payload_key="request")
     async def refactor(
         self,
         text: str,
@@ -344,6 +353,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
         """
         English‑text command interface for schema/data refactoring.
@@ -372,44 +382,59 @@ class KnowledgeManager(BaseKnowledgeManager):
             A handle that allows interjection, pause/resume, and awaiting the
             final result.
         """
-
-        # ── 0.  Emit *incoming* ManagerMethod event ──────────────────────
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "KnowledgeManager",
-            "refactor",
-            phase="incoming",
-            command=text,
-        )
-
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
 
         # 1️⃣  Prepare toolset (and optional live clarification helper)
         tools = dict(self._refactor_tools)
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                """Bubble a clarification question upward and await the answer.
-
-                Note: If the enclosing loop has no clarification queues, callers
-                must not ask the user questions in the final response. Proceed
-                with sensible defaults or best guesses instead.
-                """
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "KnowledgeManager.refactor was invoked without both "
-                        "clarification queues but the model requested one.",
+            async def _on_request(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "refactor",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
                     )
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                except Exception:
+                    pass
 
-            tools["request_clarification"] = request_clarification
+            async def _on_answer(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "refactor",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         # 2️⃣  Build & inject system prompt
         table_schemas_json = json.dumps(self._tables_overview(), indent=4)
@@ -434,16 +459,8 @@ class KnowledgeManager(BaseKnowledgeManager):
             loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=self._look_first_tool_policy,
-            preprocess_msgs=self._inject_broader_context,
-        )
-
-        # ── 3.  Add logging wrapper so every handle-interaction is traced ─
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "KnowledgeManager",
-            "refactor",
+            tool_policy=self._default_refactor_tool_policy,
+            preprocess_msgs=inject_broader_context,
         )
 
         # 4️⃣  Optionally wrap .result() to expose hidden reasoning
@@ -459,6 +476,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         return handle
 
     @functools.wraps(BaseKnowledgeManager.update, updated=())
+    @log_manager_call("KnowledgeManager", "update", payload_key="request")
     async def update(
         self,
         text: str,
@@ -468,6 +486,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        _call_id: Optional[str] = None,
+        case_specific_instructions: str | None = None,
     ) -> "SteerableToolHandle":
         """
         Modify tables/rows based on a natural‑language request.
@@ -489,50 +509,67 @@ class KnowledgeManager(BaseKnowledgeManager):
         rolling_summary_in_prompts : bool | None, default ``None``
             Overrides the instance‑level ``rolling_summary_in_prompts`` for
             this call only when not ``None``.
-
+        case_specific_instructions : str | None, default ``None``
+            Optional case-specific instructions to add to the system prompt.
         Returns
         -------
         SteerableToolHandle
             A handle that allows interjection, pause/resume, and awaiting the
             final result.
         """
-
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "KnowledgeManager",
-            "update",
-            phase="incoming",
-            request=text,
-        )
-
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self._update_tools)
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                """Query the user for more information, and wait for the reply.
-
-                If clarification queues are not present, higher‑level logic must
-                continue with sensible defaults and should not ask questions in
-                the final response.
-                """
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "TranscriptManager.ask was called without both "
-                        "clarification queues but the model requested clarifications.",
+            async def _on_request(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "update",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
                     )
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                except Exception:
+                    pass
 
-            tools["request_clarification"] = request_clarification
+            async def _on_answer(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "update",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
@@ -548,6 +585,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 tools=tools,
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
+                case_specific_instructions=case_specific_instructions,
             ),
         )
 
@@ -558,19 +596,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=self._look_first_tool_policy,
-            preprocess_msgs=self._inject_broader_context,
+            tool_policy=self._default_update_tool_policy,
+            preprocess_msgs=inject_broader_context,
         )
 
-        # ── 3a.  Add logging wrapper  ─────────────────────────────────────
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "KnowledgeManager",
-            "update",
-        )
-
-        # ── 3b.  Optionally wrap .result() to expose reasoning  ───────────
+        # Optionally wrap .result() to expose reasoning
         if _return_reasoning_steps:
             original_result = handle.result
 
@@ -583,6 +613,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         return handle
 
     @functools.wraps(BaseKnowledgeManager.ask, updated=())
+    @log_manager_call("KnowledgeManager", "ask", payload_key="question")
     async def ask(
         self,
         text: str,
@@ -592,6 +623,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        case_specific_instructions: str | None = None,
+        response_format: Any | None = None,
+        _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
         """
         Retrieve information from knowledge tables using natural language.
@@ -613,48 +647,67 @@ class KnowledgeManager(BaseKnowledgeManager):
         rolling_summary_in_prompts : bool | None, default ``None``
             Overrides the instance‑level ``rolling_summary_in_prompts`` for
             this call only when not ``None``.
-
+        case_specific_instructions : str | None, default ``None``
+            Optional case-specific instructions to add to the system prompt.
         Returns
         -------
         SteerableToolHandle
             A handle that allows interjection, pause/resume, and awaiting the
             final result.
         """
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "KnowledgeManager",
-            "ask",
-            phase="incoming",
-            question=text,
-        )
-
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self._ask_tools)
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                """Query the user for more information, and wait for the reply.
-
-                If queues are unavailable, do not ask questions in the outer
-                response; proceed with sensible defaults or best guesses.
-                """
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "KnowledgeManager.retrieve was called without both "
-                        "clarification queues but the model requested clarifications.",
+            async def _on_request(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "ask",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
                     )
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                except Exception:
+                    pass
 
-            tools["request_clarification"] = request_clarification
+            async def _on_answer(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "ask",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
@@ -670,6 +723,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 tools=tools,
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
+                case_specific_instructions=case_specific_instructions,
             ),
         )
         handle = start_async_tool_use_loop(
@@ -679,19 +733,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
-            preprocess_msgs=self._inject_broader_context,
+            tool_policy=self._default_ask_tool_policy,
+            preprocess_msgs=inject_broader_context,
+            response_format=response_format,
         )
 
-        # ── 3a.  Add logging wrapper  ─────────────────────────────────────
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "KnowledgeManager",
-            "ask",
-        )
-
-        # ── 3b.  Optionally wrap .result() to expose reasoning  ───────────
+        # Optionally wrap .result() to expose reasoning
         if _return_reasoning_steps:
             original_result = handle.result
 
@@ -724,7 +771,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         response = http_request("GET", url, headers=headers)
         _handle_exceptions(response)
         ret = response.json()
@@ -780,12 +830,26 @@ class KnowledgeManager(BaseKnowledgeManager):
             description=description,
         )
 
-        # Always add the generated primary-key unless the caller supplied it.
-        if columns is None:
-            columns = {}
+        # If no initial columns are provided, avoid an unnecessary fields call.
+        if not columns:
+            return {"info": "Context created", "context": ctx, "project": proj}
+
+        # Make sure fields are always mutable by default and skip backfill for a new context
+        materialized_fields = {
+            k: {"type": v, "mutable": True} for k, v in columns.items()
+        }
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
-        json_input = {"project": proj, "context": ctx, "fields": columns}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
+        json_input = {
+            "project": proj,
+            "context": ctx,
+            "fields": materialized_fields,
+            # Creating a brand-new context implies no logs to backfill; skip for speed.
+            "backfill_logs": False,
+        }
         response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
@@ -811,24 +875,44 @@ class KnowledgeManager(BaseKnowledgeManager):
                 Mapping ``table_name → {"description": str, "columns": {...}}``.
                 If *include_column_info* is *False* the ``"columns"`` key is omitted.
         """
+        # Single read for Knowledge contexts under this manager
+        km_contexts = unify.get_contexts(prefix=f"{self._ctx}/")
         tables = {
             k[len(f"{self._ctx}/") :]: {"description": v}
-            for k, v in unify.get_contexts(prefix=f"{self._ctx}/").items()
+            for k, v in km_contexts.items()
         }
 
-        # Optionally expose root-level Contacts when linkage is enabled.
-        if (
-            self._include_contacts
-            and self._contacts_ctx is not None
-            and self._contacts_ctx in unify.get_contexts()
-        ):
-            tables["Contacts"] = {
-                "description": unify.get_contexts()[self._contacts_ctx],
-            }
-        if not include_column_info:
+        # Optionally expose root-level Contacts when linkage is enabled (single call)
+        if self._include_contacts and self._contacts_ctx is not None:
+            try:
+                contacts_info = unify.get_context(self._contacts_ctx)
+                if isinstance(contacts_info, dict):
+                    tables["Contacts"] = {
+                        "description": contacts_info.get("description", ""),
+                    }
+            except Exception:
+                # Best-effort: absence of Contacts must not fail overview
+                pass
+
+        if not include_column_info or not tables:
             return tables
+
+        # Fetch column metadata in parallel to avoid N sequential REST calls
+        columns_by_table: Dict[str, Dict[str, str]] = {}
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(tables)))) as pool:
+            futures = {
+                pool.submit(self._get_columns, table=table_name): table_name
+                for table_name in tables.keys()
+            }
+            for fut in as_completed(futures):
+                table_name = futures[fut]
+                # Propagate exceptions to match prior behaviour (fail fast)
+                cols = fut.result()
+                columns_by_table[table_name] = cols
+
         return {
-            k: {**v, "columns": self._get_columns(table=k)} for k, v in tables.items()
+            name: {**meta, "columns": columns_by_table.get(name, {})}
+            for name, meta in tables.items()
         }
 
     @_km_log_tool_runtime
@@ -857,7 +941,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         old_name = f"{self._ctx}/{old_name}"
         new_name = f"{self._ctx}/{new_name}"
         url = f"{unify.BASE_URL}/project/{proj}/contexts/{old_name}/rename"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         json_input = {"name": new_name}
         response = http_request("PATCH", url, json=json_input, headers=headers)
         _handle_exceptions(response)
@@ -869,7 +956,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         *,
         tables: Union[str, List[str]],
         startswith: Optional[str] = None,
-    ) -> Dict[str, str]:
+    ) -> List[Dict[str, str]]:
         """
         **Drop** an entire table *and* all its rows.
 
@@ -883,19 +970,47 @@ class KnowledgeManager(BaseKnowledgeManager):
         Returns
         -------
         list[dict[str, str]]
-                Confirmations / errors from the backend.
+            Confirmations / errors from the backend.
         """
+        # Build a single, de-duplicated list of fully-qualified contexts to delete
+        contexts_to_delete: List[str] = []
+
         if isinstance(tables, str):
-            tables = [tables]
-        rets = list()
-        for table in tables:
-            rets.append(unify.delete_context(self._ctx_for_table(table)))
-        if startswith is None:
-            return rets
-        contexts = unify.get_contexts(prefix=f"{self._ctx}/{startswith}")
-        for ctx in contexts:
-            rets.append(unify.delete_context(ctx))
-        return rets
+            if tables:
+                contexts_to_delete.append(self._ctx_for_table(tables))
+        elif tables:
+            contexts_to_delete.extend(self._ctx_for_table(t) for t in tables)
+
+        if startswith:
+            # One backend read to expand the prefix – avoid any further metadata calls
+            ctx_map = unify.get_contexts(prefix=f"{self._ctx}/{startswith}")
+            # Keys are full context names
+            contexts_to_delete.extend(list(ctx_map.keys()))
+
+        # De-duplicate while preserving order (explicit tables first, then prefix matches)
+        seen: set[str] = set()
+        contexts_to_delete = [
+            c for c in contexts_to_delete if not (c in seen or seen.add(c))
+        ]
+
+        if not contexts_to_delete:
+            return []
+
+        # Fast-path: single deletion avoids thread-pool overhead
+        if len(contexts_to_delete) == 1:
+            return [unify.delete_context(contexts_to_delete[0])]
+
+        # Parallelise deletions to minimise wall-clock time across multiple contexts
+        results: List[Dict[str, str]] = []
+        max_workers = min(8, len(contexts_to_delete))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [
+                pool.submit(unify.delete_context, ctx) for ctx in contexts_to_delete
+            ]
+            for fut in as_completed(futures):
+                results.append(fut.result())
+
+        return results
 
     # Columns
 
@@ -928,11 +1043,17 @@ class KnowledgeManager(BaseKnowledgeManager):
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         json_input = {
             "project": proj,
             "context": ctx,
-            "fields": {column_name: column_type},
+            # Do not pre-read fields for existence; the backend handles idempotence
+            # and updating metadata. Avoid expensive backfills for large tables.
+            "fields": {column_name: {"type": column_type, "mutable": True}},
+            "backfill_logs": False,
         }
         response = http_request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
@@ -976,7 +1097,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "equation": equation,
             "referenced_logs": {"lg": {"context": self._ctx_for_table(table)}},
         }
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = http_request("POST", url, json=json_input, headers=headers)
         return response.json()
 
     @_km_log_tool_runtime
@@ -1002,22 +1123,44 @@ class KnowledgeManager(BaseKnowledgeManager):
                 Backend confirmation or error.
         """
         table_ctx = unify.get_context(self._ctx_for_table(table))
-        unique_column_name = table_ctx["unique_keys"]
+        keys = table_ctx.get("unique_keys")
+        unique_column_name = keys[0] if isinstance(keys, list) and keys else keys
         # Guard against removal of mandatory columns
-        if (table == "Contacts" and column_name in self._CONTACT_REQUIRED_COLUMNS) or (
-            table != "Contacts" and column_name == unique_column_name
-        ):
+        if table == "Contacts":
+            try:
+                from unity.contact_manager.types.contact import Contact as _C
+
+                required_cols = set(_C.model_fields.keys()) - set(
+                    ["rolling_summary", "response_policy", "respond_to"],
+                )
+            except Exception:
+                required_cols = {"contact_id"}
+            if column_name in required_cols:
+                raise ValueError(
+                    (
+                        f"Cannot delete required Contacts column '{column_name}'. "
+                        "Contacts core schema is protected. If you need to restructure, "
+                        "use rename_column or create a new optional column and migrate values."
+                    ),
+                )
+        elif column_name == unique_column_name:
             raise ValueError(
-                f"❌  Column '{column_name}' is mandatory and cannot be deleted.",
+                (
+                    f"Cannot delete primary key column '{column_name}'. "
+                    "This column uniquely identifies rows. Use rename_column if you need a different name."
+                ),
             )
 
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        # Prefer field-level deletion endpoint for efficiency; avoids per-log scans
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         json_input = {
             "project": unify.active_project(),
             "context": self._ctx_for_table(table),
-            "ids_and_fields": [[None, column_name]],
-            "source_type": "all",
+            "fields": [column_name],
         }
         response = http_request("DELETE", url, json=json_input, headers=headers)
         _handle_exceptions(response)
@@ -1049,10 +1192,23 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend response.
         """
+        # Short-circuit obvious no-op and invalid rename targets to avoid any backend call
+        if old_name == new_name:
+            return {
+                "info": "no-op: old and new names are identical",
+                "old_name": old_name,
+                "new_name": new_name,
+            }
+        if new_name == "id":
+            raise ValueError("Cannot rename a column to reserved name 'id'.")
+
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/rename_field"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            "Content-Type": "application/json",
+        }
         json_input = {
             "project": proj,
             "context": ctx,
@@ -1241,12 +1397,32 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Mapping ``table_name → backend message / "no-op"``.
         """
-        if tables is None:
-            tables = list(self._tables_overview().keys())
+        if limit > 1000:
+            raise ValueError("Limit must be less than 1000")
 
-        summaries: Dict[str, str] = {}
-        for table in tables:
-            ctx = self._ctx_for_table(table)
+        # Resolve target tables without incurring per-table field lookups.
+        if tables is None:
+            km_prefix = f"{self._ctx}/"
+            ctxs = unify.get_contexts(prefix=km_prefix)
+            resolved_tables: List[str] = [k[len(km_prefix) :] for k in ctxs.keys()]
+            # Optionally expose root-level Contacts when linkage is enabled
+            if self._include_contacts and self._contacts_ctx is not None:
+                try:
+                    contacts_info = unify.get_context(self._contacts_ctx)
+                    if isinstance(contacts_info, dict):
+                        resolved_tables.append("Contacts")
+                except Exception:
+                    pass
+        else:
+            resolved_tables = list(tables)
+
+        if not resolved_tables:
+            return {}
+
+        project_name = unify.active_project()
+
+        def _delete_for_table(table_name: str) -> tuple[str, str]:
+            ctx = self._ctx_for_table(table_name)
             log_ids = list(
                 unify.get_logs(
                     context=ctx,
@@ -1257,16 +1433,31 @@ class KnowledgeManager(BaseKnowledgeManager):
                 ),
             )
             if not log_ids:
-                summaries[table] = "no-op"
-                continue
+                return table_name, "no-op"
 
             res = unify.delete_logs(
                 logs=log_ids,
                 context=ctx,
-                project=unify.active_project(),
+                project=project_name,
                 delete_empty_logs=True,
             )
-            summaries[table] = res.get("message", str(res))
+            return table_name, res.get("message", str(res))
+
+        # Parallelise across tables to minimise wall-clock time when multiple tables are targeted.
+        if len(resolved_tables) == 1:
+            name, msg = _delete_for_table(resolved_tables[0])
+            return {name: msg}
+
+        summaries: Dict[str, str] = {}
+        max_workers = min(8, max(1, len(resolved_tables)))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(_delete_for_table, table_name): table_name
+                for table_name in resolved_tables
+            }
+            for fut in as_completed(futures):
+                name, msg = fut.result()
+                summaries[name] = msg
 
         return summaries
 
@@ -1328,7 +1519,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         ctx = self._ctx_for_table(table)
         ctx_info = unify.get_context(ctx)
-        unique_column_name = ctx_info["unique_keys"][0]
+        keys = ctx_info.get("unique_keys")
+        unique_column_name = keys[0] if isinstance(keys, list) and keys else keys
         unique_ids = sorted([int(k) for k in updates.keys()])
         log_ids: List[int] = sorted(
             unify.get_logs(
@@ -1345,6 +1537,200 @@ class KnowledgeManager(BaseKnowledgeManager):
             overwrite=True,
         )
         return res
+
+    # File ingestion / deprecation
+
+    async def _ingest_documents(
+        self,
+        *,
+        filenames: Union[str, List[str]],
+        table: str = "content",
+        replace_existing: bool = True,
+        batch_size: int = 3,
+        **parse_options: Any,
+    ) -> Dict[str, Any]:
+        """
+        Ingest one or more documents efficiently with streaming.
+        This tool handles the complete workflow for document ingestion:
+        1. Stream parse documents in batches
+        2. Delete existing records that match (if replace_existing=True)
+        3. Insert new records as they become available
+        Args:
+            filenames: Single filename (str) or list of filenames to ingest
+            table: Target table (default: "content")
+            replace_existing: Whether to delete old records first
+            batch_size: Number of documents to parse in parallel
+            **parse_options: Options passed to parser
+        Returns:
+            Dict with success status, per-file results, and aggregate statistics
+        """
+        try:
+            if not self._file_manager:
+                return {"success": False, "error": "FileManager not available"}
+
+            # Normalize input to always be a list
+            if isinstance(filenames, str):
+                filenames = [filenames]
+
+            if not filenames:
+                return {"success": False, "error": "No filenames provided"}
+
+            print(
+                f"📄 Processing {len(filenames)} document{'s' if len(filenames) > 1 else ''} with batch size {batch_size}...",
+            )
+
+            # Initialize tracking
+            total_inserted = 0
+            total_deleted = 0
+            file_results = {}
+            batch_records = []
+            batch_files = []
+            processed_count = 0
+
+            # Process documents as they complete parsing
+            async for result in self._file_manager.parse_async(
+                filenames,
+                batch_size=batch_size,
+                **parse_options,
+            ):
+                filename = result.get("filename")
+
+                if result["status"] == "error":
+                    file_results[filename] = {
+                        "filename": filename,
+                        "success": False,
+                        "error": result["error"],
+                        "inserted": 0,
+                        "deleted": 0,
+                    }
+                    continue
+
+                records = result.get("records", [])
+                if not records:
+                    file_results[filename] = {
+                        "filename": filename,
+                        "success": False,
+                        "error": "No records extracted",
+                        "inserted": 0,
+                        "deleted": 0,
+                    }
+                    continue
+
+                # Delete existing records if requested
+                deleted_count = 0
+                if replace_existing and records:
+                    first_record = records[0]
+                    doc_filters = []
+
+                    if doc_id := first_record.get("document_id"):
+                        doc_filters.append(f"document_id == '{doc_id}'")
+
+                    if source_uri := first_record.get("source_uri"):
+                        # Clean up temp directory from path for matching
+                        clean_uri = source_uri
+                        if "/tmp/" in clean_uri:
+                            parts = clean_uri.split("/tmp/")
+                            if len(parts) > 1:
+                                after_tmp = parts[1]
+                                subparts = after_tmp.split("/", 1)
+                                if len(subparts) > 1:
+                                    clean_uri = subparts[1]
+                        # Use Python string method for pattern matching
+                        doc_filters.append(f"source_uri.endswith('{clean_uri}')")
+
+                    if doc_fingerprint := first_record.get("document_fingerprint"):
+                        doc_filters.append(
+                            f"document_fingerprint == '{doc_fingerprint}'",
+                        )
+
+                    if doc_filters:
+                        filter_expr = " or ".join(f"({f})" for f in doc_filters)
+                        try:
+                            # Check how many records will be deleted
+                            existing = self._filter(tables=[table], filter=filter_expr)
+                            deleted_count = len(existing.get(table, []))
+
+                            if deleted_count > 0:
+                                self._delete_rows(table=table, filter=filter_expr)
+                                total_deleted += deleted_count
+                                print(
+                                    f"🗑️  Deleted {deleted_count} old records for {filename}",
+                                )
+                        except Exception as e:
+                            print(
+                                f"⚠️  Failed to delete old records for {filename}: {e}",
+                            )
+
+                # Add to batch
+                batch_records.extend(records)
+                batch_files.append(
+                    {
+                        "filename": filename,
+                        "record_count": len(records),
+                        "deleted_count": deleted_count,
+                    },
+                )
+                processed_count += 1
+
+                print(f"✅ Parsed {filename}: {len(records)} records")
+
+                # Insert batch when we have processed batch_size documents or it's the last one
+                if len(batch_files) >= batch_size or processed_count == len(filenames):
+                    if batch_records:
+                        try:
+                            print(
+                                f"📥 Inserting batch of {len(batch_records)} records from {len(batch_files)} documents...",
+                            )
+                            self._add_rows(table=table, rows=batch_records)
+                            total_inserted += len(batch_records)
+
+                            # Update file results for this batch
+                            for file_info in batch_files:
+                                file_results[file_info["filename"]] = {
+                                    "filename": file_info["filename"],
+                                    "success": True,
+                                    "inserted": file_info["record_count"],
+                                    "deleted": file_info["deleted_count"],
+                                    "error": None,
+                                }
+
+                            print(f"✅ Batch inserted successfully")
+
+                        except Exception as e:
+                            # Update file results for failed batch
+                            for file_info in batch_files:
+                                file_results[file_info["filename"]] = {
+                                    "filename": file_info["filename"],
+                                    "success": False,
+                                    "inserted": 0,
+                                    "deleted": file_info["deleted_count"],
+                                    "error": f"Batch insertion failed: {str(e)}",
+                                }
+                            print(f"❌ Failed to insert batch: {e}")
+
+                        # Clear batch for next set
+                        batch_records = []
+                        batch_files = []
+
+            # Calculate summary statistics
+            successful_files = sum(
+                1 for fr in file_results.values() if fr.get("success", False)
+            )
+            failed_files = len(filenames) - successful_files
+
+            return {
+                "success": failed_files == 0,
+                "total_files": len(filenames),
+                "successful_files": successful_files,
+                "failed_files": failed_files,
+                "total_records": total_inserted,
+                "total_inserted": total_inserted,
+                "total_deleted": total_deleted,
+                "file_results": list(file_results.values()),
+            }
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     # Vector Search Helpers
     @_km_log_tool_runtime
@@ -1384,6 +1770,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table: str,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
+        filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Semantic search within a single knowledge table using one or more source expressions.
@@ -1396,8 +1783,11 @@ class KnowledgeManager(BaseKnowledgeManager):
                 Mapping from a source expression (plain column or derived Unify expression) to the
                 reference text to compare against. Supports multiple expressions; when more than one
                 is provided the ranking uses a sum of cosine distances over all terms.
-        k : int, default 5
+        k : int, default 10
                 Maximum number of rows to return.
+        filter : str | None, default ``None``
+                Row-level predicate (evaluated with column names as variables).
+                *None* returns all rows.
 
         Returns
         -------
@@ -1409,7 +1799,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         context = self._ctx_for_table(table)
 
-        rows: List[Dict[str, Any]] = fetch_top_k_by_references(context, references, k=k)
+        rows: List[Dict[str, Any]] = fetch_top_k_by_references(
+            context,
+            references,
+            k=k,
+            row_filter=filter,
+        )
         return backfill_rows(context, rows, k)
 
     @_km_log_tool_runtime
@@ -1424,6 +1819,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         right_where: Optional[str] = None,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
+        filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform a semantic search over the result of joining two tables.
@@ -1461,6 +1857,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         k : int, default 5
             Maximum number of rows to return.
 
+        filter : str | None, default ``None``
+                Row-level predicate (evaluated with column names as variables).
+                *None* returns all rows.
+
         Returns
         -------
         list[dict[str, Any]]
@@ -1489,6 +1889,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 dest_ctx,
                 references,
                 k=k,
+                row_filter=filter,
             )
             return backfill_rows(dest_ctx, rows, k)
         finally:
@@ -1505,6 +1906,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         joins: List[Dict[str, Any]],
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
+        filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform a semantic search over the result of chaining multiple joins.
@@ -1625,6 +2027,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 final_ctx,
                 references,
                 k=k,
+                row_filter=filter,
             )
             return backfill_rows(final_ctx, rows, k)
         finally:
@@ -1776,24 +2179,65 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, list[dict[str, Any]]]
                 Mapping ``table_name → [row_dict, …]``.
         """
+        if limit > 1000:
+            raise ValueError("Limit must be less than 1000")
+
+        # Resolve target tables without triggering per-table field reads.
+        # When the caller does not specify tables, list contexts directly
+        # rather than calling `_tables_overview(include_column_info=True)`,
+        # which would fetch columns for every table (unnecessary here).
         if tables is None:
-            tables = self._tables_overview()
+            km_prefix = f"{self._ctx}/"
+            ctxs = unify.get_contexts(prefix=km_prefix)
+            resolved_tables: List[str] = [k[len(km_prefix) :] for k in ctxs.keys()]
+            # Optionally expose root-level Contacts when linkage is enabled
+            if self._include_contacts and self._contacts_ctx is not None:
+                try:
+                    contacts_info = unify.get_context(self._contacts_ctx)
+                    if isinstance(contacts_info, dict):
+                        resolved_tables.append("Contacts")
+                except Exception:
+                    pass
         elif isinstance(tables, str):
-            tables = [tables]
-        # ToDo: convert to map function
-        results = dict()
-        for table in tables:
-            ctx = self._ctx_for_table(table)
-            results[table] = [
+            resolved_tables = [tables]
+        else:
+            resolved_tables = list(tables)
+
+        # Fetch private-field lists and rows per table without serial stalls.
+        # Each table performs at most two backend reads: fields (once) and logs.
+        def _fetch_one(table_name: str) -> tuple[str, List[Dict[str, Any]]]:
+            ctx = self._ctx_for_table(table_name)
+            excl = list_private_fields(ctx)
+            rows: List[Dict[str, Any]] = [
                 log.entries
                 for log in unify.get_logs(
                     context=ctx,
                     filter=filter,
                     offset=offset,
                     limit=limit,
-                    exclude_fields=list_private_fields(ctx),
+                    exclude_fields=excl,
                 )
             ]
+            return table_name, rows
+
+        results: Dict[str, List[Dict[str, Any]]] = {}
+        # Parallelise when scanning multiple tables to reduce wall-clock time.
+        max_workers = min(8, max(1, len(resolved_tables)))
+        if len(resolved_tables) <= 1:
+            # Avoid thread-pool overhead for the common single-table case
+            name, rows = _fetch_one(resolved_tables[0])
+            results[name] = rows
+            return results
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(_fetch_one, table_name): table_name
+                for table_name in resolved_tables
+            }
+            for fut in as_completed(futures):
+                name, rows = fut.result()
+                results[name] = rows
+
         return results
 
     @_km_log_tool_runtime

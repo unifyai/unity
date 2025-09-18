@@ -2,6 +2,8 @@
 
 ### Setup
 
+Watch this video for [local setup](https://www.loom.com/share/c3ad55e541634b478f50e0660d4e1017?sid=c1653138-dc7e-476a-b31a-5d4908e2a029).
+
 1. Install the required package
 
 `bash install.sh`
