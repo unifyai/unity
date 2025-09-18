@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import base64
+import copy
 import datetime
 import enum
 import functools
@@ -12,7 +13,8 @@ import logging
 import sys
 import textwrap
 import traceback
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import typing
 import types
@@ -48,6 +50,29 @@ current_invocation_id_var = contextvars.ContextVar("hp_invocation_id", default="
 logger = logging.getLogger(__name__)
 
 DIAGNOSTIC_MODE = True
+
+
+@dataclass
+class VerificationWorkItem:
+    """A package of all necessary context to verify a single function's execution."""
+
+    ordinal: int
+    function_name: str
+    parent_stack: tuple
+    func_source: str
+    pre_state: dict
+    post_state: dict
+    interactions: list
+    return_value_repr: str
+    cache_miss_counter: int
+
+
+@dataclass
+class VerificationHandle:
+    """A handle to a single, in-flight verification task."""
+
+    item: VerificationWorkItem
+    task: asyncio.Task
 
 
 class PlanRuntime:
@@ -1143,6 +1168,15 @@ class HierarchicalPlan(BaseActiveTask):
             self._last_summarized_interaction_count: int = 0
 
         self._child_tasks: set[asyncio.Task] = set()
+
+        self.verif_seq: int = 0
+        self.pending_verifications: "OrderedDict[int, VerificationHandle]" = (
+            OrderedDict()
+        )
+        self._verification_lock = asyncio.Lock()
+        self._recovery_task: Optional[asyncio.Task] = None
+        self._recovery_target_ordinal: Optional[int] = None
+        self.is_verifying_post_completion: bool = False
 
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations or 2
