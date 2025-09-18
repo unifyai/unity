@@ -3457,16 +3457,16 @@ class TaskScheduler(BaseTaskScheduler):
         if not schedules:
             return {"outcome": "schedules updated", "details": {"count": 0}}
 
-        # Build a local view and validate cross-refs
+        # Build a local view and validate cross-refs with MINIMAL backend I/O
+        # 1) Normalise input → by_id (tid → schedule dict). Ignore nested queue_id.
         by_id: Dict[int, Dict[str, Any]] = {}
         for item in schedules:
             tid = int(item.get("task_id"))
             sch = dict(item.get("schedule") or {})
-            # Ignore any nested queue_id inside schedule; rely on top-level queue_id
             sch.pop("queue_id", None)
             by_id[tid] = sch
 
-        # Fetch rows
+        # 2) Single read for all target rows
         rows = self._filter_tasks(filter=f"task_id in {list(by_id.keys())}")
         ids_found = {r.get("task_id") for r in rows}
         missing = [tid for tid in by_id.keys() if tid not in ids_found]
@@ -3476,44 +3476,66 @@ class TaskScheduler(BaseTaskScheduler):
             assert st not in self._TERMINAL_STATUSES, f"Task {r['task_id']} is terminal"
         self._ensure_not_active_task(list(by_id.keys()))
 
-        # Cross-queue guard and adjacency graph
+        # Local map for quick access to current rows
+        rows_by_id: Dict[int, Dict[str, Any]] = {int(r.get("task_id")): r for r in rows}
+
+        # 3) Precompute any top-level queue_id provided in the payload (once)
+        provided_qid: Dict[int, Optional[int]] = {}
+        for it in schedules:
+            try:
+                provided_qid[int(it.get("task_id"))] = it.get("queue_id")
+            except Exception:
+                continue
+
+        # 4) Batch-resolve external neighbours referenced by the new schedules
+        external_neighbours: set[int] = set()
+        for _tid, _sch in by_id.items():
+            for _k in ("prev_task", "next_task"):
+                _nbr = _sch.get(_k)
+                if _nbr is None:
+                    continue
+                try:
+                    _nbr_int = int(_nbr)
+                    if _nbr_int not in by_id:
+                        external_neighbours.add(_nbr_int)
+                except Exception:
+                    continue
+        if external_neighbours:
+            ext_rows = self._filter_tasks(
+                filter=f"task_id in {list(external_neighbours)}",
+            )
+            for r in ext_rows:
+                try:
+                    rows_by_id[int(r.get("task_id"))] = r
+                except Exception:
+                    continue
+
+        # 5) Build a queue_id lookup covering targets + any external neighbours
+        qid_for_tid: Dict[int, Optional[int]] = {}
+        for tid in list(rows_by_id.keys()):
+            if tid in provided_qid and provided_qid.get(tid) is not None:
+                qid_for_tid[tid] = provided_qid.get(tid)
+            else:
+                row = rows_by_id.get(tid)
+                qid_for_tid[tid] = row.get("queue_id") if row else None
+
+        # 6) Cross-queue guard using only the prefetched state
         graph: Dict[int, List[int]] = {tid: [] for tid in by_id.keys()}
         for tid, sch in by_id.items():
-            # Use the provided top-level queue_id if present; otherwise derive from storage
-            qid = None
-            try:
-                for it in schedules:
-                    if int(it.get("task_id")) == int(tid):
-                        qid = it.get("queue_id")
-                        break
-            except Exception:
-                qid = None
+            cur_qid = qid_for_tid.get(int(tid))
             for nbr_key in ("prev_task", "next_task"):
                 nbr = sch.get(nbr_key)
                 if nbr is None:
                     continue
                 nbr = int(nbr)
-                # ensure referenced schedule present; fallback to storage view
-                nbr_row = self._get_single_row_or_raise(nbr)
-                nbr_sched = dict((nbr_row.get("schedule") or {}))
-                nbr_qid = None
-                # prefer top-level for neighbour if provided in the batch
-                try:
-                    for it in schedules:
-                        if int(it.get("task_id")) == int(nbr):
-                            nbr_qid = it.get("queue_id")
-                            break
-                except Exception:
-                    nbr_qid = None
-                if nbr_qid is None:
-                    nbr_qid = nbr_row.get("queue_id")
-                if nbr_qid != qid:
+                nbr_qid = qid_for_tid.get(nbr)
+                if nbr_qid != cur_qid:
                     raise ValueError(
-                        f"Cross-queue link rejected: task {tid} (qid={qid}) → {nbr_key}={nbr} (qid={nbr_qid}).",
+                        f"Cross-queue link rejected: task {tid} (qid={cur_qid}) → {nbr_key}={nbr} (qid={nbr_qid}).",
                     )
-                graph[tid].append(nbr)
+                graph[int(tid)].append(nbr)
 
-        # Cycle/head validation by queue_id groups
+        # 7) Cycle validation within the provided graph
         visited: Dict[int, int] = {}
         temp: set[int] = set()
 
@@ -3531,13 +3553,13 @@ class TaskScheduler(BaseTaskScheduler):
         for u in graph.keys():
             _dfs(u)
 
-        # Head/start_at rule: start_at only on heads
+        # 8) Head/start_at rule: start_at only on heads
         for tid, sch in by_id.items():
             prev_tid = sch.get("prev_task")
             if sch.get("start_at") is not None and prev_tid is not None:
                 raise ValueError(f"Only heads may define start_at (task {tid})")
 
-        # Apply atomically: write each via validated funnel
+        # 9) Apply atomically: reuse current_row and skip cross-queue guard (already validated)
         for tid, sch in by_id.items():
             is_head = sch.get("prev_task") is None
             desired_status = (
@@ -3545,21 +3567,11 @@ class TaskScheduler(BaseTaskScheduler):
                 if (is_head and sch.get("start_at") is not None)
                 else Status.queued
             )
-            # Top-level queue_id must be provided explicitly per item or preserved from current row
-            top_qid = None
-            try:
-                for it in schedules:
-                    if int(it.get("task_id")) == int(tid):
-                        top_qid = it.get("queue_id")
-                        break
-            except Exception:
-                top_qid = None
+            top_qid = provided_qid.get(int(tid))
             if top_qid is None:
-                try:
-                    current_row = self._get_single_row_or_raise(int(tid))
-                    top_qid = current_row.get("queue_id")
-                except Exception:
-                    top_qid = None
+                row = rows_by_id.get(int(tid))
+                top_qid = row.get("queue_id") if row else None
+
             self._validated_write(
                 task_id=int(tid),
                 entries={
@@ -3568,6 +3580,8 @@ class TaskScheduler(BaseTaskScheduler):
                     **({"queue_id": int(top_qid)} if isinstance(top_qid, int) else {}),
                 },
                 err_prefix=f"While applying set_schedules_atomic (task {tid}):",
+                current_row=rows_by_id.get(int(tid)),
+                skip_cross_queue_guard=True,
             )
 
         return {"outcome": "schedules updated", "details": {"count": len(by_id)}}
