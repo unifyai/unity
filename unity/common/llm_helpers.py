@@ -1292,6 +1292,20 @@ class _ToolsData:
         limit = self.normalized[task_name].max_concurrent
         return limit is None or self.active_count(task_name) < limit
 
+    def has_exceeded_quota_for_tool(self, task_name: str) -> bool:
+        if task_name not in self.normalized:
+            return False
+
+        limit = self.normalized[task_name].max_total_calls
+        return limit is not None and self._quota_count(task_name) >= limit
+
+    def has_exceeded_concurrent_limit_for_tool(self, task_name: str) -> bool:
+        if task_name not in self.normalized:
+            return False
+
+        limit = self.normalized[task_name].max_concurrent
+        return limit is not None and self.active_count(task_name) >= limit
+
     def save_task(self, coro, metadata: ToolCallMetadata):
         self.pending.add(coro)
         self.info[coro] = metadata
@@ -3513,21 +3527,11 @@ async def _async_tool_use_loop_inner(
                         continue  # nothing else to schedule
 
                     # Respect hidden per-tool total-call quotas (pre-pruned); guard
-                    if (
-                        name in tools_data.normalized
-                        and tools_data.normalized[name].max_total_calls is not None
-                        and tools_data.call_counts.get(name, 0)
-                        >= tools_data.normalized[name].max_total_calls
-                    ):
+                    if tools_data.has_exceeded_quota_for_tool(name):
                         continue
 
                     # Respect *per-tool* concurrency limits  ────────────────
-                    if (
-                        name in tools_data.normalized
-                        and tools_data.normalized[name].max_concurrent is not None
-                        and tools_data.active_count(name)
-                        >= tools_data.normalized[name].max_concurrent
-                    ):
+                    if tools_data.has_exceeded_concurrent_limit_for_tool(name):
                         # Concurrency cap reached → immediately insert a
                         # *tool-error* message and **do not** schedule.
                         tool_msg = create_tool_call_message(
