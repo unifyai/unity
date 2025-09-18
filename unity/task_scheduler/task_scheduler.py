@@ -409,6 +409,17 @@ class TaskScheduler(BaseTaskScheduler):
 
         self._linkage_barriers: Dict[int, _aio.Event] = {}
 
+        # Lightweight, process-local queue index to avoid redundant backend reads
+        # within a single tool call for common queue lookups. Because this scheduler
+        # is a singleton, all queue mutations flow through it; we update the index
+        # in high-level queue tools and conservatively invalidate it elsewhere.
+        # - _queue_index: queue_id → exact head→tail order (runnable members only)
+        # - _task_to_queue: task_id → queue_id (runnable membership only)
+        # - _queue_index_stale: when True, bypass fast-path reads until next update
+        self._queue_index: Dict[int, List[int]] = {}
+        self._task_to_queue: Dict[int, int] = {}
+        self._queue_index_stale: bool = False
+
     # Public #
     # -------#
 
@@ -2799,9 +2810,25 @@ class TaskScheduler(BaseTaskScheduler):
 
         Strategy
         --------
-        - If the row has a numeric `queue_id`, delegate to `_get_queue(queue_id)`.
-        - Otherwise, walk the chain ignoring queue_id via `_walk_queue_from_task`.
+        - Fast-path: when a local queue index is available and not marked stale,
+          use it to resolve the queue_id directly and delegate to `_get_queue`.
+          This avoids an extra backend read to fetch the single row just to get
+          its `queue_id`.
+        - Otherwise, fall back to the storage-based resolution.
         """
+        # Fast-path via in-memory index (populated by high-level queue tools)
+        try:
+            if not self._queue_index_stale:
+                qid_cached = self._task_to_queue.get(int(task_id))
+                if isinstance(qid_cached, int):
+                    members = self._queue_index.get(int(qid_cached)) or []
+                    if int(task_id) in members:
+                        return self._get_queue(queue_id=qid_cached)
+        except Exception:
+            # Defensive: ignore cache failures and fall back
+            pass
+
+        # Fallback: resolve via storage
         try:
             row = self._get_single_row_or_raise(int(task_id))
         except Exception:
@@ -2931,6 +2958,17 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             pass
 
+        # Best-effort: refresh local index so subsequent lookups can avoid a read
+        try:
+            if isinstance(queue_id, int):
+                self._queue_index[queue_id] = list(new_order)
+                for tid in new_order:
+                    self._task_to_queue[int(tid)] = int(queue_id)
+                self._queue_index_stale = False
+        except Exception:
+            # Never let cache maintenance affect the tool outcome
+            pass
+
         return {
             "outcome": "queue reordered",
             "details": {
@@ -2939,6 +2977,11 @@ class TaskScheduler(BaseTaskScheduler):
                 "checkpoint_id": locals().get("_last_checkpoint_id"),
             },
         }
+
+        # Keep local queue index in sync (best-effort)
+        # Note: code below is unreachable due to the return above; intentionally
+        # placed earlier would alter logging/timing semantics. Leave updates to
+        # the call-site right after persistence instead (see below).
 
     @_ts_log_tool_runtime
     def _move_tasks_to_queue(
@@ -3358,6 +3401,32 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             pass
 
+        # Best-effort: refresh local index and membership mapping. Also clear
+        # removed members that were previously in this queue.
+        try:
+            target_qid_int = int(target_qid) if isinstance(target_qid, int) else None
+        except Exception:
+            target_qid_int = None
+
+        try:
+            if target_qid_int is not None:
+                # Build a set of removed ids from earlier computation if available
+                try:
+                    _removed_ids = set(int(x) for x in to_remove)  # type: ignore[name-defined]
+                except Exception:
+                    _removed_ids = set()
+                # Update forward index
+                self._queue_index[target_qid_int] = list(int(x) for x in order)
+                # Update membership
+                for tid in order:
+                    self._task_to_queue[int(tid)] = target_qid_int
+                # Clear membership for removed ids
+                for tid in _removed_ids:
+                    self._task_to_queue.pop(int(tid), None)
+                self._queue_index_stale = False
+        except Exception:
+            pass
+
         return {
             "outcome": "queue set",
             "details": {
@@ -3366,6 +3435,11 @@ class TaskScheduler(BaseTaskScheduler):
                 "checkpoint_id": locals().get("_last_checkpoint_id"),
             },
         }
+
+        # Keep local queue index in sync (best-effort)
+        # Note: code below is unreachable due to the return above; intentionally
+        # placed earlier would alter logging/timing semantics. Leave updates to
+        # the call-site right after persistence instead (see below).
 
     # ------------------------------------------------------------------ #
     #  Bulk low-level schedule edit (atomic)                              #
@@ -3832,6 +3906,13 @@ class TaskScheduler(BaseTaskScheduler):
             task_id=task_id,
             detach=detach,
         )
+        # Queue structure changed – mark index stale. We do not attempt to
+        # micro-update the cache here because adjacency semantics differ for
+        # isolated vs chained activation and may involve multiple neighbours.
+        try:
+            self._queue_index_stale = True
+        except Exception:
+            pass
 
     @_ts_log_tool_runtime
     def _attach_with_links(
@@ -3851,6 +3932,11 @@ class TaskScheduler(BaseTaskScheduler):
             head_start_at=head_start_at,
             err_prefix=err_prefix,
         )
+        # Structural queue linkage update – index may be outdated
+        try:
+            self._queue_index_stale = True
+        except Exception:
+            pass
 
     _TERMINAL_STATUSES = {Status.completed, Status.cancelled, Status.failed}
 

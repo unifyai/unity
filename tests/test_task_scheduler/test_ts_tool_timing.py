@@ -182,7 +182,7 @@ def test_tool_get_queue_timing():
 
 @pytest.mark.unit
 @_handle_project
-def test_tool_get_task_queue_timing():
+def test_tool_get_queue_for_task_timing():
     _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT GTQ A " + _uniq(), description="a")["details"][
