@@ -1346,6 +1346,7 @@ class HierarchicalPlan(BaseActiveTask):
                 self.action_log.append(
                     f"Main plan execution finished with result: {result}.",
                 )
+                await self._cancel_all_background_tasks()
                 self._set_state(_HierarchicalPlanState.COMPLETED)
                 self._set_final_result(str(result))
                 return
@@ -2117,6 +2118,9 @@ class HierarchicalPlan(BaseActiveTask):
         """
         Processes a user interjection by using an LLM to decide on the best course of action.
         """
+
+        await self._cancel_all_background_tasks()
+
         logger.debug(
             f"INTERJECT: Interjection received {message}. Current state: {self._state.name}",
         )
@@ -2652,6 +2656,8 @@ class HierarchicalPlan(BaseActiveTask):
         Returns:
             A status message.
         """
+
+        await self._cancel_all_background_tasks()
         if self._is_complete:
             return f"Plan already in terminal state: {self._state.name}."
 
