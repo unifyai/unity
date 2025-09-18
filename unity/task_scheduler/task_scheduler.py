@@ -2883,7 +2883,70 @@ class TaskScheduler(BaseTaskScheduler):
         if queue_id is None:
             return []
 
-        # Single filtered read of all runnable rows in this queue
+        # Fast-path: use the in-memory queue index when fresh to avoid a broad
+        # backend scan. Fetch a minimal projection for exactly these ids.
+        try:
+            if (not self._queue_index_stale) and isinstance(queue_id, int):
+                member_ids = list(self._queue_index.get(int(queue_id)) or [])
+                if member_ids:
+                    # Minimal field set sufficient to build Task and derive ordering
+                    fields_needed: List[str] = [
+                        "task_id",
+                        "instance_id",
+                        "name",
+                        "description",
+                        "status",
+                        "schedule",
+                        "priority",
+                        "queue_id",
+                        "activated_by",
+                        # Optional fields below are accepted by the model
+                        "trigger",
+                        "deadline",
+                        "repeat",
+                        "response_policy",
+                    ]
+                    logs = self._store.get_minimal_rows_by_task_ids(
+                        task_ids=member_ids,
+                        fields=fields_needed,
+                    )
+                    # Build by-id map from returned rows without extra reads
+                    rows_by_id: Dict[int, Dict[str, Any]] = {}
+                    for lg in logs or []:
+                        try:
+                            e = dict(getattr(lg, "entries", {}) or {})
+                            tid = e.get("task_id")
+                            if isinstance(tid, int):
+                                rows_by_id[int(tid)] = e
+                        except Exception:
+                            continue
+
+                    ordered: List[Task] = []
+                    for tid in member_ids:
+                        row = rows_by_id.get(int(tid))
+                        if not isinstance(row, dict):
+                            continue
+                        # Skip terminal rows defensively; the local index tracks runnable members only
+                        try:
+                            st = self._to_status(row.get("status"))  # type: ignore[arg-type]
+                            if st in self._TERMINAL_STATUSES:
+                                continue
+                        except Exception:
+                            pass
+                        # Strip stale activation metadata on non-active rows
+                        try:
+                            if self._to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
+                                row.pop("activated_by", None)
+                        except Exception:
+                            if str(row.get("status")) != str(Status.active):
+                                row.pop("activated_by", None)
+                        ordered.append(Task(**row))
+                    return ordered
+        except Exception:
+            # Defensive: fall through to storage-based resolution
+            pass
+
+        # Fallback: single filtered read of all runnable rows in this queue
         rows_in_queue: List[TaskRow] = [
             r
             for r in self._filter_tasks(
