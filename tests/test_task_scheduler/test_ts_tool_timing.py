@@ -291,39 +291,6 @@ def test_tool_set_schedules_atomic_timing():
 
 @pytest.mark.unit
 @_handle_project
-def test_tool_update_task_queue_timing():
-    _enable_timing()
-    ts = TaskScheduler()
-    a = ts._create_task(name="TT UTQ A " + _uniq(), description="a")["details"][
-        "task_id"
-    ]
-    b = ts._create_task(name="TT UTQ B " + _uniq(), description="b")["details"][
-        "task_id"
-    ]
-    # Use insert-only semantics so the tool materializes exact order via _set_queue
-    original = []
-    new = [a, b]
-    t0 = time.perf_counter()
-    # Legacy helper removed; emulate with set_queue
-    out = ts._set_queue(queue_id=None, order=new)
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    assert out["outcome"] in {"queue set", "queue reordered"}
-    # Confirm a queue exists whose head→tail order starts with our desired order
-    queues = ts._list_queues()
-    assert isinstance(queues, list)
-    found = False
-    for q in queues:
-        chain = ts._get_queue(queue_id=q.get("queue_id"))
-        ids = [t.task_id for t in chain]
-        if ids[: len(new)] == new:
-            found = True
-            break
-    assert found
-    print(f"elapsed: {elapsed_ms} < X")
-
-
-@pytest.mark.unit
-@_handle_project
 def test_tool_partition_queue_timing():
     _enable_timing()
     ts = TaskScheduler()
