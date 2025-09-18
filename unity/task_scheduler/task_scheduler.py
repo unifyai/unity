@@ -2546,11 +2546,11 @@ class TaskScheduler(BaseTaskScheduler):
         # Guard against touching the active task (fast in‑memory check)
         self._ensure_not_active_task(task_ids)
 
-        # Single targeted read for the referenced tasks only
-        # (avoid scanning all completed tasks in the context).
-        logs = self._get_logs_by_task_ids(
+        # Single targeted read for the referenced tasks only with a minimal field projection
+        # (avoid scanning all completed tasks and avoid fetching unused columns within this call).
+        logs = self._store.get_minimal_rows_by_task_ids(
             task_ids=task_ids,
-            return_ids_only=False,
+            fields=["status"],
         )
         # Validate none of the referenced tasks are already completed
         try:
@@ -2566,9 +2566,11 @@ class TaskScheduler(BaseTaskScheduler):
             "Cannot cancel completed tasks. Attempted to cancel: " f"{overlap}"
         )
 
-        # Batch update status using the resolved log ids (no extra reads)
-        log_ids = [lg.id if hasattr(lg, "id") else lg for lg in logs]
-        self._write_log_entries(logs=log_ids, entries={"status": Status.cancelled})
+        # Batch update status using the resolved log ids directly (no extra reads)
+        self._write_log_entries(
+            logs=[lg.id for lg in logs],
+            entries={"status": Status.cancelled},
+        )
         return {
             "outcome": "tasks cancelled",
             "details": {"task_ids": task_ids},
