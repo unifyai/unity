@@ -24,6 +24,8 @@ winget install --id=Python.Python.3 -e
 
 ### Setup
 
+Watch this video for [local setup](https://www.loom.com/share/61a230c7d7314a109e3fc64061d8e315?sid=b80b1f19-c080-4431-a667-6ee1a0c350f1).
+
 1. Install the required package through PowerShell in "Run as Administrator" mode.
 
 ```powershell
