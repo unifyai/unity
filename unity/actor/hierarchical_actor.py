@@ -1325,14 +1325,14 @@ class HierarchicalPlan(BaseActiveTask):
                     f"Main plan execution concluded with result: {result}. Verifying final steps in background...",
                 )
 
+                self.is_verifying_post_completion = True
+                self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
                 if hasattr(self, "_done_events") and not self._done_events.empty():
                     try:
                         event_to_signal = self._done_events.get_nowait()
                         event_to_signal.set()
                     except asyncio.QueueEmpty:
                         pass
-
-                self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
                 return
             else:
                 self.action_log.append(
@@ -2509,6 +2509,7 @@ class HierarchicalPlan(BaseActiveTask):
                     parent_chat_context=self.parent_chat_context,
                     clarification_up_q=self.clarification_up_q,
                     clarification_down_q=self.clarification_down_q,
+                    persist=False,
                 )
 
                 sandbox_result = await sandbox_plan.result()
@@ -3291,16 +3292,6 @@ class HierarchicalActor(BaseActor):
                         f"{diag_prefix} -> Entering '{func_name}' with args: ({all_args})",
                     )
 
-                    entry_screenshot = None
-                    if "action_provider.browser" in plan.plan_source_code:
-                        try:
-                            entry_screenshot = (
-                                await self.action_provider.browser.get_screenshot()
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                f"Could not capture entry screenshot for '{func_name}': {e}",
-                            )
                     logger.info(f"{diag_prefix} VERIFY: Entering '{func_name}'")
                     parent_action_counter = plan.runtime.action_counter
                     plan.runtime.action_counter = 0
@@ -3309,30 +3300,28 @@ class HierarchicalActor(BaseActor):
                     if plan.runtime.execution_mode != "replay_after_modification":
                         await self._ensure_precondition(plan, func_name)
 
+                    pre_state = {
+                        "url": await self.action_provider.browser.get_current_url(),
+                        "screenshot": await self.action_provider.browser.get_screenshot(),
+                    }
+
                     last_error_reason = ""
+                    result = None
                     try:
                         for i in range(plan.MAX_LOCAL_RETRIES):
                             plan.runtime.action_counter = 0
                             if i > 0:
                                 local_interactions.clear()
                             try:
-                                captured_run_id = current_run_id_var.get()
 
                                 current_fn_for_execution = plan.execution_namespace[
                                     func_name
                                 ]
-                                func_source = plan.function_source_map.get(func_name)
-
-                                result = await self._execute_and_verify_step(
-                                    plan,
-                                    inspect.unwrap(current_fn_for_execution),
-                                    func_source,
-                                    args,
-                                    kwargs,
-                                    local_interactions,
-                                    entry_screenshot=entry_screenshot,
+                                captured_run_id = current_run_id_var.get()
+                                result = await inspect.unwrap(current_fn_for_execution)(
+                                    *args,
+                                    **kwargs,
                                 )
-
                                 if captured_run_id != plan.run_id:
                                     logger.warning(
                                         f"Discarding stale verification for '{func_name}' from a previous run (ID: {captured_run_id}).",
@@ -3344,7 +3333,7 @@ class HierarchicalActor(BaseActor):
                                         "Stale verification.",
                                     )
 
-                                return result
+                                break
 
                             except _ControlledInterruptionException:
                                 plan.action_log.append(
@@ -3418,42 +3407,70 @@ class HierarchicalActor(BaseActor):
                                 )
                                 local_interactions.clear()
                                 continue
-
-                        if plan.clarification_enabled:
-                            plan.action_log.append(
-                                f"Function '{func_name}' has failed all {plan.MAX_LOCAL_RETRIES} retries. Asking user for guidance.",
-                            )
-                            clarification_question = (
-                                f"I've been unable to complete the step '{func_name}'. "
-                                f"The last issue was: {last_error_reason}. How should I proceed?"
-                            )
-                            user_answer = await plan.execution_namespace[
-                                "request_clarification"
-                            ](clarification_question)
-                            plan.action_log.append(
-                                f"Received user guidance: {user_answer}",
-                            )
-
-                            existing_code = plan.clean_function_source_map.get(
-                                func_name,
-                            )
-                            await plan._handle_dynamic_implementation(
-                                func_name,
-                                replan_reason=f"Function failed all retries. User provided new guidance: {user_answer}",
-                                failed_interactions=local_interactions,
-                                existing_code_for_modification=existing_code,
-                                clarification_question=clarification_question,
-                                clarification_answer=user_answer,
-                            )
-                            plan.action_log.append(
-                                f"Restarting execution of '{func_name}' after user guidance.",
-                            )
-                            continue
                         else:
-                            raise ReplanFromParentException(
-                                f"Function '{func_name}' failed after {plan.MAX_LOCAL_RETRIES} retries.",
-                                reason=f"Final error:\n{last_error_reason}",
-                            )
+                            if plan.clarification_enabled:
+                                plan.action_log.append(
+                                    f"Function '{func_name}' has failed all {plan.MAX_LOCAL_RETRIES} retries. Asking user for guidance.",
+                                )
+                                clarification_question = (
+                                    f"I've been unable to complete the step '{func_name}'. "
+                                    f"The last issue was: {last_error_reason}. How should I proceed?"
+                                )
+                                user_answer = await plan.execution_namespace[
+                                    "request_clarification"
+                                ](clarification_question)
+                                plan.action_log.append(
+                                    f"Received user guidance: {user_answer}",
+                                )
+
+                                existing_code = plan.clean_function_source_map.get(
+                                    func_name,
+                                )
+                                await plan._handle_dynamic_implementation(
+                                    func_name,
+                                    replan_reason=f"Function failed all retries. User provided new guidance: {user_answer}",
+                                    failed_interactions=local_interactions,
+                                    existing_code_for_modification=existing_code,
+                                    clarification_question=clarification_question,
+                                    clarification_answer=user_answer,
+                                )
+                                plan.action_log.append(
+                                    f"Restarting execution of '{func_name}' after user guidance.",
+                                )
+                                continue
+                            else:
+                                raise ReplanFromParentException(
+                                    f"Function '{func_name}' failed after {plan.MAX_LOCAL_RETRIES} retries.",
+                                    reason=f"Final error:\n{last_error_reason}",
+                                )
+
+                        post_state = {
+                            "url": await self.action_provider.browser.get_current_url(),
+                            "screenshot": await self.action_provider.browser.get_screenshot(),
+                        }
+
+                        step_cache_miss_counter = plan.runtime.cache_miss_counter
+
+                        plan.runtime.cache_miss_counter = 0
+
+                        plan.verif_seq += 1
+                        item = VerificationWorkItem(
+                            ordinal=plan.verif_seq,
+                            function_name=func_name,
+                            parent_stack=plan.runtime.get_current_stack_tuple(
+                                plan.run_id,
+                            )[:-1],
+                            func_source=plan.function_source_map.get(func_name, ""),
+                            pre_state=pre_state,
+                            post_state=post_state,
+                            interactions=copy.deepcopy(local_interactions),
+                            return_value_repr=repr(result),
+                            cache_miss_counter=step_cache_miss_counter,
+                        )
+
+                        plan._spawn_async_verification(item)
+
+                        return result
 
                     finally:
                         if parent_sink is not None:
@@ -3471,10 +3488,13 @@ class HierarchicalActor(BaseActor):
                         )
                         plan.runtime.action_counter = parent_action_counter
 
+                        plan.runtime.cache_miss_counter = 0
+
             return wrapper
 
         return verify
 
+    # TODO: DEPRECATED
     async def _execute_and_verify_step(
         self,
         plan: HierarchicalPlan,
