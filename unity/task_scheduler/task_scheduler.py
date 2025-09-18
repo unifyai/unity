@@ -3715,51 +3715,37 @@ class TaskScheduler(BaseTaskScheduler):
 
         to_remove = [tid for tid in current_members if tid not in order]
         if to_remove:
-            # Detach removed tasks: clear prev/next on schedule; set top-level queue_id=None
-            for tid in to_remove:
-                row = current_rows_by_id.get(int(tid)) or self._get_single_row_or_raise(
-                    int(tid),
-                )
-                sched = {**(row.get("schedule") or {})}
-                # Clear any neighbour pointers and start_at on non-heads
-                sched.pop("prev_task", None)
-                sched.pop("next_task", None)
-                sched.pop("start_at", None)
-                self._validated_write(
-                    task_id=int(tid),
+            # Detach removed tasks in a single backend call: neutral schedule, queued status, no queue_id
+            try:
+                log_ids = self._get_logs_by_task_ids(task_ids=to_remove)
+                self._write_log_entries(
+                    logs=log_ids,
                     entries={
-                        "schedule": sched or {},
-                        # Ensure invariants: a detached task without start_at must not be 'scheduled'
+                        "schedule": {},
                         "status": Status.queued,
                         "queue_id": None,
                     },
-                    err_prefix=f"While clearing removed task {tid} from queue {target_qid}:",
-                    current_row=row,
                 )
+            except Exception:
+                # Fallback to per-task validated writes if batch update fails for any reason
+                for tid in to_remove:
+                    row = current_rows_by_id.get(
+                        int(tid),
+                    ) or self._get_single_row_or_raise(
+                        int(tid),
+                    )
+                    self._validated_write(
+                        task_id=int(tid),
+                        entries={
+                            "schedule": {},
+                            "status": Status.queued,
+                            "queue_id": None,
+                        },
+                        err_prefix=f"While clearing removed task {tid} from queue {target_qid}:",
+                        current_row=row,
+                    )
 
-        # Ensure all specified tasks belong to target queue and have no conflicting links
-        for tid in order:
-            row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(int(tid))
-            sched = {**(row.get("schedule") or {})}
-            # neutralize prev/next; set precisely below
-            sched["prev_task"] = None
-            sched["next_task"] = None
-            # Remove start_at for now; we will reapply for head only
-            sched.pop("start_at", None)
-            # Preserve 'active' status on the currently running task by omitting a status write
-            prep_entries: Dict[str, Any] = {"schedule": sched, "queue_id": target_qid}
-            if active_tid is None or int(tid) != int(active_tid):
-                prep_entries["status"] = Status.queued  # temporary neutral state
-            self._validated_write(
-                task_id=int(tid),
-                entries=prep_entries,
-                err_prefix=f"While preparing task {tid} for queue materialization:",
-                current_row=row,
-                # Keep cross-queue guard here because tasks might still have neighbours in other queues
-                skip_cross_queue_guard=False,
-            )
-
-        # Rewire links to match order and apply head start_at
+        # Rewire links to match order and apply head start_at (single write per member)
         for idx, tid in enumerate(order):
             prev_tid = None if idx == 0 else order[idx - 1]
             next_tid = None if idx == len(order) - 1 else order[idx + 1]
@@ -3783,12 +3769,38 @@ class TaskScheduler(BaseTaskScheduler):
                     else Status.queued
                 )
                 write_entries["status"] = desired_status
+            # Skip no-op writes when the current row already matches the desired state
+            row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(int(tid))
+            try:
+                cur_sched = {**(row.get("schedule") or {})}
+                cur_qid = row.get("queue_id")
+                cur_status = row.get("status")
+                same_sched = (
+                    cur_sched.get("prev_task") == sched.get("prev_task")
+                    and cur_sched.get("next_task") == sched.get("next_task")
+                    and (cur_sched.get("start_at") == sched.get("start_at"))
+                )
+                same_qid = cur_qid == target_qid
+                if "status" in write_entries:
+                    desired_st = self._to_status(write_entries["status"])  # type: ignore[arg-type]
+                    try:
+                        cur_st = self._to_status(cur_status)  # type: ignore[arg-type]
+                    except Exception:
+                        cur_st = cur_status
+                    same_status = cur_st == desired_st
+                else:
+                    # When active, we never change status in this call
+                    same_status = True
+                if same_sched and same_qid and same_status:
+                    continue
+            except Exception:
+                pass
             self._validated_write(
                 task_id=int(tid),
                 entries=write_entries,
                 err_prefix=f"While materializing queue {target_qid} (task {tid}):",
                 current_row=row,
-                # After neutralization all members are in the same queue; skip guard and per-write neighbour syncing
+                # Allow cross-queue moves in one shot; symmetry ensured by writing all members
                 skip_cross_queue_guard=True,
                 skip_sync=True,
             )
