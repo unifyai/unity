@@ -1891,8 +1891,59 @@ class HierarchicalPlan(BaseActiveTask):
                 self._perform_verification_recovery(item, assessment),
                 name=f"Recovery-to-{item.ordinal}-{item.function_name}",
             )
+            
+    async def _perform_verification_recovery(
+        self,
+        item: VerificationWorkItem,
+        assessment: VerificationAssessment,
+    ):
+        """Orchestrates the full rollback, fix, rewind, and restart process."""
+        try:
+            if hasattr(
+                self.actor.action_provider.browser.backend,
+                "interrupt_current_action",
+            ):
+                await self.actor.action_provider.browser.backend.interrupt_current_action()
+            old_run_id = self.run_id
+            self.run_id += 1  
+
+            await self._handle_dynamic_implementation(
+                function_name=item.function_name,
+                replan_reason=assessment.reason,
+                status=assessment.status,
+                failed_interactions=item.interactions,
+                existing_code_for_modification=self.clean_function_source_map.get(
+                    item.function_name,
+                ),
+            )
+
+            await self.actor._verify_and_correct_state(
+                plan=self,
+                target_precondition=item.pre_state,
+                context_label=f"async verification recovery for '{item.function_name}'",
+            )
+
+            self._invalidate_cache_from_function(item.function_name, item.parent_stack)
+
+
+            self._restart_execution_loop(old_run_id)
+
+        except Exception as e:
+            logger.error(
+                f"Critical error during verification recovery for '{item.function_name}': {e}",
+                exc_info=True,
+            )
+            self._set_state(_HierarchicalPlanState.ERROR)
+            self._set_final_result(
+                f"ERROR: Unrecoverable error during verification recovery: {e}",
+            )
+        finally:
+           
+            self._recovery_task = None
+            self._recovery_target_ordinal = None
 
     
+
     async def _summarize_log_chunk(self, summaries: str) -> str:
         """Uses an LLM to summarize a list of action log entries."""
         if not summaries:
