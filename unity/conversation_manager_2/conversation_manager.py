@@ -11,7 +11,9 @@ from pydantic_core import from_json
 
 from unity.events.event_bus import EVENT_BUS
 from unity.conversation_manager.events import *
+# from unity.conversation_manager.comms_actions import _send_sms_message_via_number
 from unity.helpers import run_script, terminate_process
+from unity.conversation_manager_2.prompt_utils import NotificationBar, ContactThread, ThreadMessage
 
 
 import redis.asyncio as redis
@@ -65,6 +67,58 @@ actions = Union[AskConductor, WaitForNextEvent, SendSMS, SendEmail, MakeCall]
 class Response(BaseModel):
     phone_utterance: str
     actions: Optional[list[actions]]
+
+import aiohttp
+
+headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
+async def _send_sms_message_via_number(
+    to_number: str,
+    message: str,
+    event_broker: redis.Redis
+) -> str:
+    """
+    Send an SMS message using the SMS provider API.
+
+    Args:
+        to_number: The recipient's phone number
+        message: The message content to send
+
+    Returns:
+        str: The response from the SMS API
+    """
+    from_number = os.getenv("ASSISTANT_NUMBER")
+
+    print(f"Sending SMS from {from_number} to {to_number}: {message}")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{os.getenv('UNITY_COMMS_URL')}/phone/send-text",
+            headers=headers,
+            json={
+                "From": from_number,
+                "To": to_number,
+                "Body": message,
+            },
+        ) as response:
+            try:
+                response.raise_for_status()
+            except Exception as e:
+                print(e)
+            response_text = await response.text()
+            print(f"Response: {response_text}")
+            await event_broker.publish(
+                "app:comms:sms_sent",
+                json.dumps({
+                    "topic": to_number,
+                    "to": "past",
+                    "event": SMSMessageSentEvent(
+                        content=message,
+                        role="Assistant",
+                        timestamp=datetime.now().isoformat(),
+                    ).to_dict(),
+                }),
+            )
+            return response_text
+
 
 
 
@@ -167,6 +221,17 @@ class ConversationManager:
 
         self.event_broker = event_broker
         self.openai_client = AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'])
+
+        # this will probs be retrieved from a database or whatever
+        self.contacts_map = {
+            "+12697784020": {
+                "name": "Yasser Ahmed",
+                "is_boss": True,
+                "summary": ...
+            }
+        }
+
+        self.active_conversations = []
     
     async def _init_past_events(self):
         # TODO: this should be generalized to retrieve the entire
@@ -184,11 +249,18 @@ class ConversationManager:
     async def run_llm(self):
         # format events as message
         input_messages = []
+        current_user_message = []
         for e in self.past_events + self.inflight_events:
             if isinstance(e, ActionEvent):
+                if current_user_message:
+                    input_messages.append({"role": "user", "content": "\n".join(current_user_message)})
+                    current_user_message = []
                 input_messages.append({"role": "assistant", "content": str(e)})
             else:
-                input_messages.append({"role": "user", "content": str(e)})
+                current_user_message.append(str(e))
+        if current_user_message:
+                input_messages.append({"role": "user", "content": "\n".join(current_user_message)})
+                current_user_message = []
         print(input_messages)
         if self.mode in ["call", "gmeet"]:
             print("running...")
@@ -202,7 +274,7 @@ You will recieve a bunch of user events, these are events such as the user's pho
 Reply to the user using the following format:
 {
     "phone_utterance": <YOUR RESPONSE TO THE USER OVER THE PHONE>,
-    "actions": <ACTION TO TAKE BASED ON USER INPUTS>
+    "actions": <ACTIONS TO TAKE BASED ON USER INPUTS>
 }
 """.strip(),
                 input=input_messages,
@@ -230,12 +302,18 @@ Reply to the user using the following format:
                                     "type": "end_gen"
                                 }))
             print(parsed_out)
-            self.past_events.extend(self.inflight_events.copy())
-            self.inflight_events.clear()
-            self.past_events.append(ActionEvent(out))
                          
         else:
-            ...
+            parsed_out = await self.openai_client.responses.parse(model="gpt-4.1", inputs=input_messages, text_format=...)    
+        
+        if parsed_out["actions"] is not None:
+                for action in parsed_out["actions"]:
+                    if action["action_name"] == "send_sms":
+                        print("sending sms message")
+                        await _send_sms_message_via_number(self.user_number, action["message"], self.event_broker)
+        self.past_events.extend(self.inflight_events.copy())
+        self.inflight_events.clear()
+        self.past_events.append(ActionEvent(out))
     
     async def scheduele_llm_run(self, delay=1, cancel_running=False):
         self.inflight_events = self.pending_events.copy()
@@ -274,7 +352,7 @@ Reply to the user using the following format:
             while True:
                 msg = await pubsub.get_message(timeout=2, ignore_subscribe_messages=True)
                 
-                # if msg is not None: print(msg)
+                if msg is not None: print(msg)
 
                 # there are still pending messages and no scheduled responses or currently running responses
                 if msg is None:
@@ -323,7 +401,7 @@ Reply to the user using the following format:
                     elif isinstance(event, PhoneCallEndedEvent):
                         terminate_process(self.call_proc)
                     elif event.is_urgent or isinstance(event, PhoneUtteranceEvent):
-                        if event.role == "user":
+                        if event.role.lower() == "user":
                             await self.scheduele_llm_run(0, cancel_running=True)
                     elif len(self.pending_events) >= MAX_PENDING_EVENTS:
                         # check if there is any running responses, wait for the response and then run

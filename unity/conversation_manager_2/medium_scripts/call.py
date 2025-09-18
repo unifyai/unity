@@ -78,6 +78,7 @@ class Assistant(Agent):
                     content=new_message.text_content,
                 ).to_dict(),
             }
+        print("sending user message...")
         await event_broker.publish("app:comms:phone_utterance", json.dumps(msg))
         raise llm.StopResponse()
 
@@ -297,9 +298,9 @@ async def entrypoint(ctx: agents.JobContext):
 
         async with event_broker.pubsub() as pubsub:
             await pubsub.subscribe("app:call:response_gen")
+            print("waiting for events...")
             while True:
                 try:
-                    print("waiting for events...")
                     msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=None)
                     if msg is None:
                         continue
