@@ -2619,10 +2619,27 @@ class HierarchicalPlan(BaseActiveTask):
 
         return "Error: Unknown or unsupported interjection action."
 
-    async def stop(self, final_result: str | None = None) -> str:
+    async def stop(
+        self,
+        final_result: str | None = None,
+        *,
+        reason: str | None = None,
+        cancel: bool | None = None,
+    ) -> str:
         """
         Stops the plan's execution permanently.
         In persist mode, this is a graceful shutdown. Otherwise, it is a hard cancel.
+
+        Parameters
+        ----------
+        final_result : str | None
+            Optional final message to record as the plan's result.
+        reason : str | None
+            Optional human-readable reason appended to the final result.
+        cancel : bool | None
+            If True, perform a hard cancel (STOPPED). If False, perform a
+            graceful stop (COMPLETED). If None, preserve legacy behaviour:
+            COMPLETED when `persist` is True, else STOPPED.
 
         Returns:
             A status message.
@@ -2630,24 +2647,51 @@ class HierarchicalPlan(BaseActiveTask):
         if self._is_complete:
             return f"Plan already in terminal state: {self._state.name}."
 
-        result_str = final_result or "Plan was stopped by user."
+        if final_result is not None:
+            base_msg = final_result
+        else:
+            base_msg = (
+                "Plan was cancelled by user."
+                if cancel is True
+                else "Plan was stopped by user."
+            )
+        result_str = base_msg if not reason else f"{base_msg} Reason: {reason}"
+
         self.action_log.append(f"stop() called. Final result: '{result_str}'")
         self._cleanup_temp_file()
 
-        if self.persist:
-            self._set_state(_HierarchicalPlanState.COMPLETED)
-            self._set_final_result(result_str)
-            try:
-                if hasattr(self, "_done_events") and not self._done_events.empty():
-                    event_to_signal = self._done_events.get_nowait()
-                    event_to_signal.set()
-            except Exception:
-                pass
+        if cancel is None:
+            if self.persist:
+                self._set_state(_HierarchicalPlanState.COMPLETED)
+                self._set_final_result(result_str)
+                try:
+                    if hasattr(self, "_done_events") and not self._done_events.empty():
+                        event_to_signal = self._done_events.get_nowait()
+                        event_to_signal.set()
+                except Exception:
+                    pass
+            else:
+                self._set_state(_HierarchicalPlanState.STOPPED)
+                if self._execution_task and not self._execution_task.done():
+                    self._execution_task.cancel()
+                self._set_final_result(result_str)
         else:
-            self._set_state(_HierarchicalPlanState.STOPPED)
-            if self._execution_task and not self._execution_task.done():
-                self._execution_task.cancel()
-            self._set_final_result(result_str)
+            if cancel is False:
+
+                self._set_state(_HierarchicalPlanState.COMPLETED)
+                self._set_final_result(result_str)
+                try:
+                    if hasattr(self, "_done_events") and not self._done_events.empty():
+                        event_to_signal = self._done_events.get_nowait()
+                        event_to_signal.set()
+                except Exception:
+                    pass
+            else:
+
+                self._set_state(_HierarchicalPlanState.STOPPED)
+                if self._execution_task and not self._execution_task.done():
+                    self._execution_task.cancel()
+                self._set_final_result(result_str)
 
         try:
             self.runtime._release_from_checkpoint()
