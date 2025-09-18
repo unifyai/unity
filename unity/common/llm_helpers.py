@@ -2034,6 +2034,99 @@ class DynamicToolFactory:
             fn=_resume,
         )
 
+    def _expose_public_methods(self, tool_context: _ToolContext, handle: Any):
+        public_methods = _discover_custom_public_methods(handle)
+
+        # ── honour handle.valid_tools, if present ──────────────
+        if hasattr(handle, "valid_tools"):
+            allowed: set[str] = set(getattr(handle, "valid_tools", []))
+            public_methods = {
+                name: bound for name, bound in public_methods.items() if name in allowed
+            }
+
+        # Identify write-only helpers declared by the handle
+        write_only_set: set[str] = set()
+        with suppress(Exception):
+            wo = getattr(handle, "write_only_methods", None)
+            if wo is not None:
+                write_only_set |= set(wo)
+
+        with suppress(Exception):
+            wo2 = getattr(handle, "write_only_tools", None)
+            if wo2 is not None:
+                write_only_set |= set(wo2)
+
+        for meth_name, bound in public_methods.items():
+            # use the same name we're about to give fn.__name__
+            func_name = (
+                f"{meth_name}_{tool_context.fn_name}_{tool_context.safe_call_id}"
+            )
+            helper_key = func_name
+
+            # Skip if we already generated one this turn (possible when
+            # the loop revisits the same pending task).
+            if helper_key in self.dynamic_tools:
+                continue
+
+            # Write-only helpers: fire-and-forget operations
+            if meth_name in write_only_set:
+
+                async def _invoke_handle_method(
+                    _method_name=meth_name,
+                    **_kw,
+                ):
+                    # Robust forwarding incl. kwargs normalisation and fallbacks
+                    with suppress(Exception):
+                        await _forward_handle_call(
+                            handle,
+                            _method_name,
+                            _kw,
+                        )
+                    # Write-only: no result propagation
+                    return {"call_id": tool_context.call_id, "status": "ack"}
+
+            else:
+
+                async def _invoke_handle_method(
+                    _method_name=meth_name,
+                    **_kw,
+                ):  # default args → capture current method name
+                    """
+                    Auto-generated wrapper that calls the corresponding
+                    method on the live handle and **waits** for the return
+                    value (sync or async).
+                    """
+                    # Use shared forwarding to support flexible args and fallbacks
+                    res = await _forward_handle_call(
+                        handle,
+                        _method_name,
+                        _kw,
+                    )
+                    return {"call_id": tool_context.call_id, "result": res}
+
+            # override the wrapper's signature to match the real method
+            _invoke_handle_method.__signature__ = inspect.signature(bound)
+
+            self._register_tool(
+                func_name=func_name,
+                fallback_doc=(
+                    (
+                        f"Perform `{meth_name}` on the running handle (id={tool_context.call_id}). "
+                        "Fire-and-forget write-only operation; returns immediately."
+                    )
+                    if meth_name in write_only_set
+                    else (
+                        f"Invoke `{meth_name}` on the running handle (id={tool_context.call_id}). "
+                        "Returns when that method finishes."
+                    )
+                ),
+                fn=_invoke_handle_method,
+            )
+            # Mark write-only helpers so scheduling can acknowledge and avoid tracking
+            if meth_name in write_only_set:
+                with suppress(Exception):
+                    self.dynamic_tools[helper_key].__write_only__ = True  # type: ignore[attr-defined]
+
     def _process_task(self, task: asyncio.Task):
         info = self.tools_data.info[task]
         handle = info.handle
@@ -2133,98 +2226,7 @@ class DynamicToolFactory:
 
         # 7.  expose *all* other public methods of the handle
         if handle_available:
-
-            public_methods = _discover_custom_public_methods(handle)
-
-            # ── honour handle.valid_tools, if present ──────────────
-            if hasattr(handle, "valid_tools"):
-                allowed: set[str] = set(getattr(handle, "valid_tools", []))
-                public_methods = {
-                    name: bound
-                    for name, bound in public_methods.items()
-                    if name in allowed
-                }
-
-            # Identify write-only helpers declared by the handle
-            write_only_set: set[str] = set()
-            with suppress(Exception):
-                wo = getattr(handle, "write_only_methods", None)
-                if wo is not None:
-                    write_only_set |= set(wo)
-
-            with suppress(Exception):
-                wo2 = getattr(handle, "write_only_tools", None)
-                if wo2 is not None:
-                    write_only_set |= set(wo2)
-
-            for meth_name, bound in public_methods.items():
-                # use the same name we're about to give fn.__name__
-                func_name = f"{meth_name}_{_fn_name}_{_safe_call_id}"
-                helper_key = func_name
-
-                # Skip if we already generated one this turn (possible when
-                # the loop revisits the same pending task).
-                if helper_key in self.dynamic_tools:
-                    continue
-
-                # Write-only helpers: fire-and-forget operations
-                if meth_name in write_only_set:
-
-                    async def _invoke_handle_method(
-                        _method_name=meth_name,
-                        **_kw,
-                    ):
-                        # Robust forwarding incl. kwargs normalisation and fallbacks
-                        with suppress(Exception):
-                            await _forward_handle_call(
-                                handle,
-                                _method_name,
-                                _kw,
-                            )
-                        # Write-only: no result propagation
-                        return {"call_id": _call_id, "status": "ack"}
-
-                else:
-
-                    async def _invoke_handle_method(
-                        _method_name=meth_name,
-                        **_kw,
-                    ):  # default args → capture current method name
-                        """
-                        Auto-generated wrapper that calls the corresponding
-                        method on the live handle and **waits** for the return
-                        value (sync or async).
-                        """
-                        # Use shared forwarding to support flexible args and fallbacks
-                        res = await _forward_handle_call(
-                            handle,
-                            _method_name,
-                            _kw,
-                        )
-                        return {"call_id": _call_id, "result": res}
-
-                # override the wrapper's signature to match the real method
-                _invoke_handle_method.__signature__ = inspect.signature(bound)
-
-                self._register_tool(
-                    func_name=func_name,
-                    fallback_doc=(
-                        (
-                            f"Perform `{meth_name}` on the running handle (id={_call_id}). "
-                            "Fire-and-forget write-only operation; returns immediately."
-                        )
-                        if meth_name in write_only_set
-                        else (
-                            f"Invoke `{meth_name}` on the running handle (id={_call_id}). "
-                            "Returns when that method finishes."
-                        )
-                    ),
-                    fn=_invoke_handle_method,
-                )
-                # Mark write-only helpers so scheduling can acknowledge and avoid tracking
-                if meth_name in write_only_set:
-                    with suppress(Exception):
-                        self.dynamic_tools[helper_key].__write_only__ = True  # type: ignore[attr-defined]
+            self._expose_public_methods(create_tool_ctx, handle)
 
     def generate(self):
         for task in list(self.tools_data.pending):
