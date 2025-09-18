@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from pydantic_core import from_json
 
 from unity.events.event_bus import EVENT_BUS
-from unity.conversation_manager.events import *
+from unity.conversation_manager_2.new_events import *
 # from unity.conversation_manager.comms_actions import _send_sms_message_via_number
 from unity.helpers import run_script, terminate_process
 from unity.conversation_manager_2.prompt_utils import NotificationBar, ContactThread, ThreadMessage
@@ -31,6 +31,20 @@ MAX_PENDING_EVENTS = 10
 
 CONV_CONTEXT_LENGTH = 50
 
+instructions = """
+You are a general purpose assistant that is conversing with a user
+You will recieve a bunch of user events, these are events such as the user's phone utterance, whatsapp messages recieved, etc.
+Reply to the user using the following format if you are on a call:
+{
+    "phone_utterance": <YOUR RESPONSE TO THE USER OVER THE PHONE>,
+    "actions": <ACTIONS TO TAKE BASED ON USER INPUTS>
+}
+
+otherwise just reply with the right set of actions:
+{
+    "actions": <ACTIONS TO TAKE BASED ON USER INPUTS>
+}
+""".strip()
 # actions
 
 # conductor
@@ -64,9 +78,18 @@ class MakeCall(BaseModel):
 ...
 
 actions = Union[AskConductor, WaitForNextEvent, SendSMS, SendEmail, MakeCall]
-class Response(BaseModel):
+class ResponsePhone(BaseModel):
     phone_utterance: str
     actions: Optional[list[actions]]
+
+class Response(BaseModel):
+    actions: Optional[list[actions]]
+
+responses_model = {
+    "call": ResponsePhone,
+    "gmeet": ResponsePhone,
+    "text": Response
+}
 
 import aiohttp
 
@@ -105,34 +128,21 @@ async def _send_sms_message_via_number(
                 print(e)
             response_text = await response.text()
             print(f"Response: {response_text}")
-            await event_broker.publish(
-                "app:comms:sms_sent",
-                json.dumps({
-                    "topic": to_number,
-                    "to": "past",
-                    "event": SMSMessageSentEvent(
-                        content=message,
-                        role="Assistant",
-                        timestamp=datetime.now().isoformat(),
-                    ).to_dict(),
-                }),
-            )
+            # await event_broker.publish(
+            #     "app:comms:sms_sent",
+            #     json.dumps({
+            #         "topic": to_number,
+            #         "to": "past",
+            #         "event": SMSMessageSentEvent(
+            #             content=message,
+            #             role="Assistant",
+            #             timestamp=datetime.now().isoformat(),
+            #         ).to_dict(),
+            #     }),
+            # )
             return response_text
 
 
-
-
-# conversation manager can:
-# 1- send comms directly to boss user
-# 2- send comms directly to someone else
-# 3- ask conductor for anything else
-
-# conversation manager should have it's "mode" switched
-# is just a "switch" that changes based on incoming events to the conversation manager
-# Call started should simply start a phone call process and switch the mode to "call"
-# if the controller joins a google meet and uses mode "google_meet"
-# default mode is "text"
-# this will just change the system prompt and structured output slightly, also enables streaming
 class ConversationManager:
     def __init__(
         self,
@@ -232,6 +242,7 @@ class ConversationManager:
         }
 
         self.active_conversations = []
+        self.message_history = []
     
     async def _init_past_events(self):
         # TODO: this should be generalized to retrieve the entire
@@ -268,17 +279,9 @@ class ConversationManager:
             out = ""
             async with self.openai_client.responses.stream(
                 model="gpt-4.1",
-                instructions="""
-You are a general purpose assistant that is conversing with a user on a call.
-You will recieve a bunch of user events, these are events such as the user's phone utterance, whatsapp messages recieved, etc.
-Reply to the user using the following format:
-{
-    "phone_utterance": <YOUR RESPONSE TO THE USER OVER THE PHONE>,
-    "actions": <ACTIONS TO TAKE BASED ON USER INPUTS>
-}
-""".strip(),
+                instructions=instructions,
                 input=input_messages,
-                text_format=Response
+                text_format=responses_model[self.mode]
             ) as stream:
                 first_chunk = True
                 async for event in stream:
@@ -304,8 +307,11 @@ Reply to the user using the following format:
             print(parsed_out)
                          
         else:
-            parsed_out = await self.openai_client.responses.parse(model="gpt-4.1", inputs=input_messages, text_format=...)    
+            out = await self.openai_client.responses.parse(model="gpt-4.1", instructions=instructions, input=input_messages, text_format=responses_model[self.mode])  
+            parsed_out = out.output[0].content[0].parsed.model_dump()
+            out = out.output[0].content[0].text
         
+        print(parsed_out)
         if parsed_out["actions"] is not None:
                 for action in parsed_out["actions"]:
                     if action["action_name"] == "send_sms":
@@ -363,11 +369,10 @@ Reply to the user using the following format:
                         # await self.scheduele_llm_run(0)
                         ...
                 else:
-                    event = Event.from_dict(json.loads(msg["data"])["event"])
-                    if event.transient:
-                        continue
+                    event = Event.from_json(msg["data"])
+                    print(event)
                     self.pending_events.append(event)
-                    if isinstance(event, PhoneCallInitiatedEvent):
+                    if isinstance(event, PhoneCallInitiated):
                         # start phone call process and wait untils its done, we should probably make sure
                         # first that any running llm calls are awaited, and any schedueled llm calls are canceled
                         # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
@@ -395,14 +400,13 @@ Reply to the user using the following format:
                                 "None",
                                 str(False),
                             )
-                    elif isinstance(event, PhoneCallStartedEvent):
+                    elif isinstance(event, PhoneCallStarted):
                         self.mode = "call"
                         await self.scheduele_llm_run(0, cancel_running=True)
-                    elif isinstance(event, PhoneCallEndedEvent):
+                    elif isinstance(event, PhoneCallEnded):
                         terminate_process(self.call_proc)
-                    elif event.is_urgent or isinstance(event, PhoneUtteranceEvent):
-                        if event.role.lower() == "user":
-                            await self.scheduele_llm_run(0, cancel_running=True)
+                    elif isinstance(event, PhoneUtterance):
+                        await self.scheduele_llm_run(0, cancel_running=True)
                     elif len(self.pending_events) >= MAX_PENDING_EVENTS:
                         # check if there is any running responses, wait for the response and then run
                         # this should also probably wait for the run to fully complete to avoid filling pending events

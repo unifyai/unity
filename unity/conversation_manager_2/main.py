@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+
+load_dotenv()
 import os
 import asyncio
 
@@ -5,9 +8,6 @@ from unity.conversation_manager_2.conversation_manager import ConversationManage
 from unity.conversation_manager_2.comms_manager import CommsManager
 from unity.conversation_manager_2.event_broker import get_event_broker
 
-from dotenv import load_dotenv
-
-load_dotenv()
 
 
 

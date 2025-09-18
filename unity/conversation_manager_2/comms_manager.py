@@ -6,7 +6,7 @@ import asyncio
 from google.cloud import pubsub_v1
 import json
 import os
-from unity.conversation_manager.events import *
+from unity.conversation_manager_2.new_events import *
 from unity.constants import ASYNCIO_DEBUG
 import redis.asyncio as redis
 
@@ -33,9 +33,9 @@ subscription_id = (
 
 # Map subscription IDs to their corresponding event types
 events_map: dict[str, Event] = {
-    "whatsapp": WhatsappMessageRecievedEvent,
-    "msg": SMSMessageRecievedEvent,
-    "email": EmailRecievedEvent,
+    # "whatsapp": WhatsappMessageRecievedEvent,
+    "msg": SMSRecieved,
+    "email": EmailRecieved,
 }
 
 
@@ -120,14 +120,11 @@ class CommsManager:
                 # Put the message in the queue instead of creating a task
                 task = asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
-                        "app:comms:whatsapp_message",
-                    json.dumps({
-                        "topic": topic,
-                        "event": events_map[thread](
+                        f"app:comms:{thread}_message",
+                        events_map[thread](
                             content=content,
-                            role="User",
-                        ).to_dict(),
-                    }),
+                            contact=topic,
+                        ).to_json()
                     ),
                 self.loop
 
@@ -144,14 +141,12 @@ class CommsManager:
                     task = asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             "app:comms:call_initiated",
-                            json.dumps({
-                                "topic": event["caller_number"],
-                                "event": PhoneCallInitiatedEvent(
-                                    voice_id=event.get("voice_id", None),
-                                    tts_provider=event.get("tts_provider", None),
-                                ).to_dict(),
-                            }
-                        )),
+                            PhoneCallInitiated(
+                                contact=event["caller_number"],
+                                # voice_id=event.get("voice_id", None),
+                                # tts_provider=event.get("tts_provider", None),
+                            ).to_json(),
+                        ),
                         self.loop
                     )
                     # this should be handled through the comms agents i think
