@@ -3277,6 +3277,8 @@ class TaskScheduler(BaseTaskScheduler):
                 raise ValueError(
                     f"Task {r['task_id']} is trigger-based and cannot be placed in the queue.",
                 )
+        # Build a one-shot rows map for reuse throughout this tool call
+        rows_by_id: Dict[int, Dict[str, Any]] = {int(r.get("task_id")): r for r in rows}
         # Allow editing a queue that includes the currently active task; preserve its status below
         active_tid: Optional[int] = None
         try:
@@ -3291,18 +3293,22 @@ class TaskScheduler(BaseTaskScheduler):
         # Capture existing head-level start_at BEFORE any mutations so it can be
         # restored onto the new head reliably (avoids losing it during neutralisation)
         existing_head_start: Optional[str] = None
-        try:
-            _orig_head = self._head_row_for_queue(target_qid)
-            if _orig_head is not None:
-                existing_head_start = (_orig_head.get("schedule") or {}).get("start_at")
-        except Exception:
-            existing_head_start = None
-        # Fallback: if no head detected for this queue yet, derive from any current
-        # member in the provided order that is a head and owns a start_at
+        if queue_id is not None:
+            try:
+                _orig_head = self._head_row_for_queue(target_qid)
+                if _orig_head is not None:
+                    existing_head_start = (_orig_head.get("schedule") or {}).get(
+                        "start_at",
+                    )
+            except Exception:
+                existing_head_start = None
+        # Fallback using already-fetched rows when available
         if existing_head_start is None:
             try:
                 for _tid in order:
-                    _row = self._get_single_row_or_raise(int(_tid))
+                    _row = rows_by_id.get(int(_tid))
+                    if not _row:
+                        continue
                     _sched = _row.get("schedule") or {}
                     if (
                         _sched.get("start_at") is not None
@@ -3314,23 +3320,29 @@ class TaskScheduler(BaseTaskScheduler):
                 pass
 
         # Remove any other members currently in the target queue (strict by queue_id)
-        try:
-            _rows_all = self._filter_tasks()
-            current_members = [
-                int(r.get("task_id"))
-                for r in _rows_all
-                if r.get("schedule") is not None
-                and r.get("queue_id") == target_qid
-                and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
-            ]
-        except Exception:
-            current_members = []
+        current_members: List[int] = []
+        current_rows_by_id: Dict[int, Dict[str, Any]] = {}
+        if queue_id is not None:
+            try:
+                rows_in_queue: List[TaskRow] = self._filter_tasks(
+                    filter=(
+                        "schedule is not None and "
+                        "status not in ('completed','cancelled','failed') and "
+                        f"queue_id == {int(target_qid)}"
+                    ),
+                )
+            except Exception:
+                rows_in_queue = []
+            current_members = [int(r.get("task_id")) for r in rows_in_queue]
+            current_rows_by_id = {int(r.get("task_id")): r for r in rows_in_queue}
 
         to_remove = [tid for tid in current_members if tid not in order]
         if to_remove:
             # Detach removed tasks: clear prev/next on schedule; set top-level queue_id=None
             for tid in to_remove:
-                row = self._get_single_row_or_raise(int(tid))
+                row = current_rows_by_id.get(int(tid)) or self._get_single_row_or_raise(
+                    int(tid),
+                )
                 sched = {**(row.get("schedule") or {})}
                 # Clear any neighbour pointers and start_at on non-heads
                 sched.pop("prev_task", None)
@@ -3345,11 +3357,12 @@ class TaskScheduler(BaseTaskScheduler):
                         "queue_id": None,
                     },
                     err_prefix=f"While clearing removed task {tid} from queue {target_qid}:",
+                    current_row=row,
                 )
 
         # Ensure all specified tasks belong to target queue and have no conflicting links
         for tid in order:
-            row = self._get_single_row_or_raise(int(tid))
+            row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(int(tid))
             sched = {**(row.get("schedule") or {})}
             # neutralize prev/next; set precisely below
             sched["prev_task"] = None
@@ -3364,6 +3377,9 @@ class TaskScheduler(BaseTaskScheduler):
                 task_id=int(tid),
                 entries=prep_entries,
                 err_prefix=f"While preparing task {tid} for queue materialization:",
+                current_row=row,
+                # Keep cross-queue guard here because tasks might still have neighbours in other queues
+                skip_cross_queue_guard=False,
             )
 
         # Rewire links to match order and apply head start_at
@@ -3394,51 +3410,25 @@ class TaskScheduler(BaseTaskScheduler):
                 task_id=int(tid),
                 entries=write_entries,
                 err_prefix=f"While materializing queue {target_qid} (task {tid}):",
+                current_row=row,
+                # After neutralization all members are in the same queue; skip guard and per-write neighbour syncing
+                skip_cross_queue_guard=True,
+                skip_sync=True,
             )
 
-        # Safety: explicitly (re)apply start_at on the new head using the public
-        # helper to enforce invariants, regardless of intermediate writes.
-        try:
-            if order:
-                head_tid = int(order[0])
-                source_start = (
-                    queue_start_at
-                    if queue_start_at is not None
-                    else existing_head_start
-                )
-                if source_start is not None:
-                    from datetime import datetime as _dt
+        # No additional start_at write needed – applied on head in the previous step
 
-                    _src = str(source_start)
-                    if _src.endswith("Z"):
-                        _src = _src.replace("Z", "+00:00")
-                    try:
-                        dt = (
-                            source_start
-                            if isinstance(source_start, _dt)
-                            else _dt.fromisoformat(_src)
-                        )
-                    except Exception:
-                        dt = source_start  # type: ignore[assignment]
-                    self._update_task(task_id=head_tid, start_at=dt)  # type: ignore[arg-type]
-        except Exception:
-            pass
-
-        # Auto-checkpoint
+        # Auto-checkpoint (avoid extra reads by using local state)
         try:
             from ..common.llm_helpers import short_id as _short_id  # local import
 
             cid = _short_id(8)
             snap = {"label": "auto:_set_queue", "queues": []}
-            order_now = [t.task_id for t in self._get_queue(queue_id=target_qid)]
-            head_start = None
-            try:
-                head = self._head_row_for_queue(target_qid)
-                head_start = (
-                    (head.get("schedule") or {}).get("start_at") if head else None
-                )
-            except Exception:
-                head_start = None
+            order_now = list(int(x) for x in order)
+            # Prefer explicit queue_start_at; else preserved head start captured earlier
+            head_start = (
+                queue_start_at if queue_start_at is not None else existing_head_start
+            )
             snap["queues"].append(
                 {
                     "queue_id": target_qid,
@@ -3848,6 +3838,9 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         entries: Dict[str, Any],
         err_prefix: str,
+        current_row: Optional[Dict[str, Any]] = None,
+        skip_sync: bool = False,
+        skip_cross_queue_guard: bool = False,
     ) -> Dict[str, str]:
         """
         Single funnel for writing schedule/status that enforces invariants and
@@ -3860,7 +3853,7 @@ class TaskScheduler(BaseTaskScheduler):
           `_move_tasks_to_queue`, `_set_schedules_atomic`) instead of calling
           this method directly.
         """
-        current = self._get_single_row_or_raise(task_id)
+        current = current_row or self._get_single_row_or_raise(task_id)
 
         prospective_schedule = entries.get("schedule", current.get("schedule"))
         prospective_status = entries.get("status", current.get("status"))
@@ -3918,7 +3911,9 @@ class TaskScheduler(BaseTaskScheduler):
             )
 
         # Cross-queue adjacency guard: when setting prev/next ensure neighbours share queue_id
-        if "schedule" in entries and prospective_schedule is not None:
+        if ("schedule" in entries and prospective_schedule is not None) and (
+            not skip_cross_queue_guard
+        ):
             try:
                 _sched = (
                     prospective_schedule.model_dump()
@@ -3968,11 +3963,20 @@ class TaskScheduler(BaseTaskScheduler):
             except Exception:
                 pass
 
-        log_id = self._get_logs_by_task_ids(task_ids=task_id)
+        # Fast-path: reuse cached log_id when available to avoid a read
+        try:
+            _cached_log_id = self._task_log_id_cache.get(int(task_id))
+        except Exception:
+            _cached_log_id = None
+        log_id = (
+            _cached_log_id
+            if isinstance(_cached_log_id, int)
+            else self._get_logs_by_task_ids(task_ids=task_id)
+        )
         result = self._write_log_entries(logs=log_id, entries=entries)
 
-        # Ensure neighbour symmetry whenever schedule changed
-        if "schedule" in entries:
+        # Ensure neighbour symmetry whenever schedule changed (unless skipped by caller)
+        if ("schedule" in entries) and (not skip_sync):
             self._sync_adjacent_links(task_id=task_id, schedule=prospective_schedule)
 
         return result
