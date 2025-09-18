@@ -3028,234 +3028,141 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Move one or more runnable tasks to a specific queue and position.
 
-        Parameters
-        ----------
-        task_ids : list[int]
-            Identifiers of tasks to move. All tasks must be non-terminal. The
-            currently active task cannot be moved.
-        queue_id : int | None, default ``None``
-            Target queue identifier. When
-            you intend to create a brand-new queue, pass ``queue_id=None`` and
-            this tool will allocate a fresh identifier automatically and return
-            it in the details payload.
-        position : {"front", "back"} | None, default "back"
-            Where to insert the moved tasks relative to the target queue.
-            - "front": insert as a block at the front (preserving the order of
-              ``task_ids`` as provided);
-            - "back": append at the end (preserving order);
-            - None: keep target queue unchanged (only change queue membership; the
-              tasks will not be linked unless you call `_reorder_queue` next).
-
-        Behaviour
-        ---------
-        - Detaches the tasks from their original queues by fixing neighbour links.
-        - Assigns the provided/allocated ``queue_id`` to the moved tasks.
-        - If inserting at the front or back, updates neighbour links to splice the
-          block into the target queue.
-        - Preserves the target queue's head-level ``start_at`` by keeping it on the
-          new head after insertion (if any).
-        - Sets statuses consistently (head with ``start_at`` → ``scheduled``; others
-          at most ``queued``). Active tasks are rejected.
-
-        When to use
-        -----------
-        - Move tasks between queues or create a new queue and place a block at
-          the front/back. For a single-shot, precise materialization (including
-          removing other members), prefer :pyfunc:`_set_queue`.
+        This implementation minimizes backend calls by computing the desired
+        final order and delegating the materialization to a single
+        `_set_queue` call. Within a single tool call, the backend state is
+        assumed stable; we therefore avoid redundant reads/writes.
 
         Returns
         -------
         ToolOutcome
-            ``{"outcome": "tasks moved", "details": {"queue_id": <int>, "task_ids": [...]}}``
+            {"outcome": "tasks moved", "details": {"queue_id": <int>, "task_ids": [...]}}
         """
-        # Validate and normalise inputs
+        # Normalize inputs and guard against moving the active task
         if isinstance(task_ids, int):
             task_ids = [task_ids]
-        if not task_ids:
+        # Deduplicate while preserving order
+        block = list(dict.fromkeys(int(t) for t in task_ids))
+        if not block:
             return {
                 "outcome": "tasks moved",
                 "details": {"queue_id": queue_id, "task_ids": []},
             }
+        self._ensure_not_active_task(block)
 
-        # Reject active and terminal tasks
-        rows = self._filter_tasks(filter=f"task_id in {task_ids}")
+        # Validate existence, reject terminal/trigger-based; single consolidated read
+        rows = self._filter_tasks(filter=f"task_id in {block}")
         ids_found = {r.get("task_id") for r in rows}
-        missing = [tid for tid in task_ids if tid not in ids_found]
+        missing = [tid for tid in block if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
         for r in rows:
             st = self._to_status(r.get("status"))
             assert st not in self._TERMINAL_STATUSES, f"Task {r['task_id']} is terminal"
-        # Guard against touching the active task via the central helper
-        self._ensure_not_active_task(task_ids)
-        # Reject moving trigger-based tasks into a runnable queue
-        for r in rows:
             if r.get("trigger") is not None:
                 raise ValueError(
                     f"Task {r['task_id']} is trigger-based and cannot be placed in the queue.",
                 )
 
-        # Allocate queue id when requested
+        # Determine each task's current queue (prefer local index; single fallback read)
+        source_qid_by_tid: Dict[int, Optional[int]] = {}
+        try:
+            if not self._queue_index_stale:
+                for tid in block:
+                    qid = self._task_to_queue.get(int(tid))
+                    if qid is not None:
+                        source_qid_by_tid[int(tid)] = int(qid)
+            # If any are missing, fetch once for all
+            missing = [t for t in block if int(t) not in source_qid_by_tid]
+            if missing:
+                by_id = {int(r.get("task_id")): r for r in rows} if rows else {}
+                for t in missing:
+                    row = by_id.get(int(t))
+                    source_qid_by_tid[int(t)] = row.get("queue_id") if row else None
+        except Exception:
+            # Conservative fallback: best-effort single read for all
+            rows = self._filter_tasks(filter=f"task_id in {block}")
+            by_id = {int(r.get("task_id")): r for r in rows}
+            for t in block:
+                row = by_id.get(int(t))
+                source_qid_by_tid[int(t)] = row.get("queue_id") if row else None
+
+        # Allocate target queue id when requested (new queue)
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
 
-        # Snapshot the current target queue order BEFORE modifying membership to
-        # avoid a transient multi-head state (which would make _get_queue assert
-        # and tempt fallback paths to drop existing members). Prefer local index.
+        # Build target queue's existing order once (prefer local index)
         try:
             if not self._queue_index_stale and isinstance(target_qid, int):
-                existing_order = list(self._queue_index.get(int(target_qid)) or [])
+                tgt_existing = list(self._queue_index.get(int(target_qid)) or [])
             else:
                 raise RuntimeError
         except Exception:
             try:
-                existing_order = [
-                    t.task_id for t in self._get_queue(queue_id=target_qid)
-                ]
+                tgt_existing = [t.task_id for t in self._get_queue(queue_id=target_qid)]
             except Exception:
-                existing_order = []
+                tgt_existing = []
 
-        # 1) Detach each task from its current queue (fix predecessor/successor)
-        # Build a lookup for moved rows to avoid repeated reads
-        rows_by_id: Dict[int, TaskRow] = {int(r.get("task_id")): r for r in rows}
-        # Collect neighbour ids we need to read exactly once
-        neighbour_ids: set[int] = set()
-        for r in rows:
-            _sched = r.get("schedule") or {}
-            for _nbr in ("prev_task", "next_task"):
-                _tid = _sched.get(_nbr)
-                if _tid is not None and int(_tid) not in rows_by_id:
-                    neighbour_ids.add(int(_tid))
-        neighbour_rows_by_id: Dict[int, TaskRow] = {}
-        if neighbour_ids:
+        # Compose new target order based on requested position
+        tgt_base = [tid for tid in tgt_existing if tid not in block]
+        if position == "front":
+            tgt_new_order = block + tgt_base
+        elif position == "back":
+            tgt_new_order = tgt_base + block
+        else:
+            tgt_new_order = tgt_base + block
+
+        # For each source queue (excluding target), compute reduced order
+        source_qids: set[int] = {
+            int(q)
+            for q in (source_qid_by_tid.get(int(t)) for t in block)
+            if isinstance(q, int)
+        }
+        if isinstance(target_qid, int) and target_qid in source_qids:
+            source_qids.discard(int(target_qid))
+
+        def _current_order_for(qid: int) -> List[int]:
             try:
-                fetched = self._filter_tasks(filter=f"task_id in {list(neighbour_ids)}")
-                neighbour_rows_by_id = {int(x.get("task_id")): x for x in fetched}
+                if not self._queue_index_stale:
+                    return list(self._queue_index.get(int(qid)) or [])
+                raise RuntimeError
             except Exception:
-                neighbour_rows_by_id = {}
+                return [t.task_id for t in self._get_queue(queue_id=int(qid))]
 
-        def _row_of(tid_int: int) -> TaskRow:
-            if tid_int in rows_by_id:
-                return rows_by_id[tid_int]
-            nr = neighbour_rows_by_id.get(tid_int)
-            if nr is not None:
-                return nr
-            return self._get_single_row_or_raise(tid_int)
-
-        # Track original source queues to update local index later
-        source_qids: set[int] = set()
-
-        for tid in task_ids:
-            r = _row_of(int(tid))
+        source_orders: Dict[int, List[int]] = {}
+        for q in list(source_qids):
             try:
-                _qid = r.get("queue_id")
-                if isinstance(_qid, int):
-                    source_qids.add(int(_qid))
+                cur = _current_order_for(int(q))
+            except Exception:
+                cur = []
+            if not cur:
+                continue
+            reduced = [tid for tid in cur if tid not in block]
+            source_orders[int(q)] = reduced
+
+        # Materialize edits: source queues first (detach cleanly), then target queue
+        checkpoint_id = None
+        for qid, cur_order in source_orders.items():
+            # Skip when no member actually moved
+            try:
+                if cur_order == _current_order_for(int(qid)):
+                    continue
             except Exception:
                 pass
-            sched = r.get("schedule") or {}
-            prev_tid = sched.get("prev_task")
-            next_tid = sched.get("next_task")
-            # Fix predecessor's next pointer
-            if prev_tid is not None:
-                prev_row = _row_of(int(prev_tid))
-                prev_sched = {**(prev_row.get("schedule") or {})}
-                if prev_sched.get("next_task") == tid:
-                    prev_sched["next_task"] = next_tid
-                    self._validated_write(
-                        task_id=int(prev_row["task_id"]),
-                        entries={"schedule": prev_sched},
-                        err_prefix=f"While detaching predecessor for move of task {tid}:",
-                    )
-            # Fix successor's prev pointer and remove start_at (no longer head)
-            if next_tid is not None:
-                next_row = _row_of(int(next_tid))
-                next_sched = {**(next_row.get("schedule") or {})}
-                if next_sched.get("prev_task") == tid:
-                    next_sched.pop("start_at", None)
-                    next_sched["prev_task"] = prev_tid
-                    self._validated_write(
-                        task_id=int(next_row["task_id"]),
-                        entries={"schedule": next_sched},
-                        err_prefix=f"While detaching successor for move of task {tid}:",
-                    )
+            self._set_queue(queue_id=qid, order=cur_order)
 
-            # Clear this task's own linkage and queue id (will set below)
-            new_sched: Dict[str, Any] = {
-                "prev_task": None,
-                "next_task": None,
-            }
-            self._validated_write(
-                task_id=int(tid),
-                entries={
-                    "schedule": new_sched,
-                    "status": Status.queued,
-                    "queue_id": target_qid,
-                },
-                err_prefix=f"While moving task {tid} to queue {target_qid}:",
-            )
-
-        # 2) Materialize the target queue order via core primitive
-        block = list(task_ids)
-        # Compose new order from the pre-detach snapshot to preserve prior members
-        base_order = [tid for tid in existing_order if tid not in block]
-        if position == "front":
-            new_order = block + base_order
-        elif position == "back":
-            new_order = base_order + block
-        else:
-            # Keep target queue order unchanged, but ensure members are present
-            new_order = base_order + block
-
-        if new_order:
-            self._set_queue(queue_id=target_qid, order=new_order)
-
-        # Best-effort: update local index and membership mappings
-        try:
-            if isinstance(target_qid, int) and new_order:
-                # Update target queue index and membership (may be redundant with _set_queue)
-                self._queue_index[int(target_qid)] = list(new_order)
-                for _tid in new_order:
-                    self._task_to_queue[int(_tid)] = int(target_qid)
-                # Remove moved tasks from their source queues in the index if present
-                for sq in list(source_qids):
-                    if isinstance(sq, int) and sq in self._queue_index:
-                        self._queue_index[sq] = [
-                            x
-                            for x in self._queue_index[sq]
-                            if int(x) not in set(task_ids)
-                        ]
-                self._queue_index_stale = False
-        except Exception:
-            pass
-
-        # Auto-checkpoint after successful edit (best-effort)
-        try:
-            from ..common.llm_helpers import short_id as _short_id  # local import
-
-            cid = _short_id(8)
-            snap = {"label": "auto:_move_tasks_to_queue", "queues": []}
-            # Capture target queue only for brevity; avoid extra reads by using
-            # the known order we just materialized. Head start is best-effort.
-            order_now = list(new_order)
-            head_start = None
-            snap["queues"].append(
-                {
-                    "queue_id": target_qid,
-                    "head_id": order_now[0] if order_now else None,
-                    "start_at": head_start,
-                    "order": order_now,
-                },
-            )
-            self._queue_checkpoints[cid] = snap
-            _last_checkpoint_id = cid  # noqa: F841
-        except Exception:
-            pass
+        if tgt_new_order:
+            set_res = self._set_queue(queue_id=target_qid, order=tgt_new_order)
+            try:
+                target_qid = set_res.get("details", {}).get("queue_id", target_qid)
+            except Exception:
+                pass
+            checkpoint_id = set_res.get("details", {}).get("checkpoint_id")
 
         return {
             "outcome": "tasks moved",
             "details": {
                 "queue_id": target_qid,
-                "task_ids": list(task_ids),
-                "checkpoint_id": locals().get("_last_checkpoint_id"),
+                "task_ids": list(block),
+                "checkpoint_id": checkpoint_id,
             },
         }
 
