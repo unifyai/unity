@@ -3290,7 +3290,149 @@ class TaskScheduler(BaseTaskScheduler):
         - This method asserts that `new_order` is an exact permutation of the current queue;
           if you see an assertion error, refresh state and reconstruct `new_order` accordingly.
         """
-        # Build current queue membership with a single targeted read when possible.
+        # Fast-path using the in-memory queue index when fresh to minimize backend I/O.
+        # If unavailable, fall back to the existing storage-based resolution below.
+        try:
+            if isinstance(queue_id, int) and (not self._queue_index_stale):
+                member_ids = list(self._queue_index.get(int(queue_id)) or [])
+            else:
+                member_ids = []
+        except Exception:
+            member_ids = []
+
+        if member_ids:
+            current_set: set[int] = {int(t) for t in member_ids}
+            if current_set != set(new_order):
+                raise AssertionError(
+                    "new_order must be a permutation of the current queue. "
+                    f"Current members: {sorted(list(current_set))}; "
+                    f"Provided: {sorted(list(set(new_order)))}. "
+                    f"Refresh with list_queues() and get_queue(queue_id={queue_id}) "
+                    "then rebuild new_order accordingly.",
+                )
+
+            # Single minimal read for required fields only
+            minimal_fields = [
+                "task_id",
+                "status",
+                "schedule",
+            ]
+            logs = self._store.get_minimal_rows_by_task_ids(
+                task_ids=member_ids,
+                fields=minimal_fields,
+            )
+            rows_by_id: Dict[int, Dict[str, Any]] = {}
+            id_map: Dict[int, int] = {}
+            for lg in logs or []:
+                try:
+                    e = dict(getattr(lg, "entries", {}) or {})
+                    tid = (
+                        int(e.get("task_id")) if e.get("task_id") is not None else None
+                    )
+                except Exception:
+                    tid = None
+                if tid is None:
+                    continue
+                rows_by_id[int(tid)] = e
+                try:
+                    _lid = getattr(lg, "id", None)
+                    if isinstance(_lid, int):
+                        id_map[int(tid)] = int(_lid)
+                        # Populate cache for future fast-path updates
+                        self._task_log_id_cache[int(tid)] = int(_lid)
+                except Exception:
+                    pass
+
+            # Compute invariant-preserving plan and filter no-op writes
+            updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
+                new_order=new_order,
+                rows_by_id=rows_by_id,
+                queue_id=queue_id,
+            )
+
+            to_write_ids: list[int] = []
+            to_write_entries: list[Dict[str, Any]] = []
+            for tid in new_order:
+                payload = updates_per_log.get(int(tid)) or {}
+                cur_row = rows_by_id.get(int(tid)) or {}
+                cur_sched = {**(cur_row.get("schedule") or {})}
+                desired_sched = {**(payload.get("schedule") or {})}
+                need_status = False
+                try:
+                    existing_status = self._to_status(cur_row.get("status"))
+                    desired_status = self._to_status(
+                        payload.get("status", existing_status),
+                    )
+                    need_status = existing_status != desired_status
+                except Exception:
+                    need_status = "status" in payload
+                if (cur_sched == desired_sched) and (not need_status):
+                    continue
+                log_id = id_map.get(int(tid))
+                if isinstance(log_id, int):
+                    to_write_ids.append(int(log_id))
+                    to_write_entries.append(payload)
+
+            # Apply a single batched update when there is work to do
+            if to_write_ids:
+                self._write_log_entries(
+                    logs=to_write_ids,
+                    entries=to_write_entries,
+                )
+
+            # Auto-checkpoint after successful edit (best-effort)
+            try:
+                from ..common.llm_helpers import short_id as _short_id  # local import
+
+                cid = _short_id(8)
+                snap = {"label": "auto:_reorder_queue", "queues": []}
+                # Derive queue-level start_at from the previous head in our local view
+                head_start = None
+                try:
+                    for r in rows_by_id.values():
+                        sched0 = r.get("schedule") or {}
+                        if (sched0 or {}).get("prev_task") is None:
+                            head_start = (sched0 or {}).get("start_at")
+                            break
+                except Exception:
+                    head_start = None
+                snap["queues"].append(
+                    {
+                        "queue_id": queue_id,
+                        "head_id": new_order[0] if new_order else None,
+                        "start_at": head_start,
+                        "order": list(new_order),
+                    },
+                )
+                self._queue_checkpoints[cid] = snap
+                _last_checkpoint_id = cid  # noqa: F841
+            except Exception:
+                pass
+
+            # Best-effort: refresh local index and caches
+            try:
+                if isinstance(queue_id, int):
+                    self._queue_index[int(queue_id)] = list(new_order)
+                    for tid in new_order:
+                        self._task_to_queue[int(tid)] = int(queue_id)
+                    try:
+                        self._queue_head_start_at[int(queue_id)] = head_start
+                    except Exception:
+                        pass
+                    self._queue_index_stale = False
+            except Exception:
+                pass
+
+            return {
+                "outcome": "queue reordered",
+                "details": {
+                    "queue_id": queue_id,
+                    "new_order": new_order,
+                    "checkpoint_id": locals().get("_last_checkpoint_id"),
+                },
+            }
+
+        # Fallback: build current queue membership with a single targeted read.
         # Within a single tool call the backend state is stable, so reuse this view.
         if isinstance(queue_id, int):
             in_queue_rows: list[TaskRow] = [
@@ -3335,10 +3477,9 @@ class TaskScheduler(BaseTaskScheduler):
             queue_id=queue_id,
         )
 
-        # Persist through the central validated write funnel, but:
-        # - pass current_row to avoid an extra read,
-        # - skip neighbour sync (we write all members symmetrically),
-        # - skip cross-queue guard (reorder stays within the same queue).
+        # Persist through the central validated write funnel, but batch when possible
+        to_write_ids: list[int] = []
+        to_write_entries: list[Dict[str, Any]] = []
         for tid, payload in updates_per_log.items():
             cur_row = rows_by_id.get(int(tid))
             if cur_row is None:
@@ -3355,14 +3496,27 @@ class TaskScheduler(BaseTaskScheduler):
                 need_status = "status" in payload
             if (cur_sched == desired_sched) and (not need_status):
                 continue
-            self._validated_write(
-                task_id=int(tid),
-                entries=payload,
-                err_prefix=f"While reordering queue {queue_id} (task {tid}):",
-                current_row=cur_row,
-                skip_sync=True,
-                skip_cross_queue_guard=True,
-            )
+            # Resolve log id via cache or single lookup for this task
+            try:
+                _lid_cached = self._task_log_id_cache.get(int(tid))
+            except Exception:
+                _lid_cached = None
+            if isinstance(_lid_cached, int):
+                to_write_ids.append(int(_lid_cached))
+                to_write_entries.append(payload)
+            else:
+                # Fall back to validated write (single update) when id is unknown
+                self._validated_write(
+                    task_id=int(tid),
+                    entries=payload,
+                    err_prefix=f"While reordering queue {queue_id} (task {tid}):",
+                    current_row=cur_row,
+                    skip_sync=True,
+                    skip_cross_queue_guard=True,
+                )
+
+        if to_write_ids:
+            self._write_log_entries(logs=to_write_ids, entries=to_write_entries)
 
         # Auto-checkpoint after successful edit (best-effort)
         try:
@@ -3394,7 +3548,6 @@ class TaskScheduler(BaseTaskScheduler):
                 },
             )
             self._queue_checkpoints[cid] = snap
-            # Expose the checkpoint id in the return payload via outer scope variable
             _last_checkpoint_id = cid  # noqa: F841 (read by return below if available)
         except Exception:
             pass
