@@ -2392,13 +2392,32 @@ class TaskScheduler(BaseTaskScheduler):
         RuntimeError
             When trying to cancel the currently *active* task.
         """
+        # Guard against touching the active task (fast in‑memory check)
         self._ensure_not_active_task(task_ids)
-        completed_tasks = self._filter_tasks(filter="status == 'completed'")
-        completed_task_ids = [lg["task_id"] for lg in completed_tasks]
-        assert not set(task_ids).intersection(
-            set(completed_task_ids),
-        ), f"Cannot cancel completed tasks. Attempted to cancel: {set(task_ids).intersection(set(completed_task_ids))}"
-        self._update_task_status(task_ids=task_ids, new_status="cancelled")
+
+        # Single targeted read for the referenced tasks only
+        # (avoid scanning all completed tasks in the context).
+        logs = self._get_logs_by_task_ids(
+            task_ids=task_ids,
+            return_ids_only=False,
+        )
+        # Validate none of the referenced tasks are already completed
+        try:
+            completed_ids = {
+                int(getattr(lg, "entries", {}).get("task_id"))
+                for lg in logs
+                if str(getattr(lg, "entries", {}).get("status")) == "completed"
+            }
+        except Exception:
+            completed_ids = set()
+        overlap = set(task_ids).intersection(completed_ids)
+        assert not overlap, (
+            "Cannot cancel completed tasks. Attempted to cancel: " f"{overlap}"
+        )
+
+        # Batch update status using the resolved log ids (no extra reads)
+        log_ids = [lg.id if hasattr(lg, "id") else lg for lg in logs]
+        self._write_log_entries(logs=log_ids, entries={"status": Status.cancelled})
         return {
             "outcome": "tasks cancelled",
             "details": {"task_ids": task_ids},
