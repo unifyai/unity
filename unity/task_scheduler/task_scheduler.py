@@ -5167,23 +5167,15 @@ class TaskScheduler(BaseTaskScheduler):
             than ``k`` tasks overall, the remainder is backfilled from
             ``unify.get_logs(limit=k)`` in returned order, skipping duplicates.
         """
-        # Use a tight field projection to avoid metadata lookups (get_fields)
-        # and reduce payload sizes during search and backfill.
+        # Use a minimal field projection to reduce backend payload size.
+        # Only include fields required to construct a Task model.
         allowed_fields: List[str] = [
-            # Minimal set sufficient to hydrate a Task for search results
             "task_id",
             "instance_id",
             "name",
             "description",
             "status",
-            "schedule",
-            "queue_id",
-            # Include activation metadata but drop it below when stale
-            "activated_by",
-            # Small, commonly useful fields (kept lightweight)
-            "deadline",
             "priority",
-            "response_policy",
         ]
 
         # 1) Primary: semantic similarity results (ordered). When references is None/empty,
@@ -5201,19 +5193,7 @@ class TaskScheduler(BaseTaskScheduler):
             unique_id_field="task_id",
             allowed_fields=allowed_fields,
         )
-        # Defensive read: drop stale activation metadata on non-active rows to avoid
-        # Pydantic validation errors if any legacy writes left it behind.
-        sanitized: list[Task] = []
-        for lg in filled:
-            row = dict(lg)
-            try:
-                if self._to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
-                    row.pop("activated_by", None)
-            except Exception:
-                if str(row.get("status")) != str(Status.active):
-                    row.pop("activated_by", None)
-            sanitized.append(Task(**row))
-        return sanitized
+        return [Task(**lg) for lg in filled]
 
     @_ts_log_tool_runtime
     def _filter_tasks(
