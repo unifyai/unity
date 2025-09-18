@@ -237,6 +237,15 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
+    - name: Restore existing consolidated cache
+      id: cache-restore
+      uses: actions/cache/restore@v4
+      with:
+        path: .cache.ndjson
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+        restore-keys: |
+          cache-ndjson-${{ runner.os }}-
+
     - name: Download cache artifacts from current run
       uses: actions/download-artifact@v4
       with:
