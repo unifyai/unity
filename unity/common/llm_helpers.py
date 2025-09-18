@@ -1810,6 +1810,13 @@ def create_tool_call_message(name: str, call_id: str, content: str) -> ToolCallM
 
 
 class DynamicToolFactory:
+    @dataclass
+    class _ToolContext:
+        fn_name: str
+        arg_repr: str
+        call_id: str
+        safe_call_id: str
+
     def __init__(self, tools_data: _ToolsData):
         self.dynamic_tools = {}
         self.tools_data = tools_data
@@ -1818,45 +1825,37 @@ class DynamicToolFactory:
     def _register_tool(
         self,
         func_name: str,
-        doc: str,
+        fallback_doc: str,
         fn: Callable,
     ) -> None:
         # prefer the function's own docstring if it exists, else fall back
         existing = inspect.getdoc(fn)
-        fn.__doc__ = existing.strip() if existing else doc
+        fn.__doc__ = existing.strip() if existing else fallback_doc
         fn.__name__ = func_name[:64]
         fn.__qualname__ = func_name[:64]
         self.dynamic_tools[func_name.lstrip("_")] = fn
 
     def _create_continue_tool(
         self,
-        fn_name: str,
-        arg_repr: str,
-        call_id: str,
-        safe_call_id: str,
+        tool_context: _ToolContext,
     ) -> None:
-        doc = f"Continue waiting for {fn_name}({arg_repr})."
-
         async def _continue() -> Dict[str, str]:
-            return {"status": "continue", "call_id": call_id}
+            return {"status": "continue", "call_id": tool_context.call_id}
 
         self._register_tool(
-            func_name=f"continue_{fn_name}_{safe_call_id}",
-            doc=doc,
+            func_name=f"continue_{tool_context.fn_name}_{tool_context.safe_call_id}",
+            fallback_doc=f"Continue waiting for {tool_context.fn_name}({tool_context.arg_repr}).",
             fn=_continue,
         )
 
     def _create_stop_tool(
         self,
-        fn_name: str,
-        arg_repr: str,
-        call_id: str,
-        safe_call_id: str,
+        tool_context: _ToolContext,
         task: asyncio.Task,
         handle: Any,
     ) -> None:
         doc = (
-            f"Stop pending call {fn_name}({arg_repr}). "
+            f"Stop pending call {tool_context.fn_name}({tool_context.arg_repr}). "
             "Accepts any arguments supported by the underlying handle's `stop` method (e.g. `reason`)."
         )
 
@@ -1874,11 +1873,11 @@ class DynamicToolFactory:
             if not task.done():
                 task.cancel()  # kill the waiter coroutine
             self.tools_data.pop_task(task)
-            return {"status": "stopped", "call_id": call_id, **_kw}
+            return {"status": "stopped", "call_id": tool_context.call_id, **_kw}
 
         self._register_tool(
-            func_name=f"stop_{fn_name}_{safe_call_id}",
-            doc=doc,
+            func_name=f"stop_{tool_context.fn_name}_{tool_context.safe_call_id}",
+            fallback_doc=doc,
             fn=_stop,
         )
         # Expose full argspec of handle.stop in the helper schema
@@ -1888,15 +1887,12 @@ class DynamicToolFactory:
 
     def _create_interject_tool(
         self,
-        fn_name: str,
-        arg_repr: str,
-        call_id: str,
-        safe_call_id: str,
+        tool_context: _ToolContext,
         task_info: ToolCallMetadata,
         handle: Any,
     ) -> None:
         doc = (
-            f"Inject additional instructions for {fn_name}({arg_repr}). "
+            f"Inject additional instructions for {tool_context.fn_name}({tool_context.arg_repr}). "
             "Accepts any arguments supported by the underlying handle's `interject` method (e.g. `content`)."
         )
 
@@ -1913,7 +1909,7 @@ class DynamicToolFactory:
                     )
                 return {
                     "status": "interjected",
-                    "call_id": call_id,
+                    "call_id": tool_context.call_id,
                     **{k: v for k, v in _kw.items()},
                 }
 
@@ -1931,51 +1927,44 @@ class DynamicToolFactory:
                 await task_info.interject_queue.put(content)
                 return {
                     "status": "interjected",
-                    "call_id": call_id,
+                    "call_id": tool_context.call_id,
                     "content": content,
                 }
 
         self._register_tool(
-            func_name=f"interject_{fn_name}_{safe_call_id}",
-            doc=doc,
+            func_name=f"interject_{tool_context.fn_name}_{tool_context.safe_call_id}",
+            fallback_doc=doc,
             fn=_interject,
         )
 
     def _create_clarify_tool(
         self,
-        fn_name: str,
-        arg_repr: str,
-        call_id: str,
-        safe_call_id: str,
+        tool_context: _ToolContext,
     ) -> None:
         doc = (
             f"Provide an answer to the clarification which was requested by the (currently pending) tool "
-            f"{fn_name}({arg_repr}). Takes a single argument `answer`."
+            f"{tool_context.fn_name}({tool_context.arg_repr}). Takes a single argument `answer`."
         )
 
         async def _clarify(answer: str) -> Dict[str, str]:  # type: ignore[valid-type]
             return {
                 "status": "clar_answer",
-                "call_id": call_id,
+                "call_id": tool_context.call_id,
                 "answer": answer,
             }
 
         self._register_tool(
-            func_name=f"clarify_{fn_name}_{safe_call_id}",
-            doc=doc,
+            func_name=f"clarify_{tool_context.fn_name}_{tool_context.safe_call_id}",
+            fallback_doc=doc,
             fn=_clarify,
         )
 
     def _create_pause_tool(
         self,
-        fn_name: str,
-        arg_repr: str,
-        call_id: str,
-        safe_call_id: str,
+        tool_context: _ToolContext,
         handle: Any,
         pause_event: Optional[asyncio.Event],
     ) -> None:
-        doc = f"Pause the pending call {fn_name}({arg_repr})."
         handle_available = handle is not None
 
         if handle_available and hasattr(handle, "pause"):
@@ -1983,7 +1972,7 @@ class DynamicToolFactory:
             async def _pause(**_kw) -> Dict[str, str]:
                 with suppress(Exception):
                     await _forward_handle_call(handle, "pause", _kw)
-                return {"status": "paused", "call_id": call_id, **_kw}
+                return {"status": "paused", "call_id": tool_context.call_id, **_kw}
 
             # Reflect downstream signature/annotations
             with suppress(Exception):
@@ -1999,24 +1988,21 @@ class DynamicToolFactory:
                     await _maybe_await(handle.pause())
                 elif pause_event is not None:
                     pause_event.clear()
-                return {"status": "paused", "call_id": call_id}
+                return {"status": "paused", "call_id": tool_context.call_id}
 
         self._register_tool(
-            func_name=f"pause_{fn_name}_{safe_call_id}",
-            doc=doc,
+            func_name=f"pause_{tool_context.fn_name}_{tool_context.safe_call_id}",
+            fallback_doc=f"Pause the pending call {tool_context.fn_name}({tool_context.arg_repr}).",
             fn=_pause,
         )
 
     def _create_resume_tool(
         self,
-        fn_name: str,
-        arg_repr: str,
-        call_id: str,
-        safe_call_id: str,
+        tool_context: _ToolContext,
         handle: Any,
         pause_event: Optional[asyncio.Event],
     ) -> None:
-        doc = f"Resume the previously paused call {fn_name}({arg_repr})."
+        doc = f"Resume the previously paused call {tool_context.fn_name}({tool_context.arg_repr})."
 
         handle_available = handle is not None
 
@@ -2025,7 +2011,7 @@ class DynamicToolFactory:
             async def _resume(**_kw) -> Dict[str, str]:
                 with suppress(Exception):
                     await _forward_handle_call(handle, "resume", _kw)
-                return {"status": "resumed", "call_id": call_id, **_kw}
+                return {"status": "resumed", "call_id": tool_context.call_id, **_kw}
 
             with suppress(Exception):
                 _adopt_signature_and_annotations(
@@ -2040,18 +2026,18 @@ class DynamicToolFactory:
                     await _maybe_await(handle.resume())
                 elif pause_event is not None:
                     pause_event.set()
-                return {"status": "resumed", "call_id": call_id}
+                return {"status": "resumed", "call_id": tool_context.call_id}
 
         self._register_tool(
-            func_name=f"resume_{fn_name}_{safe_call_id}",
-            doc=doc,
+            func_name=f"resume_{tool_context.fn_name}_{tool_context.safe_call_id}",
+            fallback_doc=doc,
             fn=_resume,
         )
 
     def _process_task(self, task: asyncio.Task):
         info = self.tools_data.info[task]
         handle = info.handle
-        ev = info.pause_event
+        task_pause_event = info.pause_event
         handle_available = handle is not None
 
         # ── DYNAMIC capability refresh (handle may change) ─────
@@ -2101,62 +2087,48 @@ class DynamicToolFactory:
         except Exception:
             _arg_repr = _arg_json  # fallback: raw JSON string
 
-        # concise, informative, single‑line docs  ----------------------
+        create_tool_ctx = self._ToolContext(
+            fn_name=_fn_name,
+            arg_repr=_arg_repr,
+            call_id=_call_id,
+            safe_call_id=_safe_call_id,
+        )
 
-        # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
-        # Skip if the task is blocked waiting for clarification; there's
-        # nothing to "continue" until the user answers.
         if not info.waiting_for_clarification:
-            self._create_continue_tool(_fn_name, _arg_repr, _call_id, _safe_call_id)
+            self._create_continue_tool(create_tool_ctx)
 
-        # ––– 2. stop helper –––––––––––––––––––––––––––––––––––––
         self._create_stop_tool(
-            _fn_name,
-            _arg_repr,
-            _call_id,
-            _safe_call_id,
+            create_tool_ctx,
             task,
             handle,
         )
 
-        # ––– 3. interject helper (optional) ––––––––––––––––––––––
         if info.is_interjectable:
             self._create_interject_tool(
-                _fn_name,
-                _arg_repr,
-                _call_id,
-                _safe_call_id,
+                create_tool_ctx,
                 info,
                 handle,
             )
 
-        # ––– 4. clarification-answer helper (optional) ––––––––––
         if info.clar_up_queue is not None:
-            self._create_clarify_tool(_fn_name, _arg_repr, _call_id, _safe_call_id)
+            self._create_clarify_tool(create_tool_ctx)
 
-        # ––– 5. pause helper –––––––––––––––––––––––––––––––––––––––––––
-        can_pause = (handle is not None and hasattr(handle, "pause")) or ev
-
+        can_pause = (handle_available and hasattr(handle, "pause")) or task_pause_event
         if can_pause:
             self._create_pause_tool(
-                _fn_name,
-                _arg_repr,
-                _call_id,
-                _safe_call_id,
+                create_tool_ctx,
                 handle,
-                ev,
+                task_pause_event,
             )
 
-        can_resume = (handle_available and hasattr(handle, "resume")) or ev
-        # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
+        can_resume = (
+            handle_available and hasattr(handle, "resume")
+        ) or task_pause_event
         if can_resume:
             self._create_resume_tool(
-                _fn_name,
-                _arg_repr,
-                _call_id,
-                _safe_call_id,
+                create_tool_ctx,
                 handle,
-                ev,
+                task_pause_event,
             )
 
         # 7.  expose *all* other public methods of the handle
@@ -2236,7 +2208,7 @@ class DynamicToolFactory:
 
                 self._register_tool(
                     func_name=func_name,
-                    doc=(
+                    fallback_doc=(
                         (
                             f"Perform `{meth_name}` on the running handle (id={_call_id}). "
                             "Fire-and-forget write-only operation; returns immediately."
