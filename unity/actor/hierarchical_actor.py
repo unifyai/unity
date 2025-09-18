@@ -895,6 +895,9 @@ class _ActionProviderProxy:
                 logger.warning(
                     f"Blocked stale tool call to '{name}' from a previous run.",
                 )
+                self._plan.action_log.append(
+                    f"Blocked stale tool call to '{name}' from a previous run.",
+                )
                 raise asyncio.CancelledError("Stale tool call blocked by run_id gate.")
 
             interactions_log = current_interaction_sink_var.get()
@@ -1319,7 +1322,7 @@ class HierarchicalPlan(BaseActiveTask):
 
             if self.persist:
                 self.action_log.append(
-                    f"Main plan execution concluded with result: {result}. Awaiting next instruction.",
+                    f"Main plan execution concluded with result: {result}. Verifying final steps in background...",
                 )
 
                 if hasattr(self, "_done_events") and not self._done_events.empty():
@@ -3149,6 +3152,9 @@ class HierarchicalActor(BaseActor):
                 logger.info(
                     f"PRECONDITION MET for '{context_label}': {verification_decision.reason}",
                 )
+                plan.action_log.append(
+                    f"PRECONDITION MET for '{context_label}': {verification_decision.reason}",
+                )
                 return
 
             logger.warning(
@@ -3245,6 +3251,9 @@ class HierarchicalActor(BaseActor):
                         logger.warning(
                             f"Blocked stale function call to '{fn.__name__}'. "
                             f"Context run_id={context_rid} does not match plan run_id={plan_rid}.",
+                        )
+                        plan.action_log.append(
+                            f"Blocked stale function call to '{fn.__name__}'. Context run_id={context_rid} does not match plan run_id={plan_rid}.",
                         )
                         raise asyncio.CancelledError(
                             f"Stale function call to '{fn.__name__}' blocked by run_id gate.",
