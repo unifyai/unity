@@ -267,12 +267,7 @@ class ContactManager(BaseContactManager):
         List[Dict[str, Any]]
             The list of assistants for the current account.
         """
-        url = f"{os.environ['UNIFY_BASE_URL']}/assistant?"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = http_request("GET", url, headers=headers)
-        _handle_exceptions(response)
-        data = response.json()
-        return data.get("info", []) if isinstance(data, dict) else []
+        return unify.list_assistants()
 
     def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
         """Create custom columns for *extra_fields* that are not yet present.
