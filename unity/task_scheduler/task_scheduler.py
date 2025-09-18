@@ -427,6 +427,20 @@ class TaskScheduler(BaseTaskScheduler):
         self._task_to_queue: Dict[int, int] = {}
         self._queue_index_stale: bool = False
 
+        # Monotonic queue id allocator (process-local). Initialize once via a
+        # cheap server-side aggregation and then increment locally to avoid
+        # scanning tasks per allocation.
+        self._max_queue_id_seen: Optional[int] = None
+        try:
+            max_q = unify.get_logs_metric(
+                metric="max",
+                key="queue_id",
+                context=self._ctx,
+            )
+            self._max_queue_id_seen = int(max_q) if max_q is not None else 0
+        except Exception:
+            self._max_queue_id_seen = 0
+
         # Lightweight cached count of tasks within the current Tasks context.
         # - Populated lazily on first use by _num_tasks()
         # - Kept in sync by create/clone/delete flows
@@ -1862,8 +1876,27 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             pass
 
-        # Keep linkage symmetric right after creation
-        self._sync_adjacent_links(task_id=task_id, schedule=schedule)
+        # Keep linkage symmetric only when linkage exists; reuse any prefetched
+        # neighbour row (e.g., predecessor) to avoid an extra backend read.
+        if schedule is not None:
+            prefetched = None
+            try:
+                # from earlier derivation
+                prev_tid = self._sched_prev(schedule)
+                if prev_tid is not None:
+                    try:
+                        prev_row = locals().get("prev_row")
+                    except Exception:
+                        prev_row = None
+                    if prev_row is not None:
+                        prefetched = {int(prev_tid): prev_row}
+            except Exception:
+                prefetched = None
+            self._sync_adjacent_links(
+                task_id=task_id,
+                schedule=schedule,
+                prefetched_rows=prefetched,
+            )
 
         # ── Ensure the in-memory cache reflects any linkage tweaks ──
         if status == Status.primed:
@@ -2529,24 +2562,44 @@ class TaskScheduler(BaseTaskScheduler):
     # ────────────────────────────────────────────────────────────────────
 
     def _allocate_new_queue_id(self) -> int:
-        """Return a fresh integer queue identifier.
+        """Return a fresh integer queue identifier without scanning storage per call.
 
-        Strategy – scan all tasks for existing top‑level ``queue_id`` numeric
-        values and return ``max + 1`` (starting at 1). Queues are implicit in
-        this scheduler: a queue exists as soon as at least one task carries a
-        numeric ``queue_id``.
+        We maintain a process-local counter ``_max_queue_id_seen``. It is
+        initialized once using a server-side aggregation (max(queue_id)) and
+        then incremented locally for subsequent allocations. As the scheduler
+        is a singleton, all allocations flow through this instance.
         """
-        rows = self._filter_tasks()
-        max_id = 0
-        for r in rows:
-            qid = r.get("queue_id")
-            try:
-                if isinstance(qid, int):
-                    max_id = max(max_id, qid)
-            except Exception:
-                pass
-        new_id = max_id + 1 if max_id >= 0 else 1
-        return new_id
+        try:
+            if self._max_queue_id_seen is None:
+                # Defensive re-initialization if needed
+                try:
+                    max_q = unify.get_logs_metric(
+                        metric="max",
+                        key="queue_id",
+                        context=self._ctx,
+                    )
+                    self._max_queue_id_seen = int(max_q) if max_q is not None else 0
+                except Exception:
+                    # Fallback: use local index or a single read as last resort
+                    try:
+                        if (not self._queue_index_stale) and self._queue_index:
+                            self._max_queue_id_seen = max(
+                                int(q) for q in self._queue_index.keys()
+                            )
+                        else:
+                            rows = self._filter_tasks()
+                            max_id = 0
+                            for r in rows:
+                                qid = r.get("queue_id")
+                                if isinstance(qid, int) and qid > max_id:
+                                    max_id = qid
+                            self._max_queue_id_seen = max_id
+                    except Exception:
+                        self._max_queue_id_seen = 0
+            self._max_queue_id_seen = int(self._max_queue_id_seen) + 1
+        except Exception:
+            self._max_queue_id_seen = 1
+        return int(self._max_queue_id_seen)
 
     def _head_row_for_queue(self, queue_id: Optional[int]) -> Optional[TaskRow]:
         """Best-effort fetch of the head row for a given queue.
@@ -3140,6 +3193,14 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Allocate target queue id when requested (new queue)
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
+        # Keep monotonic allocator in sync when caller specifies a higher id
+        try:
+            if isinstance(target_qid, int):
+                cur_max = getattr(self, "_max_queue_id_seen", None)
+                if cur_max is None or int(target_qid) > int(cur_max):
+                    self._max_queue_id_seen = int(target_qid)
+        except Exception:
+            pass
 
         # Build target queue's existing order once (prefer local index)
         try:
