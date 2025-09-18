@@ -368,6 +368,13 @@ class TaskScheduler(BaseTaskScheduler):
             fields=model_to_fields(Task),
         )
 
+        # Eagerly snapshot the total number of tasks once at construction time so
+        # `_num_tasks()` can serve from memory. Subsequent mutations keep it in sync.
+        try:
+            self._num_tasks_cached = int(self._store.get_metric_count(key="task_id"))
+        except Exception:
+            self._num_tasks_cached = None
+
         # In-memory checkpoints for reversible multi-queue edits within a session
         # Keyed by opaque checkpoint ids; values contain a minimal snapshot of all queues
         # (queue_id, head_id, order list, and queue-level start_at).
@@ -419,6 +426,13 @@ class TaskScheduler(BaseTaskScheduler):
         self._queue_index: Dict[int, List[int]] = {}
         self._task_to_queue: Dict[int, int] = {}
         self._queue_index_stale: bool = False
+
+        # Lightweight cached count of tasks within the current Tasks context.
+        # - Populated lazily on first use by _num_tasks()
+        # - Kept in sync by create/clone/delete flows
+        # Because this scheduler is a singleton and all mutations flow through it,
+        # this cache remains coherent without extra backend reads between tool calls.
+        self._num_tasks_cached: Optional[int] = None
 
     # Public #
     # -------#
@@ -1459,6 +1473,12 @@ class TaskScheduler(BaseTaskScheduler):
         clone_payload.pop("activated_by", None)
         # Drop any internal bookkeeping injected by Unify (_id, _log_id …)
         self._store.log(entries=clone_payload, new=True)
+        # Maintain cached total count (+1 new instance row)
+        try:
+            if self._num_tasks_cached is not None:
+                self._num_tasks_cached += 1
+        except Exception:
+            pass
 
     # Private Helpers #
     # ----------------#
@@ -1832,6 +1852,13 @@ class TaskScheduler(BaseTaskScheduler):
             _lid = getattr(log, "id", None)
             if isinstance(_lid, int):
                 self._task_log_id_cache[int(task_id)] = int(_lid)
+        except Exception:
+            pass
+
+        # Maintain cached total count (+1 new row)
+        try:
+            if self._num_tasks_cached is not None:
+                self._num_tasks_cached += 1
         except Exception:
             pass
 
@@ -2364,6 +2391,7 @@ class TaskScheduler(BaseTaskScheduler):
                     self._task_log_id_cache.pop(int(task_id), None)
                 except Exception:
                     pass
+            removed_count = 1
         else:
             # Fallback: resolve the log id via a single lookup then delete
             log_id = self._get_logs_by_task_ids(task_ids=task_id)
@@ -2373,6 +2401,24 @@ class TaskScheduler(BaseTaskScheduler):
                 self._task_log_id_cache.pop(int(task_id), None)
             except Exception:
                 pass
+            try:
+                removed_count = (
+                    len(log_id)
+                    if isinstance(log_id, list)
+                    else (1 if log_id is not None else 0)
+                )
+            except Exception:
+                removed_count = 0
+
+        # Maintain cached total count (subtract removed rows)
+        try:
+            if self._num_tasks_cached is not None and removed_count:
+                self._num_tasks_cached = max(
+                    0,
+                    int(self._num_tasks_cached) - int(removed_count),
+                )
+        except Exception:
+            pass
         return {
             "outcome": "task deleted",
             "details": {"task_id": task_id},
@@ -5205,7 +5251,15 @@ class TaskScheduler(BaseTaskScheduler):
     @_ts_log_tool_runtime
     def _num_tasks(self) -> int:
         """Return the total number of tasks in the Tasks context."""
-        return self._store.get_metric_count(key="task_id")
+        if self._num_tasks_cached is None:
+            try:
+                self._num_tasks_cached = int(
+                    self._store.get_metric_count(key="task_id"),
+                )
+            except Exception:
+                # Defensive fallback; a failed metric read should not crash tools
+                self._num_tasks_cached = 0
+        return int(self._num_tasks_cached)
 
     # (Removed) LLM-based scope classifier
 
