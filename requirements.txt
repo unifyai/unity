@@ -5,7 +5,6 @@ black
 browser-use>=0.1.4
 browserbase
 deepgram-sdk>=4
-docling
 # -e ../unify # dev mode
 git+https://github.com/unifyai/unify.git # deploy mode
 fastapi>=0.104.0
@@ -44,3 +43,4 @@ opencv-python
 
 # Document parsing
 langchain>=0.3.27
+docling
