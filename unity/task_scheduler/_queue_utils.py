@@ -39,9 +39,14 @@ def sync_adjacent_links(
     *,
     task_id: int,
     schedule: Optional[Union[Schedule, dict]],
+    prefetched_rows: Optional[Dict[int, Any]] = None,
 ) -> None:
     """
     Guarantee link symmetry when (re)linking a task in the runnable queue.
+
+    When ``prefetched_rows`` is provided, neighbour lookups will reuse these
+    rows to avoid extra backend reads. The values may be either plain row
+    dicts (as returned by ``_filter_tasks``) or ``unify.Log`` objects.
     """
     if schedule is None:
         return
@@ -56,31 +61,72 @@ def sync_adjacent_links(
         neighbours.append(("prev_task", "next_task", schedule["next_task"]))
 
     for field_to_set, _, neighbour_id in neighbours:
-        rows = scheduler._filter_tasks(filter=f"task_id == {neighbour_id}", limit=1)
-        if not rows:
-            # Neighbour went missing – skip symmetric update instead of failing
-            continue
+        # Prefer prefetched row (unify.Log or dict) to avoid a backend read
+        row_obj = None
+        if prefetched_rows is not None:
+            row_obj = prefetched_rows.get(int(neighbour_id))
 
-        row = rows[0]
-        n_sched = {**(row.get("schedule") or {})}
-        if n_sched.get(field_to_set) == task_id:
-            continue  # already correct
-
-        # Strip start_at if the neighbour ceases to be queue head
-        if field_to_set == "prev_task":
-            n_sched.pop("start_at", None)
-
-        n_sched[field_to_set] = task_id
-        try:
-            log_id = scheduler._get_logs_by_task_ids(task_ids=row["task_id"])
-        except ValueError:
-            # Neighbour was deleted after we fetched rows – skip
-            continue
-        scheduler._store.update(
-            logs=log_id,
-            entries={"schedule": n_sched},
-            overwrite=True,
-        )
+        if row_obj is None:
+            rows = scheduler._filter_tasks(filter=f"task_id == {neighbour_id}", limit=1)
+            if not rows:
+                # Neighbour went missing – skip symmetric update instead of failing
+                continue
+            row_entries = rows[0]
+            n_sched = {**(row_entries.get("schedule") or {})}
+            if n_sched.get(field_to_set) == task_id:
+                continue  # already correct
+            # Strip start_at if the neighbour ceases to be queue head
+            if field_to_set == "prev_task":
+                n_sched.pop("start_at", None)
+            n_sched[field_to_set] = task_id
+            try:
+                log_id = scheduler._get_logs_by_task_ids(
+                    task_ids=row_entries["task_id"],
+                )
+            except ValueError:
+                # Neighbour was deleted after we fetched rows – skip
+                continue
+            scheduler._store.update(
+                logs=log_id,
+                entries={"schedule": n_sched},
+                overwrite=True,
+            )
+        else:
+            # Handle both unify.Log and plain dict
+            if hasattr(row_obj, "entries"):
+                # unify.Log
+                entries = getattr(row_obj, "entries", {}) or {}
+                n_sched = {**(entries.get("schedule") or {})}
+                if n_sched.get(field_to_set) == task_id:
+                    continue
+                if field_to_set == "prev_task":
+                    n_sched.pop("start_at", None)
+                n_sched[field_to_set] = task_id
+                scheduler._store.update(
+                    logs=row_obj.id if hasattr(row_obj, "id") else row_obj,
+                    entries={"schedule": n_sched},
+                    overwrite=True,
+                )
+            else:
+                # dict row fallback
+                row_entries = row_obj  # type: ignore[assignment]
+                n_sched = {**(row_entries.get("schedule") or {})}
+                if n_sched.get(field_to_set) == task_id:
+                    continue
+                if field_to_set == "prev_task":
+                    n_sched.pop("start_at", None)
+                n_sched[field_to_set] = task_id
+                try:
+                    log_id = scheduler._get_logs_by_task_ids(
+                        task_ids=row_entries["task_id"],
+                    )
+                except ValueError:
+                    continue
+                scheduler._store.update(
+                    logs=log_id,
+                    entries={"schedule": n_sched},
+                    overwrite=True,
+                )
 
         # Was the neighbour the *primed* task?  Keep cache in lock-step.
         if (
