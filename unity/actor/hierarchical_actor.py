@@ -796,7 +796,11 @@ class _SteerableToolHandleProxy:
                     f"CACHE HIT: Using cached result for {call_repr}",
                 )
                 logger.debug(f"HANDLE CACHE HIT for: {call_repr}")
-                self._plan.interaction_stack[-1].append(cached_interaction)
+                interactions_log = current_interaction_sink_var.get()
+                if interactions_log is not None:
+                    if len(cached_interaction) < 4:
+                        cached_interaction = (*cached_interaction, [])
+                    interactions_log.append(cached_interaction)
                 return cached_result
             return None
 
@@ -825,7 +829,9 @@ class _SteerableToolHandleProxy:
 
             output = await real_attr(*args, **kwargs)
             interaction_to_cache = ("handle_method_call", call_repr, str(output))
-            self._plan.interaction_stack[-1].append(interaction_to_cache)
+            interactions_log = current_interaction_sink_var.get()
+            if interactions_log is not None:
+                interactions_log.append(interaction_to_cache)
             self._plan.idempotency_cache[cache_key] = {
                 "result": output,
                 "interaction_log": interaction_to_cache,
@@ -857,7 +863,9 @@ class _SteerableToolHandleProxy:
 
             output = real_attr(*args, **kwargs)
             interaction_to_cache = ("handle_method_call", call_repr, str(output))
-            self._plan.interaction_stack[-1].append(interaction_to_cache)
+            interactions_log = current_interaction_sink_var.get()
+            if interactions_log is not None:
+                interactions_log.append(interaction_to_cache)
             self._plan.idempotency_cache[cache_key] = {
                 "result": output,
                 "interaction_log": interaction_to_cache,
@@ -3122,7 +3130,9 @@ class HierarchicalActor(BaseActor):
                 )
             plan.action_log.append(f"Received clarification: {answer}")
             interaction_to_log = ("tool_call", call_repr, answer)
-            plan.interaction_stack[-1].append(interaction_to_log)
+            interactions_log = current_interaction_sink_var.get()
+            if interactions_log is not None:
+                interactions_log.append(interaction_to_log)
             return answer
 
         plan.execution_namespace.clear()
