@@ -3103,7 +3103,57 @@ class TaskScheduler(BaseTaskScheduler):
                 if isinstance(qid_cached, int):
                     members = self._queue_index.get(int(qid_cached)) or []
                     if int(task_id) in members:
-                        return self._get_queue(queue_id=qid_cached)
+                        # Inline the fast-path of _get_queue to avoid nested tool timing
+                        member_ids = list(members)
+                        if member_ids:
+                            fields_needed: List[str] = [
+                                "task_id",
+                                "instance_id",
+                                "name",
+                                "description",
+                                "status",
+                                "schedule",
+                                "priority",
+                                "queue_id",
+                                "activated_by",
+                                "trigger",
+                                "deadline",
+                                "repeat",
+                                "response_policy",
+                            ]
+                            logs = self._store.get_minimal_rows_by_task_ids(
+                                task_ids=member_ids,
+                                fields=fields_needed,
+                            )
+                            rows_by_id: Dict[int, Dict[str, Any]] = {}
+                            for lg in logs or []:
+                                try:
+                                    e = dict(getattr(lg, "entries", {}) or {})
+                                    tid = e.get("task_id")
+                                    if isinstance(tid, int):
+                                        rows_by_id[int(tid)] = e
+                                except Exception:
+                                    continue
+
+                            ordered: List[Task] = []
+                            for tid in member_ids:
+                                row = rows_by_id.get(int(tid))
+                                if not isinstance(row, dict):
+                                    continue
+                                try:
+                                    st = self._to_status(row.get("status"))  # type: ignore[arg-type]
+                                    if st in self._TERMINAL_STATUSES:
+                                        continue
+                                except Exception:
+                                    pass
+                                try:
+                                    if self._to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
+                                        row.pop("activated_by", None)
+                                except Exception:
+                                    if str(row.get("status")) != str(Status.active):
+                                        row.pop("activated_by", None)
+                                ordered.append(Task(**row))
+                            return ordered
         except Exception:
             # Defensive: ignore cache failures and fall back
             pass
@@ -3116,7 +3166,84 @@ class TaskScheduler(BaseTaskScheduler):
 
         qid = row.get("queue_id")
         if isinstance(qid, int):
-            return self._get_queue(queue_id=qid)
+            # Optimized single-queue read that avoids re-fetching the same row twice
+            # within this tool call. We already have `row` for task_id; fetch other
+            # runnable members of the same queue excluding this task, then compose
+            # the ordered list purely in-memory.
+            try:
+                rows_in_queue: List[TaskRow] = [
+                    r
+                    for r in self._filter_tasks(
+                        filter=(
+                            "schedule is not None and "
+                            "status not in ('completed','cancelled','failed') and "
+                            f"queue_id == {int(qid)} and task_id != {int(task_id)}"
+                        ),
+                    )
+                ]
+            except Exception:
+                rows_in_queue = []
+
+            # Compose a by-id map that includes the current row
+            rows_all: List[TaskRow] = [row] + rows_in_queue
+            if not rows_all:
+                return []
+
+            rows_by_id: Dict[int, TaskRow] = {}
+            for r in rows_all:
+                try:
+                    tid_val = r.get("task_id")
+                    if isinstance(tid_val, int):
+                        rows_by_id[tid_val] = r
+                except Exception:
+                    continue
+
+            # Identify head locally (prev_task is None). If ambiguous/missing,
+            # fall back to using the provided `row` as a starting point.
+            heads = [
+                r
+                for r in rows_all
+                if (r.get("schedule") or {}).get("prev_task") is None
+            ]
+            head = heads[0] if heads else row
+
+            # Walk head→tail using next_task pointers in-memory
+            ordered: List[Task] = []
+            seen: set[int] = set()
+            cur = head
+            while cur is not None:
+                try:
+                    tid_val = cur.get("task_id")
+                    tid_int = int(tid_val) if tid_val is not None else None
+                except Exception:
+                    tid_int = None
+                if isinstance(tid_int, int):
+                    if tid_int in seen:
+                        break
+                    seen.add(tid_int)
+
+                # Strip stale activation metadata on non-active rows
+                _row = dict(cur)
+                try:
+                    if self._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
+                        _row.pop("activated_by", None)
+                except Exception:
+                    if str(_row.get("status")) != str(Status.active):
+                        _row.pop("activated_by", None)
+                ordered.append(Task(**_row))
+
+                nxt = (cur.get("schedule") or {}).get("next_task")
+                if nxt is None:
+                    break
+                try:
+                    nxt_int = int(nxt)
+                except Exception:
+                    break
+                cur = rows_by_id.get(nxt_int)
+
+            return ordered
+
+        # No numeric queue_id – follow the linked chain defensively
         return self._walk_queue_from_task(task_id=int(task_id))
 
     @_ts_log_tool_runtime
