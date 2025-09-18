@@ -3628,28 +3628,28 @@ class TaskScheduler(BaseTaskScheduler):
                     f"Task {r['task_id']} is trigger-based and cannot be placed in the queue.",
                 )
 
-        # Determine each task's current queue (prefer local index; single fallback read)
+        # Determine each task's current queue (prefer local index; reuse prefetched rows)
         source_qid_by_tid: Dict[int, Optional[int]] = {}
-        try:
-            if not self._queue_index_stale:
-                for tid in block:
+        if not self._queue_index_stale:
+            for tid in block:
+                try:
                     qid = self._task_to_queue.get(int(tid))
-                    if qid is not None:
-                        source_qid_by_tid[int(tid)] = int(qid)
-            # If any are missing, fetch once for all
-            missing = [t for t in block if int(t) not in source_qid_by_tid]
-            if missing:
-                by_id = {int(r.get("task_id")): r for r in rows} if rows else {}
-                for t in missing:
-                    row = by_id.get(int(t))
-                    source_qid_by_tid[int(t)] = row.get("queue_id") if row else None
-        except Exception:
-            # Conservative fallback: best-effort single read for all
-            rows = self._filter_tasks(filter=f"task_id in {block}")
-            by_id = {int(r.get("task_id")): r for r in rows}
-            for t in block:
+                except Exception:
+                    qid = None
+                if isinstance(qid, int):
+                    source_qid_by_tid[int(tid)] = int(qid)
+        # For any remaining ids, reuse the single consolidated read done above
+        missing = [t for t in block if int(t) not in source_qid_by_tid]
+        if missing:
+            by_id = {int(r.get("task_id")): r for r in (rows or [])}
+            for t in missing:
                 row = by_id.get(int(t))
-                source_qid_by_tid[int(t)] = row.get("queue_id") if row else None
+                try:
+                    source_qid_by_tid[int(t)] = (
+                        row.get("queue_id") if isinstance(row, dict) else None
+                    )
+                except Exception:
+                    source_qid_by_tid[int(t)] = None
 
         # Allocate target queue id when requested (new queue)
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
@@ -3819,21 +3819,42 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             assume_empty_target_queue = False
 
-        if (
-            (queue_id is not None)
-            and (queue_start_at is None)
-            and (not assume_empty_target_queue)
-        ):
+        # Remove any other members currently in the target queue (strict by queue_id)
+        current_members: List[int] = []
+        current_rows_by_id: Dict[int, Dict[str, Any]] = {}
+
+        # Prefer a single filtered read of the target queue to derive both:
+        # - existing head start_at (when queue_start_at not provided), and
+        # - current membership to compute removals.
+        if queue_id is not None and not assume_empty_target_queue:
             try:
-                _orig_head = self._head_row_for_queue(target_qid)
-                if _orig_head is not None:
-                    existing_head_start = (_orig_head.get("schedule") or {}).get(
-                        "start_at",
-                    )
+                rows_in_queue: List[TaskRow] = self._filter_tasks(
+                    filter=(
+                        "schedule is not None and "
+                        "status not in ('completed','cancelled','failed') and "
+                        f"queue_id == {int(target_qid)}"
+                    ),
+                )
             except Exception:
-                existing_head_start = None
-        # Fallback using already-fetched rows when available
-        if existing_head_start is None:
+                rows_in_queue = []
+
+            # Derive current members and by-id map from the same read
+            current_members = [int(r.get("task_id")) for r in rows_in_queue]
+            current_rows_by_id = {int(r.get("task_id")): r for r in rows_in_queue}
+
+            # Compute existing head start_at locally to avoid an unfiltered scan
+            if queue_start_at is None and existing_head_start is None:
+                try:
+                    for r in rows_in_queue:
+                        _sched = r.get("schedule") or {}
+                        if _sched.get("prev_task") is None:
+                            existing_head_start = _sched.get("start_at")
+                            break
+                except Exception:
+                    pass
+
+        # Fallback using already-fetched rows when available (only scans 'order')
+        if queue_start_at is None and existing_head_start is None:
             try:
                 for _tid in order:
                     _row = rows_by_id.get(int(_tid))
@@ -3848,23 +3869,6 @@ class TaskScheduler(BaseTaskScheduler):
                         break
             except Exception:
                 pass
-
-        # Remove any other members currently in the target queue (strict by queue_id)
-        current_members: List[int] = []
-        current_rows_by_id: Dict[int, Dict[str, Any]] = {}
-        if queue_id is not None and not assume_empty_target_queue:
-            try:
-                rows_in_queue: List[TaskRow] = self._filter_tasks(
-                    filter=(
-                        "schedule is not None and "
-                        "status not in ('completed','cancelled','failed') and "
-                        f"queue_id == {int(target_qid)}"
-                    ),
-                )
-            except Exception:
-                rows_in_queue = []
-            current_members = [int(r.get("task_id")) for r in rows_in_queue]
-            current_rows_by_id = {int(r.get("task_id")): r for r in rows_in_queue}
 
         to_remove = [tid for tid in current_members if tid not in order]
         if to_remove:
