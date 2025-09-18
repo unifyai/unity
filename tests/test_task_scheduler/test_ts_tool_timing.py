@@ -311,138 +311,48 @@ def test_tool_partition_queue_timing():
     print(f"elapsed: {elapsed_ms} < X")
 
 
-# Atomic field update timings
+# Atomic field update timing: combined single-call update
 
 
 @pytest.mark.unit
 @_handle_project
-def test_tool_update_task_name_timing():
+def test_tool_update_task_timing():
     _enable_timing()
     ts = TaskScheduler()
-    tid = ts._create_task(name="TT Name " + _uniq(), description="desc")["details"][
-        "task_id"
-    ]
-    t0 = time.perf_counter()
-    ts._update_task(task_id=tid, name="TT Name Renamed " + _uniq())
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    # sanity read
-    row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
-    assert "Renamed" in row["name"]
-    print(f"elapsed: {elapsed_ms} < X")
+    # Start with a triggerable task so we can clear trigger and set start_at in one call
+    tid = ts._create_task(
+        name="TT Combined " + _uniq(),
+        description="initial",
+        trigger={"medium": Medium.EMAIL},
+    )["details"]["task_id"]
 
-
-@pytest.mark.unit
-@_handle_project
-def test_tool_update_task_description_timing():
-    _enable_timing()
-    ts = TaskScheduler()
-    tid = ts._create_task(name="TT Desc " + _uniq(), description="d")["details"][
-        "task_id"
-    ]
-    t0 = time.perf_counter()
-    ts._update_task(task_id=tid, description="updated desc")
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
-    assert row["description"] == "updated desc"
-    print(f"elapsed: {elapsed_ms} < X")
-
-
-@pytest.mark.unit
-@_handle_project
-def test_tool_update_task_start_at_timing():
-    _enable_timing()
-    ts = TaskScheduler()
-    tid = ts._create_task(name="TT StartAt " + _uniq(), description="d")["details"][
-        "task_id"
-    ]
     when = datetime.now(timezone.utc) + timedelta(minutes=5)
-    t0 = time.perf_counter()
-    ts._update_task(task_id=tid, start_at=when)
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
-    assert (row.get("schedule") or {}).get("start_at") is not None
-    print(f"elapsed: {elapsed_ms} < X")
-
-
-@pytest.mark.unit
-@_handle_project
-def test_tool_update_task_deadline_timing():
-    _enable_timing()
-    ts = TaskScheduler()
-    tid = ts._create_task(name="TT Deadline " + _uniq(), description="d")["details"][
-        "task_id"
-    ]
     dl = datetime.now(timezone.utc) + timedelta(days=1)
+
     t0 = time.perf_counter()
-    ts._update_task(task_id=tid, deadline=dl)
+    ts._update_task(
+        task_id=tid,
+        name="TT Combined Renamed " + _uniq(),
+        description="combined updated",
+        start_at=when,
+        deadline=dl,
+        repeat=[RepeatPattern(frequency=Frequency.DAILY)],
+        priority="high",
+        status="scheduled",
+        trigger=None,  # clear trigger while adding start_at
+    )
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
-    assert row.get("deadline") is not None
-    print(f"elapsed: {elapsed_ms} < X")
 
-
-@pytest.mark.unit
-@_handle_project
-def test_tool_update_task_priority_timing():
-    _enable_timing()
-    ts = TaskScheduler()
-    tid = ts._create_task(name="TT Priority " + _uniq(), description="d")["details"][
-        "task_id"
-    ]
-    t0 = time.perf_counter()
-    ts._update_task(task_id=tid, priority="high")
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
-    assert row.get("priority") == "high"
-    print(f"elapsed: {elapsed_ms} < X")
-
-
-@pytest.mark.unit
-@_handle_project
-def test_tool_update_task_repetition_timing():
-    _enable_timing()
-    ts = TaskScheduler()
-    tid = ts._create_task(name="TT Repeat " + _uniq(), description="d")["details"][
-        "task_id"
-    ]
-    t0 = time.perf_counter()
-    ts._update_task(task_id=tid, repeat=[RepeatPattern(frequency=Frequency.DAILY)])
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
-    assert row.get("repeat") is not None
-    print(f"elapsed: {elapsed_ms} < X")
-
-
-@pytest.mark.unit
-@_handle_project
-def test_tool_update_task_status_timing():
-    _enable_timing()
-    ts = TaskScheduler()
-    tid = ts._create_task(name="TT Status " + _uniq(), description="d")["details"][
-        "task_id"
-    ]
-    t0 = time.perf_counter()
-    ts._update_task(task_id=tid, status="queued")
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    row = ts._filter_tasks(filter=f"task_id == {tid}")[0]
-    assert row.get("status") in {"queued", "primed", "scheduled"}
-    print(f"elapsed: {elapsed_ms} < X")
-
-
-@pytest.mark.unit
-@_handle_project
-def test_tool_update_task_trigger_timing():
-    _enable_timing()
-    ts = TaskScheduler()
-    tid = ts._create_task(name="TT Trigger " + _uniq(), description="d")["details"][
-        "task_id"
-    ]
-    t0 = time.perf_counter()
-    out = ts._update_task(task_id=tid, trigger={"medium": Medium.EMAIL})
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    # Validate via read rather than relying on return payload shape
+    # Validate all fields via a single read
     row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
-    assert row.get("trigger") is not None
+    assert "Renamed" in row["name"]
+    assert row["description"] == "combined updated"
+    assert (row.get("schedule") or {}).get("start_at") is not None
+    assert row.get("deadline") is not None
+    assert row.get("repeat") is not None
+    assert row.get("priority") == "high"
+    assert row.get("status") == "scheduled"
+    assert row.get("trigger") is None
     print(f"elapsed: {elapsed_ms} < X")
 
 
