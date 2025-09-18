@@ -439,6 +439,7 @@ def backfill_rows(
     needed = k - len(results)
     offset = 0
     while needed > 0:
+        batch_size = needed
         if allowed_fields is not None:
             # Ensure we can deduplicate
             from_fields = list(
@@ -454,7 +455,7 @@ def backfill_rows(
                 context=context,
                 filter=row_filter,
                 offset=offset,
-                limit=k,
+                limit=batch_size,
                 from_fields=from_fields,
             )
         else:
@@ -462,12 +463,13 @@ def backfill_rows(
                 context=context,
                 filter=row_filter,
                 offset=offset,
-                limit=k,
+                limit=batch_size,
                 exclude_fields=list_private_fields(context),
             )
         if not fallback_logs:
             break
 
+        fetched = 0
         for lg in fallback_logs:
             entries = getattr(lg, "entries", lg)
             if not isinstance(entries, dict):
@@ -481,6 +483,7 @@ def backfill_rows(
                 if comp_val is not None and comp_val in seen_ids:
                     continue
             results.append(entries)
+            fetched += 1
             if unique_id_field is not None and uid_val is not None:
                 try:
                     seen_ids.add(int(uid_val))
@@ -490,6 +493,14 @@ def backfill_rows(
             if needed == 0:
                 break
 
-        offset += k
+        # Advance by the number returned by the backend to avoid re-reading
+        # the same page repeatedly when many rows are skipped as duplicates.
+        try:
+            returned = len(fallback_logs)
+        except Exception:
+            returned = fetched
+        if returned <= 0:
+            break
+        offset += returned
 
     return results
