@@ -2124,30 +2124,45 @@ class TaskScheduler(BaseTaskScheduler):
                 ).to_post_json()
                 entries_list.append(task_payload)
 
-            # Create all in one backend call, then fetch created rows once
+            # Create all in one backend call. Prefer consuming returned rows directly
+            # to avoid additional backend reads within this tool call.
             resp = self._store.create_many(entries_list=entries_list)
-            created_log_ids: List[int] = []
-            try:
-                # Primary: explicit log_event_ids from backend
-                created_log_ids = list(resp.get("log_event_ids") or [])
-            except Exception:
-                created_log_ids = []
-            if not created_log_ids:
-                # Some client variants may return a different key
-                for alt in ("ids", "log_ids"):
-                    try:
-                        created_log_ids = list(resp.get(alt) or [])
-                        if created_log_ids:
-                            break
-                    except Exception:
-                        created_log_ids = []
-
             rows = []
-            try:
-                if created_log_ids:
-                    rows = self._store.get_rows_by_log_ids(log_ids=created_log_ids)
-            except Exception:
-                rows = []
+            created_log_ids: List[int] = []
+
+            # The storage adapter may return either a list of unify.Log objects
+            # (preferred) or a dict with identifiers. Handle both without re-reading.
+            if isinstance(resp, list):
+                rows = resp
+                try:
+                    created_log_ids = [
+                        int(getattr(lg, "id", None))
+                        for lg in rows
+                        if getattr(lg, "id", None) is not None
+                    ]
+                except Exception:
+                    created_log_ids = []
+            else:
+                try:
+                    created_log_ids = list(resp.get("log_event_ids") or [])
+                except Exception:
+                    created_log_ids = []
+                if not created_log_ids:
+                    # Some client variants may return a different key
+                    for alt in ("ids", "log_ids"):
+                        try:
+                            created_log_ids = list(resp.get(alt) or [])
+                            if created_log_ids:
+                                break
+                        except Exception:
+                            created_log_ids = []
+                # When only ids are available, fetch the fresh rows once using a
+                # single by-id lookup (still within this tool call).
+                try:
+                    if created_log_ids:
+                        rows = self._store.get_rows_by_log_ids(log_ids=created_log_ids)
+                except Exception:
+                    rows = []
             # Fallback: fetch by pairwise (name AND description) to avoid collisions
             if not rows:
                 try:
@@ -2172,38 +2187,78 @@ class TaskScheduler(BaseTaskScheduler):
                     )
                 except Exception:
                     rows = []
-            # Derive task_ids from returned rows in the same order as input specs
+            # Derive task_ids from the returned rows without extra reads.
+            # Preserve input order by matching (name, description) keys.
             by_key: Dict[tuple[str, str], int] = {}
-            for lg in rows:
-                try:
+            try:
+                for lg in rows or []:
                     e = getattr(lg, "entries", {}) or {}
                     nm = str(e.get("name"))
                     ds = str(e.get("description"))
                     tid_maybe = e.get("task_id")
                     if tid_maybe is not None:
                         by_key[(nm, ds)] = int(tid_maybe)
-                        # Also cache task_id → log_id mapping while we have both
+                        # Cache task_id → log_id mapping
                         try:
                             _lid = getattr(lg, "id", None)
                             if isinstance(_lid, int):
                                 self._task_log_id_cache[int(tid_maybe)] = int(_lid)
                         except Exception:
                             pass
-                except Exception:
-                    continue
+            except Exception:
+                by_key = {}
+
             created_ids = []
             for spec in tasks:
-                tid = by_key.get((str(spec.get("name")), str(spec.get("description"))))
+                key = (str(spec.get("name")), str(spec.get("description")))
+                tid = by_key.get(key)
                 if tid is not None:
                     created_ids.append(int(tid))
 
-            # Robust fallback: fetch by names only if mapping failed / partial
-            if len(created_ids) < len(tasks):
+            # If we couldn't derive all ids from the direct create response, fall back
+            # to a single by-id read using the created log ids collected above.
+            if (len(created_ids) < len(tasks)) and created_log_ids:
+                try:
+                    rows2 = self._store.get_rows_by_log_ids(log_ids=created_log_ids)
+                except Exception:
+                    rows2 = []
+                if rows2:
+                    by_key = {}
+                    try:
+                        for lg in rows2:
+                            e = getattr(lg, "entries", {}) or {}
+                            nm = str(e.get("name"))
+                            ds = str(e.get("description"))
+                            tid_maybe = e.get("task_id")
+                            if tid_maybe is not None:
+                                by_key[(nm, ds)] = int(tid_maybe)
+                                try:
+                                    _lid = getattr(lg, "id", None)
+                                    if isinstance(_lid, int):
+                                        self._task_log_id_cache[int(tid_maybe)] = int(
+                                            _lid,
+                                        )
+                                except Exception:
+                                    pass
+                    except Exception:
+                        by_key = {}
+                    created_ids = []
+                    for spec in tasks:
+                        key = (str(spec.get("name")), str(spec.get("description")))
+                        tid = by_key.get(key)
+                        if tid is not None:
+                            created_ids.append(int(tid))
+
+            # If mapping is still incomplete (unexpected), fall back to a single
+            # names-only read to complete ids, keeping the call within this tool run.
+            if (len(created_ids) < len(tasks)) and (not rows):
                 try:
                     name_list = [str(spec.get("name")) for spec in tasks]
                     list_literal = "[" + ", ".join(repr(n) for n in name_list) + "]"
-                    expr = f"name in {list_literal}"
-                    ents = self._store.get_entries(filter=expr, limit=len(tasks))
+                    ents = self._store.get_entries(
+                        filter=f"name in {list_literal}",
+                        limit=len(tasks),
+                    )
                 except Exception:
                     ents = []
                 if ents:
@@ -2213,29 +2268,28 @@ class TaskScheduler(BaseTaskScheduler):
                             by_name[str(r.get("name"))] = int(r.get("task_id"))
                         except Exception:
                             continue
-                    created_ids = []
-                    for spec in tasks:
-                        nm = str(spec.get("name"))
-                        if nm in by_name:
-                            created_ids.append(int(by_name[nm]))
+                    created_ids = [
+                        int(by_name[nm]) for nm in name_list if nm in by_name
+                    ]
 
-            # Reflect primed pointer in memory if we created one
+            # Reflect primed pointer in memory directly from created rows when available
             if primed_index is not None:
                 try:
-                    # Prefer 'rows' if available; else consult 'ents' fallback
                     primed_found: Optional[Dict[str, Any]] = None
-                    if rows:
-                        for r in rows:
-                            e = getattr(r, "entries", {}) or {}
-                            if e.get("status") == str(Status.primed):
-                                primed_found = e
-                                break
-                    if primed_found is None:
+                    for r in rows or []:
+                        e = getattr(r, "entries", {}) or {}
+                        if e.get("status") == str(Status.primed):
+                            primed_found = e
+                            break
+                    if primed_found is None and created_log_ids:
                         try:
-                            ents  # type: ignore[name-defined]
+                            rows3 = self._store.get_rows_by_log_ids(
+                                log_ids=created_log_ids,
+                            )
                         except Exception:
-                            ents = []  # type: ignore[assignment]
-                        for e in ents or []:
+                            rows3 = []
+                        for r in rows3 or []:
+                            e = getattr(r, "entries", {}) or {}
                             if e.get("status") == str(Status.primed):
                                 primed_found = e
                                 break
@@ -2243,6 +2297,13 @@ class TaskScheduler(BaseTaskScheduler):
                         self._primed_task = dict(primed_found)
                 except Exception:
                     pass
+
+            # Maintain cached total count (+N new rows)
+            try:
+                if self._num_tasks_cached is not None and created_ids:
+                    self._num_tasks_cached += len(created_ids)
+            except Exception:
+                pass
         else:
             # Create tasks sequentially to preserve ascending id assignment
             created_ids = []
