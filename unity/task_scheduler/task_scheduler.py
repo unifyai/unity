@@ -426,6 +426,9 @@ class TaskScheduler(BaseTaskScheduler):
         self._queue_index: Dict[int, List[int]] = {}
         self._task_to_queue: Dict[int, int] = {}
         self._queue_index_stale: bool = False
+        # Cache queue-level start_at timestamps for heads. Updated by queue tools
+        # and used by `_list_queues` fast-path to avoid extra reads.
+        self._queue_head_start_at: Dict[int, Optional[str]] = {}
 
         # Monotonic queue id allocator (process-local). Initialize once via a
         # cheap server-side aggregation and then increment locally to avoid
@@ -2738,6 +2741,30 @@ class TaskScheduler(BaseTaskScheduler):
         are non-terminal tasks with `schedule.prev_task is None` and a numeric
         `queue_id`.
         """
+        # Fast-path: when a local queue index is available and not marked stale,
+        # compute the summary directly without any backend reads.
+        try:
+            if (not self._queue_index_stale) and self._queue_index:
+                out_fast: list[Dict[str, Any]] = []
+                for qid, order in self._queue_index.items():
+                    if not order:
+                        continue
+                    head_id = order[0]
+                    start_at = self._queue_head_start_at.get(int(qid))
+                    out_fast.append(
+                        {
+                            "queue_id": qid,
+                            "queue_label": f"Q{qid}",
+                            "head_id": head_id,
+                            "size": len(order),
+                            "start_at": start_at,
+                        },
+                    )
+                return out_fast
+        except Exception:
+            # Defensive: fall through to storage-based rebuild
+            pass
+
         rows = [
             r
             for r in self._filter_tasks()
@@ -2761,6 +2788,10 @@ class TaskScheduler(BaseTaskScheduler):
         ]
 
         out: list[Dict[str, Any]] = []
+        # Prepare fresh caches reconstructed from the single read above
+        new_queue_index: Dict[int, List[int]] = {}
+        new_task_to_queue: Dict[int, int] = {}
+        new_head_start_at: Dict[int, Optional[str]] = {}
         for h in heads:
             sched = h.get("schedule") or {}
             start_at = sched.get("start_at")
@@ -2773,6 +2804,7 @@ class TaskScheduler(BaseTaskScheduler):
             size = 0
             seen: set[int] = set()
             cur = h
+            order_for_q: list[int] = []
             while cur is not None:
                 try:
                     tid_val = cur.get("task_id")
@@ -2784,6 +2816,7 @@ class TaskScheduler(BaseTaskScheduler):
                         break
                     seen.add(tid_int)
                     size += 1
+                    order_for_q.append(tid_int)
                 nxt = (cur.get("schedule") or {}).get("next_task")
                 if nxt is None:
                     break
@@ -2792,6 +2825,13 @@ class TaskScheduler(BaseTaskScheduler):
                 except Exception:
                     break
                 cur = rows_by_id.get(nxt_int)
+
+            # Update reconstructed caches
+            if order_for_q:
+                new_queue_index[int(qid)] = list(order_for_q)
+                for _tid in order_for_q:
+                    new_task_to_queue[int(_tid)] = int(qid)
+                new_head_start_at[int(qid)] = start_at
 
             out.append(
                 {
@@ -2802,6 +2842,15 @@ class TaskScheduler(BaseTaskScheduler):
                     "start_at": start_at,
                 },
             )
+
+        # Best-effort: refresh the local caches for future fast-paths
+        try:
+            self._queue_index = new_queue_index
+            self._task_to_queue = new_task_to_queue
+            self._queue_head_start_at = new_head_start_at
+            self._queue_index_stale = False
+        except Exception:
+            pass
 
         return out
 
@@ -3166,6 +3215,11 @@ class TaskScheduler(BaseTaskScheduler):
                 self._queue_index[queue_id] = list(new_order)
                 for tid in new_order:
                     self._task_to_queue[int(tid)] = int(queue_id)
+                # Maintain head start_at cache for this queue using the preserved value
+                try:
+                    self._queue_head_start_at[int(queue_id)] = head_start
+                except Exception:
+                    pass
                 self._queue_index_stale = False
         except Exception:
             # Never let cache maintenance affect the tool outcome
@@ -3597,6 +3651,16 @@ class TaskScheduler(BaseTaskScheduler):
                 # Clear membership for removed ids
                 for tid in _removed_ids:
                     self._task_to_queue.pop(int(tid), None)
+                # Maintain head start_at cache for this queue
+                try:
+                    _head_start_local = (
+                        queue_start_at
+                        if queue_start_at is not None
+                        else existing_head_start
+                    )
+                    self._queue_head_start_at[target_qid_int] = _head_start_local
+                except Exception:
+                    pass
                 self._queue_index_stale = False
         except Exception:
             pass
