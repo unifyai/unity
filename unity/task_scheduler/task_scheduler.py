@@ -3720,9 +3720,11 @@ class TaskScheduler(BaseTaskScheduler):
                     continue
             except Exception:
                 pass
+            # Use core primitive to preserve head start_at and status semantics reliably
             self._set_queue(queue_id=qid, order=cur_order)
 
         if tgt_new_order:
+            # Apply target queue materialization in one batch using the core primitive
             set_res = self._set_queue(queue_id=target_qid, order=tgt_new_order)
             try:
                 target_qid = set_res.get("details", {}).get("queue_id", target_qid)
@@ -3903,6 +3905,8 @@ class TaskScheduler(BaseTaskScheduler):
                     )
 
         # Rewire links to match order and apply head start_at (single write per member)
+        # Accumulate member writes and persist in one batch to minimize I/O
+        entries_by_tid: Dict[int, Dict[str, Any]] = {}
         for idx, tid in enumerate(order):
             prev_tid = None if idx == 0 else order[idx - 1]
             next_tid = None if idx == len(order) - 1 else order[idx + 1]
@@ -3926,6 +3930,7 @@ class TaskScheduler(BaseTaskScheduler):
                     else Status.queued
                 )
                 write_entries["status"] = desired_status
+
             # Skip no-op writes when the current row already matches the desired state
             row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(int(tid))
             try:
@@ -3952,15 +3957,25 @@ class TaskScheduler(BaseTaskScheduler):
                     continue
             except Exception:
                 pass
-            self._validated_write(
-                task_id=int(tid),
-                entries=write_entries,
-                err_prefix=f"While materializing queue {target_qid} (task {tid}):",
-                current_row=row,
-                # Allow cross-queue moves in one shot; symmetry ensured by writing all members
-                skip_cross_queue_guard=True,
-                skip_sync=True,
-            )
+            entries_by_tid[int(tid)] = write_entries
+
+        if entries_by_tid:
+            try:
+                self._batch_update_by_task_ids(entries_by_tid=entries_by_tid)
+            except Exception:
+                # Fallback to per-task validated writes for robustness
+                for tid, write_entries in entries_by_tid.items():
+                    row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(
+                        int(tid),
+                    )
+                    self._validated_write(
+                        task_id=int(tid),
+                        entries=write_entries,
+                        err_prefix=f"While materializing queue {target_qid} (task {tid}):",
+                        current_row=row,
+                        skip_cross_queue_guard=True,
+                        skip_sync=True,
+                    )
 
         # No additional start_at write needed – applied on head in the previous step
 
@@ -5302,6 +5317,63 @@ class TaskScheduler(BaseTaskScheduler):
         through one place in the scheduler.
         """
         return self._store.update(logs=logs, entries=entries, overwrite=overwrite)
+
+    # ------------------------------------------------------------------ #
+    #  Internal batched updater by task_id (single backend call)         #
+    # ------------------------------------------------------------------ #
+
+    def _batch_update_by_task_ids(
+        self,
+        *,
+        entries_by_tid: Dict[int, Dict[str, Any]],
+    ) -> Dict[str, str]:
+        """
+        Resolve log ids for the provided task_ids and apply per-task entries
+        in a single backend update.
+
+        Notes
+        -----
+        - This helper assumes the caller already validated invariants and
+          computed final entries for each task (including queue_id/schedule).
+        - Neighbour symmetry and cross-queue guards are the responsibility of
+          the caller; this method performs a direct batched write.
+        """
+        if not entries_by_tid:
+            return {"detail": "No updates"}
+
+        target_tids: List[int] = list(
+            dict.fromkeys(int(t) for t in entries_by_tid.keys()),
+        )
+
+        # Single minimal read to map task_id -> log id
+        logs = self._store.get_minimal_rows_by_task_ids(
+            task_ids=target_tids,
+            fields=["task_id"],
+        )
+        by_tid_to_log_id: Dict[int, int] = {}
+        for lg in logs or []:
+            try:
+                e = getattr(lg, "entries", {}) or {}
+                tid = e.get("task_id")
+                lid = getattr(lg, "id", None)
+                if isinstance(tid, int) and isinstance(lid, int):
+                    by_tid_to_log_id[int(tid)] = int(lid)
+            except Exception:
+                continue
+
+        # Preserve order alignment between logs and entries
+        log_ids: List[int] = []
+        entries_list: List[Dict[str, Any]] = []
+        for tid in target_tids:
+            lid = by_tid_to_log_id.get(int(tid))
+            if isinstance(lid, int):
+                log_ids.append(int(lid))
+                entries_list.append(entries_by_tid[int(tid)])
+
+        if not log_ids:
+            return {"detail": "No matching task_ids resolved"}
+
+        return self._write_log_entries(logs=log_ids, entries=entries_list)
 
     # ------------------------------------------------------------------ #
     #  Optional checkpoint persistence                                   #

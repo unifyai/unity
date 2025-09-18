@@ -196,7 +196,7 @@ class TasksStore:
         self,
         *,
         logs: Union[int, unify.Log, List[Union[int, unify.Log]]],
-        entries: Dict[str, Any],
+        entries: Union[Dict[str, Any], List[Dict[str, Any]]],
         overwrite: bool = True,
     ) -> Dict[str, str]:
         # Preserve 'activated_by' unless the caller explicitly sets/clears it.
