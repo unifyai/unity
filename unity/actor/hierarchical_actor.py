@@ -1655,6 +1655,244 @@ class HierarchicalPlan(BaseActiveTask):
         self._last_summarized_interaction_count = len(self.cumulative_interactions)
         return summary
 
+    def _spawn_async_verification(self, item: VerificationWorkItem):
+        """
+        Creates and tracks a new background task that performs real verification.
+        """
+
+        async def verification_runner():
+            """
+            Performs the actual verification, including the cache-only fast path,
+            and routes the result to the appropriate handler.
+            """
+            try:
+                assessment = None
+                if item.cache_miss_counter == 0:
+                    assessment = VerificationAssessment(
+                        status="ok",
+                        reason="Skipped verification for fully cached replay step.",
+                    )
+                else:
+                    assessment = await self.actor._check_state_against_goal(
+                        plan=self,
+                        function_name=item.function_name,
+                        function_docstring=inspect.getdoc(
+                            self.execution_namespace[item.function_name],
+                        ),
+                        function_source_code=item.func_source,
+                        interactions=item.interactions,
+                        screenshot=item.post_state["screenshot"],
+                        function_return_value=item.return_value_repr,
+                    )
+
+                if assessment.status == "ok":
+                    await self._on_verification_success(item, assessment)
+                else:
+                    await self._on_verification_failure(item, assessment)
+
+            except asyncio.CancelledError:
+                logger.warning(
+                    f"[V-TASK-{item.ordinal}] Verification for '{item.function_name}' was cancelled.",
+                )
+                self.action_log.append(
+                    f"Verification for '{item.function_name}' was cancelled",
+                )
+            except Exception as e:
+                logger.error(
+                    f"[V-TASK-{item.ordinal}] Verification task for '{item.function_name}' crashed: {e}",
+                    exc_info=True,
+                )
+                assessment = VerificationAssessment(
+                    status="fatal_error",
+                    reason=f"Verification task crashed: {e}",
+                )
+                await self._on_verification_failure(item, assessment)
+            finally:
+                self.pending_verifications.pop(item.ordinal, None)
+                self._child_tasks.discard(asyncio.current_task())
+
+        task = asyncio.create_task(
+            verification_runner(),
+            name=f"Verify-{item.ordinal}-{item.function_name}",
+        )
+        self.pending_verifications[item.ordinal] = VerificationHandle(
+            item=item,
+            task=task,
+        )
+        self._child_tasks.add(task)
+
+    async def _on_verification_success(
+        self,
+        item: VerificationWorkItem,
+        assessment: VerificationAssessment,
+    ):
+        """Handles the side-effects of a successful verification."""
+        logger.info(
+            f"[V-TASK-{item.ordinal}] Verification SUCCEEDED for '{item.function_name}'. Reason: {assessment.reason}",
+        )
+        self.action_log.append(
+            f"Async Verification for {item.function_name}: ok - '{assessment.reason}'",
+        )
+
+        self.last_verified_function_name = item.function_name
+        self.last_verified_url = item.post_state["url"]
+        self.last_verified_screenshot = item.post_state["screenshot"]
+
+        if hasattr(self, "cumulative_interactions"):
+            self.cumulative_interactions.extend(item.interactions)
+
+        if (
+            item.func_source
+            and self.actor.function_manager
+            and item.function_name != "main_plan"
+        ):
+            try:
+                func_tree = ast.parse(
+                    self.clean_function_source_map[item.function_name],
+                )
+                func_node = func_tree.body[0]
+
+                if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    func_node.decorator_list = [
+                        d
+                        for d in func_node.decorator_list
+                        if not (isinstance(d, ast.Name) and d.id == "verify")
+                    ]
+
+                clean_func_source = ast.unparse(func_tree)
+                existing_funcs = self.actor.function_manager.list_functions(
+                    include_implementations=True,
+                )
+                is_duplicate = any(
+                    item.function_name == data.get("name")
+                    for data in existing_funcs.values()
+                )
+
+                precondition_prompt = prompt_builders.build_precondition_prompt(
+                    function_source_code=clean_func_source,
+                    interactions_log=json.dumps(
+                        item.interactions,
+                        indent=2,
+                    ),
+                    has_entry_screenshot=item.pre_state["screenshot"] is not None,
+                )
+
+                self.summarization_client.set_response_format(PreconditionDecision)
+                try:
+                    decision_str = await llm_call(
+                        self.summarization_client,
+                        precondition_prompt,
+                        screenshot=item.pre_state["screenshot"],
+                    )
+                    precondition_data = PreconditionDecision.model_validate_json(
+                        decision_str,
+                    )
+                finally:
+                    self.summarization_client.reset_response_format()
+
+                preconditions_for_fm = {}
+                if precondition_data.status == "ok" and (
+                    precondition_data.url or precondition_data.description
+                ):
+                    preconditions_for_fm[item.function_name] = {
+                        "url": precondition_data.url,
+                        "description": precondition_data.description,
+                    }
+
+                if not is_duplicate:
+                    self.action_log.append(
+                        f"Persisting verified function '{item.function_name}' as a new skill.",
+                    )
+                    logger.info(
+                        f"Adding function '{item.function_name}' to FunctionManager.",
+                    )
+                    self.actor.function_manager.add_functions(
+                        implementations=[clean_func_source],
+                        preconditions=preconditions_for_fm,
+                    )
+                else:
+                    self.action_log.append(
+                        f"Skipping persistence for '{item.function_name}'; identical skill already exists.",
+                    )
+                    logger.info(
+                        f"Skipping adding function '{item.function_name}' to FunctionManager; identical function already exists.",
+                    )
+            except Exception as e:
+                self.action_log.append(
+                    f"WARNING: Could not persist function '{item.function_name}': {e}",
+                )
+                logger.warning(
+                    f"Could not add function '{item.function_name}' to FunctionManager: {e}",
+                )
+
+    async def _on_verification_failure(
+        self,
+        item: VerificationWorkItem,
+        assessment: VerificationAssessment,
+    ):
+        """
+        Handles a failed verification, including preemption logic for cascading failures
+        and re-opening the plan if it has already completed.
+        """
+        if self.is_verifying_post_completion:
+            logger.info(
+                f"Verification failed for '{item.function_name}' after plan completion. Re-opening plan for recovery...",
+            )
+            self.action_log.append(
+                f"Post-completion verification failed for '{item.function_name}'. Re-opening plan to recover.",
+            )
+            self._set_state(_HierarchicalPlanState.RUNNING)
+            self.is_verifying_post_completion = False
+
+        async with self._verification_lock:
+            failing_ordinal = item.ordinal
+
+            if self._recovery_task:
+                if failing_ordinal < (self._recovery_target_ordinal or float("inf")):
+                    logger.warning(
+                        f"Preempting recovery for ordinal {self._recovery_target_ordinal} "
+                        f"with earlier failure from '{item.function_name}' (ord={failing_ordinal}).",
+                    )
+                    self.action_log.append(
+                        f"PREEMPTION: Earlier failure (ord={failing_ordinal}) for '{item.function_name}' "
+                        f"preempts recovery for ordinal {self._recovery_target_ordinal}.",
+                    )
+                    self._recovery_task.cancel()
+                    try:
+                        await self._recovery_task
+                    except asyncio.CancelledError:
+                        pass
+                else:
+                    logger.info(
+                        f"Ignoring failure of '{item.function_name}' (ord={failing_ordinal}) because recovery for earlier error (ord={self._recovery_target_ordinal}) is in progress.",
+                    )
+                    self.action_log.append(
+                        f"Ignoring failure of '{item.function_name}' (ord={failing_ordinal}) "
+                        f"because recovery for earlier error (ord={self._recovery_target_ordinal}) is in progress.",
+                    )
+                    self.action_log.append(
+                        f"Stale verification for '{item.function_name}' discarded.",
+                    )
+                    return
+
+            logger.critical(
+                f"[V-TASK-{item.ordinal}] VERIFICATION FAILED for '{item.function_name}'. "
+                f"Status: {assessment.status}, Reason: {assessment.reason}. "
+                f"Initiating recovery...",
+            )
+            self.action_log.append(
+                f"Async Verification for {item.function_name}: FAILED - Status: {assessment.status}, Reason: '{assessment.reason}'. Initiating recovery.",
+            )
+
+            await self._cancel_verifications_after(item.ordinal)
+
+            self._recovery_target_ordinal = item.ordinal
+            self._recovery_task = asyncio.create_task(
+                self._perform_verification_recovery(item, assessment),
+                name=f"Recovery-to-{item.ordinal}-{item.function_name}",
+            )
+
+    
     async def _summarize_log_chunk(self, summaries: str) -> str:
         """Uses an LLM to summarize a list of action log entries."""
         if not summaries:
