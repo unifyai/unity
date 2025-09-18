@@ -77,26 +77,95 @@ def detach_from_queue_for_activation(
         rows = scheduler._filter_tasks(filter=f"task_id == {tid}", limit=1)
         return rows[0] if rows else None
 
+    # Compute head_start_at with at most one backend read.
+    # Fast path: when current task is the head, reuse its own start_at.
     head_start_at: Optional[str] = None
-    # Walk to the current head to capture its start_at irrespective of position
-    cur_head = _get_row(task_id)
-    while cur_head is not None and _q_prev(cur_head.get("schedule")) is not None:
-        cur_head = _get_row(_q_prev(cur_head.get("schedule")))
-    if cur_head is not None:
-        _sched_head = cur_head.get("schedule") or {}
-        if isinstance(_sched_head, dict):
-            head_start_at = _sched_head.get("start_at")
+    if prev_tid is None:
+        head_start_at = start_at
+    else:
+        # Prefer resolving via queue_id in a single filtered read.
+        try:
+            _qid = task_row.get("queue_id")
+        except Exception:
+            _qid = None
+        if isinstance(_qid, int):
+            try:
+                rows_in_queue = scheduler._filter_tasks(
+                    filter=(
+                        "schedule is not None and "
+                        "status not in ('completed','cancelled','failed') and "
+                        f"queue_id == {_qid}"
+                    ),
+                )
+            except Exception:
+                rows_in_queue = []
+            # Identify head locally and read its start_at
+            for r in rows_in_queue:
+                try:
+                    _s = r.get("schedule") or {}
+                    if _s.get("prev_task") is None:
+                        head_start_at = _s.get("start_at")
+                        break
+                except Exception:
+                    continue
+        else:
+            # Fallback: walk prev pointers (rare case when queue_id is absent)
+            cur_head = _get_row(task_id)
+            while (
+                cur_head is not None and _q_prev(cur_head.get("schedule")) is not None
+            ):
+                cur_head = _get_row(_q_prev(cur_head.get("schedule")))
+            if cur_head is not None:
+                _sched_head = cur_head.get("schedule") or {}
+                if isinstance(_sched_head, dict):
+                    head_start_at = _sched_head.get("start_at")
 
-    def _get_log_obj(tid: int) -> Optional[unify.Log]:
+    # Batch-fetch log objects for all relevant task_ids in one backend call
+    def _build_log_cache(ids: list[int]) -> Dict[int, unify.Log]:
+        cache: Dict[int, unify.Log] = {}
+        if not ids:
+            return cache
         try:
             logs = scheduler._get_logs_by_task_ids(
-                task_ids=tid,
+                task_ids=ids,
                 return_ids_only=False,
             )
-        except ValueError:
+        except Exception:
+            logs = []
+        for lg in logs or []:
+            try:
+                entries = getattr(lg, "entries", {}) or {}
+                tid = entries.get("task_id")
+                if isinstance(tid, int):
+                    cache[int(tid)] = lg
+            except Exception:
+                continue
+        return cache
+
+    needed_ids: list[int] = []
+    for _tid in (task_id, prev_tid, next_tid):
+        try:
+            if isinstance(_tid, int):
+                needed_ids.append(int(_tid))
+        except Exception:
+            continue
+    _log_cache = _build_log_cache(needed_ids)
+
+    def _get_log_obj(tid: int) -> Optional[unify.Log]:
+        if not isinstance(tid, int):
             return None
-        assert len(logs) == 1, "Task IDs should be unique"
-        return logs[0]  # type: ignore[return-value]
+        lg = _log_cache.get(int(tid))
+        if lg is not None:
+            return lg
+        # Defensive fallback (should be rare within this call)
+        try:
+            logs = scheduler._get_logs_by_task_ids(
+                task_ids=int(tid),
+                return_ids_only=False,
+            )
+        except Exception:
+            return None
+        return logs[0] if logs else None  # type: ignore[return-value]
 
     # Small local helpers to reduce repetition and keep behaviour identical
     def _log_id(log_or_id: Any) -> Any:
@@ -165,19 +234,19 @@ def detach_from_queue_for_activation(
                     next_sched.pop("start_at", None)
                     if head_start_at is not None:
                         next_sched["start_at"] = head_start_at
-                    _update_schedule(next_log, next_sched)
+                    # Merge status promotion into the same write to avoid an extra backend call
+                    _update_schedule(
+                        next_log,
+                        next_sched,
+                        extra=(
+                            {"status": "scheduled"}
+                            if head_start_at is not None
+                            else None
+                        ),
+                    )
             # Clear schedule on the detached task entirely (isolated)
             cur_log = _get_log_obj(task_id)
             _update_schedule(cur_log, {}, extra={"schedule": None})
-            # Ensure successor lifecycle is consistent when it inherited a start_at
-            if next_tid is not None and head_start_at is not None:
-                try:
-                    scheduler._update_task_status(
-                        task_ids=next_tid,
-                        new_status="scheduled",
-                    )
-                except Exception:
-                    pass
         else:
             # Middle task: unlink from neighbours
             if prev_tid is not None:
