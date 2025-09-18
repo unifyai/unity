@@ -768,16 +768,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Mapping of column names to their Unify data types.
         """
-        proj = unify.active_project()
-        ctx = self._ctx_for_table(table)
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        response = http_request("GET", url, headers=headers)
-        _handle_exceptions(response)
-        ret = response.json()
+        ret = unify.get_fields(context=self._ctx_for_table(table))
         return {k: v["data_type"] for k, v in ret.items()}
 
     # Private #
@@ -1152,19 +1143,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             )
 
         # Prefer field-level deletion endpoint for efficiency; avoids per-log scans
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        json_input = {
-            "project": unify.active_project(),
-            "context": self._ctx_for_table(table),
-            "fields": [column_name],
-        }
-        response = http_request("DELETE", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        return unify.delete_fields(
+            fields=[column_name],
+            context=self._ctx_for_table(table),
+        )
 
     @_km_log_tool_runtime
     def _rename_column(

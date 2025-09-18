@@ -670,30 +670,22 @@ class ContactManager(BaseContactManager):
         ):
             raise ValueError(f"Column '{column_name}' already exists.")
 
-        proj = unify.active_project()
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
         column_info = {
             "type": str(column_type),
             "mutable": True,
         }
         if column_description is not None:
             column_info["description"] = column_description
-        json_input = {
-            "project": proj,
-            "context": self._ctx,
-            "fields": {
-                column_name: column_info,
-            },
-        }
-        response = http_request("POST", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
+        response = unify.create_fields(
+            fields={column_name: column_info},
+            context=self._ctx,
+        )
         # Remember the new column for subsequent reads within this manager instance
         try:
             self._known_custom_fields.add(column_name)
         except Exception:
             pass
-        return response.json()
+        return response
 
     @_log_tool_runtime
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
@@ -727,57 +719,10 @@ class ContactManager(BaseContactManager):
         if column_name in self._REQUIRED_COLUMNS:
             raise ValueError(f"Cannot delete required column '{column_name}'.")
 
-        # Avoid a pre-read of fields; attempt deletion directly via the
-        # dedicated field-deletion endpoint which removes both the field
-        # definition and all associated entries in a single backend call.
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        json_input = {
-            "project": unify.active_project(),
-            "context": self._ctx,
-            "fields": [column_name],
-        }
-        response = http_request("DELETE", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-
-        payload: Dict[str, Any] = {}
-        try:
-            payload = response.json()
-        except Exception:
-            payload = {}
-
-        # If the backend returns the list of deleted fields and our target
-        # isn't included, treat it as a non-existent column for parity with
-        # previous semantics.
-        deleted_fields = None
-        if isinstance(payload, dict):
-            deleted_fields = payload.get("deleted_fields")
-        if isinstance(deleted_fields, list) and column_name not in deleted_fields:
-            raise ValueError(f"Column '{column_name}' does not exist.")
-
-        # Fallback for environments where DELETE /logs/fields is not implemented
-        # (e.g., test stubs). When no structured confirmation is present, issue a
-        # single idempotent deletion via the generic logs endpoint which will drop
-        # the field values and clean up the field definition.
-        if not isinstance(deleted_fields, list):
-            fallback_url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
-            fallback_body = {
-                "project": unify.active_project(),
-                "context": self._ctx,
-                "ids_and_fields": [[None, column_name]],
-                "source_type": "all",
-            }
-            fb_resp = http_request(
-                "DELETE",
-                fallback_url,
-                json=fallback_body,
-                headers=headers,
-            )
-            _handle_exceptions(fb_resp)
-            try:
-                payload = fb_resp.json()
-            except Exception:
-                pass
+        response = unify.delete_fields(
+            fields=[column_name],
+            context=self._ctx,
+        )
 
         # Update local view of known custom columns on success
         try:
@@ -786,7 +731,7 @@ class ContactManager(BaseContactManager):
         except Exception:
             pass
 
-        return payload
+        return response
 
     # ------------------------------------------------------------------ #
     #  Vector-search helpers                                             #
