@@ -2817,11 +2817,6 @@ class HierarchicalPlan(BaseActiveTask):
                 _HierarchicalPlanState.RUNNING,
                 _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
             )
-        if name == "modify_plan":
-            return self._state in (
-                _HierarchicalPlanState.PAUSED,
-                _HierarchicalPlanState.RUNNING,
-            )
         return False
 
     @property
@@ -2838,7 +2833,6 @@ class HierarchicalPlan(BaseActiveTask):
             "pause",
             "resume",
             "ask",
-            "modify_plan",
             "interject",
         ]
         for method_name in potential_tools:
