@@ -829,21 +829,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         materialized_fields = {
             k: {"type": v, "mutable": True} for k, v in columns.items()
         }
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        json_input = {
-            "project": proj,
-            "context": ctx,
-            "fields": materialized_fields,
-            # Creating a brand-new context implies no logs to backfill; skip for speed.
-            "backfill_logs": False,
-        }
-        response = http_request("POST", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        return unify.create_fields(
+            context=ctx,
+            fields=materialized_fields,
+            backfill_logs=False,
+        )
 
     @_km_log_tool_runtime
     def _tables_overview(
@@ -1031,24 +1021,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend response.
         """
-        proj = unify.active_project()
-        ctx = self._ctx_for_table(table)
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        json_input = {
-            "project": proj,
-            "context": ctx,
-            # Do not pre-read fields for existence; the backend handles idempotence
-            # and updating metadata. Avoid expensive backfills for large tables.
-            "fields": {column_name: {"type": column_type, "mutable": True}},
-            "backfill_logs": False,
-        }
-        response = http_request("POST", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        return unify.create_fields(
+            context=self._ctx_for_table(table),
+            fields={column_name: {"type": column_type, "mutable": True}},
+            backfill_logs=False,
+        )
 
     @_km_log_tool_runtime
     def _create_derived_column(
@@ -1184,22 +1161,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         if new_name == "id":
             raise ValueError("Cannot rename a column to reserved name 'id'.")
 
-        proj = unify.active_project()
-        ctx = self._ctx_for_table(table)
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/rename_field"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        json_input = {
-            "project": proj,
-            "context": ctx,
-            "old_field_name": old_name,
-            "new_field_name": new_name,
-        }
-        response = http_request("PATCH", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        return unify.rename_field(
+            name=old_name,
+            new_name=new_name,
+            context=self._ctx_for_table(table),
+        )
 
     @_km_log_tool_runtime
     def _copy_column(
