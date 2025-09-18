@@ -2883,16 +2883,29 @@ class TaskScheduler(BaseTaskScheduler):
         - This method asserts that `new_order` is an exact permutation of the current queue;
           if you see an assertion error, refresh state and reconstruct `new_order` accordingly.
         """
-        # Build current queue membership directly from storage to avoid
-        # assumptions about a single visible head during transitions.
-        all_rows = self._filter_tasks()
-        in_queue_rows: list[TaskRow] = [
-            r
-            for r in all_rows
-            if r.get("schedule") is not None
-            and r.get("queue_id") == queue_id
-            and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
-        ]
+        # Build current queue membership with a single targeted read when possible.
+        # Within a single tool call the backend state is stable, so reuse this view.
+        if isinstance(queue_id, int):
+            in_queue_rows: list[TaskRow] = [
+                r
+                for r in self._filter_tasks(
+                    filter=(
+                        "schedule is not None and "
+                        "status not in ('completed','cancelled','failed') and "
+                        f"queue_id == {int(queue_id)}"
+                    ),
+                )
+            ]
+        else:
+            # Fallback path (rare): no numeric queue_id → derive membership locally
+            all_rows = self._filter_tasks()
+            in_queue_rows = [
+                r
+                for r in all_rows
+                if r.get("schedule") is not None
+                and r.get("queue_id") == queue_id
+                and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+            ]
         current_set: set[int] = {int(r.get("task_id")) for r in in_queue_rows}
         if current_set != set(new_order):
             raise AssertionError(
@@ -2903,10 +2916,10 @@ class TaskScheduler(BaseTaskScheduler):
                 "then rebuild new_order accordingly.",
             )
 
-        rows_by_id: Dict[int, TaskRow] = {
-            r["task_id"]: r
-            for r in self._filter_tasks(filter=f"task_id in {new_order}")
-        }
+        # Reuse the rows we already fetched to avoid another backend read.
+        rows_by_id: Dict[int, TaskRow] = {int(r["task_id"]): r for r in in_queue_rows}
+        # Trim to the ids we actually care about (defensive)
+        rows_by_id = {int(tid): rows_by_id[int(tid)] for tid in new_order}
 
         # Compute an invariant-preserving update plan via QueueEngine
         updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
@@ -2915,12 +2928,33 @@ class TaskScheduler(BaseTaskScheduler):
             queue_id=queue_id,
         )
 
-        # Persist through the central validated write funnel
+        # Persist through the central validated write funnel, but:
+        # - pass current_row to avoid an extra read,
+        # - skip neighbour sync (we write all members symmetrically),
+        # - skip cross-queue guard (reorder stays within the same queue).
         for tid, payload in updates_per_log.items():
+            cur_row = rows_by_id.get(int(tid))
+            if cur_row is None:
+                continue
+            # Skip no-op writes
+            cur_sched = {**(cur_row.get("schedule") or {})}
+            desired_sched = {**(payload.get("schedule") or {})}
+            need_status = False
+            try:
+                existing_status = self._to_status(cur_row.get("status"))
+                desired_status = self._to_status(payload.get("status", existing_status))
+                need_status = existing_status != desired_status
+            except Exception:
+                need_status = "status" in payload
+            if (cur_sched == desired_sched) and (not need_status):
+                continue
             self._validated_write(
-                task_id=tid,
+                task_id=int(tid),
                 entries=payload,
                 err_prefix=f"While reordering queue {queue_id} (task {tid}):",
+                current_row=cur_row,
+                skip_sync=True,
+                skip_cross_queue_guard=True,
             )
 
         # Auto-checkpoint after successful edit (best-effort)
@@ -2932,16 +2966,16 @@ class TaskScheduler(BaseTaskScheduler):
 
             cid = _short_id(8)
             snap = {"label": "auto:_reorder_queue", "queues": []}
-            try:
-                order_now = [t.task_id for t in self._get_queue(queue_id=queue_id)]
-            except Exception:
-                order_now = list(new_order)
+            # Avoid extra reads: we already know the final order and head start_at.
+            order_now = list(new_order)
+            # Derive queue-level start_at from the previous head in our local view
             head_start = None
             try:
-                head = self._head_row_for_queue(queue_id)
-                head_start = (
-                    (head.get("schedule") or {}).get("start_at") if head else None
-                )
+                for r in in_queue_rows:
+                    sched = r.get("schedule") or {}
+                    if (sched or {}).get("prev_task") is None:
+                        head_start = (sched or {}).get("start_at")
+                        break
             except Exception:
                 head_start = None
             snap["queues"].append(
