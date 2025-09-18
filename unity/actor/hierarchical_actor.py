@@ -1943,6 +1943,105 @@ class HierarchicalPlan(BaseActiveTask):
             self._recovery_target_ordinal = None
 
     
+    async def _cancel_verifications_after(self, ord_: int):
+        """Cancels all pending verification tasks with an ordinal greater than the given one."""
+        
+        to_cancel = [o for o in self.pending_verifications if o > ord_]
+        if to_cancel:
+            logger.info(f"Cancelling {len(to_cancel)} subsequent verification tasks.")
+            self.action_log.append(
+                f"Cancelling {len(to_cancel)} subsequent verification tasks.",
+            )
+
+        for ordinal in to_cancel:
+            handle = self.pending_verifications.pop(ordinal, None)
+            if handle and not handle.task.done():
+                handle.task.cancel()
+                
+                try:
+                    await handle.task
+                except asyncio.CancelledError:
+                    
+                    self.action_log.append(
+                        f"Verification for '{handle.item.function_name}' was cancelled (ord={ordinal}).",
+                    )
+            if handle:
+                self._child_tasks.discard(handle.task)
+
+    def _invalidate_cache_from_function(self, function_name: str, parent_stack: tuple):
+        """
+        Reuses the selective cache invalidation logic from interjections.
+        Purges cache entries for the failed function and everything called after it.
+        """
+        try:
+            full_stack_list = list(parent_stack) + [function_name]
+            
+            start_index = full_stack_list.index(function_name)
+
+            functions_to_invalidate = set(full_stack_list[start_index:])
+            self.action_log.append(
+                f"CACHE INVALIDATION: Verification failure invalidating cache for: {', '.join(functions_to_invalidate)}",
+            )
+
+            keys_to_delete = [
+                key
+                for key in self.idempotency_cache
+                if any(func_name in functions_to_invalidate for func_name in key[0])
+            ]
+
+            if keys_to_delete:
+                logger.info(
+                    f"Invalidating {len(keys_to_delete)} cache entries due to verification failure.",
+                )
+                for key in keys_to_delete:
+                    del self.idempotency_cache[key]
+        except Exception as e:
+            logger.warning(
+                f"Selective cache invalidation failed: {e}. Clearing entire cache as a fallback.",
+            )
+            self.idempotency_cache.clear()
+
+
+    async def _cancel_all_background_tasks(self):
+        """Gracefully cancels all in-flight verification and recovery tasks."""
+        logger.debug("Cancelling all background verification and recovery tasks.")
+        self.action_log.append(
+            "Cancelling all background verification and recovery tasks.",
+        )
+
+        
+        if self._recovery_task and not self._recovery_task.done():
+            self._recovery_task.cancel()
+
+        
+        verifications_to_cancel = [
+            handle
+            for handle in self.pending_verifications.values()
+            if not handle.task.done()
+        ]
+
+        if not verifications_to_cancel and (
+            not self._recovery_task or self._recovery_task.done()
+        ):
+            return  
+
+        for handle in verifications_to_cancel:
+            handle.task.cancel()
+            self.action_log.append(
+                f"Verification for '{handle.item.function_name}' was cancelled",
+            )
+
+        
+        all_tasks = [handle.task for handle in verifications_to_cancel] + (
+            [self._recovery_task] if self._recovery_task else []
+        )
+        await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        if self._recovery_task:
+            self._child_tasks.discard(self._recovery_task)
+        
+        self.pending_verifications.clear()
+        self._recovery_task = None
 
     async def _summarize_log_chunk(self, summaries: str) -> str:
         """Uses an LLM to summarize a list of action log entries."""
