@@ -2654,14 +2654,61 @@ class TaskScheduler(BaseTaskScheduler):
         """
         if queue_id is None:
             return []
-        head = self._head_row_for_queue(queue_id)
-        if head is None:
+
+        # Single filtered read of all runnable rows in this queue
+        rows_in_queue: List[TaskRow] = [
+            r
+            for r in self._filter_tasks(
+                filter=(
+                    "schedule is not None and "
+                    "status not in ('completed','cancelled','failed') and "
+                    f"queue_id == {int(queue_id)}"
+                ),
+            )
+        ]
+        if not rows_in_queue:
             return []
-        rows = self._walk_queue(head)
+
+        # Identify head locally (prev_task is None)
+        heads = [
+            r
+            for r in rows_in_queue
+            if (r.get("schedule") or {}).get("prev_task") is None
+        ]
+        if not heads:
+            return []
+        assert (
+            len(heads) == 1
+        ), f"Multiple heads detected for queue_id={queue_id}: {heads}"
+        head = heads[0]
+
+        # Build id -> row map for O(1) next lookups without further backend reads
+        rows_by_id: Dict[int, TaskRow] = {}
+        for r in rows_in_queue:
+            try:
+                tid_val = r.get("task_id")
+                if isinstance(tid_val, int):
+                    rows_by_id[tid_val] = r
+            except Exception:
+                pass
+
+        # Walk head→tail using next_task pointers in-memory
         ordered: List[Task] = []
-        for row in rows:
+        seen: set[int] = set()
+        cur = head
+        while cur is not None:
+            try:
+                tid_val = cur.get("task_id")
+                tid_int = int(tid_val) if tid_val is not None else None
+            except Exception:
+                tid_int = None
+            if isinstance(tid_int, int):
+                if tid_int in seen:
+                    break
+                seen.add(tid_int)
+
             # Strip stale activation metadata on non-active rows
-            _row = dict(row)
+            _row = dict(cur)
             try:
                 if self._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
                     _row.pop("activated_by", None)
@@ -2669,6 +2716,16 @@ class TaskScheduler(BaseTaskScheduler):
                 if str(_row.get("status")) != str(Status.active):
                     _row.pop("activated_by", None)
             ordered.append(Task(**_row))
+
+            nxt = (cur.get("schedule") or {}).get("next_task")
+            if nxt is None:
+                break
+            try:
+                nxt_int = int(nxt)
+            except Exception:
+                break
+            cur = rows_by_id.get(nxt_int)
+
         return ordered
 
     @_ts_log_tool_runtime
