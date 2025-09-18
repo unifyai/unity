@@ -1055,18 +1055,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend acknowledgement.
         """
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         equation = equation.replace("{", "{lg:")
-        json_input = {
-            "project": unify.active_project(),
-            "context": self._ctx_for_table(table),
-            "key": column_name,
-            "equation": equation,
-            "referenced_logs": {"lg": {"context": self._ctx_for_table(table)}},
-        }
-        response = http_request("POST", url, json=json_input, headers=headers)
-        return response.json()
+        return unify.create_derived_logs(
+            context=self._ctx_for_table(table),
+            key=column_name,
+            equation=equation,
+            referenced_logs={"lg": {"context": self._ctx_for_table(table)}},
+        )
 
     @_km_log_tool_runtime
     def _delete_column(
@@ -2069,14 +2064,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         dest_ctx = self._ctx_for_table(dest_table)
 
         # 4️⃣  Fire the REST request
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        payload: Dict[str, Any] = {
-            "project": unify.active_project(),
-            "pair_of_args": (
+        unify.join_logs(
+            pair_of_args=(
                 {
                     "context": left_ctx,
                     **({} if left_where is None else {"filter_expr": left_where}),
@@ -2086,14 +2075,11 @@ class KnowledgeManager(BaseKnowledgeManager):
                     **({} if right_where is None else {"filter_expr": right_where}),
                 },
             ),
-            "join_expr": join_expr,
-            "mode": mode,
-            "new_context": dest_ctx,
-            "columns": select,
-        }
-
-        resp = http_request("POST", url, json=payload, headers=headers)
-        _handle_exceptions(resp)
+            join_expr=join_expr,
+            mode=mode,
+            new_context=dest_ctx,
+            columns=select,
+        )
 
         return dest_ctx
 
