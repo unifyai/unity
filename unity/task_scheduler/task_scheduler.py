@@ -4414,13 +4414,47 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Persist via central validated funnel when schedule/status involved; otherwise a direct write is fine
         if ("schedule" in entries) or ("status" in entries):
+            # Provide queue_id when we know it to avoid an extra guard read and ensure consistency
+            if ("schedule" in entries) and ("queue_id" not in entries):
+                try:
+                    _qid = row.get("queue_id")
+                    if isinstance(_qid, int):
+                        entries["queue_id"] = int(_qid)
+                except Exception:
+                    pass
+            # When we did not change adjacency (prev/next unchanged), skip neighbour sync and cross-queue guard
+            _skip_sync = False
+            _skip_cross_guard = False
+            try:
+                if "schedule" in entries and isinstance(entries.get("schedule"), dict):
+                    _new = entries["schedule"]
+                    _skip_sync = _new.get("prev_task") == self._sched_prev(
+                        current_sched,
+                    ) and _new.get("next_task") == self._sched_next(current_sched)
+                    _skip_cross_guard = _skip_sync
+            except Exception:
+                _skip_sync = False
+                _skip_cross_guard = False
             return self._validated_write(
                 task_id=task_id,
                 entries=entries,
                 err_prefix=f"While updating task {task_id}:",
+                # Reuse the row we already fetched in this tool call to avoid a second backend read
+                current_row=row,
+                skip_sync=_skip_sync,
+                skip_cross_queue_guard=_skip_cross_guard,
             )
         else:
-            log_id = self._get_logs_by_task_ids(task_ids=task_id)
+            # Prefer the in-memory cache to avoid a lookup when possible
+            try:
+                _cached_log_id = self._task_log_id_cache.get(int(task_id))
+            except Exception:
+                _cached_log_id = None
+            log_id = (
+                _cached_log_id
+                if isinstance(_cached_log_id, int)
+                else self._get_logs_by_task_ids(task_ids=task_id)
+            )
             return self._write_log_entries(logs=log_id, entries=entries, overwrite=True)
 
     # Legacy per-field updaters are kept above as comments; use _update_task instead.
