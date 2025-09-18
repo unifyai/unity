@@ -3234,7 +3234,23 @@ class TaskScheduler(BaseTaskScheduler):
         # Capture existing head-level start_at BEFORE any mutations so it can be
         # restored onto the new head reliably (avoids losing it during neutralisation)
         existing_head_start: Optional[str] = None
-        if queue_id is not None:
+
+        # When the caller explicitly supplies queue_start_at, we don't need to read
+        # the current head. Similarly, when we can confidently determine that the
+        # target queue is a fresh, empty queue (not present in the local index and
+        # the index is not marked stale), we avoid an unnecessary backend read.
+        assume_empty_target_queue = False
+        try:
+            if isinstance(queue_id, int) and (not self._queue_index_stale):
+                assume_empty_target_queue = int(queue_id) not in self._queue_index
+        except Exception:
+            assume_empty_target_queue = False
+
+        if (
+            (queue_id is not None)
+            and (queue_start_at is None)
+            and (not assume_empty_target_queue)
+        ):
             try:
                 _orig_head = self._head_row_for_queue(target_qid)
                 if _orig_head is not None:
@@ -3263,7 +3279,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Remove any other members currently in the target queue (strict by queue_id)
         current_members: List[int] = []
         current_rows_by_id: Dict[int, Dict[str, Any]] = {}
-        if queue_id is not None:
+        if queue_id is not None and not assume_empty_target_queue:
             try:
                 rows_in_queue: List[TaskRow] = self._filter_tasks(
                     filter=(
@@ -3647,15 +3663,10 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             source_qid = None
 
-        # Current queue snapshot (head→tail) for the identified source queue.
-        # Prefer local index when available and not stale, else read once.
-        try:
-            if not self._queue_index_stale and isinstance(source_qid, int):
-                original = list(self._queue_index.get(int(source_qid)) or [])
-            else:
-                raise RuntimeError
-        except Exception:
-            original = [t.task_id for t in self._get_queue(queue_id=source_qid)]
+        # Current queue snapshot (head→tail) and head start_at for the identified source queue.
+        # Fetch once to avoid multiple backend calls in this tool invocation.
+        tasks_in_q = self._get_queue(queue_id=source_qid)
+        original = [t.task_id for t in tasks_in_q]
         if not original:
             return {"outcome": "queue partitioned", "details": {"queues": []}}
 
@@ -3667,10 +3678,23 @@ class TaskScheduler(BaseTaskScheduler):
             rank = {tid: i for i, tid in enumerate(original)}
             return sorted(ids, key=lambda x: rank.get(x, 10**9))
 
-        queue_start_ts = None  # Remember original queue-level timestamp
-        head_row = self._head_row_for_queue(source_qid)
-        if head_row is not None:
-            queue_start_ts = (head_row.get("schedule") or {}).get("start_at")
+        # Remember original queue-level timestamp (head.start_at) without extra reads
+        queue_start_ts = None
+        try:
+            if tasks_in_q:
+                _head_sched = getattr(tasks_in_q[0], "schedule", None)
+                _val = (
+                    getattr(_head_sched, "start_at", None)
+                    if _head_sched is not None
+                    else None
+                )
+                if _val is not None:
+                    if hasattr(_val, "isoformat"):
+                        queue_start_ts = _val.isoformat()
+                    else:
+                        queue_start_ts = _val
+        except Exception:
+            queue_start_ts = None
 
         # 1) Move all tasks not in the first part out first (to avoid complex rewiring)
         first_ids = set(parts[0].get("task_ids", [])) if parts else set()
@@ -3694,11 +3718,22 @@ class TaskScheduler(BaseTaskScheduler):
 
         created: list[Dict[str, Any]] = []
 
+        # Pre-allocate a fresh queue id ONCE, then increment locally for subsequent queues
+        next_qid: Optional[int] = None
+        if groups:
+            next_qid = int(self._allocate_new_queue_id())
+
         for j, tids in groups.items():
             ordered = _ordered(tids)
-            qid = self._allocate_new_queue_id()
-            # Materialize the new queue in one step via core primitive
-            self._set_queue(queue_id=qid, order=ordered)
+            qid = (
+                int(next_qid) if next_qid is not None else self._allocate_new_queue_id()
+            )
+            # Advance next_qid for the next created queue within this tool call
+            if next_qid is not None:
+                next_qid = qid + 1
+            # Materialize the new queue in one step via core primitive; pass start_at when provided
+            qstart = later_parts[j].get("queue_start_at")
+            self._set_queue(queue_id=qid, order=ordered, queue_start_at=qstart)
             # Update local index/membership for the new queue
             try:
                 self._queue_index[int(qid)] = list(ordered)
@@ -3706,19 +3741,23 @@ class TaskScheduler(BaseTaskScheduler):
                     self._task_to_queue[int(_tid)] = int(qid)
             except Exception:
                 pass
-            # Apply queue_start_at if provided
-            qstart = later_parts[j].get("queue_start_at")
-            if qstart is not None and ordered:
-                # Set via central helper to preserve invariants
-                head_tid = ordered[0]
-                self._update_task(task_id=head_tid, start_at=qstart)
-            created.append({"queue_id": qid, "task_ids": ordered})
+            created.append(
+                {"queue_id": qid, "task_ids": ordered, "queue_start_at": qstart},
+            )
 
         # 2) Reduce the source queue to the first part (in chosen order)
         first_list = _ordered(list(first_ids))
         # Reorder source queue to include only these tasks: move out everything else already done
         if first_list:
-            self._set_queue(queue_id=source_qid, order=first_list)
+            # apply provided start_at or carry the original one
+            fstart = parts[0].get("queue_start_at") if parts else None
+            if fstart is None:
+                fstart = queue_start_ts
+            self._set_queue(
+                queue_id=source_qid,
+                order=first_list,
+                queue_start_at=fstart,
+            )
             # Update local index/membership for source queue reduction
             try:
                 if isinstance(source_qid, int):
@@ -3733,40 +3772,37 @@ class TaskScheduler(BaseTaskScheduler):
                 self._queue_index_stale = False
             except Exception:
                 pass
-            # apply provided start_at or carry the original one
-            fstart = parts[0].get("queue_start_at") if parts else None
-            if fstart is not None:
-                pass
-            else:
-                fstart = queue_start_ts
-            if fstart is not None:
-                head_tid = first_list[0]
-                self._update_task(task_id=head_tid, start_at=fstart)
+        else:
+            fstart = None
 
         details = {"default_queue": first_list, "new_queues": created}
-        # Auto-checkpoint after successful edit (best-effort)
+        # Auto-checkpoint after successful edit (best-effort): capture only touched queues to avoid extra reads
         try:
             from ..common.llm_helpers import short_id as _short_id  # local import
 
             cid = _short_id(8)
             snap = {"label": "auto:_partition_queue", "queues": []}
-            # Use local index when possible to avoid additional reads
-            try:
-                q_infos = self._list_queues()
-            except Exception:
-                q_infos = []
-            for qinfo in q_infos:
-                qid = qinfo.get("queue_id")
-                if not self._queue_index_stale and isinstance(qid, int):
-                    order_now = list(self._queue_index.get(int(qid)) or [])
-                else:
-                    order_now = [t.task_id for t in self._get_queue(queue_id=qid)]
+            # Source queue snapshot (if any)
+            if first_list:
                 snap["queues"].append(
                     {
-                        "queue_id": qid,
-                        "head_id": qinfo.get("head_id"),
-                        "start_at": qinfo.get("start_at"),
-                        "order": order_now,
+                        "queue_id": source_qid,
+                        "head_id": first_list[0] if first_list else None,
+                        "start_at": fstart,
+                        "order": list(first_list),
+                    },
+                )
+            # Newly created queues
+            for created_q in created:
+                _qid = created_q.get("queue_id")
+                _order = list(created_q.get("task_ids", []) or [])
+                _qstart = created_q.get("queue_start_at")
+                snap["queues"].append(
+                    {
+                        "queue_id": _qid,
+                        "head_id": _order[0] if _order else None,
+                        "start_at": _qstart,
+                        "order": _order,
                     },
                 )
             self._queue_checkpoints[cid] = snap
