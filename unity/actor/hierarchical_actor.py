@@ -1891,7 +1891,7 @@ class HierarchicalPlan(BaseActiveTask):
                 self._perform_verification_recovery(item, assessment),
                 name=f"Recovery-to-{item.ordinal}-{item.function_name}",
             )
-            
+
     async def _perform_verification_recovery(
         self,
         item: VerificationWorkItem,
@@ -1905,7 +1905,7 @@ class HierarchicalPlan(BaseActiveTask):
             ):
                 await self.actor.action_provider.browser.backend.interrupt_current_action()
             old_run_id = self.run_id
-            self.run_id += 1  
+            self.run_id += 1
 
             await self._handle_dynamic_implementation(
                 function_name=item.function_name,
@@ -1925,7 +1925,6 @@ class HierarchicalPlan(BaseActiveTask):
 
             self._invalidate_cache_from_function(item.function_name, item.parent_stack)
 
-
             self._restart_execution_loop(old_run_id)
 
         except Exception as e:
@@ -1938,14 +1937,13 @@ class HierarchicalPlan(BaseActiveTask):
                 f"ERROR: Unrecoverable error during verification recovery: {e}",
             )
         finally:
-           
+
             self._recovery_task = None
             self._recovery_target_ordinal = None
 
-    
     async def _cancel_verifications_after(self, ord_: int):
         """Cancels all pending verification tasks with an ordinal greater than the given one."""
-        
+
         to_cancel = [o for o in self.pending_verifications if o > ord_]
         if to_cancel:
             logger.info(f"Cancelling {len(to_cancel)} subsequent verification tasks.")
@@ -1957,11 +1955,11 @@ class HierarchicalPlan(BaseActiveTask):
             handle = self.pending_verifications.pop(ordinal, None)
             if handle and not handle.task.done():
                 handle.task.cancel()
-                
+
                 try:
                     await handle.task
                 except asyncio.CancelledError:
-                    
+
                     self.action_log.append(
                         f"Verification for '{handle.item.function_name}' was cancelled (ord={ordinal}).",
                     )
@@ -1975,7 +1973,7 @@ class HierarchicalPlan(BaseActiveTask):
         """
         try:
             full_stack_list = list(parent_stack) + [function_name]
-            
+
             start_index = full_stack_list.index(function_name)
 
             functions_to_invalidate = set(full_stack_list[start_index:])
@@ -2001,6 +1999,26 @@ class HierarchicalPlan(BaseActiveTask):
             )
             self.idempotency_cache.clear()
 
+    def _restart_execution_loop(self, old_run_id: int):
+        """Reuses the plan restart and state cleanup logic from interjections."""
+        logger.info(f"Restarting execution loop. New run_id: {self.run_id}")
+        self.action_log.append(
+            f"RESTART: Restarting execution loop (old_run_id={old_run_id} → new_run_id={self.run_id}).",
+        )
+
+        if self._execution_task and not self._execution_task.done():
+            self._execution_task.cancel()
+
+        if old_run_id in self.runtime.call_stacks:
+            del self.runtime.call_stacks[old_run_id]
+        self.interaction_stack.clear()
+        self.call_stack.clear()
+        self.runtime.path_context.clear()
+        self.interaction_stack.append([])
+
+        self._execution_task = asyncio.create_task(
+            self._initialize_and_run(mode="replay_after_verification_recovery"),
+        )
 
     async def _cancel_all_background_tasks(self):
         """Gracefully cancels all in-flight verification and recovery tasks."""
@@ -2009,11 +2027,9 @@ class HierarchicalPlan(BaseActiveTask):
             "Cancelling all background verification and recovery tasks.",
         )
 
-        
         if self._recovery_task and not self._recovery_task.done():
             self._recovery_task.cancel()
 
-        
         verifications_to_cancel = [
             handle
             for handle in self.pending_verifications.values()
@@ -2023,7 +2039,7 @@ class HierarchicalPlan(BaseActiveTask):
         if not verifications_to_cancel and (
             not self._recovery_task or self._recovery_task.done()
         ):
-            return  
+            return
 
         for handle in verifications_to_cancel:
             handle.task.cancel()
@@ -2031,7 +2047,6 @@ class HierarchicalPlan(BaseActiveTask):
                 f"Verification for '{handle.item.function_name}' was cancelled",
             )
 
-        
         all_tasks = [handle.task for handle in verifications_to_cancel] + (
             [self._recovery_task] if self._recovery_task else []
         )
@@ -2039,7 +2054,7 @@ class HierarchicalPlan(BaseActiveTask):
 
         if self._recovery_task:
             self._child_tasks.discard(self._recovery_task)
-        
+
         self.pending_verifications.clear()
         self._recovery_task = None
 
