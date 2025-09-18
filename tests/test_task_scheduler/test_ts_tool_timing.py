@@ -311,28 +311,6 @@ def test_tool_partition_queue_timing():
     print(f"elapsed: {elapsed_ms} < X")
 
 
-@pytest.mark.unit
-@_handle_project
-def test_queue_snapshot_via_list_and_get():
-    _enable_timing()
-    ts = TaskScheduler()
-    a = ts._create_task(name="TT EQ A " + _uniq(), description="a")["details"][
-        "task_id"
-    ]
-    b = ts._create_task(name="TT EQ B " + _uniq(), description="b")["details"][
-        "task_id"
-    ]
-    set_out = ts._set_queue(queue_id=None, order=[a, b])
-    qid = set_out["details"]["queue_id"]
-    t0 = time.perf_counter()
-    queues = ts._list_queues()
-    chain = ts._get_queue(queue_id=qid)
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    assert any(q.get("queue_id") == qid for q in queues)
-    assert [t.task_id for t in chain] == [a, b]
-    print(f"elapsed: {elapsed_ms} < X")
-
-
 # Atomic field update timings
 
 

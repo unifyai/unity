@@ -2468,9 +2468,15 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         task_id: int,
         schedule: ScheduleLike,
+        prefetched_rows: Optional[Dict[int, Dict[str, Any]]] = None,
     ) -> None:
         """Delegate to queue-utils to maintain symmetric neighbour links."""
-        _q_sync_adjacent_links(self, task_id=task_id, schedule=schedule)
+        _q_sync_adjacent_links(
+            self,
+            task_id=task_id,
+            schedule=schedule,
+            prefetched_rows=prefetched_rows,
+        )
 
     # ────────────────────────────────────────────────────────────────────
     # Multi-queue helpers (public tools for the update loop)
@@ -3844,6 +3850,25 @@ class TaskScheduler(BaseTaskScheduler):
           `_move_tasks_to_queue`, `_set_schedules_atomic`) instead of calling
           this method directly.
         """
+        # Fast-path: when NOT touching lifecycle/queue fields we can update directly
+        # without reading the current row or running invariant checks.
+        touches_lifecycle = any(
+            k in entries for k in ("schedule", "status", "trigger", "queue_id")
+        )
+
+        if not touches_lifecycle:
+            # Resolve log id via cache or a single lookup, then write entries
+            try:
+                _cached_log_id = self._task_log_id_cache.get(int(task_id))
+            except Exception:
+                _cached_log_id = None
+            log_id = (
+                _cached_log_id
+                if isinstance(_cached_log_id, int)
+                else self._get_logs_by_task_ids(task_ids=task_id)
+            )
+            return self._write_log_entries(logs=log_id, entries=entries)
+
         current = current_row or self._get_single_row_or_raise(task_id)
 
         prospective_schedule = entries.get("schedule", current.get("schedule"))
@@ -3918,26 +3943,39 @@ class TaskScheduler(BaseTaskScheduler):
                 prev_tid = (_sched or {}).get("prev_task")
                 next_tid = (_sched or {}).get("next_task")
 
-                def _qid_of(tid: Optional[int]) -> Optional[int]:
-                    if tid is None:
-                        return None
-                    rows = self._filter_tasks(filter=f"task_id == {int(tid)}", limit=1)
-                    if not rows:
-                        return None
-                    srow = rows[0]
-                    return srow.get("queue_id")
+                # Batch-resolve neighbour queue ids in a single read
+                neighbour_ids = [int(t) for t in (prev_tid, next_tid) if t is not None]
+                rows_by_id: Dict[int, Dict[str, Any]] = {}
+                if neighbour_ids:
+                    try:
+                        rows = self._filter_tasks(
+                            filter=f"task_id in {neighbour_ids}",
+                        )
+                    except Exception:
+                        rows = []
+                    for r in rows:
+                        try:
+                            rows_by_id[int(r.get("task_id"))] = r
+                        except Exception:
+                            continue
 
                 # Only enforce when linkage exists
                 for _nbr, _tid in (("prev_task", prev_tid), ("next_task", next_tid)):
                     if _tid is None:
                         continue
-                    nbr_qid = _qid_of(_tid)
+                    try:
+                        nbr_row = rows_by_id.get(int(_tid))
+                        nbr_qid = nbr_row.get("queue_id") if nbr_row else None
+                    except Exception:
+                        nbr_qid = None
                     if nbr_qid != qid:
                         raise ValueError(
                             f"{err_prefix} cross-queue link rejected: {_nbr}={_tid} has queue_id={nbr_qid} "
                             f"but current task would be in queue_id={qid}. Use set_queue() or move_tasks_to_queue() "
                             f"followed by reorder_queue() to materialize chains within a single queue.",
                         )
+                # Store for neighbour symmetry reuse below
+                locals()["__prefetch_neighbours__"] = rows_by_id
             except Exception:
                 # Defensive: do not block writes on guard failure paths; the invariant validator will still run
                 pass
@@ -3968,7 +4006,15 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Ensure neighbour symmetry whenever schedule changed (unless skipped by caller)
         if ("schedule" in entries) and (not skip_sync):
-            self._sync_adjacent_links(task_id=task_id, schedule=prospective_schedule)
+            try:
+                prefetched = locals().get("__prefetch_neighbours__")
+            except Exception:
+                prefetched = None
+            self._sync_adjacent_links(
+                task_id=task_id,
+                schedule=prospective_schedule,
+                prefetched_rows=prefetched,
+            )
 
         return result
 
