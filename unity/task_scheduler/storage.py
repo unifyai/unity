@@ -156,6 +156,41 @@ class TasksStore:
                 )
         return logs
 
+    def get_minimal_rows_by_task_ids(
+        self,
+        *,
+        task_ids: Union[int, Iterable[int]],
+        fields: Optional[List[str]] = None,
+    ) -> List[unify.Log]:
+        """
+        Fetch a minimal projection of rows for the specified task_ids.
+
+        Only the requested fields are returned in each row's entries payload to
+        reduce payload size and backend processing time. The returned objects
+        still include their underlying log ids.
+        """
+        singular = isinstance(task_ids, int)
+        original_id = task_ids if singular else None
+        ids_list = [task_ids] if singular else list(task_ids)
+        # Ensure we always include task_id in the projection for correctness
+        fields = list(dict.fromkeys((fields or []) + ["task_id"]))
+        logs = unify.get_logs(
+            context=self._ctx,
+            filter=f"task_id in {ids_list}",
+            return_ids_only=False,
+            from_fields=fields,
+        )
+        if singular:
+            if len(logs) == 0:
+                raise ValueError(
+                    f"Task with task_id == {original_id} does not exist in the task list.",
+                )
+            if len(logs) > 1:
+                raise AssertionError(
+                    f"Expected exactly 1 row for task_id {original_id}, but found {len(logs)}.",
+                )
+        return logs
+
     # ------------------------------- Writes --------------------------------
     def update(
         self,
