@@ -2565,10 +2565,22 @@ class TaskScheduler(BaseTaskScheduler):
             if r.get("schedule") is not None
             and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
         ]
-        # heads are rows with prev_task == None
+
+        # Single-pass index for constant-time next lookups within this tool call
+        rows_by_id: Dict[int, TaskRow] = {}
+        for r in rows:
+            try:
+                tid = r.get("task_id")
+                if isinstance(tid, int):
+                    rows_by_id[tid] = r
+            except Exception:
+                pass
+
+        # Heads are rows with prev_task == None
         heads: list[TaskRow] = [
             r for r in rows if (r.get("schedule") or {}).get("prev_task") is None
         ]
+
         out: list[Dict[str, Any]] = []
         for h in heads:
             sched = h.get("schedule") or {}
@@ -2577,16 +2589,41 @@ class TaskScheduler(BaseTaskScheduler):
             if not isinstance(qid, int):
                 # Skip any legacy rows lacking a numeric queue_id
                 continue
-            chain = self._walk_queue(h)
+
+            # Compute chain size purely in-memory to avoid extra backend reads
+            size = 0
+            seen: set[int] = set()
+            cur = h
+            while cur is not None:
+                try:
+                    tid_val = cur.get("task_id")
+                    tid_int = int(tid_val) if tid_val is not None else None
+                except Exception:
+                    tid_int = None
+                if isinstance(tid_int, int):
+                    if tid_int in seen:
+                        break
+                    seen.add(tid_int)
+                    size += 1
+                nxt = (cur.get("schedule") or {}).get("next_task")
+                if nxt is None:
+                    break
+                try:
+                    nxt_int = int(nxt)
+                except Exception:
+                    break
+                cur = rows_by_id.get(nxt_int)
+
             out.append(
                 {
                     "queue_id": qid,
                     "queue_label": f"Q{qid}",
                     "head_id": h.get("task_id"),
-                    "size": len(chain),
+                    "size": size,
                     "start_at": start_at,
                 },
             )
+
         return out
 
     @_ts_log_tool_runtime
