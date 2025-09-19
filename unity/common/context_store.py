@@ -2,19 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-import requests
 import unify
-
-
-_HTTP_SESSION: Optional[requests.Session] = None
-
-
-def _get_http_session() -> requests.Session:
-    """Return a process-local requests.Session for connection reuse."""
-    global _HTTP_SESSION
-    if _HTTP_SESSION is None:
-        _HTTP_SESSION = requests.Session()
-    return _HTTP_SESSION
 
 
 class TableStore:
