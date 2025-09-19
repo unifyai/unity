@@ -5,7 +5,7 @@ import expressWs from 'express-ws';
 import WebSocket from 'ws';
 import util from 'util';
 import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserOptions } from 'magnitude-core';
-import { z, ZodTypeAny, ZodAny } from 'zod';
+import { z, ZodTypeAny, ZodAny, ZodType } from 'zod';
 import dotenv from 'dotenv';
 dotenv.config();
 import os from 'os';
@@ -442,7 +442,9 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const zodSchema = schema ? jsonSchemaToZod(schema) : z.string();
-      const data = await browserAgent!.extract(instructions, zodSchema);
+      const extractFn = (browserAgent as unknown as { extract: (i: unknown, s: ZodTypeAny) => Promise<unknown> }).extract;
+      const dataUnknown: unknown = await extractFn(instructions, zodSchema as ZodTypeAny);
+      const data = dataUnknown as z.infer<typeof zodSchema>;
       // If successful, send the response and exit the loop
       return res.json({ data });
     } catch (err: unknown) {
@@ -470,7 +472,9 @@ app.post('/query', isAgentReady, async (req: Request, res: Response) => {
   }
   try {
     const zodSchema = schema ? jsonSchemaToZod(schema) : z.any();
-    const data = await browserAgent!.query(query, zodSchema);
+    const queryFn = (browserAgent as unknown as { query: (q: unknown, s: ZodTypeAny) => Promise<unknown> }).query;
+    const dataUnknown: unknown = await queryFn(query, zodSchema as ZodTypeAny);
+    const data = dataUnknown as z.infer<typeof zodSchema>;
     res.json({ data });
   } catch (err) {
     handleAgentError(err, res);
