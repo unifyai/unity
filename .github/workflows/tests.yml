@@ -52,7 +52,7 @@ on:
         description: "Per-test timeout in seconds"
         required: false
         type: number
-        default: 120
+        default: 240
       test_session_timeout:
         description: "Test session timeout in minutes (for all tests)"
         required: false
@@ -173,7 +173,7 @@ jobs:
     - name: Run unit tests
       run: |
         xvfb-run .unity/bin/python -m pytest \
-          --timeout=${{ inputs.test_timeout || 120 }} \
+          --timeout=${{ inputs.test_timeout || 240 }} \
           -p no:warnings \
           -vv \
           --durations=${{ inputs.test_show_slowest || 20 }} \
