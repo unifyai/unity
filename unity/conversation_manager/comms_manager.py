@@ -105,7 +105,10 @@ class CommsManager:
                 if thread == "email":
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     topic = event["from"].split("<")[1][:-1]
-                    extras = {"message_id": event["message_id"]}
+                    extras = {
+                        "message_id": event["message_id"],
+                        "subject": event["subject"],
+                    }
                 else:
                     topic = event["from_number"].replace("whatsapp:", "").strip()
                 # Put the message in the queue instead of creating a task

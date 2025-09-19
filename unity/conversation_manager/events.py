@@ -202,12 +202,19 @@ class EmailSentEvent(_Message):
 
     def __init__(self, **kwargs):
         self.message_id = kwargs.pop("message_id", None)
+        self.subject = kwargs.pop("subject", None)
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
-        base_dict["payload"].update({"message_id": self.message_id})
+        base_dict["payload"].update(
+            {"message_id": self.message_id, "subject": self.subject}
+        )
         return base_dict
+
+    def __str__(self):
+        message_str = super().__str__()
+        return f"{message_str} (message_id: {self.message_id}, subject: {self.subject})"
 
 
 class WhatsappMessageRecievedEvent(_Message):
@@ -226,12 +233,19 @@ class EmailRecievedEvent(_Message):
 
     def __init__(self, **kwargs):
         self.message_id = kwargs.pop("message_id", None)
+        self.subject = kwargs.pop("subject", None)
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
-        base_dict["payload"].update({"message_id": self.message_id})
+        base_dict["payload"].update(
+            {"message_id": self.message_id, "subject": self.subject}
+        )
         return base_dict
+
+    def __str__(self):
+        message_str = super().__str__()
+        return f"{message_str} (message_id: {self.message_id}, subject: {self.subject})"
 
 
 # this should be either done by user or assistant, should
