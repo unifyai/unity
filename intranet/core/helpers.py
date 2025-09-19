@@ -3,7 +3,6 @@ import re
 import traceback
 
 
-
 def _strip_quoted_text(text: str) -> str:
     """Remove quoted text and signatures from email content."""
     lines = text.splitlines()

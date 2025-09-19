@@ -61,15 +61,14 @@ async def process_message(message):
             subject=assistant_email,
         )
         gmail_service = build("gmail", "v1", credentials=gmail_creds)
-        _, message_id, last_message = get_thread_id(
-            email, history_id, gmail_service
-        )
+        _, message_id, last_message = get_thread_id(email, history_id, gmail_service)
         if not last_message:
             print("No last message found")
             message.ack()
             return
         print("Last Message", last_message)
         question = last_message.get("content", "Sample Message")
+        subject = last_message.get("subject", "Sample Subject")
         res = re.search(r"<(.*?)>", last_message.get("sender", ""))
         if res:
             to_email = res.group(1)
@@ -82,7 +81,7 @@ async def process_message(message):
         # acknowledge receipt
         await send_email(
             to_email,
-            "Re: Your query received",
+            subject,
             "We have received your request and are processing it.",
             message_id,
         )
@@ -90,8 +89,7 @@ async def process_message(message):
         # call the /query endpoint
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                "http://localhost:8000/query",
-                json={"query": question}
+                "http://localhost:8000/query", json={"query": question}
             ) as resp:
                 text = await resp.text()
                 print("Query response", text)
@@ -102,7 +100,7 @@ async def process_message(message):
         # send the answer back
         await send_email(
             to_email,
-            "Re: Answer to your query",
+            subject,
             answer,
             message_id,
         )
