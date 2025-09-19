@@ -72,8 +72,8 @@ async def process_message(message):
         res = re.search(r"<(.*?)>", last_message.get("sender", ""))
         if res:
             to_email = res.group(1)
-        if not res or to_email != "ved@unify.ai":
-            print("No email found in sender or not Ved")
+        if not res:
+            print("No email found in sender")
             message.ack()
             return
         print("Email Details", to_email, message_id, question)
