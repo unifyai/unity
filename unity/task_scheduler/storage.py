@@ -442,6 +442,57 @@ class LocalTaskView:
         self._max_queue_id_seen: Optional[int] = None
         self._task_log_id_cache: Dict[int, int] = {}
 
+    # Expose task context fields via the view for convenience
+    @property
+    def fields(self) -> Dict[str, str]:
+        return self._store.fields
+
+    # ------------------------------- Reads --------------------------------
+    def get_rows(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+        return_ids_only: bool = False,
+        exclude_fields: Optional[List[str]] = None,
+    ) -> List[Union[int, unify.Log]]:
+        """
+        Pass-through to the underlying store for general row retrieval.
+
+        Kept in LocalTaskView so that all read I/O can be centralised and
+        optionally instrumented or toggled via environment flags in the
+        future.
+        """
+        return self._store.get_rows(
+            filter=filter,
+            offset=offset,
+            limit=limit,
+            return_ids_only=return_ids_only,
+            exclude_fields=exclude_fields,
+        )
+
+    def get_entries(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+        exclude_fields: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Pass-through to the underlying store for entry dictionaries.
+
+        Exists here so that TaskScheduler and helpers route all generic reads
+        through LocalTaskView for consistency and easier optimisation later.
+        """
+        return self._store.get_entries(
+            filter=filter,
+            offset=offset,
+            limit=limit,
+            exclude_fields=exclude_fields,
+        )
+
     # ----------------------------- Queue index -----------------------------
     def queue_index_is_fresh(self) -> bool:
         return (not self._queue_index_stale) and (not self._cache_disabled())
@@ -783,6 +834,67 @@ class LocalTaskView:
         return self._store.get_rows_by_log_ids(log_ids=log_ids)
 
     # ------------------------------- Writes --------------------------------
+    def create_one(self, *, entries: Dict[str, Any], new: bool = True) -> unify.Log:
+        """
+        Create a single log row and apply light cache maintenance.
+
+        - Memoises task_id -> log_id when resolvable from the returned object.
+        - Conservatively marks queue index stale when lifecycle fields are present.
+        """
+        log_obj = self._store.log(entries=entries, new=new)
+        try:
+            e = getattr(log_obj, "entries", {}) or {}
+            tid = e.get("task_id")
+            lid = getattr(log_obj, "id", None)
+            if isinstance(tid, int) and isinstance(lid, int):
+                self.cache_log_id(task_id=int(tid), log_id=int(lid))
+        except Exception:
+            pass
+        try:
+            touches_lifecycle = any(
+                k in entries for k in ("schedule", "queue_id", "status")
+            )
+            if touches_lifecycle:
+                self._queue_index_stale = True
+        except Exception:
+            # Be conservative when uncertain
+            self._queue_index_stale = True
+        return log_obj
+
+    def create_many(self, *, entries_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Batch-create multiple rows and apply light cache maintenance.
+
+        Mirrors TasksStore.create_many but centralises cache handling and
+        optional id memoisation.
+        """
+        result = self._store.create_many(entries_list=entries_list)
+        # Attempt to memoise ids when the API returns full log objects
+        try:
+            if isinstance(result, list):
+                for lg in result:
+                    try:
+                        e = getattr(lg, "entries", {}) or {}
+                        tid = e.get("task_id")
+                        lid = getattr(lg, "id", None)
+                        if isinstance(tid, int) and isinstance(lid, int):
+                            self.cache_log_id(task_id=int(tid), log_id=int(lid))
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        # Mark queue index stale when any payload contains lifecycle fields
+        try:
+            if any(
+                isinstance(e, dict)
+                and any(k in e for k in ("schedule", "queue_id", "status"))
+                for e in entries_list
+            ):
+                self._queue_index_stale = True
+        except Exception:
+            self._queue_index_stale = True
+        return result
+
     def write_entries(
         self,
         *,
@@ -836,6 +948,15 @@ class LocalTaskView:
             except Exception:
                 pass
         return result
+
+    # ------------------------------- Metrics -------------------------------
+    def get_metric_count(self, *, key: str) -> int:
+        """Expose count metrics via the view (pass-through)."""
+        return self._store.get_metric_count(key=key)
+
+    def get_metric_max(self, *, key: str) -> int:
+        """Expose max metrics via the view (pass-through)."""
+        return self._store.get_metric_max(key=key)
 
     # ----------------------------- Env helpers -----------------------------
     @staticmethod

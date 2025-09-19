@@ -371,7 +371,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Eagerly snapshot the total number of tasks once at construction time so
         # `_num_tasks()` can serve from memory. Subsequent mutations keep it in sync.
         try:
-            self._num_tasks_cached = int(self._store.get_metric_count(key="task_id"))
+            self._num_tasks_cached = int(self._view.get_metric_count(key="task_id"))
         except Exception:
             self._num_tasks_cached = None
 
@@ -1402,7 +1402,7 @@ class TaskScheduler(BaseTaskScheduler):
         AssertionError
             If more than one row matches the composite key.
         """
-        log_objs = self._store.get_rows(
+        log_objs = self._view.get_rows(
             filter=f"task_id == {task_id} and instance_id == {instance_id}",
             return_ids_only=False,
         )
@@ -1461,7 +1461,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Do not carry over activation metadata to a fresh instance
         clone_payload.pop("activated_by", None)
         # Drop any internal bookkeeping injected by Unify (_id, _log_id …)
-        self._store.log(entries=clone_payload, new=True)
+        self._view.create_one(entries=clone_payload, new=True)
         # Maintain cached total count (+1 new instance row)
         try:
             if self._num_tasks_cached is not None:
@@ -1692,7 +1692,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Escape values via repr to keep a valid filter string regardless of content.
         _name_lit = f"{name!r}"
         _desc_lit = f"{description!r}"
-        _dupe_rows = self._store.get_entries(
+        _dupe_rows = self._view.get_entries(
             filter=f"name == {_name_lit} or description == {_desc_lit}",
             limit=2,
         )
@@ -1833,7 +1833,7 @@ class TaskScheduler(BaseTaskScheduler):
         ).to_post_json()
 
         # ------------------  write log immediately  ------------------ #
-        log = self._store.log(entries=task_details, new=True)
+        log = self._view.create_one(entries=task_details, new=True)
         task_id = log.entries["task_id"]
         task_details["task_id"] = task_id
         # Keep the monotonic queue-id allocator in sync with the id we just
@@ -2057,7 +2057,7 @@ class TaskScheduler(BaseTaskScheduler):
                         clauses.append(f"description == {ds!r}")
                 filter_expr = " or ".join(clauses) if clauses else None
                 existing = (
-                    self._store.get_entries(filter=filter_expr, limit=len(tasks) + 1)
+                    self._view.get_entries(filter=filter_expr, limit=len(tasks) + 1)
                     if filter_expr
                     else []
                 )
@@ -2109,7 +2109,7 @@ class TaskScheduler(BaseTaskScheduler):
 
             # Create all in one backend call. Prefer consuming returned rows directly
             # to avoid additional backend reads within this tool call.
-            resp = self._store.create_many(entries_list=entries_list)
+            resp = self._view.create_many(entries_list=entries_list)
             rows = []
             created_log_ids: List[int] = []
 
@@ -2160,7 +2160,7 @@ class TaskScheduler(BaseTaskScheduler):
                         )
                     filter_expr = " or ".join(pair_clauses) if pair_clauses else None
                     rows = (
-                        self._store.get_rows(
+                        self._view.get_rows(
                             filter=filter_expr,
                             limit=max(10, len(tasks) * 2),
                             return_ids_only=False,
@@ -2225,7 +2225,7 @@ class TaskScheduler(BaseTaskScheduler):
                 try:
                     name_list = [str(spec.get("name")) for spec in tasks]
                     list_literal = "[" + ", ".join(repr(n) for n in name_list) + "]"
-                    ents = self._store.get_entries(
+                    ents = self._view.get_entries(
                         filter=f"name in {list_literal}",
                         limit=len(tasks),
                     )
@@ -2836,12 +2836,7 @@ class TaskScheduler(BaseTaskScheduler):
                         continue
                 except Exception:
                     pass
-                try:
-                    if self._to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
-                        row.pop("activated_by", None)
-                except Exception:
-                    if str(row.get("status")) != str(Status.active):
-                        row.pop("activated_by", None)
+                row = self._sanitize_activation(row)
                 ordered.append(Task(**row))
             return ordered
 
@@ -2898,13 +2893,7 @@ class TaskScheduler(BaseTaskScheduler):
                 seen.add(tid_int)
 
             # Strip stale activation metadata on non-active rows
-            _row = dict(cur)
-            try:
-                if self._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
-                    _row.pop("activated_by", None)
-            except Exception:
-                if str(_row.get("status")) != str(Status.active):
-                    _row.pop("activated_by", None)
+            _row = self._sanitize_activation(dict(cur))
             ordered.append(Task(**_row))
 
             nxt = (cur.get("schedule") or {}).get("next_task")
@@ -2966,13 +2955,7 @@ class TaskScheduler(BaseTaskScheduler):
             if tid_int is not None:
                 seen.add(tid_int)
             # Strip stale activation metadata on non-active rows
-            _row = dict(node)
-            try:
-                if self._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
-                    _row.pop("activated_by", None)
-            except Exception:
-                if str(_row.get("status")) != str(Status.active):
-                    _row.pop("activated_by", None)
+            _row = self._sanitize_activation(dict(node))
             ordered.append(Task(**_row))
             nxt_id = (node.get("schedule") or {}).get("next_task")
             if nxt_id is None:
@@ -3031,12 +3014,7 @@ class TaskScheduler(BaseTaskScheduler):
                                 continue
                         except Exception:
                             pass
-                        try:
-                            if self._to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
-                                row.pop("activated_by", None)
-                        except Exception:
-                            if str(row.get("status")) != str(Status.active):
-                                row.pop("activated_by", None)
+                        row = self._sanitize_activation(row)
                         ordered.append(Task(**row))
                     return ordered
 
@@ -3105,13 +3083,7 @@ class TaskScheduler(BaseTaskScheduler):
                     seen.add(tid_int)
 
                 # Strip stale activation metadata on non-active rows
-                _row = dict(cur)
-                try:
-                    if self._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
-                        _row.pop("activated_by", None)
-                except Exception:
-                    if str(_row.get("status")) != str(Status.active):
-                        _row.pop("activated_by", None)
+                _row = self._sanitize_activation(dict(cur))
                 ordered.append(Task(**_row))
 
                 nxt = (cur.get("schedule") or {}).get("next_task")
@@ -4471,11 +4443,6 @@ class TaskScheduler(BaseTaskScheduler):
             task_id=task_id,
             detach=detach,
         )
-        # Queue structure changed – mark LocalTaskView as changed.
-        try:
-            self._view.mark_queue_changed()
-        except Exception:
-            pass
 
     @_ts_log_tool_runtime
     def _attach_with_links(
@@ -4495,11 +4462,6 @@ class TaskScheduler(BaseTaskScheduler):
             head_start_at=head_start_at,
             err_prefix=err_prefix,
         )
-        # Structural queue linkage update – LocalTaskView may be outdated
-        try:
-            self._view.mark_queue_changed()
-        except Exception:
-            pass
 
     _TERMINAL_STATUSES = {Status.completed, Status.cancelled, Status.failed}
 
@@ -5549,7 +5511,7 @@ class TaskScheduler(BaseTaskScheduler):
         # multiple instances of the same task_id to be returned (e.g., clones).
         effective_limit = limit
 
-        rows = self._store.get_entries(
+        rows = self._view.get_entries(
             filter=filter,
             offset=offset,
             limit=effective_limit,
@@ -5656,7 +5618,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Return {column_name: column_type} for the tasks table.
         """
-        return self._store.fields
+        return self._view.fields
 
     @_ts_log_tool_runtime
     def _list_columns(
@@ -5676,7 +5638,7 @@ class TaskScheduler(BaseTaskScheduler):
         if self._num_tasks_cached is None:
             try:
                 self._num_tasks_cached = int(
-                    self._store.get_metric_count(key="task_id"),
+                    self._view.get_metric_count(key="task_id"),
                 )
             except Exception:
                 # Defensive fallback; a failed metric read should not crash tools
@@ -5701,6 +5663,19 @@ class TaskScheduler(BaseTaskScheduler):
             "repeat",
             "response_policy",
         ]
+
+    def _sanitize_activation(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Drop `activated_by` unless the row is currently active to keep
+        payloads clean and Pydantic construction predictable.
+        """
+        try:
+            if self._to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
+                row.pop("activated_by", None)
+        except Exception:
+            if str(row.get("status")) != str(Status.active):
+                row.pop("activated_by", None)
+        return row
 
     # (Removed) LLM-based scope classifier
 
