@@ -740,6 +740,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Adjust queue linkages for activation (and record reintegration plan).
         # detach=True → isolation semantics; detach=False → chain semantics.
         desired_next: Optional[int] = _q_next(task_row.get("schedule"))
+
         self._detach_from_queue_for_activation(
             task_id=task_id,
             detach=detach,
