@@ -2494,6 +2494,11 @@ def build_interjection_prompt(
 
     {cache_summary}
     ---
+    ### Cache Invalidation Rules (CRITICAL)
+    1.  **No Phantom Invalidations**: Only list functions in `invalidate_functions` if they appear in the `Cache Status` list above.
+    2.  **Surgical Invalidation**: Use `invalidate_functions` to clear the entire cache for a function, or `invalidate_steps` to clear only a portion of it. Be as minimal as possible to ensure an efficient replay.
+    3.  **You may omit `cache`** if nothing needs invalidation.
+    ---
     {strategy_principles}
     ---
     ### Your Task: Analyze, Decide, Patch, and Propose Cache Strategy
@@ -2505,19 +2510,91 @@ def build_interjection_prompt(
         - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstrings.
         - **Generate Patches:** For every function that needs to be changed, create a `FunctionPatch` object containing its full, updated source code.
 
-    **3. Propose a Cache Invalidation Strategy (CRITICAL for `modify_task`):**
-        After any modification, the plan will restart execution from `main_plan`. Your proposed cache strategy is critical to avoid re-running steps that are still valid, ensuring a fast and intelligent replay. Your goal is to invalidate the absolute minimum number of steps required for the plan to be correct.
+    **3. Devise an Optimal Cache Strategy (CRITICAL for `modify_task`):**
 
-        - **`invalidate_functions`**: Use to clear the cache for entire functions that have fundamentally changed.
-        - **`invalidate_steps`**: Use for surgical changes *within* a function, to clear the cache only from the point of the change onward.
-        - **Safety Note**: You do not need to worry about downstream effects of state changes (e.g., from a `.navigate()` call). The runtime will automatically enforce safety guardrails on top of your proposal. Focus only on invalidating the direct targets of your code patches.
+        **Golden Rule of Replay:** After you submit your patches, the plan **always restarts execution from the beginning of `main_plan`**. Your task is to craft a cache invalidation plan that makes this replay as fast as possible by preserving all valid caches.
 
-        **Comparison of Invalidation Strategies:**
+        **Scenario 1: Invalidating Downstream Dependencies (`invalidate_functions`)**
+        * **Situation:** The plan is `A_login() -> B_fetch_user_data("123") -> C_generate_report(...)`. The correctness of `C` depends on the data fetched in `B`. The user interjects: "Sorry, I meant user ID `'456'`."
+        * **Analysis:** Changing the `user_id` in `B` will cause it to navigate to a new page and fetch different data. Because `C` relies on this data, its previous cached result is now invalid and must also be cleared. `A_login`, however, is unaffected.
+        * **Correct `modify_task` Response:**
+            ```json
+            {{
+                "action": "modify_task",
+                "reason": "User changed the target user ID. This invalidates both the data fetching step (B) and the report generation step (C) which depends on it.",
+                "patches": [
+                    {{
+                        "function_name": "main_plan",
+                        "new_code": "async def main_plan():\\n    await A_login()\\n    user_data = await B_fetch_user_data(user_id='456')\\n    await C_generate_report(user_data)"
+                    }}
+                ],
+                "cache": {{
+                    "invalidate_functions": ["B_fetch_user_data", "C_generate_report"]
+                }}
+            }}
+            ```
+        * **Replay Analysis:**
+            1.  Execution starts at `main_plan`.
+            2.  `await A_login()` runs. **Result: CACHE HIT**.
+            3.  `await B_fetch_user_data(user_id='456')` runs. **Result: CACHE MISS**. It executes for real.
+            4.  `await C_generate_report(...)` runs. **Result: CACHE MISS**. It executes for real with the new data from `B`.
 
-        | Scenario                                                                                                                              | Bad Invalidation (Slow, Redundant Replay)                                                                                                                                     | Good Invalidation (Fast, Intelligent Replay)                                                                                                                                                                |
-        | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-        | A plan `login()` -> `search_items("laptops")` -> `add_to_cart()` is interrupted. The user wants to search for "monitors" instead.       | **LLM Response**: ` "cache": null ` <br> **Actor Behavior**: The conservative default invalidates from `search_items`. The actor replays `login()` from cache, then re-runs the rest of the plan. This is acceptable but not optimal. | **LLM Response**: ` "cache": {{"invalidate_functions": ["search_items", "add_to_cart"]}} ` <br> **Actor Behavior**: The actor knows exactly which functions are stale. It replays `login()` from cache and correctly re-executes the rest. |
-        | A function `process_report()` has 5 steps. The user interjects to change the logic only in step 4 (e.g., change chart type).          | **LLM Response**: ` "cache": {{"invalidate_functions": ["process_report"]}} ` <br> **Actor Behavior**: The actor re-runs the entire `process_report` function, including potentially slow data fetching and cleaning in steps 1 and 2. | **LLM Response**: ` "cache": {{"invalidate_steps": [{{"function_name": "process_report", "from_step_inclusive": 4}}]}} ` <br> **Actor Behavior**: The actor reuses the cached results for steps 1-3 inside the function and only re-runs from step 4 onward. This is highly efficient. |
+        ---
+
+        **Scenario 2: Invalidating a Portion of a Function (`invalidate_steps`)**
+        * **Situation:** Function `B` has 5 internal steps. After step 2 completes, the user interjects: "In step B, after step 2, you need to add a new action before continuing."
+        * **Analysis:** Only the latter part of function `B` is affected. The initial steps (1 and 2) inside `B` are still valid and their caches should be preserved to save time.
+        * **Correct `modify_task` Response:**
+            ```json
+            {{
+                "action": "modify_task",
+                "reason": "User added a new step in the middle of function B. Invalidating from step 3 onwards.",
+                "patches": [
+                    {{
+                        "function_name": "B",
+                        "new_code": "async def B(parameter: str):\\n    # step 1\\n    await action_provider.act('Step B1')\\n    # step 2\\n    await action_provider.act('Step B2')\\n    # new step 2.5\\n    await action_provider.act('Newly added Step B2.5')\\n    # step 3\\n    await action_provider.act('Step B3')\\n    # ..."
+                    }}
+                ],
+                "cache": {{
+                    "invalidate_steps": [
+                        {{"function_name": "B", "from_step_inclusive": 3}}
+                    ]
+                }}
+            }}
+            ```
+        * **Replay Analysis:**
+            1.  Execution starts at `main_plan`.
+            2.  `await A()` runs. **Result: CACHE HIT**.
+            3.  `await B(...)` runs.
+                * Internal Step 1: **CACHE HIT**.
+                * Internal Step 2: **CACHE HIT**.
+                * Internal Step 2.5 (new): **CACHE MISS**.
+                * Internal Step 3 onwards: **CACHE MISS** (due to invalidation).
+            4.  `await C()` runs. **Result: CACHE HIT**.
+
+        ---
+
+        **Scenario 3: No Invalidation Needed (Structural Change)**
+        * **Situation:** The plan `A() -> B() -> C()` has fully completed `A` and `B`. The user interjects: "Actually, you don't need to do C. Just stop after B."
+        * **Analysis:** The user is only changing the sequence of calls in `main_plan`. The internal logic and inputs for functions `A` and `B` have not changed, so their caches are perfectly valid.
+        * **Correct `modify_task` Response:**
+            ```json
+            {{
+                "action": "modify_task",
+                "reason": "User requested to remove step C from the plan.",
+                "patches": [
+                    {{
+                        "function_name": "main_plan",
+                        "new_code": "async def main_plan():\\n    await A()\\n    await B()"
+                    }}
+                ]
+            }}
+            ```
+        * **Replay Analysis:**
+            1.  Execution starts at the *new* `main_plan`.
+            2.  `await A()` runs. **Result: CACHE HIT**.
+            3.  `await B()` runs. **Result: CACHE HIT**.
+            4.  The plan finishes. The replay is extremely fast.
 
     ---
     #### 🧠 Distinguishing `modify_task` from `refactor_and_generalize`
