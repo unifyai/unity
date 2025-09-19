@@ -2336,53 +2336,62 @@ class HierarchicalPlan(BaseActiveTask):
         if decision.action == "modify_task" and decision.patches:
             self.action_log.append("Executing stateful decision: modify_task.")
 
+            original_call_stack = list(self.call_stack)
+            first_modified_function_index = -1
             first_modified_function_name = None
+            for i, func_name in enumerate(original_call_stack):
+                if any(p.function_name == func_name for p in decision.patches):
+                    first_modified_function_index = i
+                    first_modified_function_name = func_name
+                    break
+
             try:
-                original_call_stack = list(self.call_stack)
-                first_modified_function_index = -1
-
-                for i, func_name in enumerate(original_call_stack):
-                    if any(p.function_name == func_name for p in decision.patches):
-                        first_modified_function_index = i
-                        break
-
-                if first_modified_function_index != -1:
-                    functions_to_invalidate = set(
-                        original_call_stack[first_modified_function_index:],
-                    )
-                    first_modified_function_name = original_call_stack[
-                        first_modified_function_index
-                    ]
-                    self.action_log.append(
-                        f"CACHE INVALIDATION: Interjection modifies past actions. Invalidating cache for: {', '.join(functions_to_invalidate)}",
-                    )
-                    logger.debug(
-                        f"Invalidating {len(functions_to_invalidate)} functions' cache entries due to interjection.",
-                    )
-                    keys_to_delete = [
-                        key
-                        for key in self.idempotency_cache
-                        if any(
-                            func_name in functions_to_invalidate for func_name in key[0]
-                        )
-                    ]
-
-                    if keys_to_delete:
-                        logger.debug(
-                            f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
-                        )
-                        for key in keys_to_delete:
-                            del self.idempotency_cache[key]
-                else:
-                    self.action_log.append(
-                        "CACHE INVALIDATION: No past running functions were modified, cache remains intact.",
-                    )
-
+                keys_to_delete = self._resolve_invalidation_keys(
+                    decision,
+                    original_call_stack,
+                    first_modified_function_index,
+                )
             except Exception as e:
                 logger.warning(
                     f"Error during selective cache invalidation: {e}. For safety, clearing the entire cache.",
                 )
-                self.idempotency_cache.clear()
+                keys_to_delete = set(self.idempotency_cache.keys())
+
+            if keys_to_delete:
+                logger.info(
+                    f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
+                )
+                self.action_log.append(
+                    f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
+                )
+
+            invalidated_handles = set()
+            for key in keys_to_delete:
+                entry = self.idempotency_cache.pop(key, None)
+                if (
+                    entry
+                    and isinstance(entry.get("result"), str)
+                    and entry["interaction_log"][2].startswith("Returned handle")
+                ):
+                    hid = entry["result"]
+                    invalidated_handles.add(hid)
+                    self.live_handles.pop(hid, None)
+
+            if invalidated_handles:
+                logger.info(
+                    f"Cleaning up cached method calls for {len(invalidated_handles)} invalidated handles.",
+                )
+                self.action_log.append(
+                    f"Cleaning up cached method calls for {len(invalidated_handles)} invalidated handles.",
+                )
+                for k in list(self.idempotency_cache.keys()):
+                    meta_tool = (
+                        self.idempotency_cache.get(k, {})
+                        .get("meta", {})
+                        .get("tool", "")
+                    )
+                    if any(f":{hid}." in meta_tool for hid in invalidated_handles):
+                        self.idempotency_cache.pop(k, None)
 
             if first_modified_function_name:
                 self.action_log.append(
