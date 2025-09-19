@@ -86,7 +86,7 @@ def sync_adjacent_links(
             except ValueError:
                 # Neighbour was deleted after we fetched rows – skip
                 continue
-            scheduler._store.update(
+            scheduler._view.write_entries(  # type: ignore[attr-defined]
                 logs=log_id,
                 entries={"schedule": n_sched},
                 overwrite=True,
@@ -102,7 +102,7 @@ def sync_adjacent_links(
                 if field_to_set == "prev_task":
                     n_sched.pop("start_at", None)
                 n_sched[field_to_set] = task_id
-                scheduler._store.update(
+                scheduler._view.write_entries(  # type: ignore[attr-defined]
                     logs=row_obj.id if hasattr(row_obj, "id") else row_obj,
                     entries={"schedule": n_sched},
                     overwrite=True,
@@ -122,7 +122,7 @@ def sync_adjacent_links(
                     )
                 except ValueError:
                     continue
-                scheduler._store.update(
+                scheduler._view.write_entries(  # type: ignore[attr-defined]
                     logs=log_id,
                     entries={"schedule": n_sched},
                     overwrite=True,
@@ -208,7 +208,7 @@ def attach_with_links(
         prev_sched = {**((_entries(prev_log).get("schedule") or {}))}
         if prev_sched.get("next_task") != task_id:
             prev_sched["next_task"] = task_id
-            scheduler._store.update(
+            scheduler._view.write_entries(  # type: ignore[attr-defined]
                 logs=prev_log.id if hasattr(prev_log, "id") else prev_log,
                 entries={"schedule": prev_sched},
                 overwrite=True,
@@ -221,7 +221,7 @@ def attach_with_links(
             next_sched["prev_task"] = task_id
             if head_start_at is not None:
                 next_sched.pop("start_at", None)
-            scheduler._store.update(
+            scheduler._view.write_entries(  # type: ignore[attr-defined]
                 logs=next_log.id if hasattr(next_log, "id") else next_log,
                 entries={"schedule": next_sched},
                 overwrite=True,
