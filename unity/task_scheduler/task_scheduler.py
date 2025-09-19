@@ -1864,6 +1864,18 @@ class TaskScheduler(BaseTaskScheduler):
         log = self._store.log(entries=task_details, new=True)
         task_id = log.entries["task_id"]
         task_details["task_id"] = task_id
+        # Keep the monotonic queue-id allocator in sync with the id we just
+        # materialized (if any). This ensures preview calls to
+        # _allocate_new_queue_id() do not consume ids and tests that capture a
+        # queue id before creation continue to pass.
+        try:
+            if isinstance(derived_qid, int):
+                if self._max_queue_id_seen is None or int(derived_qid) > int(
+                    self._max_queue_id_seen,
+                ):
+                    self._max_queue_id_seen = int(derived_qid)
+        except Exception:
+            pass
         # Cache the backing log id for fast single-call delete/updates.
         try:
             _lid = getattr(log, "id", None)
@@ -2668,10 +2680,10 @@ class TaskScheduler(BaseTaskScheduler):
                             self._max_queue_id_seen = max_id
                     except Exception:
                         self._max_queue_id_seen = 0
-            self._max_queue_id_seen = int(self._max_queue_id_seen) + 1
+            # Do NOT advance here; only return the next candidate.
+            return int(self._max_queue_id_seen) + 1
         except Exception:
-            self._max_queue_id_seen = 1
-        return int(self._max_queue_id_seen)
+            return 1
 
     def _head_row_for_queue(self, queue_id: Optional[int]) -> Optional[TaskRow]:
         """Best-effort fetch of the head row for a given queue.
@@ -3811,6 +3823,15 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Allocate queue id when needed
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
+        # Keep the allocator in sync when a new queue becomes materialized here
+        try:
+            if isinstance(target_qid, int):
+                if self._max_queue_id_seen is None or int(target_qid) > int(
+                    self._max_queue_id_seen,
+                ):
+                    self._max_queue_id_seen = int(target_qid)
+        except Exception:
+            pass
 
         # Capture existing head-level start_at BEFORE any mutations so it can be
         # restored onto the new head reliably (avoids losing it during neutralisation)
