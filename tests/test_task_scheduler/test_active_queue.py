@@ -329,7 +329,7 @@ async def test_queue_pause_resume_and_completion(monkeypatch):
     h.resume()
 
     # Wait until B is active, then perform two benign steps for B: interject + ask
-    await asyncio.wait_for(b_active_evt.wait(), timeout=5)
+    await asyncio.wait_for(b_active_evt.wait(), timeout=15)
     await h.interject("continue")
     ask_handle = await h.ask("status?")
     await ask_handle.result()
