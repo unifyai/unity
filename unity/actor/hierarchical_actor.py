@@ -2110,24 +2110,15 @@ class HierarchicalPlan(BaseActiveTask):
     def _resolve_invalidation_keys(
         self,
         decision: InterjectionDecision,
-        original_call_stack: List[str],
-        first_modified_function_index: int,
     ) -> set[tuple]:
         """
-        Resolve which cache keys to invalidate by combining: (A) conservative suffix heuristic,
-        (B) the LLM's proposal (functions + intra-function tails), and (C) the impure guardrail.
+        Resolve which cache keys to invalidate by combining:
+        (A) the LLM's proposal (functions + intra-function tails), and
+        (B) the impure guardrail for safety.
         """
         cache = self.idempotency_cache
         all_keys = list(cache.keys())
         spec = getattr(decision, "cache", None)
-
-        conservative = set()
-        if first_modified_function_index != -1:
-            modified_suffix = set(original_call_stack[first_modified_function_index:])
-            for k in all_keys:
-                key_call_stack = k[0]
-                if any(fn in modified_suffix for fn in key_call_stack):
-                    conservative.add(k)
 
         proposed = set()
         if spec:
@@ -2150,7 +2141,7 @@ class HierarchicalPlan(BaseActiveTask):
         invalidated_impure_indices = {
             i
             for i, k in enumerate(all_keys)
-            if k in (conservative | proposed) and cache[k].get("meta", {}).get("impure")
+            if k in proposed and cache[k].get("meta", {}).get("impure")
         }
         if invalidated_impure_indices:
             latest_impure_index = max(invalidated_impure_indices)
@@ -2158,7 +2149,7 @@ class HierarchicalPlan(BaseActiveTask):
                 if i > latest_impure_index:
                     impure_guard.add(k)
 
-        final_keys = conservative | proposed | impure_guard
+        final_keys = proposed | impure_guard
         return final_keys
 
     def _restart_execution_loop(self, old_run_id: int):
@@ -2357,8 +2348,6 @@ class HierarchicalPlan(BaseActiveTask):
             try:
                 keys_to_delete = self._resolve_invalidation_keys(
                     decision,
-                    original_call_stack,
-                    first_modified_function_index,
                 )
             except Exception as e:
                 logger.warning(
