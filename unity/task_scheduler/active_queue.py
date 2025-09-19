@@ -65,6 +65,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             )
         except Exception:
             self._current_next_hint = None
+
         # Background driver
         self._driver = asyncio.create_task(self._drive())
 
@@ -597,7 +598,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                         self._queued_interjections.setdefault(tid, []).append(instr)
             return
         except Exception:
-            # Fallback: deliver to current task only
+            # Fallback: if ambiguous, request clarification and DO NOT forward to the inner task.
+            # Only when clearly not ambiguous do we deliver to the current task.
             try:
                 ambiguous_tokens = ("all", "rest", "remaining", "first", "last")
                 looks_ambiguous = any(
@@ -609,6 +611,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                         "Please specify which tasks it applies to (by id or directive such as 'all', 'first', 'last'), "
                         "and provide the instruction text for each group.",
                     )
+                    return
             except Exception:
                 pass
             await self._current_handle.interject(message)
