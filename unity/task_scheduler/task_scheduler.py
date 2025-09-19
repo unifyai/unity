@@ -3713,7 +3713,14 @@ class TaskScheduler(BaseTaskScheduler):
         def _current_order_for(qid: int) -> List[int]:
             try:
                 if not self._queue_index_stale:
-                    return list(self._queue_index.get(int(qid)) or [])
+                    # Use the in-memory index only when we actually have
+                    # a cached order for this queue. If the queue is not
+                    # present in the cache, fall back to a storage read
+                    # instead of returning an empty list (which would make
+                    # callers believe the queue has no members).
+                    cached = self._queue_index.get(int(qid))
+                    if cached is not None:
+                        return list(cached)
                 raise RuntimeError
             except Exception:
                 return [t.task_id for t in self._get_queue(queue_id=int(qid))]
