@@ -2239,6 +2239,7 @@ class HierarchicalPlan(BaseActiveTask):
                     call_stack=self.call_stack,
                     action_log=self.action_log[-10:],
                     goal=self.goal,
+                    idempotency_cache=self.idempotency_cache,
                     tools=self.actor.tools,
                 )
 
