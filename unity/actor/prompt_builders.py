@@ -50,29 +50,51 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
 
 
 def _format_cache_summary(idempotency_cache: Dict[tuple, Any], last_n: int = 20) -> str:
-    """Formats the last N cache entries into a readable summary for the LLM."""
+    """
+    Formats the last N cache entries, including tool call arguments, into a
+    readable summary for the LLM.
+    """
     if not idempotency_cache:
-        return "Cache is empty."
+        return "### Cache Status\n- The cache is currently empty."
 
-    summary_lines = ["### Recent Cache Entry Summary (for invalidation planning)"]
+    summary_lines = [
+        "### Cache Status (for Invalidation Planning)",
+        "- The following functions have at least one cached action and are eligible for invalidation:",
+    ]
+
+    cacheable_functions = sorted(
+        list(
+            set(
+                entry["meta"]["function"]
+                for entry in idempotency_cache.values()
+                if entry.get("meta") and entry["meta"].get("function")
+            ),
+        ),
+    )
+    summary_lines.append(f"  `{cacheable_functions}`")
+    summary_lines.append(
+        "- **Rule**: Only list functions from this list in `invalidate_functions`.",
+    )
+    summary_lines.append("\n### Recent Cached Actions:")
 
     recent_items = list(idempotency_cache.values())[-last_n:]
 
     for entry in recent_items:
         meta = entry.get("meta")
-        if not meta:
+        interaction = entry.get("interaction_log")
+        if not meta or not interaction:
             continue
 
         func = meta.get("function", "N/A")
         step = meta.get("step", "N/A")
-        tool = meta.get("tool", "N/A").replace("action_provider.", "")
-        url = meta.get("url", "N/A")
 
-        if url and len(url) > 70:
-            url = url[:67] + "..."
+        call_repr = interaction[1] if len(interaction) > 1 else "N/A"
+
+        if len(call_repr) > 100:
+            call_repr = call_repr[:97] + "..."
 
         summary_lines.append(
-            f"- Func: `{func}`, Step: `{step}`, Tool: `{tool}`, URL: `{url}`",
+            f"- Func: `{func}`, Step: `{step}`, Call: `{call_repr}`",
         )
 
     return "\n".join(summary_lines)
