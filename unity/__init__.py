@@ -120,17 +120,7 @@ def _list_all_assistants() -> list[dict]:
     is returned so that offline test-suites continue to operate.
     """
     try:
-        # Defer optional imports so that the package can be imported without
-        # 'requests' installed (common in offline test environments).
-        from .helpers import _handle_exceptions  # local, may import requests
-        from .common.http import request as http_request
-
-        url = f"{os.environ['UNIFY_BASE_URL']}/assistant"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = http_request("GET", url, headers=headers)
-        _handle_exceptions(response)
-        data = response.json()
-        return data.get("info", []) if isinstance(data, dict) else []
+        return unify.list_assistants()
     except Exception:
         # Offline / stubbed environments fall back to an empty list so that
         # the rest of the initialisation sequence can proceed with a dummy
