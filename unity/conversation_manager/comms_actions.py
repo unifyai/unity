@@ -359,6 +359,7 @@ async def _send_email_via_address(
                         role="Assistant",
                         timestamp=datetime.now().isoformat(),
                         message_id=message_id,
+                        subject=subject,
                     ).to_dict(),
                 },
             )
