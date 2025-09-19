@@ -4356,67 +4356,65 @@ class HierarchicalActor(BaseActor):
 
     async def _execute_course_correction(self, plan: HierarchicalPlan, code: str):
         """
-        Executes a dynamically generated script to correct the browser state and
-        invalidates the cache for the failed function's scope.
+        Executes a dynamically generated script to correct the browser state.
+        Runs under the current plan's run_id so tool calls are not blocked by the proxy.
         """
-
-        current_scope_tuple = tuple(plan.call_stack)
-        keys_to_invalidate = [
-            key for key in plan.idempotency_cache if key[0] == current_scope_tuple
-        ]
-
-        if keys_to_invalidate:
-            plan.action_log.append(
-                f"COURSE CORRECTION: Invalidating {len(keys_to_invalidate)} cache entries for scope: {plan.call_stack}",
-            )
-            logger.debug(f"Invalidating cache for scope {plan.call_stack}")
-            for key in keys_to_invalidate:
-                del plan.idempotency_cache[key]
-
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         failed_function_name = (
             plan.call_stack[-1] if plan.call_stack else "unknown_function"
         )
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
         correction_filename = f"correction_for_{failed_function_name}_{timestamp}.py"
         plans_dir = Path.cwd() / ".unity_plans"
         plans_dir.mkdir(exist_ok=True)
         correction_file_path = plans_dir / correction_filename
-
-        script_to_write = f"""
-# Auto-generated course correction script
-# Triggered by failure in: {failed_function_name}
-# Executed at: {timestamp}
-#
-# Goal: Restore browser state to the one left by '{plan.last_verified_function_name}'
-# Target URL: {plan.last_verified_url}
-
-import asyncio
-import textwrap
-
-# The 'action_provider' is injected into the execution namespace by the actor.
-
-async def course_correction_plan():
-    # This is a sequence of actions to restore the state.
-    {textwrap.indent(code, '    ')}
-
-"""
-        correction_file_path.write_text(textwrap.dedent(script_to_write).strip())
-
+        correction_file_path.write_text(code)
         logger.info(
             f"Executing course correction script. See '{correction_file_path}' for details.",
         )
-        plan.action_log.append(
-            f"Saved course correction script to '{correction_file_path}'.",
+
+        wrapped_code = "async def __hp_course_correction():\n" + textwrap.indent(
+            code,
+            "    ",
         )
+        local_namespace: dict = {}
+        exec(wrapped_code, plan.execution_namespace, local_namespace)
+        correction_func = local_namespace["__hp_course_correction"]
 
-        exec_namespace = plan.execution_namespace
+        run_id_token = current_run_id_var.set(plan.run_id)
+        invoc_id_token = current_invocation_id_var.set(
+            f"course_correction_{uuid.uuid4().hex[:8]}",
+        )
+        interaction_sink: list = []
+        sink_token = current_interaction_sink_var.set(interaction_sink)
 
-        script_content = correction_file_path.read_text()
-        exec(script_content, exec_namespace)
+        frame_token = plan.runtime.push_frame(plan.run_id, "__course_correction__")
+        plan.call_stack.append("__course_correction__")
 
-        correction_func = exec_namespace["course_correction_plan"]
-        await correction_func()
+        try:
+            await correction_func()
+            if hasattr(plan, "cumulative_interactions"):
+                plan.cumulative_interactions.extend(interaction_sink)
+
+        except asyncio.CancelledError:
+            logger.warning("Course correction was cancelled.")
+            raise
+        except Exception as e:
+            logger.error(
+                f"Course correction script failed to execute: {e}",
+                exc_info=True,
+            )
+            raise
+        finally:
+            try:
+                current_interaction_sink_var.reset(sink_token)
+                current_invocation_id_var.reset(invoc_id_token)
+                current_run_id_var.reset(run_id_token)
+            except Exception:
+                pass
+
+            plan.runtime.pop_frame(plan.run_id, frame_token)
+            if plan.call_stack and plan.call_stack[-1] == "__course_correction__":
+                plan.call_stack.pop()
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
