@@ -184,7 +184,7 @@ def detach_from_queue_for_activation(
         entries: Dict[str, Any] = {"schedule": new_sched}
         if extra:
             entries.update(extra)
-        scheduler._store.update(
+        scheduler._view.write_entries(  # type: ignore[attr-defined]
             logs=_log_id(log_or_id),
             entries=entries,
             overwrite=True,
