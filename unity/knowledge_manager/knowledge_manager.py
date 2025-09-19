@@ -10,7 +10,6 @@ import json
 from unity.file_manager.base import BaseFileManager
 from unity.file_manager.file_manager import FileManager
 from ..common.embed_utils import ensure_vector_column, list_private_fields
-from ..helpers import _handle_exceptions
 from .types import ColumnType
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
@@ -33,7 +32,6 @@ from ..common.semantic_search import (
 )
 from ..common.context_store import TableStore
 from ..events.event_bus import EVENT_BUS, Event
-from ..common.http import request as http_request
 
 # ------------------------------------------------------------------ #
 # Optional per-tool runtime logging (KnowledgeManager)               #
@@ -768,16 +766,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Mapping of column names to their Unify data types.
         """
-        proj = unify.active_project()
-        ctx = self._ctx_for_table(table)
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        response = http_request("GET", url, headers=headers)
-        _handle_exceptions(response)
-        ret = response.json()
+        ret = unify.get_fields(context=self._ctx_for_table(table))
         return {k: v["data_type"] for k, v in ret.items()}
 
     # Private #
@@ -838,21 +827,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         materialized_fields = {
             k: {"type": v, "mutable": True} for k, v in columns.items()
         }
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        json_input = {
-            "project": proj,
-            "context": ctx,
-            "fields": materialized_fields,
-            # Creating a brand-new context implies no logs to backfill; skip for speed.
-            "backfill_logs": False,
-        }
-        response = http_request("POST", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        return unify.create_fields(
+            context=ctx,
+            fields=materialized_fields,
+            backfill_logs=False,
+        )
 
     @_km_log_tool_runtime
     def _tables_overview(
@@ -937,18 +916,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend acknowledgement / error message.
         """
-        proj = unify.active_project()
         old_name = f"{self._ctx}/{old_name}"
         new_name = f"{self._ctx}/{new_name}"
-        url = f"{unify.BASE_URL}/project/{proj}/contexts/{old_name}/rename"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        json_input = {"name": new_name}
-        response = http_request("PATCH", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        return unify.rename_context(old_name, new_name)
 
     @_km_log_tool_runtime
     def _delete_tables(
@@ -1040,24 +1010,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend response.
         """
-        proj = unify.active_project()
-        ctx = self._ctx_for_table(table)
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        json_input = {
-            "project": proj,
-            "context": ctx,
-            # Do not pre-read fields for existence; the backend handles idempotence
-            # and updating metadata. Avoid expensive backfills for large tables.
-            "fields": {column_name: {"type": column_type, "mutable": True}},
-            "backfill_logs": False,
-        }
-        response = http_request("POST", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        return unify.create_fields(
+            context=self._ctx_for_table(table),
+            fields={column_name: {"type": column_type, "mutable": True}},
+            backfill_logs=False,
+        )
 
     @_km_log_tool_runtime
     def _create_derived_column(
@@ -1087,18 +1044,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend acknowledgement.
         """
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         equation = equation.replace("{", "{lg:")
-        json_input = {
-            "project": unify.active_project(),
-            "context": self._ctx_for_table(table),
-            "key": column_name,
-            "equation": equation,
-            "referenced_logs": {"lg": {"context": self._ctx_for_table(table)}},
-        }
-        response = http_request("POST", url, json=json_input, headers=headers)
-        return response.json()
+        return unify.create_derived_logs(
+            context=self._ctx_for_table(table),
+            key=column_name,
+            equation=equation,
+            referenced_logs={"lg": {"context": self._ctx_for_table(table)}},
+        )
 
     @_km_log_tool_runtime
     def _delete_column(
@@ -1152,19 +1104,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             )
 
         # Prefer field-level deletion endpoint for efficiency; avoids per-log scans
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        json_input = {
-            "project": unify.active_project(),
-            "context": self._ctx_for_table(table),
-            "fields": [column_name],
-        }
-        response = http_request("DELETE", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        return unify.delete_fields(
+            fields=[column_name],
+            context=self._ctx_for_table(table),
+        )
 
     @_km_log_tool_runtime
     def _rename_column(
@@ -1202,22 +1145,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         if new_name == "id":
             raise ValueError("Cannot rename a column to reserved name 'id'.")
 
-        proj = unify.active_project()
-        ctx = self._ctx_for_table(table)
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/rename_field"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        json_input = {
-            "project": proj,
-            "context": ctx,
-            "old_field_name": old_name,
-            "new_field_name": new_name,
-        }
-        response = http_request("PATCH", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        return unify.rename_field(
+            name=old_name,
+            new_name=new_name,
+            context=self._ctx_for_table(table),
+        )
 
     @_km_log_tool_runtime
     def _copy_column(
@@ -2121,14 +2053,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         dest_ctx = self._ctx_for_table(dest_table)
 
         # 4️⃣  Fire the REST request
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        payload: Dict[str, Any] = {
-            "project": unify.active_project(),
-            "pair_of_args": (
+        unify.join_logs(
+            pair_of_args=(
                 {
                     "context": left_ctx,
                     **({} if left_where is None else {"filter_expr": left_where}),
@@ -2138,14 +2064,11 @@ class KnowledgeManager(BaseKnowledgeManager):
                     **({} if right_where is None else {"filter_expr": right_where}),
                 },
             ),
-            "join_expr": join_expr,
-            "mode": mode,
-            "new_context": dest_ctx,
-            "columns": select,
-        }
-
-        resp = http_request("POST", url, json=payload, headers=headers)
-        _handle_exceptions(resp)
+            join_expr=join_expr,
+            mode=mode,
+            new_context=dest_ctx,
+            columns=select,
+        )
 
         return dest_ctx
 

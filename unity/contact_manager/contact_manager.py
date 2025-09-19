@@ -7,7 +7,6 @@ import re
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.embed_utils import ensure_vector_column
 from ..knowledge_manager.types import ColumnType
-from ..helpers import _handle_exceptions
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
@@ -30,7 +29,6 @@ from ..common.semantic_search import (
     fetch_top_k_by_references,
     backfill_rows,
 )
-from ..common.http import request as http_request
 
 # ------------------------------------------------------------------ #
 #  Optional per-tool runtime logging                                  #
@@ -267,12 +265,7 @@ class ContactManager(BaseContactManager):
         List[Dict[str, Any]]
             The list of assistants for the current account.
         """
-        url = f"{os.environ['UNIFY_BASE_URL']}/assistant?"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = http_request("GET", url, headers=headers)
-        _handle_exceptions(response)
-        data = response.json()
-        return data.get("info", []) if isinstance(data, dict) else []
+        return unify.list_assistants()
 
     def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
         """Create custom columns for *extra_fields* that are not yet present.
@@ -441,25 +434,17 @@ class ContactManager(BaseContactManager):
 
         user_info: Dict[str, Any] = {}
 
-        url = f"{os.environ['UNIFY_BASE_URL']}/user/basic-info"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = http_request("GET", url, headers=headers)
+        data: Any = unify.get_user_basic_info()
+        # Map API payload → expected field names
+        mapped: Dict[str, Any] = {
+            "first_name": data.get("first"),
+            "last_name": data.get("last"),
+            "email": data.get("email"),
+        }
 
-        # Raise for HTTP errors so the except-block handles them uniformly
-        _handle_exceptions(response)
-
-        data: Any = response.json()
-        if isinstance(data, dict):
-            # Map API payload → expected field names
-            mapped: Dict[str, Any] = {
-                "first_name": data.get("first"),
-                "last_name": data.get("last"),
-                "email": data.get("email"),
-            }
-
-            # Filter out *None* values so downstream logic does not
-            # inadvertently overwrite existing data with nulls.
-            user_info.update({k: v for k, v in mapped.items() if v is not None})
+        # Filter out *None* values so downstream logic does not
+        # inadvertently overwrite existing data with nulls.
+        user_info.update({k: v for k, v in mapped.items() if v is not None})
 
         from .. import ASSISTANT
 
@@ -670,30 +655,22 @@ class ContactManager(BaseContactManager):
         ):
             raise ValueError(f"Column '{column_name}' already exists.")
 
-        proj = unify.active_project()
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
         column_info = {
             "type": str(column_type),
             "mutable": True,
         }
         if column_description is not None:
             column_info["description"] = column_description
-        json_input = {
-            "project": proj,
-            "context": self._ctx,
-            "fields": {
-                column_name: column_info,
-            },
-        }
-        response = http_request("POST", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
+        response = unify.create_fields(
+            fields={column_name: column_info},
+            context=self._ctx,
+        )
         # Remember the new column for subsequent reads within this manager instance
         try:
             self._known_custom_fields.add(column_name)
         except Exception:
             pass
-        return response.json()
+        return response
 
     @_log_tool_runtime
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
@@ -727,57 +704,10 @@ class ContactManager(BaseContactManager):
         if column_name in self._REQUIRED_COLUMNS:
             raise ValueError(f"Cannot delete required column '{column_name}'.")
 
-        # Avoid a pre-read of fields; attempt deletion directly via the
-        # dedicated field-deletion endpoint which removes both the field
-        # definition and all associated entries in a single backend call.
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        json_input = {
-            "project": unify.active_project(),
-            "context": self._ctx,
-            "fields": [column_name],
-        }
-        response = http_request("DELETE", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-
-        payload: Dict[str, Any] = {}
-        try:
-            payload = response.json()
-        except Exception:
-            payload = {}
-
-        # If the backend returns the list of deleted fields and our target
-        # isn't included, treat it as a non-existent column for parity with
-        # previous semantics.
-        deleted_fields = None
-        if isinstance(payload, dict):
-            deleted_fields = payload.get("deleted_fields")
-        if isinstance(deleted_fields, list) and column_name not in deleted_fields:
-            raise ValueError(f"Column '{column_name}' does not exist.")
-
-        # Fallback for environments where DELETE /logs/fields is not implemented
-        # (e.g., test stubs). When no structured confirmation is present, issue a
-        # single idempotent deletion via the generic logs endpoint which will drop
-        # the field values and clean up the field definition.
-        if not isinstance(deleted_fields, list):
-            fallback_url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
-            fallback_body = {
-                "project": unify.active_project(),
-                "context": self._ctx,
-                "ids_and_fields": [[None, column_name]],
-                "source_type": "all",
-            }
-            fb_resp = http_request(
-                "DELETE",
-                fallback_url,
-                json=fallback_body,
-                headers=headers,
-            )
-            _handle_exceptions(fb_resp)
-            try:
-                payload = fb_resp.json()
-            except Exception:
-                pass
+        response = unify.delete_fields(
+            fields=[column_name],
+            context=self._ctx,
+        )
 
         # Update local view of known custom columns on success
         try:
@@ -786,7 +716,7 @@ class ContactManager(BaseContactManager):
         except Exception:
             pass
 
-        return payload
+        return response
 
     # ------------------------------------------------------------------ #
     #  Vector-search helpers                                             #

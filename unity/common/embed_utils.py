@@ -2,11 +2,8 @@
 Utility functions for embedding-based vector search through the logs.
 """
 
-import os
-
 import unify
 import threading
-from .http import request as http_request
 
 # Model to use for text embeddings
 EMBED_MODEL = "text-embedding-3-small"
@@ -73,29 +70,21 @@ def ensure_derived_column(
     # reject duplicates and we treat those as success.
     lock = _get_column_lock(context, key)
     with lock:
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
-        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
-        json_input: dict = {
-            "project": unify.active_project(),
-            "context": context,
-            "key": key,
-            "equation": equation,
-            "referenced_logs": {
-                "lg": {"context": referenced_logs_context or context},
-            },
-        }
-        if derived is not None:
-            json_input["derived"] = derived
-
-        response = http_request("POST", url, json=json_input, headers=headers)
-        if response.status_code != 200:
-            body = getattr(response, "text", "") or ""
+        try:
+            unify.create_derived_logs(
+                context=context,
+                key=key,
+                equation=equation,
+                referenced_logs={"lg": {"context": referenced_logs_context or context}},
+                derived=derived,
+            )
+        except unify.RequestError as e:
+            body = getattr(e.response, "text", "") or ""
             if (
                 "already exists" in body
                 or "duplicate key value violates unique constraint" in body
             ):
                 return
-            assert response.status_code == 200, response.text
 
 
 def ensure_vector_column(
