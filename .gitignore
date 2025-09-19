@@ -20,3 +20,4 @@ dump.rdb
 *.txt
 parsed_results_output/
 evals/
+magnitude/

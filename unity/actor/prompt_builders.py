@@ -49,6 +49,35 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
     return "\n\n".join(handle_docs)
 
 
+def _format_cache_summary(idempotency_cache: Dict[tuple, Any], last_n: int = 20) -> str:
+    """Formats the last N cache entries into a readable summary for the LLM."""
+    if not idempotency_cache:
+        return "Cache is empty."
+
+    summary_lines = ["### Recent Cache Entry Summary (for invalidation planning)"]
+
+    recent_items = list(idempotency_cache.values())[-last_n:]
+
+    for entry in recent_items:
+        meta = entry.get("meta")
+        if not meta:
+            continue
+
+        func = meta.get("function", "N/A")
+        step = meta.get("step", "N/A")
+        tool = meta.get("tool", "N/A").replace("action_provider.", "")
+        url = meta.get("url", "N/A")
+
+        if url and len(url) > 70:
+            url = url[:67] + "..."
+
+        summary_lines.append(
+            f"- Func: `{func}`, Step: `{step}`, Tool: `{tool}`, URL: `{url}`",
+        )
+
+    return "\n".join(summary_lines)
+
+
 def _build_shared_strategy_principles() -> str:
     """
     Builds the reusable block of strategic principles for automation prompts.
@@ -2404,6 +2433,7 @@ def build_interjection_prompt(
     call_stack: list[str],
     action_log: list[str],
     goal: str,
+    idempotency_cache: Dict[tuple, Any],
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -2411,6 +2441,8 @@ def build_interjection_prompt(
     tool_reference = _build_tool_signatures(tools)
     handle_apis = _build_handle_apis(tools)
     strategy_principles = _build_shared_strategy_principles()
+
+    cache_summary = _format_cache_summary(idempotency_cache)
 
     call_stack_str = (
         " -> ".join(call_stack) if call_stack else "Not inside any function."
@@ -2437,10 +2469,12 @@ def build_interjection_prompt(
     - **Current Execution Point (Call Stack):** `{call_stack_str}`
     - **Most Recent Plan Actions:**
       {recent_actions}
+
+    {cache_summary}
     ---
     {strategy_principles}
     ---
-    ### Your Task: Analyze, Decide, and Patch
+    ### Your Task: Analyze, Decide, Patch, and Propose Cache Strategy
 
     **1. Analyze Intent and Choose an Action:** First, analyze the user's intent to choose the single best action from the Decision Tree below.
 
@@ -2449,6 +2483,21 @@ def build_interjection_prompt(
         - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstrings.
         - **Generate Patches:** For every function that needs to be changed, create a `FunctionPatch` object containing its full, updated source code.
 
+    **3. Propose a Cache Invalidation Strategy (CRITICAL for `modify_task`):**
+        After any modification, the plan will restart execution from `main_plan`. Your proposed cache strategy is critical to avoid re-running steps that are still valid, ensuring a fast and intelligent replay. Your goal is to invalidate the absolute minimum number of steps required for the plan to be correct.
+
+        - **`invalidate_functions`**: Use to clear the cache for entire functions that have fundamentally changed.
+        - **`invalidate_steps`**: Use for surgical changes *within* a function, to clear the cache only from the point of the change onward.
+        - **Safety Note**: You do not need to worry about downstream effects of state changes (e.g., from a `.navigate()` call). The runtime will automatically enforce safety guardrails on top of your proposal. Focus only on invalidating the direct targets of your code patches.
+
+        **Comparison of Invalidation Strategies:**
+
+        | Scenario                                                                                                                              | Bad Invalidation (Slow, Redundant Replay)                                                                                                                                     | Good Invalidation (Fast, Intelligent Replay)                                                                                                                                                                |
+        | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+        | A plan `login()` -> `search_items("laptops")` -> `add_to_cart()` is interrupted. The user wants to search for "monitors" instead.       | **LLM Response**: ` "cache": null ` <br> **Actor Behavior**: The conservative default invalidates from `search_items`. The actor replays `login()` from cache, then re-runs the rest of the plan. This is acceptable but not optimal. | **LLM Response**: ` "cache": {{"invalidate_functions": ["search_items", "add_to_cart"]}} ` <br> **Actor Behavior**: The actor knows exactly which functions are stale. It replays `login()` from cache and correctly re-executes the rest. |
+        | A function `process_report()` has 5 steps. The user interjects to change the logic only in step 4 (e.g., change chart type).          | **LLM Response**: ` "cache": {{"invalidate_functions": ["process_report"]}} ` <br> **Actor Behavior**: The actor re-runs the entire `process_report` function, including potentially slow data fetching and cleaning in steps 1 and 2. | **LLM Response**: ` "cache": {{"invalidate_steps": [{{"function_name": "process_report", "from_step_inclusive": 4}}]}} ` <br> **Actor Behavior**: The actor reuses the cached results for steps 1-3 inside the function and only re-runs from step 4 onward. This is highly efficient. |
+
+    ---
     #### 🧠 Distinguishing `modify_task` from `refactor_and_generalize`
     This is your most critical strategic decision.
     - **Choose `modify_task` to alter the BEHAVIOR of the current plan.** Use this when the user wants to add a step, correct a step, or change a parameter. The fundamental *structure* of the plan (which functions call which other functions) remains the same. Do not delete the existing steps and/or workflow unless the user specifically asks you to do so.

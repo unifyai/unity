@@ -370,6 +370,18 @@ def pytest_runtest_teardown(item):
     test_name_log_filter.reset_test_name()
 
 
+def pytest_html_results_summary(prefix, summary, postfix):
+    if SETTINGS.UNIFY_CACHE_BENCHMARK:
+        stats = unify.get_cache_stats()
+        prefix.extend(
+            [
+                f"<h4>Unify Cache Benchmark Report:</h4>",
+                f"<p>Hits ({stats.get_percentage_of_cache_hits():.2f}%): {stats.hits} | Misses ({stats.get_percentage_of_cache_misses():.2f}%): {stats.misses}</p>",
+                f"<p>Reads: {stats.reads} | Writes: {stats.writes}</p>",
+            ],
+        )
+
+
 # --------------------------------------------------------------------------- #
 #  httpx cleanup
 # --------------------------------------------------------------------------- #
