@@ -1690,10 +1690,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Uniqueness (name/description) – single read covering both columns within this tool call
         # Escape values via repr to keep a valid filter string regardless of content.
-        _name_lit = f"{name!r}"
-        _desc_lit = f"{description!r}"
-        _dupe_rows = self._view.get_entries(
-            filter=f"name == {_name_lit} or description == {_desc_lit}",
+        _dupe_rows = self._find_name_desc_collisions(
+            name=name,
+            description=description,
             limit=2,
         )
         if _dupe_rows:
@@ -2046,7 +2045,6 @@ class TaskScheduler(BaseTaskScheduler):
         if simple_allowed:
             # Single deduplication read across all names/descriptions
             try:
-                # Build a single OR-chain filter across provided names/descriptions
                 clauses: list[str] = []
                 for spec in tasks:
                     nm = spec.get("name")
@@ -2057,7 +2055,10 @@ class TaskScheduler(BaseTaskScheduler):
                         clauses.append(f"description == {ds!r}")
                 filter_expr = " or ".join(clauses) if clauses else None
                 existing = (
-                    self._view.get_entries(filter=filter_expr, limit=len(tasks) + 1)
+                    self._view.get_entries(
+                        filter=filter_expr,
+                        limit=len(tasks) + 1,
+                    )
                     if filter_expr
                     else []
                 )
@@ -2811,19 +2812,10 @@ class TaskScheduler(BaseTaskScheduler):
             member_ids = []
         if member_ids:
             fields_needed: List[str] = self._queue_member_fields()
-            logs = self._view.get_minimal_rows_by_task_ids(
-                task_ids=member_ids,
+            rows_by_id: Dict[int, Dict[str, Any]] = self._read_rows_by_ids(
+                ids=member_ids,
                 fields=fields_needed,
             )
-            rows_by_id: Dict[int, Dict[str, Any]] = {}
-            for lg in logs or []:
-                try:
-                    e = dict(getattr(lg, "entries", {}) or {})
-                    tid = e.get("task_id")
-                    if isinstance(tid, int):
-                        rows_by_id[int(tid)] = e
-                except Exception:
-                    continue
 
             ordered: List[Task] = []
             for tid in member_ids:
@@ -2973,10 +2965,10 @@ class TaskScheduler(BaseTaskScheduler):
         Strategy
         --------
         - Fast-path: when a local queue index is available and not marked stale,
-          use it to resolve the queue_id directly and delegate to `_get_queue`.
-          This avoids an extra backend read to fetch the single row just to get
-          its `queue_id`.
-        - Otherwise, fall back to the storage-based resolution.
+          resolve `queue_id` and delegate to `_get_queue(queue_id=…)`.
+        - Otherwise, read the single row; if it carries a numeric `queue_id`,
+          delegate to `_get_queue(queue_id=…)`; else fall back to
+          `_walk_queue_from_task` which ignores `queue_id` and follows links.
         """
         # Fast-path via LocalTaskView when membership is known.
         try:
@@ -2986,37 +2978,7 @@ class TaskScheduler(BaseTaskScheduler):
         if isinstance(qid_cached, int):
             members = list(self._view.get_member_ids(int(qid_cached)) or [])
             if int(task_id) in members:
-                member_ids = list(members)
-                if member_ids:
-                    fields_needed: List[str] = self._queue_member_fields()
-                    logs = self._view.get_minimal_rows_by_task_ids(
-                        task_ids=member_ids,
-                        fields=fields_needed,
-                    )
-                    rows_by_id: Dict[int, Dict[str, Any]] = {}
-                    for lg in logs or []:
-                        try:
-                            e = dict(getattr(lg, "entries", {}) or {})
-                            tid = e.get("task_id")
-                            if isinstance(tid, int):
-                                rows_by_id[int(tid)] = e
-                        except Exception:
-                            continue
-
-                    ordered: List[Task] = []
-                    for tid in member_ids:
-                        row = rows_by_id.get(int(tid))
-                        if not isinstance(row, dict):
-                            continue
-                        try:
-                            st = self._to_status(row.get("status"))  # type: ignore[arg-type]
-                            if st in self._TERMINAL_STATUSES:
-                                continue
-                        except Exception:
-                            pass
-                        row = self._sanitize_activation(row)
-                        ordered.append(Task(**row))
-                    return ordered
+                return self._get_queue(queue_id=qid_cached)
 
         # Fallback: resolve via storage
         try:
@@ -3026,76 +2988,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         qid = row.get("queue_id")
         if isinstance(qid, int):
-            # Optimized single-queue read that avoids re-fetching the same row twice
-            # within this tool call. We already have `row` for task_id; fetch other
-            # runnable members of the same queue excluding this task, then compose
-            # the ordered list purely in-memory.
-            try:
-                rows_in_queue: List[TaskRow] = [
-                    r
-                    for r in self._filter_tasks(
-                        filter=(
-                            "schedule is not None and "
-                            "status not in ('completed','cancelled','failed') and "
-                            f"queue_id == {int(qid)} and task_id != {int(task_id)}"
-                        ),
-                    )
-                ]
-            except Exception:
-                rows_in_queue = []
-
-            # Compose a by-id map that includes the current row
-            rows_all: List[TaskRow] = [row] + rows_in_queue
-            if not rows_all:
-                return []
-
-            rows_by_id: Dict[int, TaskRow] = {}
-            for r in rows_all:
-                try:
-                    tid_val = r.get("task_id")
-                    if isinstance(tid_val, int):
-                        rows_by_id[tid_val] = r
-                except Exception:
-                    continue
-
-            # Identify head locally (prev_task is None). If ambiguous/missing,
-            # fall back to using the provided `row` as a starting point.
-            heads = [
-                r
-                for r in rows_all
-                if (r.get("schedule") or {}).get("prev_task") is None
-            ]
-            head = heads[0] if heads else row
-
-            # Walk head→tail using next_task pointers in-memory
-            ordered: List[Task] = []
-            seen: set[int] = set()
-            cur = head
-            while cur is not None:
-                try:
-                    tid_val = cur.get("task_id")
-                    tid_int = int(tid_val) if tid_val is not None else None
-                except Exception:
-                    tid_int = None
-                if isinstance(tid_int, int):
-                    if tid_int in seen:
-                        break
-                    seen.add(tid_int)
-
-                # Strip stale activation metadata on non-active rows
-                _row = self._sanitize_activation(dict(cur))
-                ordered.append(Task(**_row))
-
-                nxt = (cur.get("schedule") or {}).get("next_task")
-                if nxt is None:
-                    break
-                try:
-                    nxt_int = int(nxt)
-                except Exception:
-                    break
-                cur = rows_by_id.get(nxt_int)
-
-            return ordered
+            return self._get_queue(queue_id=qid)
 
         # No numeric queue_id – follow the linked chain defensively
         return self._walk_queue_from_task(task_id=int(task_id))
@@ -3175,26 +3068,20 @@ class TaskScheduler(BaseTaskScheduler):
                 task_ids=member_ids,
                 fields=minimal_fields,
             )
-            rows_by_id: Dict[int, Dict[str, Any]] = {}
+            rows_by_id: Dict[int, Dict[str, Any]] = self._read_rows_by_ids(
+                ids=member_ids,
+                fields=minimal_fields,
+            )
             id_map: Dict[int, int] = {}
             for lg in logs or []:
                 try:
-                    e = dict(getattr(lg, "entries", {}) or {})
-                    tid = (
-                        int(e.get("task_id")) if e.get("task_id") is not None else None
-                    )
+                    e = getattr(lg, "entries", {}) or {}
+                    tid = e.get("task_id")
+                    lid = getattr(lg, "id", None)
+                    if isinstance(tid, int) and isinstance(lid, int):
+                        id_map[int(tid)] = int(lid)
                 except Exception:
-                    tid = None
-                if tid is None:
                     continue
-                rows_by_id[int(tid)] = e
-                try:
-                    _lid = getattr(lg, "id", None)
-                    if isinstance(_lid, int):
-                        id_map[int(tid)] = int(_lid)
-                        # LocalTaskView manages memoization centrally
-                except Exception:
-                    pass
 
             # Compute invariant-preserving plan and filter no-op writes
             updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
@@ -3802,7 +3689,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         if entries_by_tid:
             try:
-                self._batch_update_by_task_ids(entries_by_tid=entries_by_tid)
+                self._view.write_entries_by_task_ids(entries_by_tid=entries_by_tid)
             except Exception:
                 # Fallback to per-task validated writes for robustness
                 for tid, write_entries in entries_by_tid.items():
@@ -5098,62 +4985,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         return self._view.write_entries(logs=logs, entries=entries, overwrite=overwrite)
 
-    # ------------------------------------------------------------------ #
-    #  Internal batched updater by task_id (single backend call)         #
-    # ------------------------------------------------------------------ #
-
-    def _batch_update_by_task_ids(
-        self,
-        *,
-        entries_by_tid: Dict[int, Dict[str, Any]],
-    ) -> Dict[str, str]:
-        """
-        Resolve log ids for the provided task_ids and apply per-task entries
-        in a single backend update.
-
-        Notes
-        -----
-        - This helper assumes the caller already validated invariants and
-          computed final entries for each task (including queue_id/schedule).
-        - Neighbour symmetry and cross-queue guards are the responsibility of
-          the caller; this method performs a direct batched write.
-        """
-        if not entries_by_tid:
-            return {"detail": "No updates"}
-
-        target_tids: List[int] = list(
-            dict.fromkeys(int(t) for t in entries_by_tid.keys()),
-        )
-
-        # Single minimal read to map task_id -> log id
-        logs = self._view.get_minimal_rows_by_task_ids(
-            task_ids=target_tids,
-            fields=["task_id"],
-        )
-        by_tid_to_log_id: Dict[int, int] = {}
-        for lg in logs or []:
-            try:
-                e = getattr(lg, "entries", {}) or {}
-                tid = e.get("task_id")
-                lid = getattr(lg, "id", None)
-                if isinstance(tid, int) and isinstance(lid, int):
-                    by_tid_to_log_id[int(tid)] = int(lid)
-            except Exception:
-                continue
-
-        # Preserve order alignment between logs and entries
-        log_ids: List[int] = []
-        entries_list: List[Dict[str, Any]] = []
-        for tid in target_tids:
-            lid = by_tid_to_log_id.get(int(tid))
-            if isinstance(lid, int):
-                log_ids.append(int(lid))
-                entries_list.append(entries_by_tid[int(tid)])
-
-        if not log_ids:
-            return {"detail": "No matching task_ids resolved"}
-
-        return self._write_log_entries(logs=log_ids, entries=entries_list)
+    # (Removed) Batched updater by task_id – now resides in LocalTaskView
 
     # ------------------------------------------------------------------ #
     #  Optional checkpoint persistence                                   #
@@ -5166,20 +4998,8 @@ class TaskScheduler(BaseTaskScheduler):
         snapshot: Dict[str, Any],
     ) -> None:
         try:
-            ctx = f"{self._ctx}/Checkpoints"
-            if ctx not in unify.get_contexts():
-                unify.create_context(ctx)
-                unify.create_fields(
-                    {
-                        "checkpoint_id": "str",
-                        "label": "str",
-                        "payload": "json",
-                    },
-                    context=ctx,
-                )
-            unify.log(
-                context=ctx,
-                new=True,
+            # Route through storage/view to centralize backend I/O
+            _ = self._store.save_checkpoint(
                 checkpoint_id=cid,
                 label=label,
                 payload=snapshot,
@@ -5189,33 +5009,13 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _load_checkpoint(self, cid: str) -> Optional[Dict[str, Any]]:
         try:
-            ctx = f"{self._ctx}/Checkpoints"
-            rows = unify.get_logs(
-                context=ctx,
-                filter=f"checkpoint_id == {cid!r}",
-                limit=1,
-                return_ids_only=False,
-            )
-            if not rows:
-                return None
-            log = rows[0]
-            entries = getattr(log, "entries", {}) or {}
-            return entries.get("payload")
+            return self._store.load_checkpoint(checkpoint_id=cid)
         except Exception:
             return None
 
     def _get_latest_persisted_checkpoint(self) -> Optional[Dict[str, Any]]:
         try:
-            ctx = f"{self._ctx}/Checkpoints"
-            rows = unify.get_logs(context=ctx, offset=0, limit=1, return_ids_only=False)
-            if not rows:
-                return None
-            log = rows[-1]
-            entries = getattr(log, "entries", {}) or {}
-            return {
-                "checkpoint_id": entries.get("checkpoint_id"),
-                "label": entries.get("label"),
-            }
+            return self._store.get_latest_checkpoint()
         except Exception:
             return None
 
@@ -5644,6 +5444,54 @@ class TaskScheduler(BaseTaskScheduler):
                 # Defensive fallback; a failed metric read should not crash tools
                 self._num_tasks_cached = 0
         return int(self._num_tasks_cached)
+
+    # ----------------------------- Read helpers ----------------------------- #
+    def _read_rows_by_ids(
+        self,
+        *,
+        ids: List[int],
+        fields: List[str],
+    ) -> Dict[int, Dict[str, Any]]:
+        """
+        Fetch a minimal projection for the given task ids and return a map
+        of task_id -> entries dict. Always includes task_id in the projection.
+        """
+        try:
+            logs = self._view.get_minimal_rows_by_task_ids(
+                task_ids=ids,
+                fields=fields,
+            )
+        except Exception:
+            logs = []
+        rows_by_id: Dict[int, Dict[str, Any]] = {}
+        for lg in logs or []:
+            try:
+                e = dict(getattr(lg, "entries", {}) or {})
+                tid = e.get("task_id")
+                if isinstance(tid, int):
+                    rows_by_id[int(tid)] = e
+            except Exception:
+                continue
+        return rows_by_id
+
+    def _find_name_desc_collisions(
+        self,
+        *,
+        name: str,
+        description: str,
+        limit: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return existing rows that collide on name or description.
+        Uses a single filtered read within the current tool call.
+        """
+        try:
+            return self._view.get_entries(
+                filter=f"name == {name!r} or description == {description!r}",
+                limit=limit,
+            )
+        except Exception:
+            return []
 
     # ---------------------------- Field helpers ---------------------------- #
     def _queue_member_fields(self) -> List[str]:

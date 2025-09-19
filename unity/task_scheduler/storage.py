@@ -408,6 +408,120 @@ class TasksStore:
     def delete(self, *, logs: Union[int, List[int]]) -> Dict[str, str]:
         return unify.delete_logs(context=self._ctx, logs=logs)
 
+    # ------------------------- Checkpoint helpers -------------------------
+    def _checkpoint_context(self) -> str:
+        """
+        Return the fully-qualified checkpoints context for this task context.
+
+        Example: for "Tasks", returns "Tasks/Checkpoints".
+        """
+        return f"{self._ctx}/Checkpoints"
+
+    def _ensure_checkpoint_context(self) -> str:
+        """
+        Ensure the checkpoints context exists with required fields and return its name.
+        """
+        ctx = self._checkpoint_context()
+        try:
+            if ctx not in unify.get_contexts():
+                unify.create_context(ctx)
+                unify.create_fields(
+                    {
+                        "checkpoint_id": "str",
+                        "label": "str",
+                        "payload": "json",
+                    },
+                    context=ctx,
+                )
+        except Exception:
+            # Best-effort: if we cannot create context/fields, subsequent calls may fail
+            pass
+        return ctx
+
+    def save_checkpoint(
+        self,
+        *,
+        checkpoint_id: str,
+        label: Optional[str],
+        payload: Dict[str, Any],
+    ) -> Optional[unify.Log]:
+        """
+        Create a checkpoint row in the checkpoints context.
+        """
+        ctx = self._ensure_checkpoint_context()
+        try:
+            return unify.log(
+                context=ctx,
+                new=True,
+                checkpoint_id=checkpoint_id,
+                label=label,
+                payload=payload,
+            )
+        except Exception:
+            return None
+
+    def load_checkpoint(self, *, checkpoint_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Load a checkpoint payload by its identifier. Returns None if missing.
+        """
+        ctx = self._checkpoint_context()
+        try:
+            if ctx not in unify.get_contexts():
+                return None
+            rows = unify.get_logs(
+                context=ctx,
+                filter=f"checkpoint_id == {checkpoint_id!r}",
+                limit=1,
+                return_ids_only=False,
+            )
+            if not rows:
+                return None
+            log = rows[0]
+            entries = getattr(log, "entries", {}) or {}
+            return entries.get("payload")
+        except Exception:
+            return None
+
+    def get_latest_checkpoint(self) -> Optional[Dict[str, Any]]:
+        """
+        Return a small descriptor of the most recent checkpoint, or None.
+
+        Note: ordering semantics are backend-defined; this mirrors prior behaviour.
+        """
+        ctx = self._checkpoint_context()
+        try:
+            if ctx not in unify.get_contexts():
+                return None
+            rows = unify.get_logs(context=ctx, offset=0, limit=1, return_ids_only=False)
+            if not rows:
+                return None
+            log = rows[-1]
+            entries = getattr(log, "entries", {}) or {}
+            return {
+                "checkpoint_id": entries.get("checkpoint_id"),
+                "label": entries.get("label"),
+            }
+        except Exception:
+            return None
+
+    def delete_checkpoint(self, *, checkpoint_id: str) -> Dict[str, str]:
+        """
+        Best-effort deletion of a checkpoint row by identifier.
+        """
+        ctx = self._checkpoint_context()
+        try:
+            rows = unify.get_logs(
+                context=ctx,
+                filter=f"checkpoint_id == {checkpoint_id!r}",
+                limit=100,
+                return_ids_only=True,
+            )
+            if not rows:
+                return {"detail": "No matching checkpoints"}
+            return unify.delete_logs(context=ctx, logs=rows)
+        except Exception:
+            return {"detail": "Delete failed"}
+
 
 class LocalTaskView:
     """
@@ -894,6 +1008,52 @@ class LocalTaskView:
         except Exception:
             self._queue_index_stale = True
         return result
+
+    def write_entries_by_task_ids(
+        self,
+        *,
+        entries_by_tid: Dict[int, Dict[str, Any]],
+    ) -> Dict[str, str]:
+        """
+        Resolve log ids for the provided task_ids and apply per-task entries
+        in a single backend update.
+
+        Caller is responsible for invariant checks and neighbour symmetry.
+        """
+        if not entries_by_tid:
+            return {"detail": "No updates"}
+
+        target_tids: List[int] = list(
+            dict.fromkeys(int(t) for t in entries_by_tid.keys()),
+        )
+
+        logs = self.get_minimal_rows_by_task_ids(
+            task_ids=target_tids,
+            fields=["task_id"],
+        )
+        by_tid_to_log_id: Dict[int, int] = {}
+        for lg in logs or []:
+            try:
+                e = getattr(lg, "entries", {}) or {}
+                tid = e.get("task_id")
+                lid = getattr(lg, "id", None)
+                if isinstance(tid, int) and isinstance(lid, int):
+                    by_tid_to_log_id[int(tid)] = int(lid)
+            except Exception:
+                continue
+
+        log_ids: List[int] = []
+        entries_list: List[Dict[str, Any]] = []
+        for tid in target_tids:
+            lid = by_tid_to_log_id.get(int(tid))
+            if isinstance(lid, int):
+                log_ids.append(int(lid))
+                entries_list.append(entries_by_tid[int(tid)])
+
+        if not log_ids:
+            return {"detail": "No matching task_ids resolved"}
+
+        return self.write_entries(logs=log_ids, entries=entries_list)
 
     def write_entries(
         self,
