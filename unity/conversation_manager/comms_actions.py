@@ -332,7 +332,9 @@ async def _send_email_via_address(
     """
     from_email = os.getenv("ASSISTANT_EMAIL")
 
-    print(f"Sending email from {from_email} to {to_email}: {content}")
+    print(
+        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}"
+    )
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{os.getenv('UNITY_COMMS_URL')}/email/send",

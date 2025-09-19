@@ -919,7 +919,7 @@ class CommsAgent:
         Args:
             subject (str): The subject of the email.
             message (str): The message of the email.
-            message_id (str): The message id of the email to reply to (ignore for now).
+            message_id (str): The message id of the email to reply to.
         """
         # ToDo: Add this back to the docstring once the message_id works
         # If you are asked to reply to an email rather than sending a new email,
@@ -1005,6 +1005,7 @@ class CommsAgent:
 
         Args:
             description (str): The description of the contact and content of the email.
+            Always include the message_id and subject of the email you're responding to.
             parent_chat_context (list[dict]): The parent chat context.
         """
         return await send_email(description, parent_chat_context)
