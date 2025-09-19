@@ -225,11 +225,17 @@ class ActiveTask(BaseActiveTask):
         ret = await self._actor_handle.result()
         # If the task wasn't explicitly cancelled/failed, mark as completed.
         if self._scheduler and self._task_id is not None and not self._was_stopped:
-            row = self._scheduler._filter_tasks(  # type: ignore[attr-defined]
+            rows = self._scheduler._filter_tasks(  # type: ignore[attr-defined]
                 filter=f"task_id == {self._task_id} and instance_id == {self._instance_id}",
                 limit=1,
-            )[0]
-            if row["status"] not in ("cancelled", "failed"):
+            )
+            cur_status = None
+            try:
+                if rows:
+                    cur_status = rows[0].get("status")
+            except Exception:
+                cur_status = None
+            if rows and cur_status not in ("cancelled", "failed"):
                 self._mirror_status("completed")
         self._clear_active_pointer()
         return ret

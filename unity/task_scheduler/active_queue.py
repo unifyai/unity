@@ -49,6 +49,22 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             self._passthrough_enabled: bool = len(initial_q) == 1
         except Exception:
             self._passthrough_enabled = False
+
+        # Precompute a next-task hint from the current row's schedule.next_task
+        self._current_next_hint: Optional[int] = None
+        try:
+            rows0 = self._s._filter_tasks(
+                filter=f"task_id == {int(self._current_task_id)}",
+                limit=1,
+            )
+            sched0 = rows0[0].get("schedule") if rows0 else None
+            self._current_next_hint = (
+                int((sched0 or {}).get("next_task"))
+                if (sched0 or {}).get("next_task") is not None
+                else None
+            )
+        except Exception:
+            self._current_next_hint = None
         # Background driver
         self._driver = asyncio.create_task(self._drive())
 
@@ -212,6 +228,20 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         try:
             while True:
                 try:
+                    # Refresh next-hint just before awaiting result, in case linkage was updated
+                    try:
+                        rows_h = self._s._filter_tasks(
+                            filter=f"task_id == {int(self._current_task_id)}",
+                            limit=1,
+                        )
+                        sched_h = rows_h[0].get("schedule") if rows_h else None
+                        self._current_next_hint = (
+                            int((sched_h or {}).get("next_task"))
+                            if (sched_h or {}).get("next_task") is not None
+                            else None
+                        )
+                    except Exception:
+                        pass
                     result = await self._current_handle.result()
                 except asyncio.CancelledError:
                     self._final_result = "Stopped."
@@ -282,13 +312,16 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     except Exception:
                         pass
 
-                # Find next runnable in the same queue (head->tail from current)
-                queue = self._s._get_queue_for_task(task_id=self._current_task_id)
-                next_tid = None
-                for t in queue:
-                    if t.task_id != self._current_task_id:
-                        next_tid = t.task_id
-                        break
+                # Determine the next task to run.
+                # Prefer the pre-captured next_hint (schedule.next_task) for robustness even if the head row changed status.
+                next_tid = self._current_next_hint
+                if next_tid is None:
+                    # Fallback: derive from the current live queue state (head->tail)
+                    queue = self._s._get_queue_for_task(task_id=self._current_task_id)
+                    for t in queue:
+                        if t.task_id != self._current_task_id:
+                            next_tid = t.task_id
+                            break
                 if next_tid is None:
                     # Queue exhausted – compose a completion summary across all tasks
                     if self._completed_tasks:
@@ -316,6 +349,20 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     # Do NOT detach followers from each other; keep queue links intact
                     detach=False,
                 )
+                # Precompute next hint for the new current task
+                try:
+                    rows_n = self._s._filter_tasks(
+                        filter=f"task_id == {int(self._current_task_id)}",
+                        limit=1,
+                    )
+                    sched_n = rows_n[0].get("schedule") if rows_n else None
+                    self._current_next_hint = (
+                        int((sched_n or {}).get("next_task"))
+                        if (sched_n or {}).get("next_task") is not None
+                        else None
+                    )
+                except Exception:
+                    self._current_next_hint = None
                 # Deliver any queued interjections for the newly active task
                 try:
                     pending_msgs = getattr(self, "_queued_interjections", {}).pop(
