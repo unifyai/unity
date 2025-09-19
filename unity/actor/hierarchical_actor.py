@@ -355,6 +355,10 @@ class InterjectionDecision(BaseModel):
         None,
         description="A list of functions to be updated. Required for 'modify_task'.",
     )
+    cache: Optional[CacheInvalidateSpec] = Field(
+        None,
+        description="An optional, surgical plan for invalidating the cache to enable a more efficient replay.",
+    )
     new_goal: Optional[str] = Field(
         None,
         description="The goal for the new or detached task.",
