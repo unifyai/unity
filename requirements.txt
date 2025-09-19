@@ -10,6 +10,7 @@ git+https://github.com/unifyai/unify.git # deploy mode
 fastapi>=0.104.0
 google-auth>=2.17.0
 google-cloud-pubsub>=2.18.0
+google-api-python-client==2.70.0
 langchain-openai
 langchain-anthropic
 livekit-agents[deepgram,openai,cartesia,silero,elevenlabs,turn-detector]==1.0.17
