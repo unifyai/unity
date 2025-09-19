@@ -35,7 +35,7 @@ storage.py
   - ensure_context: creates the Tasks context with keys/fields.
   - get_rows, get_entries, get_logs_by_task_ids, get_minimal_rows_by_task_ids: optimized readers with projections.
   - update, log, create_many, delete: batched writes with normalization and None‑stripping rules consistent with Task model.
-  - LocalTaskView overlay maintains a fast local queue index and log id cache during a process lifetime, with helpers to rebuild/sync and to batch updates by task ids.
+  - LocalTaskView centralizes I/O fast‑paths for runtime performance: maintains a fast queue index and membership map, memoizes task_id→log_id, exposes helpers for batch reads/writes, and marks caches stale on lifecycle changes. Reads/writes from tools should route through LocalTaskView.
 
 queue_engine.py
 - Stateless helpers for queue math:
@@ -47,8 +47,8 @@ queue_engine.py
 _queue_utils.py
 - Private helpers used by TaskScheduler for linkage symmetry:
   - sched_prev/sched_next: tolerant prev/next accessors over dict or Schedule.
-  - sync_adjacent_links: given a task and its schedule, ensure neighbours’ reciprocal pointers are updated and non‑head start_at is stripped.
-  - attach_with_links: optimized attach that updates neighbours, sets head start_at/status when applicable, carries queue_id, and writes current task via the scheduler’s validated funnel; uses prefetched log objects where possible.
+  - sync_adjacent_links: given a task and its schedule, ensure neighbours’ reciprocal pointers are updated and non‑head start_at is stripped. Neighbour writes route via LocalTaskView to keep caches in sync.
+  - attach_with_links: optimized attach that updates neighbours (via LocalTaskView), sets head start_at/status when applicable, carries queue_id, and writes the current task via the scheduler’s validated funnel; uses prefetched log objects where possible.
 
 _queue_ops.py
 - Higher‑level queue mutations used during activation and attachment:
@@ -56,7 +56,7 @@ _queue_ops.py
     • Always records a ReintegrationPlan with prev/next/head_start_at/original_status/queue_id.
     • Isolation (detach=True): if detaching head, promote successor to head and carry head_start_at; if detaching middle, unlink neighbours; in both cases clear schedule on the detached task. Non‑heads never keep start_at.
     • Chain (detach=False): promote the activating task to head, keep followers attached, move head_start_at to new head, and strip start_at from its successor. Signals a per‑task asyncio.Event barrier to let ActiveQueue await linkage completion.
-  - attach_with_links: small wrapper delegating to _queue_utils.attach_with_links.
+  - attach_with_links: thin wrapper that delegates to _queue_utils.attach_with_links (single source of attach logic).
 
 reintegration.py
 - ReintegrationManager applies a ReintegrationPlan to restore a task’s previous position. Handles edge cases: deleted neighbours, conflicting statuses (e.g., primed conflicts downgraded), and ensures head start_at/status semantics. Used when an isolated activation is deferred/stopped or requested explicitly by reinstate_to_previous_queue.
@@ -114,12 +114,13 @@ How things fit together
    - Isolated: _execute_internal(detach=True) uses _queue_ops.detach_from_queue_for_activation to detach the selected task and record a ReintegrationPlan. ActiveTask runs the actor and updates statuses; on stop/defer, reintegration restores the position using reintegration.ReintegrationManager.
    - Chain: _execute_queue_internal(detach=False) keeps followers linked. ActiveQueue manages sequential execution, awaits linkage barriers for deterministic traversal, routes interjections to current/future tasks, and composes a final summary or per‑task result stream via active_task_done.
 5) Clarification: Both ActiveTask and ActiveQueue can request clarification via asyncio queues, allowing external drivers/tests to supply answers.
-6) Caching/Indexing: TaskScheduler maintains a local queue index and membership map updated by high‑level tools to reduce repeated backend reads within a process, falling back to robust scans when stale.
+6) Caching/Indexing: LocalTaskView maintains a local queue index, head‑start cache, membership map, and task_id→log_id memoization. High‑level tools update/mark it stale; readers prefer the view and fall back to storage when needed.
 
 Environment flags
 - UNITY_TS_DISABLE_LLM_ROUTER: when set ("1"/"true"/"yes"), ActiveQueue.interject bypasses the LLM router and forwards to the current task.
 - UNITY_TS_PERSIST_CHECKPOINTS: when set, execute/update checkpoints are persisted and can be reloaded across runs.
 - UNITY_SIM_ACTOR_DURATION: default simulated actor step duration (seconds) for tests/sandboxes when no actor is provided.
+ - UNITY_TS_LOCAL_VIEW_OFF: when set, bypasses LocalTaskView caches and always reads from storage (useful for debugging).
 
 Tests directory mapping (tests/test_task_scheduler/)
 - conftest.py: Scenario builder/fixtures for shared setup; seeds initial tasks and provides helpers to create queues.
@@ -171,5 +172,6 @@ Notes for contributors
 - All lifecycle/queue edits should go through _validated_write or the high‑level queue tools to ensure invariants.
 - Prefer batch operations (_set_queue, _batch_update_by_task_ids) to reduce backend IO.
 - Maintain neighbour symmetry when changing prev/next, and ensure only heads carry start_at.
-- Keep _queue_index/_task_to_queue caches coherent after mutating tools; mark stale when uncertain.
+- Route tool reads/writes through LocalTaskView (e.g., write_entries/delete/get_minimal_rows_by_task_ids). Avoid calling TasksStore directly from tools.
+- LocalTaskView owns the queue index and membership map; mark it stale after structural changes when precise updates are not applied.
 - ReintegrationPlan must be recorded on activation detachment paths to support later restore semantics.

@@ -199,6 +199,20 @@ class TasksStore:
                 raise AssertionError(
                     f"Expected exactly 1 row for task_id {original_id}, but found {len(logs)}.",
                 )
+        # Opportunistically memoize task_id -> log_id mappings
+        try:
+            for lg in logs or []:
+                try:
+                    e = getattr(lg, "entries", {}) or {}
+                    tid = e.get("task_id")
+                    lid = getattr(lg, "id", None)
+                    if isinstance(tid, int) and isinstance(lid, int):
+                        # This method is on TasksStore; LocalTaskView handles memoization
+                        pass
+                except Exception:
+                    continue
+        except Exception:
+            pass
         return logs
 
     # ------------------------------- Writes --------------------------------
@@ -685,14 +699,74 @@ class LocalTaskView:
         return_ids_only: bool = True,
     ) -> List[Union[int, unify.Log]]:
         """
-        Wrapper over TasksStore.get_logs_by_task_ids. This method exists so that
-        future call sites can take advantage of memoised log ids transparently.
+        Resolve log objects/ids for task_ids, with a read-through memoization
+        when callers request ids only.
+
+        For id-only requests, this method will prefer cached mappings and
+        fetch only the missing subset (as full rows to learn the mapping),
+        returning a list of ints in the same order as the input ids.
         """
-        # For step 1, delegate fully to the store (no partial assembly yet)
-        return self._store.get_logs_by_task_ids(
-            task_ids=task_ids,
-            return_ids_only=return_ids_only,
-        )
+        singular = isinstance(task_ids, int)
+        ids_list = [task_ids] if singular else list(task_ids)
+
+        if not return_ids_only:
+            logs = self._store.get_logs_by_task_ids(
+                task_ids=ids_list if not singular else ids_list[0],
+                return_ids_only=False,
+            )
+            # Opportunistically memoize task_id -> log_id
+            try:
+                for lg in logs or []:
+                    try:
+                        e = getattr(lg, "entries", {}) or {}
+                        tid = e.get("task_id")
+                        lid = getattr(lg, "id", None)
+                        if isinstance(tid, int) and isinstance(lid, int):
+                            self.cache_log_id(task_id=int(tid), log_id=int(lid))
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            return logs
+
+        # return_ids_only=True path
+        resolved_by_tid: Dict[int, int] = {}
+        missing: List[int] = []
+        for tid in ids_list:
+            try:
+                lid = self._task_log_id_cache.get(int(tid))
+                if isinstance(lid, int):
+                    resolved_by_tid[int(tid)] = int(lid)
+                else:
+                    missing.append(int(tid))
+            except Exception:
+                continue
+
+        if missing:
+            try:
+                logs = self._store.get_logs_by_task_ids(
+                    task_ids=missing if len(missing) > 1 else missing[0],
+                    return_ids_only=False,
+                )
+            except Exception:
+                logs = []
+            for lg in logs or []:
+                try:
+                    e = getattr(lg, "entries", {}) or {}
+                    tid = e.get("task_id")
+                    lid = getattr(lg, "id", None)
+                    if isinstance(tid, int) and isinstance(lid, int):
+                        resolved_by_tid[int(tid)] = int(lid)
+                        self.cache_log_id(task_id=int(tid), log_id=int(lid))
+                except Exception:
+                    continue
+
+        out: List[int] = []
+        for tid in ids_list:
+            lid = resolved_by_tid.get(int(tid))
+            if isinstance(lid, int):
+                out.append(int(lid))
+        return out
 
     def get_minimal_rows_by_task_ids(
         self,
@@ -744,6 +818,23 @@ class LocalTaskView:
             # precise updates via update_after_* helpers when the new order is known.
             self._queue_index_stale = True
 
+        return result
+
+    # ------------------------------- Delete --------------------------------
+    def delete(self, *, logs: Union[int, List[int]]) -> Dict[str, str]:
+        """
+        Delete one or more logs by their identifiers via the underlying store.
+
+        Deletions can change queue membership; conservatively mark the queue
+        index as stale so readers will rebuild on next access.
+        """
+        try:
+            result = self._store.delete(logs=logs)
+        finally:
+            try:
+                self._queue_index_stale = True
+            except Exception:
+                pass
         return result
 
     # ----------------------------- Env helpers -----------------------------

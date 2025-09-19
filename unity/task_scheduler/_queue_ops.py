@@ -83,32 +83,18 @@ def detach_from_queue_for_activation(
     if prev_tid is None:
         head_start_at = start_at
     else:
-        # Prefer resolving via queue_id in a single filtered read.
+        # Prefer LocalTaskView for a single-step head start_at resolution.
         try:
             _qid = task_row.get("queue_id")
         except Exception:
             _qid = None
         if isinstance(_qid, int):
             try:
-                rows_in_queue = scheduler._filter_tasks(
-                    filter=(
-                        "schedule is not None and "
-                        "status not in ('completed','cancelled','failed') and "
-                        f"queue_id == {_qid}"
-                    ),
-                )
+                head_start_at = scheduler._view.get_head_start_at(int(_qid))  # type: ignore[attr-defined]
             except Exception:
-                rows_in_queue = []
-            # Identify head locally and read its start_at
-            for r in rows_in_queue:
-                try:
-                    _s = r.get("schedule") or {}
-                    if _s.get("prev_task") is None:
-                        head_start_at = _s.get("start_at")
-                        break
-                except Exception:
-                    continue
-        else:
+                head_start_at = None
+        # Fallbacks when queue_id is missing or the local view returned nothing
+        if head_start_at is None:
             # Fallback: walk prev pointers (rare case when queue_id is absent)
             cur_head = _get_row(task_id)
             while (
@@ -126,7 +112,7 @@ def detach_from_queue_for_activation(
         if not ids:
             return cache
         try:
-            logs = scheduler._get_logs_by_task_ids(
+            logs = scheduler._view.get_log_ids_by_task_ids(  # type: ignore[attr-defined]
                 task_ids=ids,
                 return_ids_only=False,
             )
@@ -159,7 +145,7 @@ def detach_from_queue_for_activation(
             return lg
         # Defensive fallback (should be rare within this call)
         try:
-            logs = scheduler._get_logs_by_task_ids(
+            logs = scheduler._view.get_log_ids_by_task_ids(  # type: ignore[attr-defined]
                 task_ids=int(tid),
                 return_ids_only=False,
             )

@@ -403,9 +403,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Centralised local view for queue membership, allocator and light caching.
         self._view = LocalTaskView(self._store)
-        # Track task_ids that are known to have multiple instances so we don't
-        # attempt single-id fast paths when deleting.
-        self._multi_instance_tasks: set[int] = set()
+        # Note: multi-instance heuristics were removed; LocalTaskView and
+        # targeted reads handle correctness without this state.
 
         # Linkage barriers: per-task events set after queue linkage updates
         # complete for a given activation. ActiveQueue can await these to avoid
@@ -2144,7 +2143,7 @@ class TaskScheduler(BaseTaskScheduler):
                 # single by-id lookup (still within this tool call).
                 try:
                     if created_log_ids:
-                        rows = self._store.get_rows_by_log_ids(log_ids=created_log_ids)
+                        rows = self._view.get_rows_by_log_ids(log_ids=created_log_ids)
                 except Exception:
                     rows = []
             # Fallback: fetch by pairwise (name AND description) to avoid collisions
@@ -2197,7 +2196,7 @@ class TaskScheduler(BaseTaskScheduler):
             # to a single by-id read using the created log ids collected above.
             if (len(created_ids) < len(tasks)) and created_log_ids:
                 try:
-                    rows2 = self._store.get_rows_by_log_ids(log_ids=created_log_ids)
+                    rows2 = self._view.get_rows_by_log_ids(log_ids=created_log_ids)
                 except Exception:
                     rows2 = []
                 if rows2:
@@ -2254,7 +2253,7 @@ class TaskScheduler(BaseTaskScheduler):
                             break
                     if primed_found is None and created_log_ids:
                         try:
-                            rows3 = self._store.get_rows_by_log_ids(
+                            rows3 = self._view.get_rows_by_log_ids(
                                 log_ids=created_log_ids,
                             )
                         except Exception:
@@ -2450,7 +2449,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Fast path: if we know the backing log id for this task, delete directly
         # Resolve the log id via a single lookup then delete (LocalTaskView manages memoization)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        self._store.delete(logs=log_id)
+        self._view.delete(logs=log_id)
         try:
             removed_count = (
                 len(log_id)
@@ -2811,21 +2810,7 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             member_ids = []
         if member_ids:
-            fields_needed: List[str] = [
-                "task_id",
-                "instance_id",
-                "name",
-                "description",
-                "status",
-                "schedule",
-                "priority",
-                "queue_id",
-                "activated_by",
-                "trigger",
-                "deadline",
-                "repeat",
-                "response_policy",
-            ]
+            fields_needed: List[str] = self._queue_member_fields()
             logs = self._view.get_minimal_rows_by_task_ids(
                 task_ids=member_ids,
                 fields=fields_needed,
@@ -3020,21 +3005,7 @@ class TaskScheduler(BaseTaskScheduler):
             if int(task_id) in members:
                 member_ids = list(members)
                 if member_ids:
-                    fields_needed: List[str] = [
-                        "task_id",
-                        "instance_id",
-                        "name",
-                        "description",
-                        "status",
-                        "schedule",
-                        "priority",
-                        "queue_id",
-                        "activated_by",
-                        "trigger",
-                        "deadline",
-                        "repeat",
-                        "response_policy",
-                    ]
+                    fields_needed: List[str] = self._queue_member_fields()
                     logs = self._view.get_minimal_rows_by_task_ids(
                         task_ids=member_ids,
                         fields=fields_needed,
@@ -3472,9 +3443,7 @@ class TaskScheduler(BaseTaskScheduler):
         }
 
         # Keep local queue index in sync (best-effort)
-        # Note: code below is unreachable due to the return above; intentionally
-        # placed earlier would alter logging/timing semantics. Leave updates to
-        # the call-site right after persistence instead (see below).
+        # Intentionally left to call-sites post-persistence when needed.
 
     @_ts_log_tool_runtime
     def _move_tasks_to_queue(
@@ -3929,9 +3898,7 @@ class TaskScheduler(BaseTaskScheduler):
         }
 
         # Keep local queue index in sync (best-effort)
-        # Note: code below is unreachable due to the return above; intentionally
-        # placed earlier would alter logging/timing semantics. Leave updates to
-        # the call-site right after persistence instead (see below).
+        # Intentionally left to call-sites post-persistence when needed.
 
     # ------------------------------------------------------------------ #
     #  Bulk low-level schedule edit (atomic)                              #
@@ -5715,6 +5682,25 @@ class TaskScheduler(BaseTaskScheduler):
                 # Defensive fallback; a failed metric read should not crash tools
                 self._num_tasks_cached = 0
         return int(self._num_tasks_cached)
+
+    # ---------------------------- Field helpers ---------------------------- #
+    def _queue_member_fields(self) -> List[str]:
+        """Projection for queue member rows used in ordered queue reads."""
+        return [
+            "task_id",
+            "instance_id",
+            "name",
+            "description",
+            "status",
+            "schedule",
+            "priority",
+            "queue_id",
+            "activated_by",
+            "trigger",
+            "deadline",
+            "repeat",
+            "response_policy",
+        ]
 
     # (Removed) LLM-based scope classifier
 
