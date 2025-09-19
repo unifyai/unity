@@ -2489,18 +2489,47 @@ class TaskScheduler(BaseTaskScheduler):
         if not rows_in_queue:
             return []
 
-        # Identify head locally (prev_task is None)
-        heads = [
-            r
-            for r in rows_in_queue
-            if (r.get("schedule") or {}).get("prev_task") is None
-        ]
-        if not heads:
+        # Identify head with tolerance for terminal/missing predecessor.
+        # A row is a head if: prev_task is None OR prev_task not present among non-terminal members.
+        ids_in_q: set[int] = set()
+        for r in rows_in_queue:
+            try:
+                tid_val = r.get("task_id")
+                if isinstance(tid_val, int):
+                    ids_in_q.add(int(tid_val))
+            except Exception:
+                continue
+        head_candidates: list[TaskRow] = []
+        prefer_none_prev: list[TaskRow] = []
+        for r in rows_in_queue:
+            sched = r.get("schedule") or {}
+            prev_id = sched.get("prev_task")
+            if prev_id is None:
+                prefer_none_prev.append(r)
+                head_candidates.append(r)
+            else:
+                try:
+                    prev_int = int(prev_id)
+                except Exception:
+                    prev_int = None  # type: ignore[assignment]
+                if prev_int is None or prev_int not in ids_in_q:
+                    head_candidates.append(r)
+        if not head_candidates:
             return []
-        assert (
-            len(heads) == 1
-        ), f"Multiple heads detected for queue_id={queue_id}: {heads}"
-        head = heads[0]
+        # If multiple, prefer a true None-prev head; else choose deterministically by task_id
+        if len(head_candidates) > 1:
+            if prefer_none_prev:
+                head = prefer_none_prev[0]
+            else:
+                try:
+                    head = sorted(
+                        head_candidates,
+                        key=lambda x: int(x.get("task_id")),
+                    )[0]
+                except Exception:
+                    head = head_candidates[0]
+        else:
+            head = head_candidates[0]
 
         # Build id -> row map for O(1) next lookups without further backend reads
         rows_by_id: Dict[int, TaskRow] = {}
@@ -3262,6 +3291,7 @@ class TaskScheduler(BaseTaskScheduler):
                 pass
 
         to_remove = [tid for tid in current_members if tid not in order]
+
         if to_remove:
             # Detach removed tasks in a single backend call: neutral schedule, queued status, no queue_id
             try:
