@@ -10,7 +10,6 @@ import json
 from unity.file_manager.base import BaseFileManager
 from unity.file_manager.file_manager import FileManager
 from ..common.embed_utils import ensure_vector_column, list_private_fields
-from ..helpers import _handle_exceptions
 from .types import ColumnType
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
@@ -33,7 +32,6 @@ from ..common.semantic_search import (
 )
 from ..common.context_store import TableStore
 from ..events.event_bus import EVENT_BUS, Event
-from ..common.http import request as http_request
 
 # ------------------------------------------------------------------ #
 # Optional per-tool runtime logging (KnowledgeManager)               #
@@ -918,18 +916,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend acknowledgement / error message.
         """
-        proj = unify.active_project()
         old_name = f"{self._ctx}/{old_name}"
         new_name = f"{self._ctx}/{new_name}"
-        url = f"{unify.BASE_URL}/project/{proj}/contexts/{old_name}/rename"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        json_input = {"name": new_name}
-        response = http_request("PATCH", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        return unify.rename_context(old_name, new_name)
 
     @_km_log_tool_runtime
     def _delete_tables(
