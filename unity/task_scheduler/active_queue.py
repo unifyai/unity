@@ -313,15 +313,56 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                         pass
 
                 # Determine the next task to run.
-                # Prefer the pre-captured next_hint (schedule.next_task) for robustness even if the head row changed status.
-                next_tid = self._current_next_hint
-                if next_tid is None:
-                    # Fallback: derive from the current live queue state (head->tail)
-                    queue = self._s._get_queue_for_task(task_id=self._current_task_id)
-                    for t in queue:
-                        if t.task_id != self._current_task_id:
-                            next_tid = t.task_id
+                # Prefer the live queue; validate any hint candidate before using it.
+                next_tid: Optional[int] = None
+                try:
+                    live_queue = (
+                        self._s._get_queue_for_task(task_id=self._current_task_id) or []
+                    )
+                except Exception:
+                    live_queue = []
+                for t in live_queue:
+                    try:
+                        tid_val = int(getattr(t, "task_id", -1))
+                        if tid_val != int(self._current_task_id):
+                            next_tid = tid_val
                             break
+                    except Exception:
+                        continue
+                if next_tid is None:
+                    next_tid = self._current_next_hint
+                if next_tid is not None:
+                    try:
+                        rows_cand = self._s._filter_tasks(
+                            filter=(
+                                f"task_id == {int(next_tid)} and status not in "
+                                "('completed','cancelled','failed','active')"
+                            ),
+                            limit=1,
+                        )
+                        if not rows_cand:
+                            # Try to recover by scanning rest of the live queue
+                            next_tid = None
+                            for t in live_queue:
+                                try:
+                                    tid_try = int(getattr(t, "task_id", -1))
+                                    if tid_try == int(self._current_task_id):
+                                        continue
+                                    rows_try = self._s._filter_tasks(
+                                        filter=(
+                                            f"task_id == {tid_try} and status not in "
+                                            "('completed','cancelled','failed','active')"
+                                        ),
+                                        limit=1,
+                                    )
+                                    if rows_try:
+                                        next_tid = tid_try
+                                        break
+                                except Exception:
+                                    continue
+                    except Exception:
+                        pass
+
                 if next_tid is None:
                     # Queue exhausted – compose a completion summary across all tasks
                     if self._completed_tasks:
@@ -361,6 +402,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                         if (sched_n or {}).get("next_task") is not None
                         else None
                     )
+
                 except Exception:
                     self._current_next_hint = None
                 # Deliver any queued interjections for the newly active task
