@@ -4913,6 +4913,10 @@ class TaskScheduler(BaseTaskScheduler):
             "description",
             "status",
             "priority",
+            # Include schedule/deadline so callers can answer date-related questions
+            # without issuing an additional read per task.
+            "schedule",
+            "deadline",
         ]
 
         # 1) Primary: semantic similarity results (ordered). When references is None/empty,
