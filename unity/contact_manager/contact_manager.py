@@ -7,7 +7,6 @@ import re
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.embed_utils import ensure_vector_column
 from ..knowledge_manager.types import ColumnType
-from ..helpers import _handle_exceptions
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
@@ -30,7 +29,6 @@ from ..common.semantic_search import (
     fetch_top_k_by_references,
     backfill_rows,
 )
-from ..common.http import request as http_request
 
 # ------------------------------------------------------------------ #
 #  Optional per-tool runtime logging                                  #
@@ -436,25 +434,17 @@ class ContactManager(BaseContactManager):
 
         user_info: Dict[str, Any] = {}
 
-        url = f"{os.environ['UNIFY_BASE_URL']}/user/basic-info"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = http_request("GET", url, headers=headers)
+        data: Any = unify.get_user_basic_info()
+        # Map API payload → expected field names
+        mapped: Dict[str, Any] = {
+            "first_name": data.get("first"),
+            "last_name": data.get("last"),
+            "email": data.get("email"),
+        }
 
-        # Raise for HTTP errors so the except-block handles them uniformly
-        _handle_exceptions(response)
-
-        data: Any = response.json()
-        if isinstance(data, dict):
-            # Map API payload → expected field names
-            mapped: Dict[str, Any] = {
-                "first_name": data.get("first"),
-                "last_name": data.get("last"),
-                "email": data.get("email"),
-            }
-
-            # Filter out *None* values so downstream logic does not
-            # inadvertently overwrite existing data with nulls.
-            user_info.update({k: v for k, v in mapped.items() if v is not None})
+        # Filter out *None* values so downstream logic does not
+        # inadvertently overwrite existing data with nulls.
+        user_info.update({k: v for k, v in mapped.items() if v is not None})
 
         from .. import ASSISTANT
 
