@@ -862,9 +862,25 @@ class _SteerableToolHandleProxy:
             interactions_log = current_interaction_sink_var.get()
             if interactions_log is not None:
                 interactions_log.append(interaction_to_cache)
+            try:
+                url = await self._plan.actor.action_provider.browser.get_current_url()
+            except Exception:
+                url = None
+
+            meta = {
+                "call_stack": cache_key[0],
+                "path": cache_key[1],
+                "function": cache_key[0][-1] if cache_key[0] else None,
+                "step": self._plan.runtime.action_counter,
+                "tool": tool_name,
+                "url": url,
+                "impure": False,
+            }
+
             self._plan.idempotency_cache[cache_key] = {
                 "result": output,
                 "interaction_log": interaction_to_cache,
+                "meta": meta,
             }
             return output
 
@@ -896,9 +912,21 @@ class _SteerableToolHandleProxy:
             interactions_log = current_interaction_sink_var.get()
             if interactions_log is not None:
                 interactions_log.append(interaction_to_cache)
+
+            meta = {
+                "call_stack": cache_key[0],
+                "path": cache_key[1],
+                "function": cache_key[0][-1] if cache_key[0] else None,
+                "step": self._plan.runtime.action_counter,
+                "tool": tool_name,
+                "url": None,
+                "impure": False,
+            }
+
             self._plan.idempotency_cache[cache_key] = {
                 "result": output,
                 "interaction_log": interaction_to_cache,
+                "meta": meta,
             }
             return output
 
@@ -1040,9 +1068,26 @@ class _ActionProviderProxy:
                 magnitude_logs,
             )
             interactions_log.append(interaction_to_cache)
+
+            try:
+                url = await self._plan.actor.action_provider.browser.get_current_url()
+            except Exception:
+                url = None
+
+            meta = {
+                "call_stack": cache_key[0],
+                "path": cache_key[1],
+                "function": cache_key[0][-1] if cache_key[0] else None,
+                "step": self._plan.runtime.action_counter,
+                "tool": tool_name,
+                "url": url,
+                "impure": tool_name.endswith((".navigate", ".act")),
+            }
+
             self._plan.idempotency_cache[cache_key] = {
                 "result": result_to_cache,
                 "interaction_log": interaction_to_cache,
+                "meta": meta,
             }
 
             return return_value
@@ -1132,9 +1177,21 @@ class _ActionProviderProxy:
 
             interaction_to_cache = ("tool_call", call_repr, interaction_str)
             interactions_log.append(interaction_to_cache)
+
+            meta = {
+                "call_stack": cache_key[0],
+                "path": cache_key[1],
+                "function": cache_key[0][-1] if cache_key[0] else None,
+                "step": self._plan.runtime.action_counter,
+                "tool": tool_name,
+                "url": None,
+                "impure": tool_name.endswith((".navigate", ".act")),
+            }
+
             self._plan.idempotency_cache[cache_key] = {
                 "result": result_to_cache,
                 "interaction_log": interaction_to_cache,
+                "meta": meta,
             }
 
             return return_value
