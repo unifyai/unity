@@ -2325,6 +2325,12 @@ class TaskScheduler(BaseTaskScheduler):
                 ):
                     if key in spec:
                         payload[key] = spec[key]
+
+                # When queue_ordering is provided, avoid auto-priming during creation.
+                # Defer head-state selection to the explicit queue materialization below.
+                if queue_ordering is not None and "status" not in payload:
+                    payload["status"] = Status.queued
+
                 out = self._create_task(**payload)
                 created_ids.append(int(out["details"]["task_id"]))
 
