@@ -53,6 +53,81 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         self._driver = asyncio.create_task(self._drive())
 
     # ----------------------------
+    # Snapshot helper (head→tail)
+    # ----------------------------
+    def _build_queue_rows_snapshot(self) -> list[dict]:
+        """
+        Build a compact queue snapshot (head→tail) by walking prev→head then
+        next pointers. Falls back to _get_queue_for_task when traversal fails.
+        Returns a list of dict rows with non-None, non-internal fields.
+        """
+
+        def _get_row(tid: int):
+            try:
+                rows = self._s._filter_tasks(
+                    filter=f"task_id == {int(tid)}",
+                    limit=1,
+                )
+                return rows[0] if rows else None
+            except Exception:
+                return None
+
+        try:
+            cur_row = _get_row(self._current_task_id)
+            head_row = cur_row
+            while head_row is not None:
+                prev_id = self._s._sched_prev((head_row.get("schedule") or {}))
+                if prev_id is None:
+                    break
+                prev_row = _get_row(prev_id)
+                if prev_row is None:
+                    break
+                head_row = prev_row
+
+            queue_rows: list[dict] = []
+            seen: set[int] = set()
+            node = head_row
+            while node is not None:
+                tid = node.get("task_id")
+                try:
+                    tid_int = int(tid)
+                except Exception:
+                    tid_int = None  # type: ignore[assignment]
+                if tid_int is not None and tid_int in seen:
+                    break
+                if tid_int is not None:
+                    seen.add(tid_int)
+                queue_rows.append(
+                    {
+                        k: v
+                        for k, v in node.items()
+                        if v is not None and not str(k).startswith("_")
+                    },
+                )
+                nxt_id = self._s._sched_next((node.get("schedule") or {}))
+                if nxt_id is None:
+                    break
+                node = _get_row(nxt_id)
+
+            if queue_rows:
+                return queue_rows
+
+            # Fallback to best-effort non-terminal queue snapshot
+            queue = self._s._get_queue_for_task(task_id=self._current_task_id)
+            return [
+                {
+                    "task_id": getattr(t, "task_id", None),
+                    "name": getattr(t, "name", None),
+                    "description": getattr(t, "description", None),
+                    "status": getattr(t, "status", None),
+                    "schedule": getattr(t, "schedule", None),
+                }
+                for t in queue
+            ]
+        except Exception:
+            return []
+
+    # ----------------------------
     # Internal clarification tool
     # ----------------------------
     async def _request_clarification(
@@ -311,68 +386,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             except Exception:
                 return str(value)
 
-        def _get_row(tid: int):
-            try:
-                rows = self._s._filter_tasks(
-                    filter=f"task_id == {int(tid)}",
-                    limit=1,
-                )
-                return rows[0] if rows else None
-            except Exception:
-                return None
-
-        try:
-            cur_row = _get_row(self._current_task_id)
-            head_row = cur_row
-            while head_row is not None:
-                prev_id = self._s._sched_prev((head_row.get("schedule") or {}))
-                if prev_id is None:
-                    break
-                prev_row = _get_row(prev_id)
-                if prev_row is None:
-                    break
-                head_row = prev_row
-
-            queue_rows: list[dict] = []
-            seen: set[int] = set()
-            node = head_row
-            while node is not None:
-                tid = node.get("task_id")
-                try:
-                    tid_int = int(tid)
-                except Exception:
-                    tid_int = None  # type: ignore[assignment]
-                if tid_int is not None and tid_int in seen:
-                    break
-                if tid_int is not None:
-                    seen.add(tid_int)
-                queue_rows.append(
-                    {
-                        k: v
-                        for k, v in node.items()
-                        if v is not None and not str(k).startswith("_")
-                    },
-                )
-                nxt_id = self._s._sched_next((node.get("schedule") or {}))
-                if nxt_id is None:
-                    break
-                node = _get_row(nxt_id)
-
-            if not queue_rows:
-                # Fallback to best-effort non-terminal queue snapshot
-                queue = self._s._get_queue_for_task(task_id=self._current_task_id)
-                queue_rows = [
-                    {
-                        "task_id": getattr(t, "task_id", None),
-                        "name": getattr(t, "name", None),
-                        "description": getattr(t, "description", None),
-                        "status": getattr(t, "status", None),
-                        "schedule": getattr(t, "schedule", None),
-                    }
-                    for t in queue
-                ]
-        except Exception:
-            queue_rows = []
+        queue_rows: list[dict] = self._build_queue_rows_snapshot()
 
         # Create a dedicated router client with high reasoning and priority tier
         try:
@@ -654,71 +668,10 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             except Exception:
                 return str(value)
 
-        def _get_row(tid: int):
-            try:
-                rows = self._s._filter_tasks(
-                    filter=f"task_id == {int(tid)}",
-                    limit=1,
-                )
-                return rows[0] if rows else None
-            except Exception:
-                return None
-
         queue_preamble: str | None = None
         try:
-            # 1) Locate current row and walk to head (using schedule.prev_task)
-            cur_row = _get_row(self._current_task_id)
-            head_row = cur_row
-            while head_row is not None:
-                prev_id = self._s._sched_prev((head_row.get("schedule") or {}))
-                if prev_id is None:
-                    break
-                prev_row = _get_row(prev_id)
-                if prev_row is None:
-                    break
-                head_row = prev_row
-
-            # 2) Walk forward to collect the entire queue, including terminal statuses
-            queue_rows: list[dict] = []
-            seen: set[int] = set()
-            node = head_row
-            while node is not None:
-                tid = node.get("task_id")
-                try:
-                    tid_int = int(tid)
-                except Exception:
-                    tid_int = None  # type: ignore[assignment]
-                if tid_int is not None and tid_int in seen:
-                    break  # safety loop-breaker
-                if tid_int is not None:
-                    seen.add(tid_int)
-                queue_rows.append(node)
-                nxt_id = self._s._sched_next((node.get("schedule") or {}))
-                if nxt_id is None:
-                    break
-                node = _get_row(nxt_id)
-
-            # Fallback: if queue_rows is empty, try non-terminal queue as a best-effort snapshot
-            if not queue_rows:
-                queue = self._s._get_queue_for_task(task_id=self._current_task_id)
-                queue_rows = [
-                    {
-                        # best-effort row-like dict shape
-                        "task_id": getattr(t, "task_id", None),
-                        "instance_id": getattr(t, "instance_id", None),
-                        "name": getattr(t, "name", None),
-                        "description": getattr(t, "description", None),
-                        "status": getattr(t, "status", None),
-                        "schedule": getattr(t, "schedule", None),
-                        "trigger": getattr(t, "trigger", None),
-                        "deadline": getattr(t, "deadline", None),
-                        "repeat": getattr(t, "repeat", None),
-                        "priority": getattr(t, "priority", None),
-                        "response_policy": getattr(t, "response_policy", None),
-                        "activated_by": getattr(t, "activated_by", None),
-                    }
-                    for t in queue
-                ]
+            # Build queue snapshot (includes terminal statuses when available)
+            queue_rows: list[dict] = self._build_queue_rows_snapshot()
 
             total_count = len(queue_rows)
             # Identify current index

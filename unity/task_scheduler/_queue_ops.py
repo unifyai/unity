@@ -106,28 +106,7 @@ def detach_from_queue_for_activation(
                 if isinstance(_sched_head, dict):
                     head_start_at = _sched_head.get("start_at")
 
-    # Batch-fetch log objects for all relevant task_ids in one backend call
-    def _build_log_cache(ids: list[int]) -> Dict[int, unify.Log]:
-        cache: Dict[int, unify.Log] = {}
-        if not ids:
-            return cache
-        try:
-            logs = scheduler._view.get_log_ids_by_task_ids(  # type: ignore[attr-defined]
-                task_ids=ids,
-                return_ids_only=False,
-            )
-        except Exception:
-            logs = []
-        for lg in logs or []:
-            try:
-                entries = getattr(lg, "entries", {}) or {}
-                tid = entries.get("task_id")
-                if isinstance(tid, int):
-                    cache[int(tid)] = lg
-            except Exception:
-                continue
-        return cache
-
+    # Batch-fetch log objects for all relevant task_ids in one backend call (reuse scheduler helper)
     needed_ids: list[int] = []
     for _tid in (task_id, prev_tid, next_tid):
         try:
@@ -135,23 +114,27 @@ def detach_from_queue_for_activation(
                 needed_ids.append(int(_tid))
         except Exception:
             continue
-    _log_cache = _build_log_cache(needed_ids)
+    try:
+        log_objs = scheduler._get_logs_by_task_ids(  # type: ignore[attr-defined]
+            task_ids=needed_ids,
+            return_ids_only=False,
+        )
+    except Exception:
+        log_objs = []
+    _log_cache: Dict[int, unify.Log] = {}
+    for lg in log_objs or []:
+        try:
+            entries = getattr(lg, "entries", {}) or {}
+            tid = entries.get("task_id")
+            if isinstance(tid, int):
+                _log_cache[int(tid)] = lg
+        except Exception:
+            continue
 
     def _get_log_obj(tid: int) -> Optional[unify.Log]:
         if not isinstance(tid, int):
             return None
-        lg = _log_cache.get(int(tid))
-        if lg is not None:
-            return lg
-        # Defensive fallback (should be rare within this call)
-        try:
-            logs = scheduler._view.get_log_ids_by_task_ids(  # type: ignore[attr-defined]
-                task_ids=int(tid),
-                return_ids_only=False,
-            )
-        except Exception:
-            return None
-        return logs[0] if logs else None  # type: ignore[return-value]
+        return _log_cache.get(int(tid))
 
     # Small local helpers to reduce repetition and keep behaviour identical
     def _log_id(log_or_id: Any) -> Any:

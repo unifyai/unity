@@ -368,6 +368,9 @@ class TaskScheduler(BaseTaskScheduler):
             fields=model_to_fields(Task),
         )
 
+        # Centralised local view for queue membership, allocator and light caching.
+        self._view = LocalTaskView(self._store)
+
         # Eagerly snapshot the total number of tasks once at construction time so
         # `_num_tasks()` can serve from memory. Subsequent mutations keep it in sync.
         try:
@@ -400,9 +403,6 @@ class TaskScheduler(BaseTaskScheduler):
         # original position on defer stop. Map: task_id -> ReintegrationPlan
         self._reintegration_plans: dict[int, "ReintegrationPlan"] = {}
         self._reintegration_manager = ReintegrationManager(self)
-
-        # Centralised local view for queue membership, allocator and light caching.
-        self._view = LocalTaskView(self._store)
         # Note: multi-instance heuristics were removed; LocalTaskView and
         # targeted reads handle correctness without this state.
 
@@ -522,162 +522,6 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Build a live tools dictionary first (prompt needs it)
         tools = dict(self._update_tools)
-
-        # Add queue planning helpers for atomic modifications, mirroring execute
-        # and include checkpoint helpers for reversibility.
-        def _later_group_schema():
-            class _LaterGroup(BaseModel):
-                task_ids: List[int] = Field(min_length=1)
-                queue_start_at: Optional[str] = None
-
-            return _LaterGroup
-
-        _LaterGroup = _later_group_schema()
-
-        class _QueuePlan(BaseModel):
-            now: List[int] = Field(min_length=1)
-            later_groups: List[_LaterGroup] = Field(default_factory=list)  # type: ignore[name-defined]
-            notes: Optional[str] = None
-
-        def validate_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            import json as _json
-
-            try:
-                parsed = _json.loads(plan) if isinstance(plan, str) else plan
-            except Exception as _e:  # noqa: N806
-                raise ValueError(f"Invalid plan: {_e}")
-            model = _QueuePlan.model_validate(parsed)
-            preview: Dict[str, Any] = {"now": model.now, "later": []}
-            for g in model.later_groups:
-                preview["later"].append(
-                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at},
-                )
-            return {
-                "outcome": "validated",
-                "details": {"plan": model.model_dump(), "preview": preview},
-            }
-
-        def apply_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            import json as _json
-
-            try:
-                parsed = _json.loads(plan) if isinstance(plan, str) else plan
-            except Exception as _e:
-                raise ValueError(f"Invalid plan: {_e}")
-            model = _QueuePlan.model_validate(parsed)
-            if model.later_groups:
-                parts = [{"task_ids": list(model.now)}] + [
-                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at}
-                    for g in model.later_groups
-                ]
-                self._partition_queue(parts=parts, strategy="preserve_order")
-            else:
-                if model.now:
-                    self._reorder_queue(queue_id=None, new_order=list(model.now))
-            cp = checkpoint_queue_state(label="post-apply-plan")
-            return {
-                "outcome": "applied",
-                "details": {"checkpoint_id": cp["details"]["checkpoint_id"]},
-            }
-
-        def checkpoint_queue_state(*, label: Optional[str] = None) -> Dict[str, Any]:  # type: ignore[valid-type]
-            snapshot: Dict[str, Any] = {"label": label, "queues": []}
-            try:
-                all_q = self._list_queues()
-            except Exception:
-                all_q = []
-            for q in all_q:
-                qid = q.get("queue_id")
-                start_at = q.get("start_at")
-                try:
-                    order = [t.task_id for t in self._get_queue(queue_id=qid)]
-                except Exception:
-                    order = []
-                snapshot["queues"].append(
-                    {
-                        "queue_id": qid,
-                        "head_id": q.get("head_id"),
-                        "start_at": start_at,
-                        "order": order,
-                    },
-                )
-
-            from ..common.llm_helpers import short_id as _short_id  # local import
-
-            cid = _short_id(8)
-            self._queue_checkpoints[cid] = snapshot
-            try:
-                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    self._persist_checkpoint(cid, label, snapshot)
-            except Exception:
-                pass
-            return {"outcome": "checkpointed", "details": {"checkpoint_id": cid}}
-
-        def revert_to_checkpoint(*, checkpoint_id: str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            snap = self._queue_checkpoints.get(str(checkpoint_id))
-            if snap is None:
-                try:
-                    if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                        "1",
-                        "true",
-                        "yes",
-                    }:
-                        snap = self._load_checkpoint(str(checkpoint_id))
-                except Exception:
-                    snap = None
-            assert snap is not None, f"Unknown checkpoint_id={checkpoint_id}"
-            for q in snap.get("queues", []):
-                qid = q.get("queue_id")
-                order = list(q.get("order", []) or [])
-                if order:
-                    self._reorder_queue(queue_id=qid, new_order=order)
-                    start_at = q.get("start_at")
-                    if start_at is not None:
-                        head_tid = int(order[0])
-                        try:
-                            head_row = self._get_single_row_or_raise(head_tid)
-                            sched = {**(head_row.get("schedule") or {})}
-                            sched["start_at"] = start_at
-                            self._validated_write(
-                                task_id=head_tid,
-                                entries={"schedule": sched, "status": Status.scheduled},
-                                err_prefix="While restoring queue start_at from checkpoint:",
-                            )
-                        except Exception:
-                            pass
-            return {"outcome": "reverted", "details": {"checkpoint_id": checkpoint_id}}
-
-        def get_latest_checkpoint() -> Dict[str, Any]:  # type: ignore[valid-type]
-            try:
-                keys = list(self._queue_checkpoints.keys())
-                if keys:
-                    cid = keys[-1]
-                    snap = self._queue_checkpoints.get(cid, {})
-                    return {
-                        "outcome": "ok",
-                        "details": {"checkpoint_id": cid, "label": snap.get("label")},
-                    }
-                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    latest = self._get_latest_persisted_checkpoint()
-                    if latest is not None:
-                        return {"outcome": "ok", "details": latest}
-                return {
-                    "outcome": "none",
-                    "details": {"checkpoint_id": None, "label": None},
-                }
-            except Exception:
-                return {
-                    "outcome": "none",
-                    "details": {"checkpoint_id": None, "label": None},
-                }
 
         # Bind to shared scheduler helpers to avoid duplication
         validate_queue_plan = self.validate_queue_plan
@@ -1020,213 +864,11 @@ class TaskScheduler(BaseTaskScheduler):
         """Compose tools and prompt, then start the execute reasoning loop."""
         client = self._new_llm_client("gpt-5@openai")
 
-        # ── tool definitions ────────────────────────────────────────────────
-        class _LaterGroup(BaseModel):
-            task_ids: List[int] = Field(min_length=1)
-            queue_start_at: Optional[str] = None
-
-        class _QueuePlan(BaseModel):
-            now: List[int] = Field(min_length=1)
-            later_groups: List[_LaterGroup] = Field(default_factory=list)
-            notes: Optional[str] = None
-
-        def validate_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Validate a proposed queue plan (dict or JSON string) and return the normalised structure.
-
-            The plan must include a non-empty `now` list and zero or more
-            `later_groups`, each with a non-empty `task_ids` list. The function
-            returns the validated plan and previews of the resulting queues.
-            """
-            import json as _json
-
-            try:
-                parsed = _json.loads(plan) if isinstance(plan, str) else plan
-            except Exception as _e:  # noqa: N806 (keep local name)
-                raise ValueError(f"Invalid plan: {_e}")
-            model = _QueuePlan.model_validate(parsed)
-            # Preview shapes – we do not mutate here
-            preview: Dict[str, Any] = {"now": model.now, "later": []}
-            for g in model.later_groups:
-                preview["later"].append(
-                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at},
-                )
-            return {
-                "outcome": "validated",
-                "details": {"plan": model.model_dump(), "preview": preview},
-            }
-
-        def apply_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Atomically apply a validated plan (dict or JSON string) using invariant-preserving tools.
-
-            Strategy:
-            - Use `_partition_queue` when there are any later groups to split the
-              source queue into [now] and later queues with optional dates.
-            - Otherwise, reorder the chosen queue so that `now` is the head
-              (dropping other runnable tasks from that queue).
-            After success, automatically create a checkpoint to allow revert.
-            """
-            import json as _json
-
-            try:
-                parsed = _json.loads(plan) if isinstance(plan, str) else plan
-            except Exception as _e:
-                raise ValueError(f"Invalid plan: {_e}")
-            model = _QueuePlan.model_validate(parsed)
-            # If later groups exist, build parts payload
-            if model.later_groups:
-                parts = [{"task_ids": list(model.now)}] + [
-                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at}
-                    for g in model.later_groups
-                ]
-                self._partition_queue(parts=parts, strategy="preserve_order")
-            else:
-                # Only reorder the selected queue to contain exactly `now`
-                if model.now:
-                    self._reorder_queue(queue_id=None, new_order=list(model.now))
-            # Auto-checkpoint
-            cp = checkpoint_queue_state(label="post-apply-plan")
-            return {
-                "outcome": "applied",
-                "details": {"checkpoint_id": cp["details"]["checkpoint_id"]},
-            }
-
-        def checkpoint_queue_state(*, label: Optional[str] = None) -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Create a session-scoped checkpoint of ALL runnable queues.
-
-            The checkpoint captures, for every queue, the head id, the full order
-            (head→tail), and the queue-level start_at timestamp. This enables the
-            execute loop to revert multi-queue edits if the user changes their mind
-            before completion.
-
-            Parameters
-            ----------
-            label : str | None, optional
-                Optional human-readable label for diagnostics.
-
-            Returns
-            -------
-            dict
-                {"outcome": "checkpointed", "details": {"checkpoint_id": str}}
-            """
-            # Build snapshot
-            snapshot: Dict[str, Any] = {"label": label, "queues": []}
-            try:
-                all_q = self._list_queues()
-            except Exception:
-                all_q = []
-            for q in all_q:
-                qid = q.get("queue_id")
-                start_at = q.get("start_at")
-                try:
-                    order = [t.task_id for t in self._get_queue(queue_id=qid)]
-                except Exception:
-                    order = []
-                snapshot["queues"].append(
-                    {
-                        "queue_id": qid,
-                        "head_id": q.get("head_id"),
-                        "start_at": start_at,
-                        "order": order,
-                    },
-                )
-
-            from ..common.llm_helpers import short_id as _short_id  # local import
-
-            cid = _short_id(8)
-            self._queue_checkpoints[cid] = snapshot
-            # Optionally persist to a dedicated context for cross-session safety
-            try:
-                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    self._persist_checkpoint(cid, label, snapshot)
-            except Exception:
-                pass
-            return {"outcome": "checkpointed", "details": {"checkpoint_id": cid}}
-
         # Create an initial checkpoint at the start of execute to guarantee a known revert point
         try:
-            checkpoint_queue_state(label="pre-execute")
+            self.checkpoint_queue_state(label="pre-execute")
         except Exception:
             pass
-
-        def revert_to_checkpoint(*, checkpoint_id: str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Revert all queues to a previously created checkpoint.
-
-            This operation is deterministic and invariant-preserving. It rewrites
-            each queue to the exact order stored in the checkpoint and reapplies
-            the queue-level start_at to each restored head.
-            """
-            snap = self._queue_checkpoints.get(str(checkpoint_id))
-            if snap is None:
-                # Optionally load from persistence when enabled
-                try:
-                    if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                        "1",
-                        "true",
-                        "yes",
-                    }:
-                        snap = self._load_checkpoint(str(checkpoint_id))
-                except Exception:
-                    snap = None
-            assert snap is not None, f"Unknown checkpoint_id={checkpoint_id}"
-            for q in snap.get("queues", []):
-                qid = q.get("queue_id")
-                order = list(q.get("order", []) or [])
-                if order:
-                    self._reorder_queue(queue_id=qid, new_order=order)
-                    # Restore queue-level start_at on head if present
-                    start_at = q.get("start_at")
-                    if start_at is not None:
-                        head_tid = int(order[0])
-                        try:
-                            head_row = self._get_single_row_or_raise(head_tid)
-                            sched = {**(head_row.get("schedule") or {})}
-                            sched["start_at"] = start_at
-                            self._validated_write(
-                                task_id=head_tid,
-                                entries={"schedule": sched, "status": Status.scheduled},
-                                err_prefix="While restoring queue start_at from checkpoint:",
-                            )
-                        except Exception:
-                            # Defensive: if head row cannot be found now, skip silently
-                            pass
-            return {"outcome": "reverted", "details": {"checkpoint_id": checkpoint_id}}
-
-        def get_latest_checkpoint() -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Return the most recently created checkpoint id and label.
-
-            When no checkpoints exist yet, returns {"checkpoint_id": None}.
-            """
-            try:
-                keys = list(self._queue_checkpoints.keys())
-                if keys:
-                    cid = keys[-1]
-                    snap = self._queue_checkpoints.get(cid, {})
-                    return {
-                        "outcome": "ok",
-                        "details": {"checkpoint_id": cid, "label": snap.get("label")},
-                    }
-                # Optionally consult persisted store
-                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    latest = self._get_latest_persisted_checkpoint()
-                    if latest is not None:
-                        return {"outcome": "ok", "details": latest}
-                return {
-                    "outcome": "none",
-                    "details": {"checkpoint_id": None, "label": None},
-                }
-            except Exception:
-                return {
-                    "outcome": "none",
-                    "details": {"checkpoint_id": None, "label": None},
-                }
 
         def create_task(*, name: str, description: str) -> ToolOutcome:  # type: ignore[valid-type]
             """Create a brand-new task with minimal inputs (name, description).
@@ -1327,13 +969,13 @@ class TaskScheduler(BaseTaskScheduler):
             self._set_queue,
             self._set_schedules_atomic,
             # Plan helpers
-            validate_queue_plan,
-            apply_queue_plan,
+            self.validate_queue_plan,
+            self.apply_queue_plan,
             # Reintegration and safety
             self._reinstate_task_to_previous_queue,
-            checkpoint_queue_state,
-            revert_to_checkpoint,
-            get_latest_checkpoint,
+            self.checkpoint_queue_state,
+            self.revert_to_checkpoint,
+            self.get_latest_checkpoint,
             # Start execution
             _execute_by_id,
             _execute_isolated_by_id,
@@ -3217,6 +2859,25 @@ class TaskScheduler(BaseTaskScheduler):
         # Persist through the central validated write funnel, but batch when possible
         to_write_ids: list[int] = []
         to_write_entries: list[Dict[str, Any]] = []
+
+        # Build log-id map for new_order (single lookup) to avoid NameError/id_map reliance
+        try:
+            log_objs = self._get_logs_by_task_ids(
+                task_ids=new_order,
+                return_ids_only=False,
+            )
+        except Exception:
+            log_objs = []
+        id_map: Dict[int, int] = {}
+        for lg in log_objs or []:
+            try:
+                e = getattr(lg, "entries", {}) or {}
+                tid = e.get("task_id")
+                lid = getattr(lg, "id", None)
+                if isinstance(tid, int) and isinstance(lid, int):
+                    id_map[int(tid)] = int(lid)
+            except Exception:
+                continue
         for tid, payload in updates_per_log.items():
             cur_row = rows_by_id.get(int(tid))
             if cur_row is None:
@@ -3233,8 +2894,7 @@ class TaskScheduler(BaseTaskScheduler):
                 need_status = "status" in payload
             if (cur_sched == desired_sched) and (not need_status):
                 continue
-            # Resolve log id via cache or single lookup for this task
-            # Resolve log id via single minimal read when needed (already in id_map above)
+            # Resolve log id via single minimal read built above
             _lid = id_map.get(int(tid))
             if isinstance(_lid, int):
                 to_write_ids.append(int(_lid))
