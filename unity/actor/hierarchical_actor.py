@@ -957,12 +957,15 @@ class _ActionProviderProxy:
             return real_attr
 
         async def async_wrapper(*args, **kwargs):
-            if current_run_id_var.get() != self._plan.run_id:
+            ctx_run_id = current_run_id_var.get()
+            plan_run_id = self._plan.run_id
+            if ctx_run_id != plan_run_id:
                 logger.warning(
-                    f"Blocked stale tool call to '{name}' from a previous run.",
+                    f"Blocked stale tool call to '{name}' "
+                    f"(context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
                 )
                 self._plan.action_log.append(
-                    f"Blocked stale tool call to '{name}' from a previous run.",
+                    f"Blocked stale tool call to '{name}' (context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
                 )
                 raise asyncio.CancelledError("Stale tool call blocked by run_id gate.")
 
@@ -1094,9 +1097,15 @@ class _ActionProviderProxy:
 
         def sync_wrapper(*args, **kwargs):
             """Synchronous wrapper for logging and calling sync tools."""
-            if current_run_id_var.get() != self._plan.run_id:
+            ctx_run_id = current_run_id_var.get()
+            plan_run_id = self._plan.run_id
+            if ctx_run_id != plan_run_id:
                 logger.warning(
-                    f"Blocked stale tool call to '{name}' from a previous run.",
+                    f"Blocked stale tool call to '{name}' "
+                    f"(context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
+                )
+                self._plan.action_log.append(
+                    f"Blocked stale tool call to '{name}' (context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
                 )
                 raise asyncio.CancelledError("Stale tool call blocked by run_id gate.")
 
