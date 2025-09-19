@@ -5761,29 +5761,9 @@ class TaskScheduler(BaseTaskScheduler):
         """
         filter = self._normalize_filter_expr(filter)
 
-        # Heuristic: when the filter targets concrete task_id(s), we can cap the
-        # server-side limit to the theoretical maximum number of matches. This
-        # reduces the payload size and avoids unnecessary backend work without
-        # changing observable behaviour.
+        # Note: Avoid capping limits for task_id filters; tests may expect
+        # multiple instances of the same task_id to be returned (e.g., clones).
         effective_limit = limit
-        try:
-            if isinstance(filter, str):
-                import re as _re  # local import to avoid top-level overhead
-
-                expr = filter.strip()
-                # Single equality: task_id == <int>
-                if _re.fullmatch(r"task_id\s*==\s*-?\d+", expr):
-                    effective_limit = 1 if limit is None else min(1, limit)
-                else:
-                    # Explicit list membership: task_id in [a, b, c]
-                    _m = _re.search(r"task_id\s*in\s*\[([^\]]*)\]", expr)
-                    if _m:
-                        _c = len([x for x in _m.group(1).split(",") if x.strip()])
-                        if _c > 0:
-                            effective_limit = _c if (limit is None) else min(_c, limit)
-        except Exception:
-            # Fall back silently – this is a best-effort optimisation only
-            effective_limit = limit
 
         rows = self._store.get_entries(
             filter=filter,
