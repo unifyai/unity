@@ -2098,6 +2098,60 @@ class HierarchicalPlan(BaseActiveTask):
             )
             self.idempotency_cache.clear()
 
+    def _resolve_invalidation_keys(
+        self,
+        decision: InterjectionDecision,
+        original_call_stack: List[str],
+        first_modified_function_index: int,
+    ) -> set[tuple]:
+        """
+        Resolve which cache keys to invalidate by combining: (A) conservative suffix heuristic,
+        (B) the LLM's proposal (functions + intra-function tails), and (C) the impure guardrail.
+        """
+        cache = self.idempotency_cache
+        all_keys = list(cache.keys())
+        spec = getattr(decision, "cache", None)
+
+        conservative = set()
+        if first_modified_function_index != -1:
+            modified_suffix = set(original_call_stack[first_modified_function_index:])
+            for k in all_keys:
+                key_call_stack = k[0]
+                if any(fn in modified_suffix for fn in key_call_stack):
+                    conservative.add(k)
+
+        proposed = set()
+        if spec:
+            for k in all_keys:
+                meta = cache[k].get("meta", {})
+                if not meta:
+                    continue
+                if meta.get("function") in spec.invalidate_functions:
+                    proposed.add(k)
+                    continue
+                for r in spec.invalidate_steps:
+                    if (
+                        r.function_name == meta.get("function")
+                        and meta.get("step", 0) >= r.from_step_inclusive
+                    ):
+                        proposed.add(k)
+                        break
+
+        impure_guard = set()
+        invalidated_impure_indices = {
+            i
+            for i, k in enumerate(all_keys)
+            if k in (conservative | proposed) and cache[k].get("meta", {}).get("impure")
+        }
+        if invalidated_impure_indices:
+            latest_impure_index = max(invalidated_impure_indices)
+            for i, k in enumerate(all_keys):
+                if i > latest_impure_index:
+                    impure_guard.add(k)
+
+        final_keys = conservative | proposed | impure_guard
+        return final_keys
+
     def _restart_execution_loop(self, old_run_id: int):
         """Reuses the plan restart and state cleanup logic from interjections."""
         logger.info(f"Restarting execution loop. New run_id: {self.run_id}")
