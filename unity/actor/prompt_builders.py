@@ -49,6 +49,35 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
     return "\n\n".join(handle_docs)
 
 
+def _format_cache_summary(idempotency_cache: Dict[tuple, Any], last_n: int = 20) -> str:
+    """Formats the last N cache entries into a readable summary for the LLM."""
+    if not idempotency_cache:
+        return "Cache is empty."
+
+    summary_lines = ["### Recent Cache Entry Summary (for invalidation planning)"]
+
+    recent_items = list(idempotency_cache.values())[-last_n:]
+
+    for entry in recent_items:
+        meta = entry.get("meta")
+        if not meta:
+            continue
+
+        func = meta.get("function", "N/A")
+        step = meta.get("step", "N/A")
+        tool = meta.get("tool", "N/A").replace("action_provider.", "")
+        url = meta.get("url", "N/A")
+
+        if url and len(url) > 70:
+            url = url[:67] + "..."
+
+        summary_lines.append(
+            f"- Func: `{func}`, Step: `{step}`, Tool: `{tool}`, URL: `{url}`",
+        )
+
+    return "\n".join(summary_lines)
+
+
 def _build_shared_strategy_principles() -> str:
     """
     Builds the reusable block of strategic principles for automation prompts.
