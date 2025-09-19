@@ -313,6 +313,32 @@ class FunctionPatch(BaseModel):
     )
 
 
+class CacheStepRange(BaseModel):
+    """Specifies a range of steps within a function to invalidate."""
+
+    function_name: str = Field(..., description="The name of the function to target.")
+    from_step_inclusive: int = Field(
+        ...,
+        description="The per-function action_counter step to start invalidating from (inclusive).",
+    )
+
+
+class CacheInvalidateSpec(BaseModel):
+    """
+    LLM's proposal for selective cache invalidation after a plan modification.
+    The runtime will apply these and still enforce safety guardrails (e.g., impure propagation).
+    """
+
+    invalidate_functions: List[str] = Field(
+        default_factory=list,
+        description="A list of function names whose entire cache should be cleared.",
+    )
+    invalidate_steps: List[CacheStepRange] = Field(
+        default_factory=list,
+        description="Invalidate only the tail of a function: from the specified step number onward (inclusive).",
+    )
+
+
 class InterjectionDecision(BaseModel):
     """A structured decision for how to proceed with a user interjection."""
 
