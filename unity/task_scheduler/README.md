@@ -22,7 +22,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 
 - `task_scheduler.py`
   - The core manager. Exposes public `ask`, `update`, `execute` and a comprehensive set of private tools (create/delete/cancel tasks; list/get/reorder/move/partition/set queues; bulk schedule edits; checkpoints; reinstatement).
-  - Maintains in‑memory state: one active task pointer, a single primed task, reintegration plans, queue checkpoints, and linkage‑barrier events (to avoid races between queue writes and reads).
+  - Maintains in‑memory state: one active task pointer, a single primed task, reintegration plans, and queue checkpoints.
   - Uses `TasksStore` and `LocalTaskView` for I/O and caching. Exposes `ContactManager.ask` among its tools for cross‑domain flows.
 
 - `active_task.py`

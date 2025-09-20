@@ -267,26 +267,7 @@ def detach_from_queue_for_activation(
                         next_sched.pop("start_at", None)
                         _update_schedule(next_log, next_sched)
 
-    # Signal linkage barrier: create or set an event for this task_id
-    try:
-        import asyncio as _aio  # local import to avoid global dependency
-
-        ev = getattr(scheduler, "_linkage_barriers", {}).get(task_id)
-        if ev is None:
-            # Create and store a new event
-            ev = _aio.Event()
-            try:
-                scheduler._linkage_barriers[task_id] = ev  # type: ignore[attr-defined]
-            except Exception:
-                pass
-        # Set the event to signal completion
-        try:
-            ev.set()
-        except Exception:
-            pass
-    except Exception:
-        # Never let signalling break detachment
-        pass
+    # Linkage barrier signalling removed – detachment is synchronous for our purposes.
 
 
 def attach_with_links(
