@@ -560,12 +560,19 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             except Exception:
                 uncovered = []
             if isinstance(uncovered, list) and uncovered:
-                await self._request_clarification(
-                    "Your instruction could not be routed to all intended tasks without guessing. "
-                    "Please specify exact task_ids, or use clear directives such as 'all', 'first', 'last', "
-                    "or name the tasks explicitly, and provide the instruction for each group.",
-                )
-                return
+                # Prefer queue-level clarification when channels are available.
+                # If no clarification channels are provided, fall back to delivering to the
+                # current task to avoid stalling execution.
+                if self._clar_up is not None and self._clar_down is not None:
+                    await self._request_clarification(
+                        "Your instruction could not be routed to all intended tasks without guessing. "
+                        "Please specify exact task_ids, or use clear directives such as 'all', 'first', 'last', "
+                        "or name the tasks explicitly, and provide the instruction for each group.",
+                    )
+                    return
+                else:
+                    await self._current_handle.interject(message)
+                    return
 
             # Ensure pending registry exists
             if not hasattr(self, "_queued_interjections"):
@@ -598,20 +605,22 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                         self._queued_interjections.setdefault(tid, []).append(instr)
             return
         except Exception:
-            # Fallback: if ambiguous, request clarification and DO NOT forward to the inner task.
-            # Only when clearly not ambiguous do we deliver to the current task.
+            # Fallback: if ambiguous and clarification queues are available, request clarification.
+            # Otherwise, forward to the current task to avoid stalling execution.
             try:
                 ambiguous_tokens = ("all", "rest", "remaining", "first", "last")
                 looks_ambiguous = any(
                     tok in (message or "").lower() for tok in ambiguous_tokens
                 )
                 if looks_ambiguous:
-                    await self._request_clarification(
-                        "Your interjection could refer to multiple tasks. "
-                        "Please specify which tasks it applies to (by id or directive such as 'all', 'first', 'last'), "
-                        "and provide the instruction text for each group.",
-                    )
-                    return
+                    if self._clar_up is not None and self._clar_down is not None:
+                        await self._request_clarification(
+                            "Your interjection could refer to multiple tasks. "
+                            "Please specify which tasks it applies to (by id or directive such as 'all', 'first', 'last'), "
+                            "and provide the instruction text for each group.",
+                        )
+                        return
+                    # No clarification channels – fall through to forward to current task
             except Exception:
                 pass
             await self._current_handle.interject(message)
