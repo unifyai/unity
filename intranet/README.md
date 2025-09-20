@@ -4,7 +4,7 @@
 ---
 
 ## 🗃️  Schema
-`flat_schema.json` defines a single **`content`** table.  Only the `summary` column is embedded (`_summary_emb`).  Retrieval is hierarchical:
+`flat_schema.json` defines a single **`Content`** table.  Only the `summary` column is embedded (`_summary_emb`).  Retrieval is hierarchical:
 sentence ➜ paragraph ➜ section ➜ document.
 
 ## 🚀 Quick start
@@ -22,17 +22,20 @@ sudo apt update && sudo apt install -y \
     libgtk-3-dev \
     tesseract-ocr \
     tesseract-ocr-eng \
-    poppler-utils
+    poppler-utils \
+    libreoffice
 ```
 
 2. **Env + Python deps** – follow the *Setup* section in the repository-root `README.md` (create virtualenv, `uv pip install -r requirements.txt`, add `.env` with credentials from **Haris**).
 
-3. **Initialise** (build table + ingest docs + embeddings):
+3. **Spacy model** – Once *Step 2* is completed, run `uv pip install $(spacy info en_core_web_sm --url)` to download the spaCy model used by the parser.
+
+4. **Initialise** (build table + ingest docs + embeddings):
    ```bash
    python intranet/scripts/04_initialize_system.py
    ```
 
-4. **Run API**:
+5. **Run API**:
    ```bash
    python intranet/scripts/05_start_api.py
    # → http://localhost:8000/docs

@@ -15,9 +15,12 @@ import json
 import os
 import time
 from pathlib import Path
+import logging
+import hashlib
 from typing import Any, Dict, List, Union
 
 from .base import GenericParser
+from .converter import DocumentConversionManager, DocxToPdfConverter
 from .types.document import (
     Document,
     DocumentMetadata,
@@ -25,22 +28,39 @@ from .types.document import (
     DocumentParagraph,
     DocumentSection,
     DocumentSentence,
+    DocumentImage,
+    DocumentTable,
 )
 from .token_utils import (
-    count_tokens,
+    count_tokens_per_utf_byte,
     has_meaningful_text,
-    is_within_token_limit,
-    clip_text_to_token_limit,
 )
+from .summary_utils import generate_summary_with_compression
+from .token_utils import (
+    is_within_token_limit_bytes,
+    clip_text_to_token_limit_bytes,
+    first_tokens_per_utf_byte,
+    middle_tokens_per_utf_byte,
+    last_tokens_per_utf_byte,
+    conservative_token_estimate,
+    is_within_token_limit_conservative,
+    clip_text_to_token_limit_conservative,
+)
+from .prompt_builders import build_picture_description_prompt
+from ...common.llm_helpers import short_id
 
 # Check for optional dependencies
 try:
-    from docling.document_converter import DocumentConverter
-    from docling.datamodel.base_models import ConversionStatus
-    from docling.chunking import HybridChunker
-    from docling_core.transforms.chunker.tokenizer.huggingface import (
-        HuggingFaceTokenizer,
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.datamodel.base_models import ConversionStatus, InputFormat
+    from docling.datamodel.pipeline_options import (
+        PdfPipelineOptions,
+        PictureDescriptionVlmOptions,
     )
+    from docling_core.types.doc.document import PictureDescriptionData
+    from docling.chunking import HybridChunker
+    from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
+    import tiktoken
 
     DOCLING_AVAILABLE = True
 except ImportError:
@@ -50,18 +70,26 @@ except ImportError:
     class HybridChunker:
         pass
 
-    class HuggingFaceTokenizer:
+    class OpenAITokenizer:
         pass
 
 
 try:
     from langchain.text_splitter import RecursiveCharacterTextSplitter
-    from transformers import AutoTokenizer
 
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
     RecursiveCharacterTextSplitter = None
+
+# Optional spaCy (lightweight) for robust sentence splitting
+try:
+    import spacy  # type: ignore
+
+    SPACY_AVAILABLE = True
+except Exception:
+    SPACY_AVAILABLE = False
+    spacy = None  # type: ignore
 
 
 class DoclingParser(GenericParser[Document]):
@@ -82,6 +110,8 @@ class DoclingParser(GenericParser[Document]):
         extract_images: bool = True,
         extract_tables: bool = True,
         use_llm_enrichment: bool = True,
+        conversion_parallel: bool = False,
+        cleanup_converted_files: bool = True,
         parser_name: str = "DoclingParser",
         parser_version: str = "1.0.0",
     ):
@@ -108,27 +138,84 @@ class DoclingParser(GenericParser[Document]):
         self.extract_images = extract_images and DOCLING_AVAILABLE
         self.extract_tables = extract_tables and DOCLING_AVAILABLE
         self.use_llm_enrichment = use_llm_enrichment
+        self.conversion_parallel = conversion_parallel
+        self.cleanup_converted_files = cleanup_converted_files
 
-        # Initialize converters if available
+        # File format conversion manager: register available converters (extensible)
+        self._conversion_manager = DocumentConversionManager(
+            converters=[DocxToPdfConverter()],
+        )
+
+        # Initialize Docling converter (PDF pipeline) if available
         self.converter = None
-        if DOCLING_AVAILABLE:
-            self.converter = DocumentConverter()
+        try:
+            PICTURE_DESCRIPTION_MODEL_REPO = os.environ.get(
+                "PICTURE_DESCRIPTION_MODEL_REPO",
+                "HuggingFaceTB/SmolVLM-500M-Instruct",
+            )
+        except Exception:
+            PICTURE_DESCRIPTION_MODEL_REPO = "HuggingFaceTB/SmolVLM-500M-Instruct"
 
-        # Initialize text splitters
+        if DOCLING_AVAILABLE:
+            pipeline_options = PdfPipelineOptions()
+            picture_description_options = PictureDescriptionVlmOptions(
+                repo_id=PICTURE_DESCRIPTION_MODEL_REPO,
+                prompt=build_picture_description_prompt(),
+            )
+            pipeline_options.do_picture_description = True
+            pipeline_options.picture_description_options = picture_description_options
+            pipeline_options.images_scale = 2.0
+            pipeline_options.generate_picture_images = True
+
+            converter = DocumentConverter(
+                allowed_formats=list(InputFormat),
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+                },
+            )
+            self.converter = converter
+
+        else:
+            logging.warning(
+                "Docling modules not available; hybrid parsing and rich extraction are disabled. Falling back to basic parsing.",
+            )
+
+        # Initialize spaCy (optional) and text splitters
+        self._spacy_nlp: Language | None = None
+        if SPACY_AVAILABLE:
+            self._init_spacy_pipeline()
+        else:
+            logging.warning(
+                "spaCy not available; sentence splitting will use LangChain/regex.",
+            )
+
+        # Initialize text splitters (overridden below once chunker is ready)
         self.paragraph_splitter = None
         self.sentence_splitter = None
         if LANGCHAIN_AVAILABLE:
+            # Baseline initializers; will be replaced if hybrid chunker is enabled
+            # Sensible defaults from common guidance: ~10% overlap with caps
+            para_overlap_chars = min(200, max(0, int(0.1 * max_chunk_size)))
+            sent_overlap_chars = min(16, max(0, int(0.1 * sentence_chunk_size)))
+
             self.paragraph_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=max_chunk_size,
-                chunk_overlap=chunk_overlap,
+                chunk_overlap=para_overlap_chars,
                 length_function=len,
-                separators=["\n\n", "\n", ". ", " ", ""],
+                separators=["\n\n", "\n", " ", ""],
+                keep_separator=True,
             )
             self.sentence_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=sentence_chunk_size,
-                chunk_overlap=50,
+                chunk_overlap=sent_overlap_chars,
                 length_function=len,
-                separators=[". ", "! ", "? ", "\n", " ", ""],
+                # Prefer sentence boundaries; keep punctuation with the preceding chunk
+                separators=[". ", "! ", "? ", "\n\n", "\n"],
+                keep_separator="end",
+            )
+        else:
+            logging.warning(
+                "LangChain text splitters not available; falling back to regex-based splitting.",
             )
 
         # Initialize hybrid chunker if requested
@@ -136,8 +223,122 @@ class DoclingParser(GenericParser[Document]):
         if self.use_hybrid_chunking:
             self._init_hybrid_chunking()
 
+        # If hybrid chunker and LangChain are available, align splitters with tokenizer limits
+        if LANGCHAIN_AVAILABLE and self.hybrid_chunker is not None:
+            try:
+                import tiktoken
+
+                try:
+                    EMBEDDING_MODEL = os.environ.get(
+                        "EMBEDDING_MODEL",
+                        "text-embedding-3-small",
+                    )
+                except Exception:
+                    EMBEDDING_MODEL = "text-embedding-3-small"
+
+                try:
+                    EMBEDDING_ENCODING = os.environ.get(
+                        "EMBEDDING_ENCODING",
+                        "cl100k_base",
+                    )
+                except Exception:
+                    EMBEDDING_ENCODING = "cl100k_base"
+
+                encoding_name = tiktoken.encoding_for_model(EMBEDDING_MODEL).name
+            except Exception:
+                encoding_name = "cl100k_base"
+
+            # Paragraph splitter: token-aware, aligned to chunker's token budget
+            try:
+                para_overlap_tokens = min(
+                    256,
+                    max(0, int(0.1 * self.hybrid_chunker.max_tokens)),
+                )
+                self.paragraph_splitter = (
+                    RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+                        encoding_name=encoding_name,
+                        chunk_size=self.hybrid_chunker.max_tokens,
+                        chunk_overlap=para_overlap_tokens,
+                        separators=["\n\n", "\n", " "],
+                        keep_separator=True,
+                    )
+                )
+            except Exception:
+                logging.warning(
+                    "Failed to initialize token-aware paragraph splitter; using baseline splitter.",
+                )
+
+            # Sentence splitter: token-aware, sentence boundaries, keep punctuation with previous
+            try:
+                # Keep sentence size modest to encourage one-sentence-per-chunk behaviour
+                target_sentence_tokens = max(
+                    64,
+                    min(self.sentence_chunk_size, self.hybrid_chunker.max_tokens // 4),
+                )
+                sent_overlap_tokens = min(16, max(0, int(0.1 * target_sentence_tokens)))
+                self.sentence_splitter = (
+                    RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+                        encoding_name=encoding_name,
+                        chunk_size=target_sentence_tokens,
+                        chunk_overlap=sent_overlap_tokens,
+                        separators=[". ", "! ", "? ", "\n\n", "\n"],
+                        keep_separator="end",
+                    )
+                )
+            except Exception:
+                logging.warning(
+                    "Failed to initialize token-aware sentence splitter; using baseline splitter.",
+                )
+
         # Supported formats
         self.supported_formats = self._get_supported_formats()
+
+    def _init_spacy_pipeline(self) -> None:
+        """Initialise a minimal spaCy pipeline for sentence segmentation.
+
+        Tries to load en_core_web_sm if present; otherwise falls back to blank('en')
+        with rule-based sentencizer. Attempts auto-download if allowed.
+        """
+        if not SPACY_AVAILABLE:
+            return
+        model = os.environ.get("SPACY_MODEL", "en_core_web_sm")
+        try:
+            # Load small English model with minimal components
+            self._spacy_nlp = spacy.load(model)
+            # Ensure we have sentence boundaries
+            if (
+                "senter" not in self._spacy_nlp.pipe_names
+                and "sentencizer" not in self._spacy_nlp.pipe_names
+            ):
+                self._spacy_nlp.add_pipe("sentencizer")
+            # Disable heavy components not needed for sentence splitting
+            for comp in ("parser", "attribute_ruler", "tagger", "lemmatizer", "ner"):
+                try:
+                    if comp in self._spacy_nlp.pipe_names:
+                        self._spacy_nlp.remove_pipe(comp)
+                except Exception:
+                    pass
+        except Exception as e:
+            # Do not attempt programmatic downloads or fallbacks; re-raise exact exception
+            raise e
+
+        # Add a lightweight post-processor to prevent enum prefixes becoming their own sentences
+        try:
+
+            if self._spacy_nlp is not None:
+                after_component = (
+                    "sentencizer"
+                    if "sentencizer" in self._spacy_nlp.pipe_names
+                    else ("senter" if "senter" in self._spacy_nlp.pipe_names else None)
+                )
+                if after_component:
+                    self._spacy_nlp.add_pipe("sent_fix_enums", after=after_component)
+                else:
+                    # If no sentence component present, add fix last (no-op until boundaries exist)
+                    self._spacy_nlp.add_pipe("sent_fix_enums", last=True)
+        except Exception:
+            # Non-fatal: fallback behaviour remains
+            pass
 
     def _get_supported_formats(self) -> List[str]:
         """Get list of supported formats based on available backends."""
@@ -149,7 +350,48 @@ class DoclingParser(GenericParser[Document]):
             ]
         else:
             # Basic formats when only text parsing is available
+            logging.warning(
+                "Docling backend unavailable; only basic text formats are supported.",
+            )
             return [".txt"]
+
+    def _compute_document_id(
+        self,
+        path: Path | None,
+        *,
+        full_text: str | None = None,
+    ) -> str:
+        """Compute a stable, content-based document ID.
+
+        Preference order:
+        1) File bytes hash (sha256) if path is available and readable
+        2) Full text hash (sha256) if provided
+        3) Fallback to a deterministic hash of the stringified path
+        """
+        try:
+            if (
+                path is not None
+                and isinstance(path, Path)
+                and path.exists()
+                and path.is_file()
+            ):
+                with path.open("rb") as f:
+                    data = f.read()
+                return hashlib.sha256(data).hexdigest()
+        except Exception:
+            pass
+
+        try:
+            if isinstance(full_text, str) and full_text:
+                return hashlib.sha256(
+                    full_text.encode("utf-8", errors="ignore"),
+                ).hexdigest()
+        except Exception:
+            pass
+
+        # Last resort (path string, may vary across machines but deterministic per input)
+        key = str(path) if path is not None else "unknown"
+        return hashlib.sha256(key.encode("utf-8", errors="ignore")).hexdigest()
 
     def _get_mime_type(self, file_extension: str) -> str:
         """Convert file extension to MIME type."""
@@ -169,30 +411,135 @@ class DoclingParser(GenericParser[Document]):
         }
         return mime_map.get(file_extension.lower(), "application/octet-stream")
 
+    def _index_docling_structure(self, docling_doc) -> dict:
+        """Build an index of headings and item → section-path mapping from Docling's tree.
+
+        Returns a dict with keys:
+        - ref_to_path: map of NodeItem.self_ref -> tuple[str, ...] headings path
+        - heading_refs: set of self_refs that are SectionHeaderItems (or Title)
+        - heading_ref_to_level: map of heading self_ref -> explicit Docling level (int)
+        - heading_order: list of {text, level, self_ref, path} in document order
+        - title: optional top-level title text if present
+        """
+        index: dict = {
+            "ref_to_path": {},
+            "heading_refs": set(),
+            "heading_ref_to_level": {},
+            "heading_order": [],
+            "title": None,
+        }
+
+        # Maintain a stack of (text, level, self_ref) for section headers
+        heading_stack: list[tuple[str, int, str]] = []
+
+        try:
+            iterator = docling_doc.iterate_items(
+                with_groups=True,
+                traverse_pictures=False,
+            )
+        except Exception:
+            # Fallback: no index available
+            return index
+
+        for item, _depth in iterator:
+            try:
+                # Determine label string
+                label_str = str(getattr(item, "label", "")).lower()
+                self_ref = getattr(item, "self_ref", None)
+                text_val = (getattr(item, "text", "") or "").strip()
+
+                # Is this a heading-like node?
+                is_section_header = "section_header" in label_str
+                is_title = label_str.endswith("title") or label_str == "title"
+
+                if is_section_header or is_title:
+                    # Prefer Docling's explicit level
+                    raw_level = getattr(item, "level", None)
+                    header_level = (
+                        int(raw_level)
+                        if isinstance(raw_level, int)
+                        else (1 if is_title else 1)
+                    )
+
+                    # Maintain a proper stack (levels are 1-based)
+                    while heading_stack and heading_stack[-1][1] >= header_level:
+                        heading_stack.pop()
+                    if self_ref is None:
+                        # If no self_ref, fabricate a stable key from text (rare)
+                        self_ref = f"#/_heading/{len(index['heading_order'])}"
+
+                    heading_stack.append(
+                        (text_val or "Untitled", header_level, self_ref),
+                    )
+
+                    # Current path
+                    path = tuple(h[0] for h in heading_stack)
+
+                    index["heading_refs"].add(self_ref)
+                    index["heading_ref_to_level"][self_ref] = header_level
+                    index["ref_to_path"][self_ref] = path
+                    index["heading_order"].append(
+                        {
+                            "text": text_val,
+                            "level": header_level,
+                            "self_ref": self_ref,
+                            "path": list(path),
+                        },
+                    )
+
+                    if is_title and text_val and not index.get("title"):
+                        index["title"] = text_val
+
+                # Map every item's self_ref to the current path (if any)
+                if self_ref is not None:
+                    if heading_stack:
+                        index["ref_to_path"][self_ref] = tuple(
+                            h[0] for h in heading_stack
+                        )
+            except Exception:
+                continue
+
+        return index
+
     def _init_hybrid_chunking(self) -> bool:
         """Initialize the hybrid chunker if available."""
         if not DOCLING_AVAILABLE or not LANGCHAIN_AVAILABLE:
+            if not DOCLING_AVAILABLE:
+                logging.warning(
+                    "Hybrid chunking requires Docling; skipping hybrid initialization.",
+                )
+            if not LANGCHAIN_AVAILABLE:
+                logging.warning(
+                    "Hybrid chunking benefits from LangChain; token-aware splitters will be unavailable.",
+                )
             return False
 
         try:
+            try:
+                EMBEDDING_MODEL = os.environ.get(
+                    "EMBEDDING_MODEL",
+                    "text-embedding-3-small",
+                )
+            except Exception:
+                EMBEDDING_MODEL = "text-embedding-3-small"
+
+            try:
+                EMBEDDING_MAX_INPUT_TOKENS = int(
+                    os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "8000"),
+                )
+            except Exception:
+                EMBEDDING_MAX_INPUT_TOKENS = 8000
+
             # Use a default embedding model tokenizer for chunking
             # Following Docling's best practices from documentation
-            tokenizer = HuggingFaceTokenizer(
-                tokenizer=AutoTokenizer.from_pretrained(
-                    "sentence-transformers/all-MiniLM-L6-v2",
-                ),
-                max_tokens=self.max_chunk_size,
+            tokenizer = OpenAITokenizer(
+                tokenizer=tiktoken.encoding_for_model(EMBEDDING_MODEL),
+                max_tokens=EMBEDDING_MAX_INPUT_TOKENS,
             )
 
             # Initialize hybrid chunker with best practice settings
-            # Use smaller chunks to better preserve document structure
             self.hybrid_chunker = HybridChunker(
                 tokenizer=tokenizer,
-                max_tokens=min(
-                    self.max_chunk_size,
-                    300,
-                ),  # Smaller chunks for better structure detection
-                min_tokens=50,  # Avoid very small chunks
                 merge_peers=True,  # Don't merge to preserve section boundaries
             )
             return True
@@ -214,6 +561,10 @@ class DoclingParser(GenericParser[Document]):
         print(f"Parsing document: {Path(file_path).name}")
 
         file_path = Path(file_path).expanduser().resolve()
+
+        # Pre-conversion: convert inputs for supported formats (e.g., .doc/.docx -> .pdf)
+        converted_paths, to_cleanup = self._maybe_convert_inputs([file_path])
+        file_path = converted_paths[0]
 
         # Check if file exists
         if not file_path.exists() or not file_path.is_file():
@@ -242,10 +593,290 @@ class DoclingParser(GenericParser[Document]):
             f"Document parsed successfully: {len(document.sections)} sections, {document.get_total_paragraphs()} paragraphs",
         )
 
-        # # Save parsed result if enabled
-        # self._save_parsed_result_if_enabled(file_path, document)
+        # Save parsed result if enabled
+        self._save_parsed_result_if_enabled(file_path, document)
+
+        # Cleanup converted artifacts if enabled
+        if self.cleanup_converted_files and to_cleanup:
+            self._cleanup_files(to_cleanup)
 
         return document
+
+    def parse_batch(
+        self,
+        file_paths: List[Union[str, Path]],
+        /,
+        *,
+        raises_on_error: bool = False,
+        parallelize_post: bool = True,
+        **options: Any,
+    ) -> List[Document]:
+        """
+        Batch-parse multiple documents.
+
+        Behaviour:
+        - Uses Docling's convert_all when available to batch convert inputs efficiently.
+        - Falls back to per-file parse for unsupported formats or when Docling is unavailable.
+        - Post-processing (structure extraction, summaries, metadata) is parallelized via unify.map
+          when available, with a sequential fallback.
+        """
+        normalized: List[Path] = [Path(p).expanduser().resolve() for p in file_paths]
+
+        # Pre-conversion pass: convert supported formats (preserve order), allow safe parallelism
+        normalized, to_cleanup = self._maybe_convert_inputs(
+            normalized,
+            parallel=self.conversion_parallel,
+        )
+
+        # Continue with Docling's convert_all / per-file parse
+        documents: List[Document] = []
+
+        # Helper to run a function with optional parallelism
+        def _safe_map(name: str, items: list[dict], fn):
+            try:
+                import unify
+
+                return unify.map(fn, items, name=name) if items else []
+            except Exception:
+                return [fn(**it) for it in items]
+
+        # Fast path: Use convert_all only for formats Docling handles and when converter is present
+        can_batch = (
+            DOCLING_AVAILABLE
+            and self.converter is not None
+            and all(
+                p.suffix.lower() in self.supported_formats and p.is_file()
+                for p in normalized
+            )
+        )
+
+        if not can_batch:
+            # Fallback to individual parse preserving existing logic
+            for p in normalized:
+                try:
+                    documents.append(self.parse(str(p), **options))
+                except Exception as e:
+                    if raises_on_error:
+                        raise
+                    # Create minimal failed document with metadata
+                    try:
+                        doc_id = short_id(4)
+                    except Exception:
+                        doc_id = self._compute_document_id(p)[:8]
+                    meta = self._create_base_metadata(p)
+                    documents.append(
+                        Document(
+                            document_id=doc_id,
+                            metadata=meta,
+                            full_text="",
+                            processing_status="failed",
+                        ),
+                    )
+            return documents
+
+        # Split supported/unsupported for batch conversion while preserving order mapping
+        supported_indices: list[int] = []
+        unsupported_indices: list[int] = []
+        supported_paths: list[Path] = []
+        for idx, p in enumerate(normalized):
+            if p.suffix.lower() in self.supported_formats and p.is_file():
+                supported_indices.append(idx)
+                supported_paths.append(p)
+            else:
+                unsupported_indices.append(idx)
+
+        start_time = time.time()
+        conv_results = self.converter.convert_all(
+            [str(p) for p in supported_paths],
+            raises_on_error=raises_on_error,
+        )
+
+        # Prepare post-processing tasks for supported inputs
+        tasks: list[dict] = []
+        for conv_res, src in zip(conv_results, supported_paths):
+            tasks.append(
+                {
+                    "conv_res": conv_res,
+                    "src_path": src,
+                    "options": options,
+                    "start_time": start_time,
+                },
+            )
+
+        def _post_process(**data) -> Document:
+            conv_res = data["conv_res"]
+            src_path = data.get("src_path")
+            opts = data.get("options", {})
+
+            if conv_res.status != ConversionStatus.SUCCESS:
+                # Fallback: basic parse to keep behaviour consistent
+                try:
+                    if src_path and src_path.suffix.lower() in [
+                        ".txt",
+                        ".log",
+                        ".json",
+                    ]:
+                        return self._parse_as_text_document(src_path, **opts)
+                except Exception:
+                    pass
+                # Minimal document for failure
+                doc_id = (
+                    self._compute_document_id(src_path)
+                    if src_path
+                    else str(time.time())
+                )
+                meta = (
+                    self._create_base_metadata(src_path)
+                    if src_path
+                    else DocumentMetadata(
+                        title="Unknown",
+                        file_path=str(src_path) if src_path else "",
+                        file_name=str(src_path.name) if src_path else "",
+                        file_size=0,
+                        file_type=(
+                            self._get_mime_type(src_path.suffix)
+                            if src_path
+                            else "application/octet-stream"
+                        ),
+                        created_at="",
+                        modified_at="",
+                        processed_at="",
+                        parser_name=self.parser_name,
+                        parser_version=self.parser_version,
+                    )
+                )
+                return Document(
+                    document_id=doc_id,
+                    metadata=meta,
+                    full_text="",
+                    processing_status=(
+                        "failed" if conv_res.status.name == "ERROR" else "partial"
+                    ),
+                )
+
+            # SUCCESS: use common builder
+            docling_doc = conv_res.document
+            file_path = src_path or Path(str(conv_res.input.file))
+            return self._build_document_from_docling(
+                docling_doc,
+                file_path,
+                data.get("start_time", time.time()),
+            )
+
+        # Execute post-processing (parallel with fallback)
+        built_supported: list[Document]
+        if parallelize_post:
+            built_supported = _safe_map("Batch Post-Process", tasks, _post_process)
+        else:
+            built_supported = [_post_process(**t) for t in tasks]
+
+        # Parse unsupported indices individually (reuse existing parse)
+        built_unsupported: dict[int, Document] = {}
+        for idx in unsupported_indices:
+            p = normalized[idx]
+            try:
+                built_unsupported[idx] = self.parse(str(p), **options)
+            except Exception:
+                # minimal failed doc
+                try:
+                    doc_id = short_id(4)
+                except Exception:
+                    doc_id = self._compute_document_id(p)[:8]
+                meta = self._create_base_metadata(p)
+                built_unsupported[idx] = Document(
+                    document_id=doc_id,
+                    metadata=meta,
+                    full_text="",
+                    processing_status="failed",
+                )
+
+        # Merge results preserving input order
+        result_docs: list[Document] = [None] * len(normalized)  # type: ignore
+        # Place supported
+        for local_idx, global_idx in enumerate(supported_indices):
+            result_docs[global_idx] = built_supported[local_idx]
+        # Place unsupported
+        for global_idx, doc in built_unsupported.items():
+            result_docs[global_idx] = doc
+
+        # Replace any None (should not happen) with minimal stub
+        for i, maybe_doc in enumerate(result_docs):
+            if maybe_doc is None:
+                p = normalized[i]
+                doc_id = self._compute_document_id(p)
+                meta = self._create_base_metadata(p)
+                result_docs[i] = Document(
+                    document_id=doc_id,
+                    metadata=meta,
+                    full_text="",
+                    processing_status="failed",
+                )
+
+        # Save parsed results when enabled
+        try:
+            # Save for batch-converted (supported) inputs
+            for local_idx, global_idx in enumerate(supported_indices):
+                src_path = supported_paths[local_idx]
+                doc = result_docs[global_idx]
+                self._save_parsed_result_if_enabled(src_path, doc)
+
+            # Save for unsupported that failed (minimal stubs)
+            for global_idx in unsupported_indices:
+                doc = result_docs[global_idx]
+                if getattr(doc, "processing_status", "") == "failed":
+                    self._save_parsed_result_if_enabled(normalized[global_idx], doc)
+        except Exception:
+            pass
+
+        # Cleanup converted artifacts if enabled
+        if self.cleanup_converted_files and to_cleanup:
+            self._cleanup_files(to_cleanup)
+
+        return result_docs
+
+    # ---------- Conversion helpers ----------
+
+    def _maybe_convert_inputs(
+        self,
+        inputs: list[Path],
+        parallel: bool = False,
+    ) -> tuple[list[Path], list[Path]]:
+        """Convert any inputs supported by our conversion manager.
+
+        Returns (converted_paths, to_cleanup), where to_cleanup contains only artifacts
+        created by conversion (not re-used files), so we can safely delete them later.
+        """
+        # Use manager bulk API to leverage per-converter batching/parallelism
+        try:
+            results = self._conversion_manager.convert_all(
+                inputs,
+                output_dir=None,
+                parallel=parallel,
+            )
+            out: list[Path] = []
+            cleanup: list[Path] = []
+            for src, res in zip(inputs, results):
+                if res.ok and res.dst:
+                    print(f"Converted to {res.dst.suffix}: {src} -> {res.dst}")
+                    out.append(res.dst)
+                    if res.backend != "reuse":
+                        cleanup.append(res.dst)
+                else:
+                    if res.backend != "skip":
+                        print(f"Conversion failed for {src}: {res.message}")
+                    out.append(src)
+            return out, cleanup
+        except Exception as e:
+            print(f"Batch conversion error: {e}")
+            return inputs, []
+
+    def _cleanup_files(self, paths: list[Path]) -> None:
+        for p in paths:
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                continue
 
     def _parse_with_docling(self, file_path: Path, **options: Any) -> Document:
         """Parse document using Docling with retry mechanism."""
@@ -291,11 +922,17 @@ class DoclingParser(GenericParser[Document]):
         if result.status != ConversionStatus.SUCCESS:
             raise ValueError(f"Document conversion failed with status: {result.status}")
 
-        docling_doc = result.document
+        return self._build_document_from_docling(result.document, file_path, start_time)
 
+    def _build_document_from_docling(
+        self,
+        docling_doc,
+        file_path: Path,
+        start_time: float,
+    ) -> Document:
+        """Common post-conversion pipeline used by both single and batch parsing."""
         # Create base metadata
         metadata = self._create_base_metadata(file_path)
-        metadata.processing_time = time.time() - start_time
 
         # Extract document statistics
         full_text = docling_doc.export_to_text()
@@ -306,13 +943,14 @@ class DoclingParser(GenericParser[Document]):
         try:
             if hasattr(docling_doc, "pages") and docling_doc.pages:
                 metadata.total_pages = len(docling_doc.pages)
-            elif hasattr(result, "pages"):
-                metadata.total_pages = len(result.pages)
         except Exception:
             pass
 
-        # Create document
-        document_id = str(hash(str(file_path)) % (10**10))
+        # Create document id as exactly 5 characters (no hash suffix)
+        try:
+            document_id = short_id(4)
+        except Exception:
+            document_id = "docid"
         document = Document(
             document_id=document_id,
             metadata=metadata,
@@ -321,15 +959,57 @@ class DoclingParser(GenericParser[Document]):
         )
 
         # Extract content structure
-        self._extract_document_structure(docling_doc, document)
+        # Build a Docling index for robust header/path mapping (per-document)
+        try:
+            doc_index = self._index_docling_structure(docling_doc)
+        except Exception:
+            doc_index = None
+
+        self._extract_document_structure(docling_doc, document, doc_index=doc_index)
 
         # Extract images if requested
         if self.extract_images:
-            self._extract_images(docling_doc, document)
+            self._extract_images(docling_doc, document, doc_index=doc_index)
 
         # Extract tables if requested
         if self.extract_tables:
-            self._extract_tables(docling_doc, document)
+            self._extract_tables(docling_doc, document, doc_index=doc_index)
+
+        # Append image annotations and table HTML to full_text for completeness
+        try:
+            extras: list[str] = []
+            # Image annotations
+            images = getattr(document.metadata, "images", []) or []
+            annotations: list[str] = []
+            for img in images:
+                try:
+                    ann = (getattr(img, "annotation", "") or "").strip()
+                    if ann:
+                        annotations.append(ann)
+                except Exception:
+                    continue
+            if annotations:
+                extras.append("Image Annotations:\n" + "\n".join(annotations))
+
+            # Tables HTML
+            tables = getattr(document.metadata, "tables", []) or []
+            html_blocks: list[str] = []
+            for tbl in tables:
+                try:
+                    html = (getattr(tbl, "html", "") or "").strip()
+                    if html:
+                        html_blocks.append(html)
+                except Exception:
+                    continue
+            if html_blocks:
+                extras.append("Tables (HTML):\n" + "\n\n".join(html_blocks))
+
+            if extras:
+                document.full_text = (
+                    (document.full_text or "") + "\n\n" + "\n\n".join(extras)
+                )
+        except Exception:
+            pass
 
         # Generate hierarchical summaries
         if self.use_llm_enrichment:
@@ -344,6 +1024,7 @@ class DoclingParser(GenericParser[Document]):
         self._update_statistics(document)
 
         document.processing_status = "completed"
+        document.metadata.processing_time = time.time() - start_time
         return document
 
     def _parse_as_text_document(self, file_path: Path, **options: Any) -> Document:
@@ -362,12 +1043,14 @@ class DoclingParser(GenericParser[Document]):
 
         # Create metadata
         metadata = self._create_base_metadata(file_path)
-        metadata.processing_time = time.time() - start_time
         metadata.total_characters = len(content)
         metadata.total_words = len(content.split())
 
-        # Create document
-        document_id = str(hash(str(file_path)) % (10**10))
+        # Create document id as exactly 5 characters (no hash suffix)
+        try:
+            document_id = short_id(4)
+        except Exception:
+            document_id = "docid"
         document = Document(
             document_id=document_id,
             metadata=metadata,
@@ -382,6 +1065,7 @@ class DoclingParser(GenericParser[Document]):
         self._update_statistics(document)
 
         document.processing_status = "completed"
+        document.metadata.processing_time = time.time() - start_time
         return document
 
     def _create_base_metadata(
@@ -423,7 +1107,13 @@ class DoclingParser(GenericParser[Document]):
             parser_version=self.parser_version,
         )
 
-    def _extract_document_structure(self, docling_doc, document: Document):
+    def _extract_document_structure(
+        self,
+        docling_doc,
+        document: Document,
+        *,
+        doc_index: dict | None = None,
+    ):
         """Extract hierarchical document structure with waterfall fallback."""
         extraction_successful = False
 
@@ -431,7 +1121,11 @@ class DoclingParser(GenericParser[Document]):
         # 1. Try hybrid chunking if enabled
         if self.use_hybrid_chunking and self.hybrid_chunker:
             try:
-                self._extract_with_hybrid_chunking(docling_doc, document)
+                self._extract_with_hybrid_chunking(
+                    docling_doc,
+                    document,
+                    doc_index=doc_index,
+                )
                 extraction_successful = True
             except Exception as e:
                 pass
@@ -495,9 +1189,14 @@ class DoclingParser(GenericParser[Document]):
                 combined_text = " ".join(paragraph_buffer)
 
                 # Create paragraph
+                try:
+                    _para_id = short_id(4)
+                except Exception:
+                    _para_id = str(paragraph_id)
+
                 paragraph = DocumentParagraph(
                     text=combined_text,
-                    paragraph_id=str(paragraph_id),
+                    paragraph_id=_para_id,
                     section_id=current_section.section_id,
                     document_id=document.document_id,
                     paragraph_index=len(current_section.paragraphs),
@@ -507,7 +1206,7 @@ class DoclingParser(GenericParser[Document]):
                 # Split into sentences
                 sentences = self._split_into_sentences(
                     combined_text,
-                    paragraph_id,
+                    _para_id,
                     current_section.section_id,
                     document.document_id,
                     sentence_id,
@@ -537,37 +1236,21 @@ class DoclingParser(GenericParser[Document]):
                 # Handle different item types based on Docling's type system
                 item_type = type(item).__name__
 
-                # Check if this is a heading based on label or type
+                # Check if this is a heading based on Docling label first (airtight)
                 is_heading = False
-
-                # Method 1: Check item type
-                if item_type in ["TitleItem", "SectionHeaderItem", "HeadingItem"]:
+                docling_label = (
+                    str(getattr(item, "label", "")).lower()
+                    if hasattr(item, "label")
+                    else ""
+                )
+                if (
+                    "section_header" in docling_label
+                    or docling_label.endswith("title")
+                    or docling_label == "title"
+                ):
                     is_heading = True
-
-                # Method 2: Check label attribute (Docling's semantic labeling)
-                elif hasattr(item, "label") and item.label:
-                    label_lower = str(item.label).lower()
-                    if any(
-                        heading_indicator in label_lower
-                        for heading_indicator in [
-                            "title",
-                            "heading",
-                            "header",
-                            "section",
-                            "chapter",
-                            "part",
-                            "h1",
-                            "h2",
-                            "h3",
-                            "h4",
-                            "h5",
-                            "h6",
-                        ]
-                    ):
-                        is_heading = True
-
-                # Method 3: Check text pattern if not identified as heading yet
                 elif hasattr(item, "text") and item.text:
+                    # Heuristic fallback only if Docling didn't label it
                     text = item.text.strip()
                     if self._is_likely_header(text, None):
                         is_heading = True
@@ -580,19 +1263,21 @@ class DoclingParser(GenericParser[Document]):
                     title_text = (
                         item.text.strip() if hasattr(item, "text") else "Untitled"
                     )
-                    # Use the iterate_items level parameter for hierarchy
-                    header_level = (
-                        level if level is not None else getattr(item, "level", 1)
-                    )
+                    # Prefer Docling's explicit heading level when available
+                    header_level = getattr(item, "level", None)
+                    if not isinstance(header_level, int):
+                        header_level = level if level is not None else 1
 
                     # Pop sections from stack for proper hierarchy
                     while section_stack and section_stack[-1][0] >= header_level:
                         section_stack.pop()
 
                     # Create new section
+                    # Compute path from existing stack + this header
+                    base_path = [s.title for (_lvl, s) in section_stack] + [title_text]
                     current_section = DocumentSection(
                         title=title_text,
-                        section_id=str(section_id),
+                        section_id=short_id(5),
                         document_id=document.document_id,
                         section_index=section_id - 1,
                         metadata={
@@ -601,6 +1286,7 @@ class DoclingParser(GenericParser[Document]):
                             "docling_label": (
                                 str(item.label) if hasattr(item, "label") else None
                             ),
+                            "path": base_path,
                         },
                     )
                     document.sections.append(current_section)
@@ -613,7 +1299,7 @@ class DoclingParser(GenericParser[Document]):
                     if current_section is None:
                         current_section = DocumentSection(
                             title="Document Content",
-                            section_id=str(section_id),
+                            section_id=short_id(5),
                             document_id=document.document_id,
                             section_index=0,
                         )
@@ -688,7 +1374,9 @@ class DoclingParser(GenericParser[Document]):
                                     # Store bbox as dict
                                     if hasattr(prov_item.bbox, "model_dump"):
                                         paragraph_metadata["bbox"] = (
-                                            prov_item.bbox.model_dump()
+                                            prov_item.bbox.model_dump(
+                                                exclude=["coord_origin"],
+                                            )
                                         )
                                     else:
                                         paragraph_metadata["bbox"] = {
@@ -707,7 +1395,7 @@ class DoclingParser(GenericParser[Document]):
                     if current_section is None:
                         current_section = DocumentSection(
                             title="Document Content",
-                            section_id=str(section_id),
+                            section_id=short_id(5),
                             document_id=document.document_id,
                             section_index=0,
                         )
@@ -716,9 +1404,14 @@ class DoclingParser(GenericParser[Document]):
                         section_id += 1
 
                     # Create paragraph with list metadata
+                    try:
+                        _para_id = short_id(4)
+                    except Exception:
+                        _para_id = str(paragraph_id)
+
                     paragraph = DocumentParagraph(
                         text=item.text.strip(),
-                        paragraph_id=str(paragraph_id),
+                        paragraph_id=_para_id,
                         section_id=current_section.section_id,
                         document_id=document.document_id,
                         paragraph_index=len(current_section.paragraphs),
@@ -741,11 +1434,15 @@ class DoclingParser(GenericParser[Document]):
                             break
 
                     # Simple sentence for list items
+                    try:
+                        _sent_id = short_id(4)
+                    except Exception:
+                        _sent_id = str(sentence_id)
                     paragraph.sentences = [
                         DocumentSentence(
                             text=item.text.strip(),
-                            sentence_id=str(sentence_id),
-                            paragraph_id=str(paragraph_id),
+                            sentence_id=_sent_id,
+                            paragraph_id=_para_id,
                             section_id=current_section.section_id,
                             document_id=document.document_id,
                             sentence_index=0,
@@ -761,7 +1458,7 @@ class DoclingParser(GenericParser[Document]):
                     if current_section is None:
                         current_section = DocumentSection(
                             title="Document Content",
-                            section_id=str(section_id),
+                            section_id=short_id(5),
                             document_id=document.document_id,
                             section_index=0,
                         )
@@ -770,9 +1467,14 @@ class DoclingParser(GenericParser[Document]):
                         section_id += 1
 
                     # Create specialized paragraph
+                    try:
+                        _para_id2 = short_id(4)
+                    except Exception:
+                        _para_id2 = str(paragraph_id)
+
                     paragraph = DocumentParagraph(
                         text=item.text.strip(),
-                        paragraph_id=str(paragraph_id),
+                        paragraph_id=_para_id2,
                         section_id=current_section.section_id,
                         document_id=document.document_id,
                         paragraph_index=len(current_section.paragraphs),
@@ -791,11 +1493,15 @@ class DoclingParser(GenericParser[Document]):
                     )
 
                     # Don't split code/formula into sentences
+                    try:
+                        _sent_id2 = short_id(4)
+                    except Exception:
+                        _sent_id2 = str(sentence_id)
                     paragraph.sentences = [
                         DocumentSentence(
                             text=item.text.strip(),
-                            sentence_id=str(sentence_id),
-                            paragraph_id=str(paragraph_id),
+                            sentence_id=_sent_id2,
+                            paragraph_id=_para_id2,
                             section_id=current_section.section_id,
                             document_id=document.document_id,
                             sentence_index=0,
@@ -834,7 +1540,7 @@ class DoclingParser(GenericParser[Document]):
                     # Create new section
                     current_section = DocumentSection(
                         title=text_item.text.strip(),
-                        section_id=str(section_id),
+                        section_id=short_id(5),
                         document_id=document.document_id,
                         section_index=section_id - 1,
                         metadata={
@@ -853,7 +1559,7 @@ class DoclingParser(GenericParser[Document]):
                     if current_section is None:
                         current_section = DocumentSection(
                             title="Document Content",
-                            section_id=str(section_id),
+                            section_id=short_id(5),
                             document_id=document.document_id,
                             section_index=0,
                         )
@@ -861,9 +1567,14 @@ class DoclingParser(GenericParser[Document]):
                         section_id += 1
 
                     # Create paragraph
+                    try:
+                        _para_id = short_id(4)
+                    except Exception:
+                        _para_id = str(paragraph_id)
+
                     paragraph = DocumentParagraph(
                         text=text_item.text.strip(),
-                        paragraph_id=str(paragraph_id),
+                        paragraph_id=_para_id,
                         section_id=current_section.section_id,
                         document_id=document.document_id,
                         paragraph_index=len(current_section.paragraphs),
@@ -880,7 +1591,7 @@ class DoclingParser(GenericParser[Document]):
                     # Split into sentences
                     sentences = self._split_into_sentences(
                         text_item.text.strip(),
-                        paragraph_id,
+                        _para_id,
                         current_section.section_id,
                         document.document_id,
                         sentence_id,
@@ -891,223 +1602,257 @@ class DoclingParser(GenericParser[Document]):
                     current_section.paragraphs.append(paragraph)
                     paragraph_id += 1
 
-    def _extract_with_hybrid_chunking(self, docling_doc, document: Document):
-        """Extract structure using Docling's hybrid chunker with enhanced context awareness."""
-        # Get all chunks from the hybrid chunker
+    def _extract_with_hybrid_chunking(
+        self,
+        docling_doc,
+        document: Document,
+        *,
+        doc_index: dict | None = None,
+    ):
+        """Extract structure using Docling's hybrid chunker with robust hierarchy building."""
+        # 1) Get chunks from the hybrid chunker
         chunks = list(self.hybrid_chunker.chunk(docling_doc))
 
-        # Store chunks for potential enrichment in other methods
-        self._last_chunks = chunks
-        self._chunk_text_map = {}  # Map chunk text to enriched context
+        # 2) Pre-compute enriched context for each chunk (used for embeddings and heuristics)
+        chunk_text_map: dict[str, str] = {}
+        for c in chunks:
+            try:
+                key = (c.text or "").strip()
+                if key:
+                    chunk_text_map[key] = self.enrich_chunk_context(c)
+            except Exception:
+                pass
 
-        # Build a mapping of chunks to their hierarchical context
-        chunk_hierarchy = self._build_chunk_hierarchy(chunks)
+        # 3) Build a robust hierarchical map using headings path and doc items
+        #    Note: enrichment is done above before building hierarchy
+        chunk_hierarchy = self._build_chunk_hierarchy(
+            chunks,
+            doc_index=doc_index,
+            chunk_text_map=chunk_text_map,
+        )
 
+        # 4) Iterate and construct sections/paragraphs
         section_id = 1
         paragraph_id = 1
         sentence_id = 1
 
-        # Track sections by their hierarchical path
-        section_stack = []  # Stack of (level, section) tuples
-        current_section = None
-
-        # Track the last seen headings hierarchy
-        last_headings = []
+        # Map from heading path tuple to created DocumentSection
+        created_sections: dict[tuple[str, ...], DocumentSection] = {}
+        current_section: DocumentSection | None = None
 
         for i, chunk in enumerate(chunks):
-            chunk_text = chunk.text.strip()
-            if not chunk_text:
+            raw_text = (chunk.text or "").strip()
+            if not raw_text:
                 continue
 
-            # Get hierarchical context from chunk
-            chunk_path = chunk_hierarchy.get(i, {})
-            is_heading = chunk_path.get("is_heading", False)
-            heading_level = chunk_path.get("level", 0)
+            ctx = chunk_hierarchy.get(i, {})
+            headings: list[str] = list(ctx.get("headings") or [])
+            is_heading: bool = bool(ctx.get("is_heading", False))
+            # Prefer explicit level, otherwise derive from headings length
+            heading_level: int = int(
+                ctx.get("level") or (len(headings) if headings else 0),
+            )
 
-            # Check if headings changed (indicates new section)
-            current_headings = []
-            if (
-                hasattr(chunk, "meta")
-                and chunk.meta
-                and hasattr(chunk.meta, "headings")
-            ):
-                current_headings = chunk.meta.headings or []
-
-            # If headings changed from last chunk, we might be in a new section
-            if current_headings != last_headings and current_headings:
-                # Create sections for any new headings
-                for idx, heading in enumerate(current_headings):
-                    if idx >= len(last_headings) or heading != last_headings[idx]:
-                        # This is a new heading at this level
-
-                        # Pop sections from stack for proper hierarchy
-                        while section_stack and section_stack[-1][0] >= idx:
-                            section_stack.pop()
-
-                        # Create section for this heading
+            # Ensure sections exist for the full heading path
+            if headings:
+                for depth in range(1, len(headings) + 1):
+                    key = tuple(headings[:depth])
+                    if key not in created_sections:
                         new_section = DocumentSection(
-                            title=heading,
-                            section_id=str(section_id),
+                            title=headings[depth - 1],
+                            section_id=short_id(5),
                             document_id=document.document_id,
                             section_index=section_id - 1,
+                            level=depth,
                             metadata={
-                                "level": idx,
+                                "level": depth,
+                                "path": list(headings[:depth]),
                                 "from_chunk_headings": True,
                             },
                         )
                         document.sections.append(new_section)
-                        section_stack.append((idx, new_section))
+                        created_sections[key] = new_section
                         current_section = new_section
                         section_id += 1
 
-            last_headings = current_headings
+                current_section = created_sections.get(tuple(headings))
 
-            # More aggressive heading detection
-            # First check metadata
-            if hasattr(chunk, "meta") and chunk.meta:
-                # Check for heading indicators in metadata
-                # DocMeta has doc_items which contain labels
-                if hasattr(chunk.meta, "doc_items") and chunk.meta.doc_items:
-                    for doc_item in chunk.meta.doc_items:
-                        if hasattr(doc_item, "label") and doc_item.label:
-                            label_lower = doc_item.label.lower()
-                            if label_lower in [
-                                "title",
-                                "heading",
-                                "section_header",
-                                "h1",
-                                "h2",
-                                "h3",
-                                "header",
-                            ]:
-                                is_heading = True
-                                break
-                    # Extract level from label if possible
-                    for doc_item in chunk.meta.doc_items:
-                        if hasattr(doc_item, "label") and doc_item.label:
-                            label = doc_item.label.lower()
-                            if label.startswith("h") and label[1:].isdigit():
-                                heading_level = int(label[1:])
+            elif is_heading:
+                # No meta.headings, but strong signal of header in text/doc_items
+                # Build a path by appending to current path when available
+                base_path: list[str] = []
+                try:
+                    if current_section and isinstance(current_section.metadata, dict):
+                        base_path = list(current_section.metadata.get("path") or [])
+                except Exception:
+                    base_path = []
 
-            # Always check text patterns - don't skip if metadata didn't identify it
-            if self._is_likely_header(chunk_text, chunk):
-                is_heading = True
-                if heading_level == 0:  # Only set if not already set from metadata
-                    heading_level = self._estimate_heading_level(chunk_text)
-
-            if is_heading:
-                # Pop sections from stack until we find the right level
-                while section_stack and section_stack[-1][0] >= heading_level:
-                    section_stack.pop()
-
-                # Create new section
-                current_section = DocumentSection(
-                    title=chunk_text,
-                    section_id=str(section_id),
-                    document_id=document.document_id,
-                    section_index=section_id - 1,
-                    metadata={
-                        "level": heading_level,
-                        "path": [s[1].title for s in section_stack] + [chunk_text],
-                    },
-                )
-                document.sections.append(current_section)
-                section_stack.append((heading_level, current_section))
+                path = base_path + [raw_text]
+                for depth in range(1, len(path) + 1):
+                    key = tuple(path[:depth])
+                    if key not in created_sections:
+                        new_section = DocumentSection(
+                            title=path[depth - 1],
+                            section_id=short_id(5),
+                            document_id=document.document_id,
+                            section_index=section_id - 1,
+                            level=depth,
+                            metadata={
+                                "level": depth,
+                                "path": list(path[:depth]),
+                                "from_detected_heading": True,
+                            },
+                        )
+                        document.sections.append(new_section)
+                        created_sections[key] = new_section
+                        current_section = new_section
                 section_id += 1
 
-            else:
-                # This is content
-                if current_section is None:
-                    # Create default section if none exists
-                    current_section = DocumentSection(
+                current_section = created_sections.get(tuple(path))
+
+            # Fallback: ensure a default section exists
+            if current_section is None:
+                key = ("Document Content",)
+                if key not in created_sections:
+                    default_section = DocumentSection(
                         title="Document Content",
-                        section_id=str(section_id),
+                        section_id=short_id(5),
                         document_id=document.document_id,
                         section_index=0,
+                        level=1,
+                        metadata={"level": 1, "path": ["Document Content"]},
                     )
-                    document.sections.append(current_section)
-                    section_stack.append((0, current_section))
+                    document.sections.append(default_section)
+                    created_sections[key] = default_section
                     section_id += 1
+                current_section = created_sections[key]
 
-                # Validate chunk token count
-                if not self.validate_chunk_tokens(chunk):
-                    print(
-                        f"Warning: Chunk {i} exceeds token limit, may need further splitting",
-                    )
+            # Skip adding a paragraph if this chunk is a pure heading line
+            anchor_heading = headings[-1] if headings else None
+            if (
+                is_heading
+                and anchor_heading
+                and raw_text.strip() == anchor_heading.strip()
+            ):
+                # pure header chunk, do not duplicate as paragraph
+                continue
 
-                # Store enriched context for potential later use
-                enriched_text = self.enrich_chunk_context(chunk)
-                self._chunk_text_map[chunk_text] = enriched_text
+            # Validate chunk token count (contextualized)
+            _ = self.validate_chunk_tokens(chunk)
 
-                # Create paragraph from chunk with enriched metadata
+            # Enriched context string (for embeddings, overlap)
+            try:
+                enriched_text = chunk_text_map.get(
+                    raw_text,
+                ) or self.enrich_chunk_context(chunk)
+            except Exception:
+                enriched_text = raw_text
+
+                # Create paragraph
                 paragraph = DocumentParagraph(
-                    text=chunk_text,
+                    text=raw_text,
                     paragraph_id=str(paragraph_id),
                     section_id=current_section.section_id,
                     document_id=document.document_id,
                     paragraph_index=len(current_section.paragraphs),
                 )
 
-                # Get comprehensive chunk metadata using helper method
+                # Assemble rich metadata for the paragraph
                 chunk_metadata = self.get_chunk_metadata(chunk)
                 paragraph.metadata.update(
                     {
                         "chunk_index": i,
-                        "chunk_valid_tokens": self.validate_chunk_tokens(chunk),
-                        "enriched_context": enriched_text,  # Store enriched text for embeddings
-                        "enriched_length": len(enriched_text),
-                        **chunk_metadata,  # Include all metadata from helper
+                        "chunk_valid_tokens": True,
+                        "enriched_context": enriched_text,
+                        "enriched_length": len(enriched_text or ""),
+                        "headings_path": headings,
+                        "detected_heading": bool(is_heading),
+                        "detected_level": heading_level,
                     },
                 )
+            paragraph.metadata.update(chunk_metadata)
 
-                # Add chunk metadata for provenance tracking
-                if hasattr(chunk, "meta") and chunk.meta:
-                    # Extract provenance from doc_items
-                    if hasattr(chunk.meta, "doc_items") and chunk.meta.doc_items:
-                        pages = set()
-                        bboxes = []
-
-                        for doc_item in chunk.meta.doc_items:
-                            if hasattr(doc_item, "prov"):
-                                for prov in doc_item.prov:
-                                    if hasattr(prov, "page_no"):
-                                        pages.add(prov.page_no)
-                                    if hasattr(prov, "bbox"):
-                                        bbox_dict = {
+            # Provenance: pages and bboxes from doc_items
+            if hasattr(chunk, "meta") and getattr(chunk.meta, "doc_items", None):
+                pages: set[int] = set()
+                bboxes: list[dict] = []
+                labels: list[str] = []
+                for doc_item in chunk.meta.doc_items:
+                    try:
+                        if hasattr(doc_item, "label") and doc_item.label:
+                            labels.append(str(doc_item.label))
+                        if hasattr(doc_item, "prov") and doc_item.prov:
+                            for prov in doc_item.prov:
+                                if (
+                                    hasattr(prov, "page_no")
+                                    and prov.page_no is not None
+                                ):
+                                    pages.add(prov.page_no)
+                                if hasattr(prov, "bbox") and getattr(
+                                    prov,
+                                    "bbox",
+                                    None,
+                                ):
+                                    bboxes.append(
+                                        {
                                             "l": getattr(prov.bbox, "l", 0),
                                             "t": getattr(prov.bbox, "t", 0),
                                             "r": getattr(prov.bbox, "r", 0),
                                             "b": getattr(prov.bbox, "b", 0),
-                                        }
-                                        bboxes.append(bbox_dict)
+                                        },
+                                    )
+                    except Exception:
+                        continue
+                if pages:
+                    paragraph.metadata["pages"] = sorted(pages)
+                if bboxes:
+                    paragraph.metadata["bboxes"] = bboxes
+                if labels:
+                    paragraph.metadata["doc_item_labels"] = labels
 
-                        if pages:
-                            paragraph.metadata["pages"] = sorted(list(pages))
-                        if bboxes:
-                            paragraph.metadata["bboxes"] = bboxes
+            # Split into sentences with contextual awareness
+            sentences = self._split_into_sentences_contextual(
+                raw_text,
+                paragraph_id,
+                current_section.section_id,
+                document.document_id,
+                sentence_id,
+                chunk,
+            )
+            paragraph.sentences = sentences
+            sentence_id += len(sentences)
 
-                # Split paragraph into sentences with context awareness
-                sentences = self._split_into_sentences_contextual(
-                    chunk_text,
-                    paragraph_id,
-                    current_section.section_id,
-                    document.document_id,
-                    sentence_id,
-                    chunk,
-                )
-                paragraph.sentences = sentences
-                sentence_id += len(sentences)
+            current_section.paragraphs.append(paragraph)
+            paragraph_id += 1
 
-                current_section.paragraphs.append(paragraph)
-                paragraph_id += 1
+    def _build_chunk_hierarchy(
+        self,
+        chunks,
+        *,
+        doc_index: dict | None = None,
+        chunk_text_map: dict | None = None,
+    ) -> Dict[int, Dict]:
+        """Build hierarchical context for chunks using DocMeta.headings and strong heuristics.
 
-    def _build_chunk_hierarchy(self, chunks) -> Dict[int, Dict]:
-        """Build hierarchical context for chunks using HybridChunker metadata."""
-        hierarchy = {}
+        Returns a dictionary keyed by chunk index with fields:
+        - headings: full headings path (list[str])
+        - is_heading: whether this chunk is likely a heading line
+        - level: detected heading level (int)
+        - parent_heading: immediate parent heading text or None
+        - doc_items: original doc items (for reference)
+        - pages: list of page numbers if available
+        - section_path: tuple of headings (stable key)
+        - anchor_heading: last heading in path if any
+        - start_new_section: True if this chunk starts a new section
+        """
+        hierarchy: dict[int, dict] = {}
+        prev_headings: list[str] = []
+
+        import re
 
         for i, chunk in enumerate(chunks):
-            chunk_text = chunk.text.strip()
-            context = {
+            text = (getattr(chunk, "text", "") or "").strip()
+            ctx: dict[str, Any] = {
                 "is_heading": False,
                 "level": 0,
                 "parent_heading": None,
@@ -1115,80 +1860,143 @@ class DoclingParser(GenericParser[Document]):
                 "headings": [],
             }
 
-            # First check: Text-based heuristics for headings
-            # These are often more reliable than metadata for PDFs
-            import re
+            # Pull headings path from metadata when present
+            if hasattr(chunk, "meta") and chunk.meta:
+                if hasattr(chunk.meta, "headings") and chunk.meta.headings:
+                    try:
+                        ctx["headings"] = [str(h) for h in chunk.meta.headings]
+                    except Exception:
+                        ctx["headings"] = list(chunk.meta.headings)
 
-            if chunk_text and len(chunk_text) < 200:  # Headings are usually short
-                # Pattern 1: Numbered sections (e.g., "1. Introduction", "2.1 Background")
-                if re.match(r"^[\d\.]+\s+[A-Z]", chunk_text):
-                    context["is_heading"] = True
-                    context["level"] = chunk_text.count(".") + 1
+                if hasattr(chunk.meta, "doc_items") and chunk.meta.doc_items:
+                    ctx["doc_items"] = chunk.meta.doc_items
 
-                # Pattern 2: ALL CAPS
-                elif chunk_text.isupper() and len(chunk_text.split()) < 10:
-                    context["is_heading"] = True
-                    context["level"] = 1
+            headings: list[str] = ctx["headings"]
 
-                # Pattern 3: Title Case without sentence ending
-                elif (
-                    re.match(r"^[A-Z][^.!?]*$", chunk_text)
-                    and len(chunk_text.split()) < 15
-                    and not chunk_text.endswith((":", ","))
-                ):
-                    context["is_heading"] = True
-                    context["level"] = 2
+            # 0) Strengthen headings using Docling index when doc_items are available
+            try:
+                if doc_index and ctx["doc_items"]:
+                    # Collect candidate paths for all doc_items in this chunk
+                    paths: list[tuple[str, ...]] = []
+                    for di in ctx["doc_items"]:
+                        ref = getattr(di, "self_ref", None)
+                        if ref and ref in doc_index.get("ref_to_path", {}):
+                            paths.append(doc_index["ref_to_path"][ref])
+                    if paths:
+                        # Choose most frequent path
+                        from collections import Counter
 
-                # Pattern 4: Common section markers
+                        common_path, _count = Counter(paths).most_common(1)[0]
+                        headings = list(common_path)
+                        ctx["headings"] = headings
+            except Exception:
+                pass
+
+            # Determine if this chunk itself is a heading
+            # 1) Doc item labels / levels
+            level_from_item: int | None = None
+            for di in ctx["doc_items"]:
+                try:
+                    if hasattr(di, "label") and di.label:
+                        lab = str(di.label).lower()
+                        if lab in (
+                            "title",
+                            "heading",
+                            "section_header",
+                        ) or lab.startswith("h"):
+                            ctx["is_heading"] = True
+                            if hasattr(di, "level") and di.level is not None:
+                                level_from_item = int(di.level)
+                            elif (
+                                lab.startswith("h")
+                                and len(lab) > 1
+                                and lab[1].isdigit()
+                            ):
+                                level_from_item = int(lab[1])
+                            elif lab == "title":
+                                level_from_item = 1
+                except Exception:
+                    continue
+
+            # 2) Text heuristics
+            if not ctx["is_heading"] and text and len(text) < 200:
+                if re.match(r"^[\d]+(\.[\d]+)*\s+\S+", text):
+                    ctx["is_heading"] = True
+                elif text.isupper() and len(text.split()) < 12:
+                    ctx["is_heading"] = True
                 elif re.match(
-                    r"^(Chapter|Section|Part|Appendix)\s+[\dIVXLC]+",
-                    chunk_text,
+                    r"^(Chapter|Section|Part|Appendix)\s+[\dIVXLCDM]+",
+                    text,
                     re.I,
                 ):
-                    context["is_heading"] = True
-                    context["level"] = 1
+                    ctx["is_heading"] = True
+                elif self._is_likely_header(text, chunk):
+                    ctx["is_heading"] = True
 
-            # Extract metadata from DocChunk structure (secondary check)
-            if hasattr(chunk, "meta") and chunk.meta:
-                # Get headings from meta (hierarchical path)
-                if hasattr(chunk.meta, "headings") and chunk.meta.headings:
-                    context["headings"] = chunk.meta.headings
-                    # If metadata says it's under headings, it might be a heading itself
-                    if not context["is_heading"] and chunk.meta.headings:
-                        # Check if this chunk's text matches the last heading
-                        if chunk_text in chunk.meta.headings[-1]:
-                            context["is_heading"] = True
-                            context["level"] = len(chunk.meta.headings)
+            # 2b) If any doc_item is exactly a Docling heading (by ref), prefer that
+            try:
+                if doc_index and ctx["doc_items"] and not ctx["is_heading"]:
+                    for di in ctx["doc_items"]:
+                        ref = getattr(di, "self_ref", None)
+                        if ref and ref in doc_index.get("heading_refs", set()):
+                            ctx["is_heading"] = True
+                            # Prefer explicit level if available from Docling
+                            if level_from_item is None:
+                                level_from_item = doc_index.get(
+                                    "heading_ref_to_level",
+                                    {},
+                                ).get(ref, None)
+                            break
+            except Exception:
+                pass
 
-                # Get document items from meta
-                if hasattr(chunk.meta, "doc_items") and chunk.meta.doc_items:
-                    context["doc_items"] = chunk.meta.doc_items
+            # 3) If enriched contextual text starts with the last heading, mark as header
+            if headings:
+                try:
+                    enriched = (chunk_text_map or {}).get(
+                        text,
+                    ) or self.enrich_chunk_context(chunk)
+                    first_line = (enriched or "").split("\n", 1)[0].strip()
+                    if first_line and first_line.strip() == headings[-1].strip():
+                        ctx["is_heading"] = True
+                except Exception:
+                    pass
 
-                    # Analyze doc items to determine if this is a heading
-                    for doc_item in chunk.meta.doc_items:
-                        if hasattr(doc_item, "label"):
-                            label = str(doc_item.label).lower()
-                            if label in [
-                                "title",
-                                "heading",
-                                "section_header",
-                            ] or label.startswith("h"):
-                                context["is_heading"] = True
-                                if hasattr(doc_item, "level"):
-                                    context["level"] = doc_item.level
-                                elif (
-                                    label.startswith("h")
-                                    and len(label) > 1
-                                    and label[1].isdigit()
-                                ):
-                                    context["level"] = int(label[1])
-                                elif label == "title":
-                                    context["level"] = 0
-                                else:
-                                    context["level"] = 1
-                                break
+            # Determine level preference: doc item > headings path length > heuristic
+            if level_from_item is not None:
+                ctx["level"] = int(level_from_item)
+            elif headings:
+                ctx["level"] = len(headings)
+            elif ctx["is_heading"]:
+                ctx["level"] = max(1, self._estimate_heading_level(text))
+            else:
+                ctx["level"] = 0
 
-            hierarchy[i] = context
+            # Parent and keys
+            if len(headings) >= 2:
+                ctx["parent_heading"] = headings[-2]
+            ctx["section_path"] = tuple(headings)
+            ctx["anchor_heading"] = headings[-1] if headings else None
+
+            # Provenance pages
+            pages: set[int] = set()
+            try:
+                for di in ctx["doc_items"]:
+                    if hasattr(di, "prov") and di.prov:
+                        for prov in di.prov:
+                            if hasattr(prov, "page_no") and prov.page_no is not None:
+                                pages.add(prov.page_no)
+                if pages:
+                    ctx["pages"] = sorted(pages)
+            except Exception:
+                pass
+
+            # Start new section if headings path changes or we detect a header
+            ctx["heading_changed"] = headings != prev_headings
+            ctx["start_new_section"] = bool(ctx["heading_changed"] or ctx["is_heading"])
+
+            hierarchy[i] = ctx
+            prev_headings = headings
 
         return hierarchy
 
@@ -1398,13 +2206,7 @@ class DoclingParser(GenericParser[Document]):
                 return True
         return True
 
-    def get_enriched_text(self, text: str) -> str:
-        """Get enriched text with hierarchical context if available."""
-        # Check if we have a mapping from chunk extraction
-        if hasattr(self, "_chunk_text_map") and text in self._chunk_text_map:
-            return self._chunk_text_map[text]
-        # Otherwise return original text
-        return text
+    # Note: avoid per-document caches on self to stay concurrency-safe
 
     def _extract_with_text_splitting(self, docling_doc, document: Document):
         """Extract structure using text splitters."""
@@ -1421,7 +2223,7 @@ class DoclingParser(GenericParser[Document]):
         for section_title, section_content in sections:
             section = DocumentSection(
                 title=section_title or f"Section {section_id}",
-                section_id=str(section_id),
+                section_id=short_id(4),
                 document_id=document.document_id,
                 section_index=section_id - 1,
             )
@@ -1437,9 +2239,14 @@ class DoclingParser(GenericParser[Document]):
                 if not chunk_text.strip():
                     continue
 
+                try:
+                    _para_id = short_id(4)
+                except Exception:
+                    _para_id = str(paragraph_id)
+
                 paragraph = DocumentParagraph(
                     text=chunk_text.strip(),
-                    paragraph_id=str(paragraph_id),
+                    paragraph_id=_para_id,
                     section_id=section.section_id,
                     document_id=document.document_id,
                     paragraph_index=len(section.paragraphs),
@@ -1448,7 +2255,7 @@ class DoclingParser(GenericParser[Document]):
                 # Split paragraph into sentences
                 sentences = self._split_into_sentences(
                     chunk_text.strip(),
-                    paragraph_id,
+                    _para_id,
                     section.section_id,
                     document.document_id,
                     sentence_id,
@@ -1583,53 +2390,35 @@ class DoclingParser(GenericParser[Document]):
             section_id += 1
 
     def _split_into_paragraphs(self, text: str) -> List[str]:
-        """Intelligent paragraph splitting that handles various text formats."""
-        # First try double newline splitting
-        chunks = text.split("\n\n")
-
-        # If that results in very few chunks, try other strategies
-        if len(chunks) <= 2 and len(text) > 1000:
-            # Try splitting on single newlines followed by capital letters
+        """Paragraph splitting with fallbacks: LangChain > regex."""
+        try:
+            src = (text or "").strip()
+            if not src:
+                return []
+            # Prefer LangChain paragraph splitter
+            if LANGCHAIN_AVAILABLE and self.paragraph_splitter is not None:
+                parts = [
+                    p
+                    for p in self.paragraph_splitter.split_text(src)
+                    if p and p.strip()
+                ]
+                return parts
+        except Exception:
+            pass
+        # Regex fallback
+        chunks = src.split("\n\n")
+        if len(chunks) <= 2 and len(src) > 1000:
             import re
 
-            alt_chunks = re.split(r"\n(?=[A-Z])", text)
+            alt_chunks = re.split(r"\n(?=[A-Z])", src)
             if len(alt_chunks) > len(chunks) * 2:
                 chunks = alt_chunks
-
-        # Clean and filter chunks
         paragraphs = []
         for chunk in chunks:
             cleaned = chunk.strip()
-            if cleaned and len(cleaned) > 20:  # Minimum paragraph length
+            if cleaned and len(cleaned) > 20:
                 paragraphs.append(cleaned)
-
         return paragraphs
-
-    def _split_by_headers(self, markdown_text: str) -> List[tuple]:
-        """Split markdown text by headers."""
-        lines = markdown_text.split("\n")
-        sections = []
-        current_title = None
-        current_content = []
-
-        for line in lines:
-            # Check if line is a header
-            if line.strip().startswith("#"):
-                # Save previous section
-                if current_title is not None or current_content:
-                    sections.append((current_title, "\n".join(current_content)))
-
-                # Start new section
-                current_title = line.strip().lstrip("#").strip()
-                current_content = []
-            else:
-                current_content.append(line)
-
-        # Add final section
-        if current_title is not None or current_content:
-            sections.append((current_title, "\n".join(current_content)))
-
-        return sections
 
     def _split_into_sentences(
         self,
@@ -1639,36 +2428,70 @@ class DoclingParser(GenericParser[Document]):
         document_id: Union[int, str],
         start_sentence_id: int,
     ) -> List[DocumentSentence]:
-        """Split text into sentences."""
-        if self.sentence_splitter:
-            sentence_chunks = self.sentence_splitter.split_text(text)
+        """Split text into sentences with spaCy > LangChain > regex fallbacks."""
+        import re
+
+        text_norm = re.sub(r"\s+", " ", (text or "").strip())
+        if not text_norm:
+            return []
+        # 1) spaCy (best for sentence boundaries, handles abbreviations/punct)
+        if SPACY_AVAILABLE and self._spacy_nlp is not None:
+            try:
+                doc = self._spacy_nlp(text_norm)
+                chunks = [
+                    s.text.strip() for s in doc.sents if s.text and s.text.strip()
+                ]
+            except Exception:
+                chunks = []
         else:
-            # Simple sentence splitting
-            import re
-
-            sentence_chunks = re.split(r"(?<=[.!?])\s+", text)
-
-        sentences = []
-        for i, sentence_text in enumerate(sentence_chunks):
-            if not sentence_text.strip():
-                continue
-
-            sentence = DocumentSentence(
-                text=sentence_text.strip(),
-                sentence_id=str(start_sentence_id + i),
-                paragraph_id=str(paragraph_id),
-                section_id=str(section_id),
-                document_id=str(document_id),
-                sentence_index=i,
+            chunks = []
+        # 2) LangChain splitter
+        if not chunks and LANGCHAIN_AVAILABLE and self.sentence_splitter is not None:
+            try:
+                chunks = [
+                    c.strip()
+                    for c in self.sentence_splitter.split_text(text_norm)
+                    if c and c.strip()
+                ]
+            except Exception:
+                chunks = []
+        # 3) Regex fallback
+        if not chunks:
+            chunks = re.split(r"(?<=[.!?])\s+(?=[A-Z(\"])", text_norm)
+        # Clean leading punctuation defensively
+        cleaned_chunks: List[str] = []
+        for s in chunks:
+            s2 = re.sub(r"^[\s\-–—•·]*([.!?])+\s*", "", s).strip()
+            if s2:
+                cleaned_chunks.append(s2)
+        sentences: List[DocumentSentence] = []
+        for i, s in enumerate(cleaned_chunks):
+            try:
+                _sent_id = short_id(5)
+            except Exception:
+                _sent_id = str(start_sentence_id + i)
+            sentences.append(
+                DocumentSentence(
+                    text=s,
+                    sentence_id=_sent_id,
+                    paragraph_id=str(paragraph_id),
+                    section_id=str(section_id),
+                    document_id=str(document_id),
+                    sentence_index=i,
+                ),
             )
-            sentences.append(sentence)
-
         return sentences
 
-    def _extract_images(self, docling_doc, document: Document):
+    def _extract_images(
+        self,
+        docling_doc,
+        document: Document,
+        *,
+        doc_index: dict | None = None,
+    ):
         """Extract images from the document."""
         try:
-            images = []
+            images: list[DocumentImage] = []
 
             # Look for pictures in page elements
             if hasattr(docling_doc, "pictures"):
@@ -1679,21 +2502,56 @@ class DoclingParser(GenericParser[Document]):
                     ):
                         try:
                             # Get the provenance items from the picture
-                            page_num = None
-                            bbox = None
+                            page_num, bbox, annotation_text, annotation_provenance = (
+                                None,
+                                None,
+                                None,
+                                None,
+                            )
                             provenance_items = picture.prov
+                            annotations = picture.annotations
+
                             for provenance_item in provenance_items:
                                 page_num = provenance_item.page_no
                                 bbox = provenance_item.bbox
                                 break
 
-                            image_data = {
-                                "type": "image",
-                                "page": page_num,
-                                "bbox": bbox.model_dump() if bbox else {},
-                                "element_type": str(picture.label),
-                            }
-                            images.append(image_data)
+                            for annotation in annotations:
+                                if not isinstance(annotation, PictureDescriptionData):
+                                    continue
+                                annotation_text = annotation.text
+                                annotation_provenance = annotation.provenance
+                                break
+
+                            # Try to infer section path from the picture node's self_ref
+                            section_path = None
+                            try:
+                                if doc_index is not None and hasattr(
+                                    picture,
+                                    "self_ref",
+                                ):
+                                    ref = getattr(picture, "self_ref", None)
+                                    if ref and ref in doc_index.get("ref_to_path", {}):
+                                        section_path = list(
+                                            doc_index["ref_to_path"][ref],
+                                        )
+                            except Exception:
+                                section_path = None
+
+                            images.append(
+                                DocumentImage(
+                                    page=page_num,
+                                    bbox=(
+                                        bbox.model_dump(exclude=["coord_origin"])
+                                        if bbox
+                                        else {}
+                                    ),
+                                    element_type=str(picture.label),
+                                    annotation=annotation_text,
+                                    annotation_provenance=annotation_provenance,
+                                    section_path=section_path,
+                                ),
+                            )
                         except Exception:
                             pass
 
@@ -1702,32 +2560,55 @@ class DoclingParser(GenericParser[Document]):
         except Exception:
             pass
 
-    def _extract_tables(self, docling_doc, document: Document):
+    def _extract_tables(
+        self,
+        docling_doc,
+        document: Document,
+        *,
+        doc_index: dict | None = None,
+    ):
         """Extract table data from the document."""
         try:
-            tables = []
+            tables: list[DocumentTable] = []
 
             if hasattr(docling_doc, "tables"):
                 for table in docling_doc.tables:
                     if hasattr(table, "label") and "table" in str(table.label).lower():
                         try:
                             # Get the provenance items from the table
+                            page_num, bbox = None, None
                             provenance_items = table.prov
-                            page_num = None
-                            bbox = None
+
                             for provenance_item in provenance_items:
                                 page_num = provenance_item.page_no
                                 bbox = provenance_item.bbox
                                 break
 
-                            table_data = {
-                                "type": "table",
-                                "page": page_num,
-                                "element_type": str(table.label),
-                                "text": table.export_to_markdown(docling_doc),
-                                "bbox": bbox.model_dump() if bbox else {},
-                            }
-                            tables.append(table_data)
+                            # Try to infer section path from table self_ref
+                            section_path = None
+                            try:
+                                if doc_index is not None and hasattr(table, "self_ref"):
+                                    ref = getattr(table, "self_ref", None)
+                                    if ref and ref in doc_index.get("ref_to_path", {}):
+                                        section_path = list(
+                                            doc_index["ref_to_path"][ref],
+                                        )
+                            except Exception:
+                                section_path = None
+
+                            tables.append(
+                                DocumentTable(
+                                    page=page_num,
+                                    element_type=str(table.label),
+                                    html=table.export_to_html(doc=docling_doc),
+                                    bbox=(
+                                        bbox.model_dump(exclude=["coord_origin"])
+                                        if bbox
+                                        else {}
+                                    ),
+                                    section_path=section_path,
+                                ),
+                            )
                         except Exception:
                             pass
 
@@ -1745,7 +2626,7 @@ class DoclingParser(GenericParser[Document]):
         Calls an LLM (o4-mini) with a strict, Pydantic-validated JSON schema to
         produce metadata suitable for downstream retrieval (classification, topics,
         entities, tags, confidence). The routine is **token-aware** and clips or
-        samples text to respect the summariser’s context budget while maximising
+        samples text to respect the summariser's context budget while maximising
         usable signal.
 
         Token Budgets (env-configurable)
@@ -1813,7 +2694,7 @@ class DoclingParser(GenericParser[Document]):
             )
 
             prompt = build_metadata_extraction_prompt()
-            prompt_tokens = count_tokens(prompt, METADATA_ENCODING)
+            prompt_tokens = conservative_token_estimate(prompt, METADATA_ENCODING)
 
             def _budget_for_text(current_total_budget: int) -> int:
                 """Return usable token budget for the **text** after accounting for prompt."""
@@ -1875,13 +2756,17 @@ class DoclingParser(GenericParser[Document]):
                 combined = (
                     (base + ("\n\n" if base else "") + addition) if base else addition
                 )
-                if count_tokens(combined, enc) <= limit:
+                if count_tokens_per_utf_byte(combined) <= limit:
                     return combined, True
                 # Try clipped addition
-                remaining = max(limit - count_tokens(base, enc), 0)
+                remaining = max(limit - count_tokens_per_utf_byte(base), 0)
                 if remaining <= 0:
                     return base, False
-                clipped = clip_text_to_token_limit(addition, remaining, enc)
+                clipped = clip_text_to_token_limit_conservative(
+                    addition,
+                    remaining,
+                    enc,
+                )
                 if has_meaningful_text(clipped):
                     combined = (
                         (base + ("\n\n" if base else "") + clipped) if base else clipped
@@ -1954,7 +2839,11 @@ class DoclingParser(GenericParser[Document]):
                 total_budget: int,
             ) -> str:
                 usable = _budget_for_text(total_budget)
-                clipped = clip_text_to_token_limit(text, usable, METADATA_ENCODING)
+                clipped = clip_text_to_token_limit_conservative(
+                    text,
+                    usable,
+                    METADATA_ENCODING,
+                )
                 return client.copy().generate(prompt_str + clipped)
 
             # ---------- Build candidate sources (in priority order) ---------------------
@@ -1964,7 +2853,7 @@ class DoclingParser(GenericParser[Document]):
             full_text = getattr(document, "full_text", "") or ""
             if has_meaningful_text(full_text):
                 text_sources.append(("full_text", full_text))
-                if not is_within_token_limit(
+                if not is_within_token_limit_conservative(
                     full_text,
                     _budget_for_text(METADATA_MAX_TOKENS),
                     METADATA_ENCODING,
@@ -1972,11 +2861,11 @@ class DoclingParser(GenericParser[Document]):
                     # split budget across head/middle/tail portions
                     each = max(_budget_for_text(METADATA_MAX_TOKENS) // 3, 128)
                     sampled = (
-                        f"{_first_tokens(full_text, each, METADATA_ENCODING)}\n\n"
+                        f"{first_tokens_per_utf_byte(full_text, each)}\n\n"
                         "[...Document middle section...]\n\n"
-                        f"{_middle_tokens(full_text, each, METADATA_ENCODING)}\n\n"
+                        f"{middle_tokens_per_utf_byte(full_text, each)}\n\n"
                         "[...Document end section...]\n\n"
-                        f"{_last_tokens(full_text, each, METADATA_ENCODING)}"
+                        f"{last_tokens_per_utf_byte(full_text, each)}"
                     )
                     text_sources.append(("full_text_sampled", sampled))
 
@@ -1989,7 +2878,7 @@ class DoclingParser(GenericParser[Document]):
                     total = _budget_for_text(METADATA_MAX_TOKENS)
                     main_budget = max(int(total * 0.75), 256)
                     aux_budget = max(total - main_budget, 128)
-                    main = clip_text_to_token_limit(
+                    main = clip_text_to_token_limit_conservative(
                         doc_summary,
                         main_budget,
                         METADATA_ENCODING,
@@ -2127,7 +3016,7 @@ class DoclingParser(GenericParser[Document]):
         EMBEDDING_MAX_INPUT_TOKENS
             Hard cap for any single summary (paragraph, section, or document) so it
             can be embedded directly without reprocessing. A small safety margin
-            under the model’s published limit is recommended. Default (int): 6000.
+            under the model's published limit is recommended. Default (int): 8000.
 
         Key Properties
         ---------------
@@ -2223,10 +3112,10 @@ class DoclingParser(GenericParser[Document]):
             EMBEDDING_ENCODING = os.environ.get("EMBEDDING_ENCODING", "cl100k_base")
             try:
                 EMBEDDING_MAX_INPUT_TOKENS = int(
-                    os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"),
+                    os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "8000"),
                 )
             except Exception:
-                EMBEDDING_MAX_INPUT_TOKENS = 6000
+                EMBEDDING_MAX_INPUT_TOKENS = 8000
 
             # Chunk overlap ratio for context preservation
             CHUNK_OVERLAP_RATIO = 0.2
@@ -2249,10 +3138,9 @@ class DoclingParser(GenericParser[Document]):
                 Split *text* into token-aware chunks with sentence boundaries where possible.
                 Each chunk will be **<= max_tokens_for_text**.
                 """
-                if is_within_token_limit(
+                if is_within_token_limit_bytes(
                     text,
                     max_tokens_for_text,
-                    SUMMARISER_MODEL_ENCODING,
                 ):
                     return [text]
 
@@ -2271,7 +3159,7 @@ class DoclingParser(GenericParser[Document]):
                     if not sentence.strip():
                         continue
                     sent = sentence.strip()
-                    sent_tokens = count_tokens(sent, SUMMARISER_MODEL_ENCODING)
+                    sent_tokens = count_tokens_per_utf_byte(sent)
 
                     # If single sentence exceeds limit, split by clauses
                     if sent_tokens > max_tokens_for_text:
@@ -2280,34 +3168,28 @@ class DoclingParser(GenericParser[Document]):
                         for clause in clauses:
                             if not clause.strip():
                                 continue
-                            clause_tokens = count_tokens(
-                                clause,
-                                SUMMARISER_MODEL_ENCODING,
-                            )
+                            clause_tokens = count_tokens_per_utf_byte(clause)
                             if current_tokens + clause_tokens > max_tokens_for_text:
                                 if current_chunk:
                                     chunks.append(" ".join(current_chunk).strip())
                                     overlap_text = " ".join(current_chunk).strip()
-                                    overlap_trimmed = clip_text_to_token_limit(
+                                    overlap_trimmed = clip_text_to_token_limit_bytes(
                                         overlap_text,
                                         overlap_tokens,
-                                        SUMMARISER_MODEL_ENCODING,
                                     )
                                     overlap_buffer = (
                                         [overlap_trimmed] if overlap_trimmed else []
                                     )
                                     current_chunk = overlap_buffer + [clause]
-                                    current_tokens = count_tokens(
+                                    current_tokens = count_tokens_per_utf_byte(
                                         " ".join(current_chunk),
-                                        SUMMARISER_MODEL_ENCODING,
                                     )
                                 else:
                                     # Force add even if too long (rare)
                                     chunks.append(
-                                        clip_text_to_token_limit(
+                                        clip_text_to_token_limit_bytes(
                                             clause,
                                             max_tokens_for_text,
-                                            SUMMARISER_MODEL_ENCODING,
                                         ),
                                     )
                             else:
@@ -2318,18 +3200,16 @@ class DoclingParser(GenericParser[Document]):
                         if current_chunk:
                             chunks.append(" ".join(current_chunk).strip())
                             overlap_text = " ".join(current_chunk).strip()
-                            overlap_trimmed = clip_text_to_token_limit(
+                            overlap_trimmed = clip_text_to_token_limit_bytes(
                                 overlap_text,
                                 overlap_tokens,
-                                SUMMARISER_MODEL_ENCODING,
                             )
                             overlap_buffer = (
                                 [overlap_trimmed] if overlap_trimmed else []
                             )
                         current_chunk = overlap_buffer + [sent]
-                        current_tokens = count_tokens(
+                        current_tokens = count_tokens_per_utf_byte(
                             " ".join(current_chunk),
-                            SUMMARISER_MODEL_ENCODING,
                         )
                     else:
                         current_chunk.append(sent)
@@ -2359,75 +3239,42 @@ class DoclingParser(GenericParser[Document]):
                 else:
                     prompt = prompt_builder()
 
-                prompt_tokens = count_tokens(prompt, SUMMARISER_MODEL_ENCODING)
+                prompt_tokens = conservative_token_estimate(
+                    prompt,
+                    SUMMARISER_MODEL_ENCODING,
+                )
                 available_tokens_for_text = max(max_tokens - prompt_tokens, 256)
 
                 if not has_meaningful_text(text):
                     return ""  # nothing to summarise sensibly
 
                 if (
-                    is_within_token_limit(
+                    is_within_token_limit_bytes(
                         text,
                         available_tokens_for_text,
-                        SUMMARISER_MODEL_ENCODING,
                     )
                     and text.strip()
                 ):  # Text fits in single call
-                    try:
-                        return client.copy().generate(prompt + text).strip()
-                    except Exception as e:
-                        # If we hit token limit, retry with reduced limit
-                        if not text.strip():
-                            return ""
-                        if attempt < MAX_RETRY_ATTEMPTS and "token" in str(e).lower():
-                            new_max_tokens = max(
-                                max_tokens - TOKEN_REDUCTION_STEP,
-                                MIN_TOKEN_LIMIT,
-                            )
-                            return _chunk_text_if_needed(
-                                text,
-                                prompt_builder,
-                                context_info,
-                                new_max_tokens,
-                                attempt + 1,
-                            )
-                        elif attempt >= MAX_RETRY_ATTEMPTS:
-                            clipped = clip_text_to_token_limit(
-                                text,
-                                available_tokens_for_text,
-                                SUMMARISER_MODEL_ENCODING,
-                            )
-                            return clipped + "... [Text truncated due to length]"
-                        else:
-                            raise
+                    return generate_summary_with_compression(
+                        client,
+                        prompt,
+                        text,
+                        embedding_encoding=EMBEDDING_ENCODING,
+                        max_embedding_tokens=EMBEDDING_MAX_INPUT_TOKENS,
+                    )
 
                 # Text needs chunking (token-aware)
                 chunks = _semantic_chunk_text_by_tokens(text, available_tokens_for_text)
 
                 if len(chunks) == 1:
                     # Single chunk after semantic splitting
-                    try:
-                        return client.copy().generate(prompt + chunks[0]).strip()
-                    except Exception as e:
-                        if attempt < MAX_RETRY_ATTEMPTS and "token" in str(e).lower():
-                            new_max_tokens = max(
-                                max_tokens - TOKEN_REDUCTION_STEP,
-                                MIN_TOKEN_LIMIT,
-                            )
-                            return _chunk_text_if_needed(
-                                text,
-                                prompt_builder,
-                                context_info,
-                                new_max_tokens,
-                                attempt + 1,
-                            )
-                        else:
-                            clipped = clip_text_to_token_limit(
-                                chunks[0],
-                                available_tokens_for_text,
-                                SUMMARISER_MODEL_ENCODING,
-                            )
-                            return clipped + "... [Text truncated due to length]"
+                    return generate_summary_with_compression(
+                        client,
+                        prompt,
+                        chunks[0],
+                        embedding_encoding=EMBEDDING_ENCODING,
+                        max_embedding_tokens=EMBEDDING_MAX_INPUT_TOKENS,
+                    )
 
                 # Summarize chunks in parallel
 
@@ -2450,37 +3297,25 @@ class DoclingParser(GenericParser[Document]):
                         data["chunk_num"],
                         data["total_chunks"],
                     )
-                    try:
-                        return (
-                            client.copy().generate(chunk_prompt + data["chunk"]).strip()
+                    # Account for prompt tokens for this chunk-specific prompt
+                    chunk_prompt_tokens = conservative_token_estimate(
+                        chunk_prompt,
+                        SUMMARISER_MODEL_ENCODING,
+                    )
+                    available_for_chunk = max(max_tokens - chunk_prompt_tokens, 256)
+                    chunk_text = data["chunk"]
+                    if not is_within_token_limit_bytes(chunk_text, available_for_chunk):
+                        chunk_text = clip_text_to_token_limit_bytes(
+                            chunk_text,
+                            available_for_chunk,
                         )
-                    except Exception as e:
-                        if "token" in str(e).lower() and attempt < MAX_RETRY_ATTEMPTS:
-                            # Retry with reduced tokens
-                            new_max_tokens = max(
-                                max_tokens - TOKEN_REDUCTION_STEP,
-                                MIN_TOKEN_LIMIT,
-                            )
-                            return _chunk_text_if_needed(
-                                data["chunk"],
-                                lambda: build_chunked_text_summary_prompt(
-                                    data["chunk_num"],
-                                    data["total_chunks"],
-                                ),
-                                None,
-                                new_max_tokens,
-                                attempt + 1,
-                            )
-                        else:
-                            # Fallback: keep a small, token-aware excerpt
-                            return (
-                                clip_text_to_token_limit(
-                                    data["chunk"],
-                                    1000,
-                                    SUMMARISER_MODEL_ENCODING,
-                                )
-                                + "... [Chunk truncated]"
-                            )
+                    return generate_summary_with_compression(
+                        client,
+                        chunk_prompt,
+                        chunk_text,
+                        embedding_encoding=EMBEDDING_ENCODING,
+                        max_embedding_tokens=EMBEDDING_MAX_INPUT_TOKENS,
+                    )
 
                 # Run chunk summaries in parallel with fallback
                 chunk_summaries = _safe_map(
@@ -2499,8 +3334,15 @@ class DoclingParser(GenericParser[Document]):
                 # Combine chunk summaries
                 if len(chunk_summaries) > 1:
                     combined = "\n\n".join(chunk_summaries)
+                    # Account for prompt tokens before deciding next action
+                    prompt_for_next = prompt_builder()
+                    prompt_tokens_next = conservative_token_estimate(
+                        prompt_for_next,
+                        SUMMARISER_MODEL_ENCODING,
+                    )
+                    available_next = max(max_tokens - prompt_tokens_next, 256)
                     # Check if combined summaries need further summarization
-                    if count_tokens(combined, SUMMARISER_MODEL_ENCODING) > max_tokens:
+                    if count_tokens_per_utf_byte(combined) > available_next:
                         # Recursive summarization
                         return _chunk_text_if_needed(
                             combined,
@@ -2511,12 +3353,18 @@ class DoclingParser(GenericParser[Document]):
                         )
                     else:
                         try:
-                            return (
-                                client.copy()
-                                .generate(prompt_builder() + combined)
-                                .strip()
+                            clipped_combined = clip_text_to_token_limit_bytes(
+                                combined,
+                                available_next,
                             )
-                        except Exception as e:
+                            return generate_summary_with_compression(
+                                client,
+                                prompt_for_next,
+                                clipped_combined,
+                                embedding_encoding=EMBEDDING_ENCODING,
+                                max_embedding_tokens=EMBEDDING_MAX_INPUT_TOKENS,
+                            )
+                        except Exception:
                             return combined
                 else:
                     return chunk_summaries[0]
@@ -2545,8 +3393,19 @@ class DoclingParser(GenericParser[Document]):
             # Define the paragraph summary runner
             def _summarize_paragraph(**para_data):
                 """Summarize a single paragraph."""
+                # Account for prompt tokens before passing to chunk handler
+                para_prompt = build_paragraph_summary_prompt()
+                para_prompt_tokens = conservative_token_estimate(
+                    para_prompt,
+                    SUMMARISER_MODEL_ENCODING,
+                )
+                # Reuse chunk handler which recalculates; we pre-trim to be safe
+                text = para_data["text"]
+                available = max(INITIAL_MAX_TOKENS - para_prompt_tokens, 256)
+                if not is_within_token_limit_bytes(text, available):
+                    text = clip_text_to_token_limit_bytes(text, available)
                 return _chunk_text_if_needed(
-                    para_data["text"],
+                    text,
                     build_paragraph_summary_prompt,
                 )
 
@@ -2564,15 +3423,9 @@ class DoclingParser(GenericParser[Document]):
                     paragraph_refs,
                     para_summaries,
                 ):
-                    # Ensure each paragraph summary fits the embedding model budget
-                    clipped = clip_text_to_token_limit(
-                        summary or "",
-                        EMBEDDING_MAX_INPUT_TOKENS,
-                        EMBEDDING_ENCODING,
+                    document.sections[section_idx].paragraphs[para_idx].summary = (
+                        summary or ""
                     )
-                    document.sections[section_idx].paragraphs[
-                        para_idx
-                    ].summary = clipped
 
             # LEVEL 2: Parallel Section summaries
 
@@ -2622,8 +3475,18 @@ class DoclingParser(GenericParser[Document]):
             # Define the section summary runner
             def _summarize_section(**section_data):
                 """Summarize a single section."""
+                # Account for prompt tokens before passing to chunk handler
+                sec_prompt = build_section_summary_prompt()
+                sec_prompt_tokens = conservative_token_estimate(
+                    sec_prompt,
+                    SUMMARISER_MODEL_ENCODING,
+                )
+                available = max(INITIAL_MAX_TOKENS - sec_prompt_tokens, 256)
+                combined = section_data["combined_summaries"]
+                if not is_within_token_limit_bytes(combined, available):
+                    combined = clip_text_to_token_limit_bytes(combined, available)
                 return _chunk_text_if_needed(
-                    section_data["combined_summaries"],
+                    combined,
                     build_section_summary_prompt,
                 )
 
@@ -2638,12 +3501,7 @@ class DoclingParser(GenericParser[Document]):
 
                 # Update the document with the summaries
                 for section_idx, summary in zip(section_refs, section_summaries):
-                    clipped = clip_text_to_token_limit(
-                        summary or "",
-                        EMBEDDING_MAX_INPUT_TOKENS,
-                        EMBEDDING_ENCODING,
-                    )
-                    document.sections[section_idx].summary = clipped
+                    document.sections[section_idx].summary = summary or ""
 
             # LEVEL 3: Document summary (from section summaries)
             if document.summary is None and document.sections:
@@ -2665,33 +3523,69 @@ class DoclingParser(GenericParser[Document]):
                     doc_context += f"Type: {document.metadata.file_type}\n"
                     doc_context += f"Total Sections: {len(document.sections)}\n\n"
 
-                    # Generate document summary from section summaries
+                    # Include image annotations and table HTML
+                    try:
+                        image_annotations = []
+                        for img in getattr(document.metadata, "images", []) or []:
+                            try:
+                                ann = (img.annotation or "").strip()
+                            except Exception:
+                                ann = ""
+                            if ann:
+                                image_annotations.append(ann)
+                        images_block = (
+                            "Image Annotations:\n" + "\n".join(image_annotations)
+                            if image_annotations
+                            else ""
+                        )
+                    except Exception:
+                        images_block = ""
+
+                    try:
+                        table_html = []
+                        for tbl in getattr(document.metadata, "tables", []) or []:
+                            try:
+                                html = (tbl.html or "").strip()
+                            except Exception:
+                                html = ""
+                            if html:
+                                table_html.append(html)
+                        tables_block = (
+                            "Tables (HTML):\n" + "\n\n".join(table_html)
+                            if table_html
+                            else ""
+                        )
+                    except Exception:
+                        tables_block = ""
+
+                    # Generate document summary from section summaries (exclude images/tables from input)
                     doc_prompt = build_document_summary_prompt()
 
-                    # Ensure the combined text fits within token budget with prompt
-                    prompt_tokens = count_tokens(doc_prompt, SUMMARISER_MODEL_ENCODING)
-                    budget = max(INITIAL_MAX_TOKENS - prompt_tokens, 256)
-                    clipped = clip_text_to_token_limit(
-                        doc_context + combined_sections,
-                        budget,
+                    # Ensure the input fits within summariser budget (prompt + text)
+                    prompt_tokens = conservative_token_estimate(
+                        doc_prompt,
                         SUMMARISER_MODEL_ENCODING,
                     )
-                    try:
-                        final_doc_summary = (
-                            client.copy().generate(doc_prompt + clipped).strip()
+                    budget = max(INITIAL_MAX_TOKENS - prompt_tokens, 256)
+                    summary_source = "\n\n".join(
+                        [part for part in [doc_context, combined_sections] if part],
+                    )
+                    clipped_input = clip_text_to_token_limit_bytes(
+                        summary_source,
+                        budget,
+                    )
+                    generated_summary = generate_summary_with_compression(
+                        client,
+                        doc_prompt,
+                        clipped_input,
+                        embedding_encoding=EMBEDDING_ENCODING,
+                        max_embedding_tokens=EMBEDDING_MAX_INPUT_TOKENS,
+                        post_generation_ctx="\n\n".join(
+                            [p for p in [images_block, tables_block] if p],
                         )
-                        # Clip document-level summary to embedding budget as well
-                        final_doc_summary = clip_text_to_token_limit(
-                            final_doc_summary or "",
-                            EMBEDDING_MAX_INPUT_TOKENS,
-                            EMBEDDING_ENCODING,
-                        )
-                    except Exception as e:
-                        # Fallback – use chunking path
-                        final_doc_summary = _chunk_text_if_needed(
-                            doc_context + combined_sections,
-                            lambda: doc_prompt,
-                        )
+                        or None,
+                    )
+                    final_doc_summary = generated_summary
 
                 document.summary = final_doc_summary
 
@@ -2719,7 +3613,7 @@ class DoclingParser(GenericParser[Document]):
             Examples: "cl100k_base" for text-embedding-3-* models.
         EMBEDDING_MAX_INPUT_TOKENS
             Maximum input tokens the embedding model should receive for **one** text.
-            Default is 6000 (keeps a small safety margin under ~8.1k).
+            Default is 8000 (keeps a small safety margin under ~8.1k).
 
         Behaviour
         ---------
@@ -2735,7 +3629,7 @@ class DoclingParser(GenericParser[Document]):
             # Token limits for the embedding model (env-tunable; sensible defaults)
             embed_encoding = os.environ.get("EMBEDDING_ENCODING", "cl100k_base")
             # Leave a safety margin so headers/joiners never push us over model limits
-            max_doc_tokens = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"))
+            max_doc_tokens = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "8000"))
 
             sections = document.sections or []
 
@@ -2781,28 +3675,21 @@ class DoclingParser(GenericParser[Document]):
                             sec_text = f"{section.title.strip()}\n{sec_text}"
 
                         # Clip to per-section share so each section remains embeddable
-                        if not is_within_token_limit(
-                            sec_text,
-                            per_section_cap,
-                            embed_encoding,
-                        ):
-                            sec_text = clip_text_to_token_limit(
+                        if not is_within_token_limit_bytes(sec_text, per_section_cap):
+                            sec_text = clip_text_to_token_limit_bytes(
                                 sec_text,
                                 per_section_cap,
-                                embed_encoding,
                             )
                         section.summary = sec_text
                 else:
                     # If section already has a summary, still enforce the per-section cap
-                    if not is_within_token_limit(
+                    if not is_within_token_limit_bytes(
                         section.summary,
                         per_section_cap,
-                        embed_encoding,
                     ):
-                        section.summary = clip_text_to_token_limit(
+                        section.summary = clip_text_to_token_limit_bytes(
                             section.summary,
                             per_section_cap,
-                            embed_encoding,
                         )
 
             # ────────────────────────────────────────────────────────────────────
@@ -2822,15 +3709,10 @@ class DoclingParser(GenericParser[Document]):
                     combined = (document.full_text or "").strip()
 
                 if has_meaningful_text(combined):
-                    if not is_within_token_limit(
-                        combined,
-                        max_doc_tokens,
-                        embed_encoding,
-                    ):
-                        combined = clip_text_to_token_limit(
+                    if not is_within_token_limit_bytes(combined, max_doc_tokens):
+                        combined = clip_text_to_token_limit_bytes(
                             combined,
                             max_doc_tokens,
-                            embed_encoding,
                         )
                     document.summary = combined
 
@@ -2843,15 +3725,10 @@ class DoclingParser(GenericParser[Document]):
                     try:
                         document.summary = (
                             raw
-                            if is_within_token_limit(
+                            if is_within_token_limit_bytes(raw, max_doc_tokens)
+                            else clip_text_to_token_limit_bytes(
                                 raw,
                                 max_doc_tokens,
-                                embed_encoding,
-                            )
-                            else clip_text_to_token_limit(
-                                raw,
-                                max_doc_tokens,
-                                embed_encoding,
                             )
                         )
                     except Exception:
@@ -2868,10 +3745,10 @@ class DoclingParser(GenericParser[Document]):
             try:
                 embed_encoding = os.environ.get("EMBEDDING_ENCODING", "cl100k_base")
                 max_doc_tokens = int(
-                    os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"),
+                    os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "8000"),
                 )
                 document.summary = (
-                    clip_text_to_token_limit(raw, max_doc_tokens, embed_encoding)
+                    clip_text_to_token_limit_bytes(raw, max_doc_tokens)
                     if raw
                     else "Document parsing completed."
                 )
