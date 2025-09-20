@@ -35,12 +35,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         self._final_result: Optional[str] = None
         # Track tasks that completed successfully within this queue run
         self._completed_tasks: list[tuple[int, str]] = []
-        # Detailed completion events including each task's individual result text
-        self._completion_events: list[Dict[str, Any]] = []
-        # Cursor for the last position consumed by active_task_done()
-        self._completion_cursor: int = 0
-        # Waiters to awaken when a new task completes (or queue ends)
-        self._completion_waiters: list[asyncio.Future] = []
+        # Stream of per-task completion events (name → result text)
+        self._completions: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
         # Sticky pass-through flag: enabled only when the queue truly contains a
         # single task at creation time; once disabled it never re-enables for the
         # lifetime of this ActiveQueue instance.
@@ -50,99 +46,47 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except Exception:
             self._passthrough_enabled = False
 
-        # Precompute a next-task hint from the current row's schedule.next_task
-        self._current_next_hint: Optional[int] = None
-        try:
-            rows0 = self._s._filter_tasks(
-                filter=f"task_id == {int(self._current_task_id)}",
-                limit=1,
-            )
-            sched0 = rows0[0].get("schedule") if rows0 else None
-            self._current_next_hint = (
-                int((sched0 or {}).get("next_task"))
-                if (sched0 or {}).get("next_task") is not None
-                else None
-            )
-        except Exception:
-            self._current_next_hint = None
-
         # Background driver
         self._driver = asyncio.create_task(self._drive())
+
+    # ----------------------------
+    # Small summary helper
+    # ----------------------------
+    def _summarise_completions(self) -> str:
+        if self._completed_tasks:
+            summary_items = [
+                f"Task {tid}: {name}" for tid, name in self._completed_tasks
+            ]
+            return "Completed the following tasks: " + ", ".join(summary_items) + "."
+        return "Chain completed."
 
     # ----------------------------
     # Snapshot helper (head→tail)
     # ----------------------------
     def _build_queue_rows_snapshot(self) -> list[dict]:
         """
-        Build a compact queue snapshot (head→tail) by walking prev→head then
-        next pointers. Falls back to _get_queue_for_task when traversal fails.
-        Returns a list of dict rows with non-None, non-internal fields.
+        Build a compact queue snapshot (head→tail) using the scheduler's live
+        queue view. Returns a list of simple dict rows.
         """
-
-        def _get_row(tid: int):
-            try:
-                rows = self._s._filter_tasks(
-                    filter=f"task_id == {int(tid)}",
-                    limit=1,
-                )
-                return rows[0] if rows else None
-            except Exception:
-                return None
-
         try:
-            cur_row = _get_row(self._current_task_id)
-            head_row = cur_row
-            while head_row is not None:
-                prev_id = self._s._sched_prev((head_row.get("schedule") or {}))
-                if prev_id is None:
-                    break
-                prev_row = _get_row(prev_id)
-                if prev_row is None:
-                    break
-                head_row = prev_row
-
-            queue_rows: list[dict] = []
-            seen: set[int] = set()
-            node = head_row
-            while node is not None:
-                tid = node.get("task_id")
-                try:
-                    tid_int = int(tid)
-                except Exception:
-                    tid_int = None  # type: ignore[assignment]
-                if tid_int is not None and tid_int in seen:
-                    break
-                if tid_int is not None:
-                    seen.add(tid_int)
-                queue_rows.append(
+            queue = self._s._get_queue_for_task(task_id=self._current_task_id) or []
+        except Exception:
+            queue = []
+        out: list[dict] = []
+        for t in queue:
+            try:
+                out.append(
                     {
-                        k: v
-                        for k, v in node.items()
-                        if v is not None and not str(k).startswith("_")
+                        "task_id": getattr(t, "task_id", None),
+                        "name": getattr(t, "name", None),
+                        "description": getattr(t, "description", None),
+                        "status": getattr(t, "status", None),
+                        "schedule": getattr(t, "schedule", None),
                     },
                 )
-                nxt_id = self._s._sched_next((node.get("schedule") or {}))
-                if nxt_id is None:
-                    break
-                node = _get_row(nxt_id)
-
-            if queue_rows:
-                return queue_rows
-
-            # Fallback to best-effort non-terminal queue snapshot
-            queue = self._s._get_queue_for_task(task_id=self._current_task_id)
-            return [
-                {
-                    "task_id": getattr(t, "task_id", None),
-                    "name": getattr(t, "name", None),
-                    "description": getattr(t, "description", None),
-                    "status": getattr(t, "status", None),
-                    "schedule": getattr(t, "schedule", None),
-                }
-                for t in queue
-            ]
-        except Exception:
-            return []
+            except Exception:
+                continue
+        return out
 
     # ----------------------------
     # Internal clarification tool
@@ -150,9 +94,6 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
     async def _request_clarification(
         self,
         question: str,
-        *,
-        on_request: Callable[[str], Any] | None = None,
-        on_answer: Callable[[str], Any] | None = None,
     ) -> Optional[str]:
         """
         Queue-level clarification for internal use by ActiveQueue.
@@ -165,36 +106,16 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             # Only operate when both channels are available
             if self._clar_up is None or self._clar_down is None:
                 return None
-
-            # Best-effort notify hooks (non-blocking if they are sync)
-            try:
-                if on_request is not None:
-                    maybe = on_request(question)
-                    if asyncio.iscoroutine(maybe):
-                        await maybe
-            except Exception:
-                pass
-
-            # Immediately enqueue the question without blocking. The outer process
-            # will provide an answer asynchronously on the down-queue.
+            # Enqueue question; await answer
             try:
                 self._clar_up.put_nowait(question)
             except Exception:
-                # Fallback to an async put when the queue may be full/bounded
-                asyncio.create_task(self._clar_up.put(question))
-            answer = None
-
+                await self._clar_up.put(question)
             try:
-                if on_answer is not None:
-                    maybe2 = on_answer(answer)
-                    if asyncio.iscoroutine(maybe2):
-                        await maybe2
+                ans = await self._clar_down.get()
             except Exception:
-                pass
-
-            if answer is not None:
-                pass
-            return answer
+                ans = None
+            return ans
         except Exception:
             # Defensive: clarification should never break the queue
             return None
@@ -225,24 +146,51 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             return False
         return True
 
+    def _next_runnable_follower(self) -> Optional[int]:
+        """Return the next runnable task id after the current one, from the live queue.
+
+        Relies solely on the scheduler's queue view (non-terminal membership),
+        avoiding local schedule.next hints and repair scans.
+        """
+        try:
+            live_queue = (
+                self._s._get_queue_for_task(task_id=self._current_task_id) or []
+            )
+        except Exception:
+            live_queue = []
+
+        ids: list[int] = []
+        for t in live_queue:
+            try:
+                tid_val = int(getattr(t, "task_id", -1))
+            except Exception:
+                continue
+            ids.append(tid_val)
+
+        if not ids:
+            return None
+
+        cur_id = None
+        try:
+            cur_id = int(self._current_task_id)
+        except Exception:
+            cur_id = None
+
+        # If current id is not found (e.g., was detached), start at the head
+        try:
+            if cur_id is None:
+                return ids[0]
+            idx = ids.index(cur_id)
+        except ValueError:
+            return ids[0]
+
+        # Return the first follower, if any
+        return ids[idx + 1] if (idx + 1) < len(ids) else None
+
     async def _drive(self) -> None:
         try:
             while True:
                 try:
-                    # Refresh next-hint just before awaiting result, in case linkage was updated
-                    try:
-                        rows_h = self._s._filter_tasks(
-                            filter=f"task_id == {int(self._current_task_id)}",
-                            limit=1,
-                        )
-                        sched_h = rows_h[0].get("schedule") if rows_h else None
-                        self._current_next_hint = (
-                            int((sched_h or {}).get("next_task"))
-                            if (sched_h or {}).get("next_task") is not None
-                            else None
-                        )
-                    except Exception:
-                        pass
                     result = await self._current_handle.result()
                 except asyncio.CancelledError:
                     self._final_result = "Stopped."
@@ -272,22 +220,12 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                             self._completed_tasks.append(
                                 (int(self._current_task_id), str(name)),
                             )
-                            # Record a detailed completion event for active_task_done()
-                            self._completion_events.append(
-                                {
-                                    "task_id": int(self._current_task_id),
-                                    "name": str(name),
-                                    "result": text,
-                                },
-                            )
-                            # Wake any waiters that are awaiting the next completion
-                            for fut in list(self._completion_waiters):
-                                if not fut.done():
-                                    try:
-                                        fut.set_result(True)
-                                    except Exception:
-                                        pass
-                            self._completion_waiters.clear()
+                            # Emit completion event non-blockingly for active_task_done()
+                            evt = {"name": str(name), "result": text}
+                            try:
+                                self._completions.put_nowait(evt)
+                            except Exception:
+                                asyncio.create_task(self._completions.put(evt))
                     except Exception:
                         pass
                 if was_stopped:
@@ -313,71 +251,12 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     except Exception:
                         pass
 
-                # Determine the next task to run.
-                # Prefer the live queue; validate any hint candidate before using it.
-                next_tid: Optional[int] = None
-                try:
-                    live_queue = (
-                        self._s._get_queue_for_task(task_id=self._current_task_id) or []
-                    )
-                except Exception:
-                    live_queue = []
-                for t in live_queue:
-                    try:
-                        tid_val = int(getattr(t, "task_id", -1))
-                        if tid_val != int(self._current_task_id):
-                            next_tid = tid_val
-                            break
-                    except Exception:
-                        continue
-                if next_tid is None:
-                    next_tid = self._current_next_hint
-                if next_tid is not None:
-                    try:
-                        rows_cand = self._s._filter_tasks(
-                            filter=(
-                                f"task_id == {int(next_tid)} and status not in "
-                                "('completed','cancelled','failed','active')"
-                            ),
-                            limit=1,
-                        )
-                        if not rows_cand:
-                            # Try to recover by scanning rest of the live queue
-                            next_tid = None
-                            for t in live_queue:
-                                try:
-                                    tid_try = int(getattr(t, "task_id", -1))
-                                    if tid_try == int(self._current_task_id):
-                                        continue
-                                    rows_try = self._s._filter_tasks(
-                                        filter=(
-                                            f"task_id == {tid_try} and status not in "
-                                            "('completed','cancelled','failed','active')"
-                                        ),
-                                        limit=1,
-                                    )
-                                    if rows_try:
-                                        next_tid = tid_try
-                                        break
-                                except Exception:
-                                    continue
-                    except Exception:
-                        pass
+                # Determine the next task to run using the live queue only
+                next_tid: Optional[int] = self._next_runnable_follower()
 
                 if next_tid is None:
                     # Queue exhausted – compose a completion summary across all tasks
-                    if self._completed_tasks:
-                        summary_items = [
-                            f"Task {tid}: {name}" for tid, name in self._completed_tasks
-                        ]
-                        summary = (
-                            "Completed the following tasks: "
-                            + ", ".join(summary_items)
-                            + "."
-                        )
-                    else:
-                        summary = "Chain completed."
-                    self._final_result = summary
+                    self._final_result = self._summarise_completions()
                     break
 
                 # Start next task using CHAIN linkage semantics
@@ -391,21 +270,6 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     # Do NOT detach followers from each other; keep queue links intact
                     detach=False,
                 )
-                # Precompute next hint for the new current task
-                try:
-                    rows_n = self._s._filter_tasks(
-                        filter=f"task_id == {int(self._current_task_id)}",
-                        limit=1,
-                    )
-                    sched_n = rows_n[0].get("schedule") if rows_n else None
-                    self._current_next_hint = (
-                        int((sched_n or {}).get("next_task"))
-                        if (sched_n or {}).get("next_task") is not None
-                        else None
-                    )
-
-                except Exception:
-                    self._current_next_hint = None
                 # Deliver any queued interjections for the newly active task
                 try:
                     pending_msgs = getattr(self, "_queued_interjections", {}).pop(
@@ -421,14 +285,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     pass
         finally:
             self._done_evt.set()
-            # Ensure any waiters do not hang if the queue finishes without further completions
-            for fut in list(self._completion_waiters):
-                if not fut.done():
-                    try:
-                        fut.set_result(False)
-                    except Exception:
-                        pass
-            self._completion_waiters.clear()
+            # No waiter/cursor machinery – active_task_done() awaits on the completions queue
 
     # ----- Steerable surface proxies -----
     async def interject(self, message: str) -> None:  # type: ignore[override]
@@ -467,19 +324,64 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except Exception:
             pass
 
-        # Build a compact queue snapshot (head→tail) including ids and labels
-        def _safe_dump(value):
-            try:
-                import json as _json  # local import
-
-                return _json.dumps(value, default=str)
-            except Exception:
-                return str(value)
-
+        # Perform routing via helper; keep main method small
         queue_rows: list[dict] = self._build_queue_rows_snapshot()
 
-        # Create a dedicated router client with high reasoning and priority tier
+        routes, uncovered = await self._route_interjection_llm(
+            queue_rows=queue_rows,
+            message=message,
+        )
+
+        if uncovered:
+            if self._clar_up is not None and self._clar_down is not None:
+                await self._request_clarification(
+                    "Your instruction could not be routed to all intended tasks without guessing. "
+                    "Please specify exact task_ids, or use clear directives such as 'all', 'first', 'last', "
+                    "or name the tasks explicitly, and provide the instruction for each group.",
+                )
+                return
+            await self._current_handle.interject(message)
+            return
+
+        if not hasattr(self, "_queued_interjections"):
+            self._queued_interjections = {}
+
+        for route in routes:
+            task_ids = route.get("task_ids", [])
+            instr = str(route.get("instruction", "")).strip()
+            if not instr:
+                continue
+            for tid in task_ids:
+                if tid == self._current_task_id:
+                    try:
+                        await self._current_handle.interject(instr)
+                    except Exception:
+                        pass
+                else:
+                    self._queued_interjections.setdefault(tid, []).append(instr)
+        return
+
+    async def _route_interjection_llm(
+        self,
+        *,
+        queue_rows: list[dict],
+        message: str,
+    ) -> tuple[list[dict], bool]:
+        """Return (routes, uncovered_flag) using a dedicated LLM call with timeout.
+
+        On any error, returns ([], True) so callers can apply the clarification
+        or fallback policy without duplicating error handling.
+        """
         try:
+
+            def _safe_dump(value):
+                try:
+                    import json as _json  # local import
+
+                    return _json.dumps(value, default=str)
+                except Exception:
+                    return str(value)
+
             client = unify.AsyncUnify(
                 "gpt-5@openai",
                 cache=True,
@@ -507,7 +409,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 "  or any directive that cannot be mapped deterministically to concrete task_ids.\n"
             )
             client.set_system_message(sys)
-            # Compute first/last ids for explicit metadata to aid deterministic mapping
+
             try:
                 first_task_id: int | None = None
                 last_task_id: int | None = None
@@ -525,6 +427,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             except Exception:
                 first_task_id = None
                 last_task_id = None
+
             user = (
                 "Chain (head→tail):\n"
                 + _safe_dump(queue_rows)
@@ -536,97 +439,57 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 + "\nInterjection:"
                 + f"\n{(message or '').strip()}"
             )
-            # Guard router latency to avoid indefinite hangs (env-tunable for tests)
+
             try:
                 timeout_s = float(os.getenv("UNITY_TS_ROUTER_TIMEOUT_SECONDS", "60.0"))
             except Exception:
                 timeout_s = 60.0
+
             try:
                 raw = await asyncio.wait_for(client.generate(user), timeout=timeout_s)
             except asyncio.TimeoutError:
                 raw = ""
-        except Exception:
-            raw = ""
 
-        # Parse structured routes; fall back to current-only on failure
-        try:
-            import json as _json
+            try:
+                import json as _json
 
-            data = _json.loads(raw)
+                data = _json.loads(raw)
+            except Exception:
+                return [], True
+
             routes = data.get("routes") if isinstance(data, dict) else None
             if not isinstance(routes, list):
-                raise ValueError("no routes")
-
-            # If the model indicates missing coverage, escalate to clarification immediately.
-            try:
-                uncovered = data.get("uncovered_directives") or []
-            except Exception:
-                uncovered = []
-            if isinstance(uncovered, list) and uncovered:
-                # Prefer queue-level clarification when channels are available.
-                # If no clarification channels are provided, fall back to delivering to the
-                # current task to avoid stalling execution.
-                if self._clar_up is not None and self._clar_down is not None:
-                    await self._request_clarification(
-                        "Your instruction could not be routed to all intended tasks without guessing. "
-                        "Please specify exact task_ids, or use clear directives such as 'all', 'first', 'last', "
-                        "or name the tasks explicitly, and provide the instruction for each group.",
-                    )
-                    return
-                else:
-                    await self._current_handle.interject(message)
-                    return
-
-            # Ensure pending registry exists
-            if not hasattr(self, "_queued_interjections"):
-                self._queued_interjections = {}
-
-            # Build a set of known ids for safety
+                return [], True
+            uncovered = data.get("uncovered_directives") or []
+            uncovered_flag = bool(isinstance(uncovered, list) and uncovered)
+            # Normalise routes: cast ids to int, drop unknown ids and empty instructions
             known_ids = {
                 int(r.get("task_id"))
                 for r in queue_rows
                 if r.get("task_id") is not None
             }
-
-            for route in routes:
-                try:
-                    task_ids = [int(t) for t in route.get("task_ids", [])]
-                    instr = str(route.get("instruction", "")).strip()
-                except Exception:
-                    continue
-                if not instr:
-                    continue
-                for tid in task_ids:
-                    if tid not in known_ids:
-                        continue
-                    if tid == self._current_task_id:
-                        try:
-                            await self._current_handle.interject(instr)
-                        except Exception:
-                            pass
-                    else:
-                        self._queued_interjections.setdefault(tid, []).append(instr)
-            return
-        except Exception:
-            # Fallback: if ambiguous and clarification queues are available, request clarification.
-            # Otherwise, forward to the current task to avoid stalling execution.
+            norm_routes: list[dict] = []
             try:
-                ambiguous_tokens = ("all", "rest", "remaining", "first", "last")
-                looks_ambiguous = any(
-                    tok in (message or "").lower() for tok in ambiguous_tokens
-                )
-                if looks_ambiguous:
-                    if self._clar_up is not None and self._clar_down is not None:
-                        await self._request_clarification(
-                            "Your interjection could refer to multiple tasks. "
-                            "Please specify which tasks it applies to (by id or directive such as 'all', 'first', 'last'), "
-                            "and provide the instruction text for each group.",
-                        )
-                        return
-                    # No clarification channels – fall through to forward to current task
+                for r in routes:
+                    instr = str(r.get("instruction", "")).strip()
+                    if not instr:
+                        continue
+                    ids_raw = r.get("task_ids", [])
+                    ids_int: list[int] = []
+                    for t in ids_raw:
+                        try:
+                            tid = int(t)
+                            if tid in known_ids:
+                                ids_int.append(tid)
+                        except Exception:
+                            continue
+                    if ids_int:
+                        norm_routes.append({"task_ids": ids_int, "instruction": instr})
             except Exception:
-                pass
-            await self._current_handle.interject(message)
+                norm_routes = []
+            return norm_routes, uncovered_flag
+        except Exception:
+            return [], True
 
     def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
         try:
@@ -684,10 +547,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         if self._final_result:
             return self._final_result
         if self._completed_tasks:
-            summary_items = [
-                f"Task {tid}: {name}" for tid, name in self._completed_tasks
-            ]
-            return "Completed the following tasks: " + ", ".join(summary_items) + "."
+            return self._summarise_completions()
         return ""
 
     async def active_task_done(self) -> str:
@@ -707,33 +567,32 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
           since the last call, returns an empty JSON object "{}".
         """
 
-        # Fast path: return immediately if there are unseen completions
-        if self._completion_cursor < len(self._completion_events):
-            slice_events = self._completion_events[self._completion_cursor :]
-            self._completion_cursor = len(self._completion_events)
-            payload = {e["name"]: e.get("result", "") for e in slice_events}
-            try:
-                return json.dumps(payload, ensure_ascii=False)
-            except Exception:
-                return str(payload)
-
-        # If queue already finished and nothing new, return empty
-        if self._done_evt.is_set():
-            return "{}"
-
-        # Otherwise wait for the next completion (or queue termination)
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._completion_waiters.append(fut)
+        # Drain any immediately available completion events first
+        collected: list[Dict[str, Any]] = []
         try:
-            await fut
-        except Exception:
-            # Defensive: proceed to aggregate whatever is available
+            while True:
+                collected.append(self._completions.get_nowait())
+        except asyncio.QueueEmpty:
             pass
 
-        # Aggregate any newly completed tasks (may be empty on terminal wake)
-        slice_events = self._completion_events[self._completion_cursor :]
-        self._completion_cursor = len(self._completion_events)
-        payload = {e["name"]: e.get("result", "") for e in slice_events}
+        if not collected:
+            # If queue already finished and nothing pending, return empty
+            if self._done_evt.is_set():
+                return "{}"
+            # Otherwise wait for the next event, then drain the rest
+            try:
+                first = await self._completions.get()
+                collected.append(first)
+                try:
+                    while True:
+                        collected.append(self._completions.get_nowait())
+                except asyncio.QueueEmpty:
+                    pass
+            except Exception:
+                # Defensive: if awaiting failed unexpectedly, return empty or best-effort
+                return "{}" if self._done_evt.is_set() else "{}"
+
+        payload = {e.get("name", ""): e.get("result", "") for e in collected if e}
         try:
             return json.dumps(payload, ensure_ascii=False)
         except Exception:
@@ -747,11 +606,9 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
     ) -> "SteerableToolHandle":  # type: ignore[override]
         """Answer questions with queue-aware context and delegate to inner handle.
 
-        Builds a compact queue snapshot (head→tail) including all non-None
-        task fields for each task (completed and non-completed) and a
-        high-level progress summary, then prepends it to the forwarded
-        question. If snapshot construction fails, falls back to the raw
-        question.
+        Builds a compact queue snapshot (head→tail) and a concise progress
+        headline, then prepends it to the forwarded question. If snapshot
+        construction fails, falls back to the raw question.
         """
 
         # Fast-path: when queue remains a true singleton, delegate directly
@@ -763,14 +620,6 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 )
             except TypeError:
                 return await self._current_handle.ask(question)
-
-        def _safe_dump(value):
-            try:
-                import json as _json  # local import
-
-                return _json.dumps(value, default=str)
-            except Exception:
-                return str(value)
 
         queue_preamble: str | None = None
         try:
@@ -821,19 +670,12 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             if next_names:
                 headline += f" Next: {', '.join(next_names)}."
 
-            # Detailed rows with all non-None fields
+            # Essential rows: only id and name to keep preamble concise
             details_lines: list[str] = ["Chain tasks (head→tail):"]
             for r in queue_rows:
                 tid = r.get("task_id")
                 name = r.get("name") or ""
                 details_lines.append(f"- Task {tid}: {name}")
-                # Print all non-None, non-_internal keys
-                for k, v in r.items():
-                    if v is None or k in {"name"}:
-                        continue
-                    if str(k).startswith("_"):
-                        continue
-                    details_lines.append(f"    {k}: {_safe_dump(v)}")
 
             queue_preamble = (
                 "CHAIN CONTEXT\n" + headline + "\n" + "\n".join(details_lines)
