@@ -70,7 +70,7 @@ from ._queue_ops import (
     attach_with_links as _ops_attach_with_links,
 )
 from .reintegration import ReintegrationManager
-from .queue_engine import plan_reorder_queue
+from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
 
 
 # Sentinel for optional-argument presence detection
@@ -410,6 +410,66 @@ class TaskScheduler(BaseTaskScheduler):
         # Because this scheduler is a singleton and all mutations flow through it,
         # this cache remains coherent without extra backend reads between tool calls.
         self._num_tasks_cached: Optional[int] = None
+
+    # ------------------------------ Small helpers ------------------------------ #
+    def _tid_to_log_id_map(self, task_ids: List[int]) -> Dict[int, int]:
+        """Resolve a mapping of task_id → log_id in one call (best-effort)."""
+        try:
+            log_objs = self._get_logs_by_task_ids(
+                task_ids=task_ids,
+                return_ids_only=False,
+            )
+        except Exception:
+            log_objs = []
+        id_map: Dict[int, int] = {}
+        for lg in log_objs or []:
+            try:
+                e = getattr(lg, "entries", {}) or {}
+                tid = e.get("task_id")
+                lid = getattr(lg, "id", None)
+                if isinstance(tid, int) and isinstance(lid, int):
+                    id_map[int(tid)] = int(lid)
+            except Exception:
+                continue
+        return id_map
+
+    def _write_entries_batched(
+        self,
+        *,
+        entries_by_tid: Dict[int, Dict[str, Any]],
+    ) -> None:
+        """Best-effort batched write using LocalTaskView; fall back to per-task."""
+        if not entries_by_tid:
+            return
+        try:
+            self._view.write_entries_by_task_ids(entries_by_tid=entries_by_tid)
+            return
+        except Exception:
+            pass
+        # Fallback: per-task validated writes
+        for tid, write_entries in entries_by_tid.items():
+            row = self._get_single_row_or_raise(int(tid))
+            self._validated_write(
+                task_id=int(tid),
+                entries=write_entries,
+                err_prefix=f"While batched-writing entries (task {tid}):",
+                current_row=row,
+                skip_cross_queue_guard=True,
+                skip_sync=True,
+            )
+
+    def _head_start_at_from_rows(self, rows: List[Dict[str, Any]]) -> Optional[str]:
+        """Return the queue-level start_at from the head row among provided rows.
+
+        Expects rows as simple dicts with a 'schedule' key; ignores non-dict entries.
+        """
+        for r in rows or []:
+            if not isinstance(r, dict):
+                continue
+            sched = r.get("schedule") or {}
+            if (sched or {}).get("prev_task") is None:
+                return (sched or {}).get("start_at")
+        return None
 
     # Public #
     # -------#
@@ -2425,162 +2485,44 @@ class TaskScheduler(BaseTaskScheduler):
         - This method asserts that `new_order` is an exact permutation of the current queue;
           if you see an assertion error, refresh state and reconstruct `new_order` accordingly.
         """
-        # Fast-path using the in-memory queue index when fresh to minimize backend I/O.
-        # If unavailable, fall back to the existing storage-based resolution below.
+        # Resolve current membership once (prefer local index; fallback to storage)
         try:
-            if isinstance(queue_id, int):
-                member_ids = list(self._view.get_member_ids(int(queue_id)) or [])
-            else:
-                member_ids = []
+            member_ids = (
+                list(self._view.get_member_ids(int(queue_id)) or [])
+                if isinstance(queue_id, int)
+                else []
+            )
         except Exception:
             member_ids = []
 
-        if member_ids:
-            current_set: set[int] = {int(t) for t in member_ids}
-            if current_set != set(new_order):
-                raise AssertionError(
-                    "new_order must be a permutation of the current queue. "
-                    f"Current members: {sorted(list(current_set))}; "
-                    f"Provided: {sorted(list(set(new_order)))}. "
-                    f"Refresh with list_queues() and get_queue(queue_id={queue_id}) "
-                    "then rebuild new_order accordingly.",
-                )
-
-            # Single minimal read for required fields only
-            minimal_fields = [
-                "task_id",
-                "status",
-                "schedule",
-            ]
-            logs = self._view.get_minimal_rows_by_task_ids(
-                task_ids=member_ids,
-                fields=minimal_fields,
-            )
-            rows_by_id: Dict[int, Dict[str, Any]] = self._read_rows_by_ids(
-                ids=member_ids,
-                fields=minimal_fields,
-            )
-            id_map: Dict[int, int] = {}
-            for lg in logs or []:
-                try:
-                    e = getattr(lg, "entries", {}) or {}
-                    tid = e.get("task_id")
-                    lid = getattr(lg, "id", None)
-                    if isinstance(tid, int) and isinstance(lid, int):
-                        id_map[int(tid)] = int(lid)
-                except Exception:
-                    continue
-
-            # Compute invariant-preserving plan and filter no-op writes
-            updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
-                new_order=new_order,
-                rows_by_id=rows_by_id,
-                queue_id=queue_id,
-            )
-
-            to_write_ids: list[int] = []
-            to_write_entries: list[Dict[str, Any]] = []
-            for tid in new_order:
-                payload = updates_per_log.get(int(tid)) or {}
-                cur_row = rows_by_id.get(int(tid)) or {}
-                cur_sched = {**(cur_row.get("schedule") or {})}
-                desired_sched = {**(payload.get("schedule") or {})}
-                need_status = False
-                try:
-                    existing_status = self._to_status(cur_row.get("status"))
-                    desired_status = self._to_status(
-                        payload.get("status", existing_status),
+        in_queue_rows: list[TaskRow] | None = None
+        if not member_ids:
+            # Single filtered read of runnable rows in this queue
+            if isinstance(queue_id, int):
+                in_queue_rows = [
+                    r
+                    for r in self._filter_tasks(
+                        filter=(
+                            "schedule is not None and "
+                            "status not in ('completed','cancelled','failed') and "
+                            f"queue_id == {int(queue_id)}"
+                        ),
                     )
-                    need_status = existing_status != desired_status
-                except Exception:
-                    need_status = "status" in payload
-                if (cur_sched == desired_sched) and (not need_status):
-                    continue
-                log_id = id_map.get(int(tid))
-                if isinstance(log_id, int):
-                    to_write_ids.append(int(log_id))
-                    to_write_entries.append(payload)
+                ]
+            else:
+                # Rare path: non-numeric queue_id (e.g., None) → derive membership locally
+                all_rows = self._filter_tasks()
+                in_queue_rows = [
+                    r
+                    for r in all_rows
+                    if r.get("schedule") is not None
+                    and r.get("queue_id") == queue_id
+                    and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+                ]
+            member_ids = [int(r.get("task_id")) for r in (in_queue_rows or [])]
 
-            # Apply a single batched update when there is work to do
-            if to_write_ids:
-                self._write_log_entries(
-                    logs=to_write_ids,
-                    entries=to_write_entries,
-                )
-
-            # Auto-checkpoint after successful edit (best-effort)
-            try:
-                from ..common.llm_helpers import short_id as _short_id  # local import
-
-                cid = _short_id(8)
-                snap = {"label": "auto:_reorder_queue", "queues": []}
-                # Derive queue-level start_at from the previous head in our local view
-                head_start = None
-                try:
-                    for r in rows_by_id.values():
-                        sched0 = r.get("schedule") or {}
-                        if (sched0 or {}).get("prev_task") is None:
-                            head_start = (sched0 or {}).get("start_at")
-                            break
-                except Exception:
-                    head_start = None
-                snap["queues"].append(
-                    {
-                        "queue_id": queue_id,
-                        "head_id": new_order[0] if new_order else None,
-                        "start_at": head_start,
-                        "order": list(new_order),
-                    },
-                )
-                self._queue_checkpoints[cid] = snap
-                _last_checkpoint_id = cid  # noqa: F841
-            except Exception:
-                pass
-
-            # Best-effort: refresh LocalTaskView
-            try:
-                if isinstance(queue_id, int):
-                    self._view.update_after_reorder(
-                        queue_id=int(queue_id),
-                        new_order=list(new_order),
-                        head_start_at=head_start,
-                    )
-            except Exception:
-                pass
-
-            return {
-                "outcome": "queue reordered",
-                "details": {
-                    "queue_id": queue_id,
-                    "new_order": new_order,
-                    "checkpoint_id": locals().get("_last_checkpoint_id"),
-                },
-            }
-
-        # Fallback: build current queue membership with a single targeted read.
-        # Within a single tool call the backend state is stable, so reuse this view.
-        if isinstance(queue_id, int):
-            in_queue_rows: list[TaskRow] = [
-                r
-                for r in self._filter_tasks(
-                    filter=(
-                        "schedule is not None and "
-                        "status not in ('completed','cancelled','failed') and "
-                        f"queue_id == {int(queue_id)}"
-                    ),
-                )
-            ]
-        else:
-            # Fallback path (rare): no numeric queue_id → derive membership locally
-            all_rows = self._filter_tasks()
-            in_queue_rows = [
-                r
-                for r in all_rows
-                if r.get("schedule") is not None
-                and r.get("queue_id") == queue_id
-                and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
-            ]
-        current_set: set[int] = {int(r.get("task_id")) for r in in_queue_rows}
+        # Validate permutation
+        current_set: set[int] = {int(t) for t in member_ids}
         if current_set != set(new_order):
             raise AssertionError(
                 "new_order must be a permutation of the current queue. "
@@ -2590,45 +2532,31 @@ class TaskScheduler(BaseTaskScheduler):
                 "then rebuild new_order accordingly.",
             )
 
-        # Reuse the rows we already fetched to avoid another backend read.
-        rows_by_id: Dict[int, TaskRow] = {int(r["task_id"]): r for r in in_queue_rows}
-        # Trim to the ids we actually care about (defensive)
-        rows_by_id = {int(tid): rows_by_id[int(tid)] for tid in new_order}
+        # Minimal fields required for planning and comparison
+        minimal_fields = ["task_id", "status", "schedule"]
+        rows_by_id: Dict[int, Dict[str, Any]] = self._read_rows_by_ids(
+            ids=member_ids,
+            fields=minimal_fields,
+        )
+        # Trim to ids we actually care about (defensive and deterministic order)
+        rows_by_id = {int(tid): rows_by_id.get(int(tid), {}) for tid in new_order}
 
-        # Compute an invariant-preserving update plan via QueueEngine
+        # Compute invariant-preserving plan
         updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
             new_order=new_order,
             rows_by_id=rows_by_id,
             queue_id=queue_id,
         )
 
-        # Persist through the central validated write funnel, but batch when possible
+        # Build tid→log_id map once
+        id_map: Dict[int, int] = self._tid_to_log_id_map(list(new_order))
+
+        # Filter out no-op writes and batch the rest
         to_write_ids: list[int] = []
         to_write_entries: list[Dict[str, Any]] = []
-
-        # Build log-id map for new_order (single lookup) to avoid NameError/id_map reliance
-        try:
-            log_objs = self._get_logs_by_task_ids(
-                task_ids=new_order,
-                return_ids_only=False,
-            )
-        except Exception:
-            log_objs = []
-        id_map: Dict[int, int] = {}
-        for lg in log_objs or []:
-            try:
-                e = getattr(lg, "entries", {}) or {}
-                tid = e.get("task_id")
-                lid = getattr(lg, "id", None)
-                if isinstance(tid, int) and isinstance(lid, int):
-                    id_map[int(tid)] = int(lid)
-            except Exception:
-                continue
-        for tid, payload in updates_per_log.items():
-            cur_row = rows_by_id.get(int(tid))
-            if cur_row is None:
-                continue
-            # Skip no-op writes
+        for tid in new_order:
+            payload = updates_per_log.get(int(tid)) or {}
+            cur_row = rows_by_id.get(int(tid)) or {}
             cur_sched = {**(cur_row.get("schedule") or {})}
             desired_sched = {**(payload.get("schedule") or {})}
             need_status = False
@@ -2640,10 +2568,9 @@ class TaskScheduler(BaseTaskScheduler):
                 need_status = "status" in payload
             if (cur_sched == desired_sched) and (not need_status):
                 continue
-            # Resolve log id via single minimal read built above
-            _lid = id_map.get(int(tid))
-            if isinstance(_lid, int):
-                to_write_ids.append(int(_lid))
+            lid = id_map.get(int(tid))
+            if isinstance(lid, int):
+                to_write_ids.append(int(lid))
                 to_write_entries.append(payload)
 
         if to_write_ids:
@@ -2651,51 +2578,33 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Auto-checkpoint after successful edit (best-effort)
         try:
-            # Silent; the execute loop also checkpoints explicitly
-            _ = self._queue_checkpoints  # guard attribute existence
-            # Build lightweight snapshot of just this queue
             from ..common.llm_helpers import short_id as _short_id  # local import
 
             cid = _short_id(8)
             snap = {"label": "auto:_reorder_queue", "queues": []}
-            # Avoid extra reads: we already know the final order and head start_at.
-            order_now = list(new_order)
-            # Derive queue-level start_at from the previous head in our local view
-            head_start = None
-            try:
-                for r in in_queue_rows:
-                    sched = r.get("schedule") or {}
-                    if (sched or {}).get("prev_task") is None:
-                        head_start = (sched or {}).get("start_at")
-                        break
-            except Exception:
-                head_start = None
+            head_start = self._head_start_at_from_rows(list(rows_by_id.values()))
             snap["queues"].append(
                 {
                     "queue_id": queue_id,
-                    "head_id": order_now[0] if order_now else None,
+                    "head_id": new_order[0] if new_order else None,
                     "start_at": head_start,
-                    "order": order_now,
+                    "order": list(new_order),
                 },
             )
             self._queue_checkpoints[cid] = snap
-            _last_checkpoint_id = cid  # noqa: F841 (read by return below if available)
+            _last_checkpoint_id = cid  # noqa: F841
         except Exception:
-            pass
+            head_start = locals().get("head_start", None)  # type: ignore[assignment]
 
-        # Best-effort: refresh local index so subsequent lookups can avoid a read
+        # Best-effort: refresh LocalTaskView
         try:
             if isinstance(queue_id, int):
-                try:
-                    self._view.update_after_reorder(
-                        queue_id=int(queue_id),
-                        new_order=list(new_order),
-                        head_start_at=head_start,
-                    )
-                except Exception:
-                    pass
+                self._view.update_after_reorder(
+                    queue_id=int(queue_id),
+                    new_order=list(new_order),
+                    head_start_at=head_start,
+                )
         except Exception:
-            # Never let cache maintenance affect the tool outcome
             pass
 
         return {
@@ -3056,18 +2965,32 @@ class TaskScheduler(BaseTaskScheduler):
                 elif existing_head_start is not None:
                     sched["start_at"] = existing_head_start
 
-            # Derive status for non-active tasks only; keep the active task as 'active'
+            # Prepare entries; derive status centrally and avoid writing 'active'
             write_entries: Dict[str, Any] = {"schedule": sched, "queue_id": target_qid}
-            if active_tid is None or int(tid) != int(active_tid):
-                desired_status = (
-                    Status.scheduled
-                    if (idx == 0 and ("start_at" in sched))
-                    else Status.queued
+
+            # Fetch current row once for status derivation and no-op detection
+            row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(int(tid))
+            existing_status = row.get("status")
+            is_head = idx == 0
+            head_has_start_at = "start_at" in sched
+
+            if not (active_tid is not None and int(tid) == int(active_tid)):
+                # Centralized derivation; non-head cannot remain primed
+                derived_status = derive_status_after_queue_edit(
+                    existing_status=existing_status,
+                    is_head=is_head,
+                    head_has_start_at=head_has_start_at,
                 )
-                write_entries["status"] = desired_status
+                if (not is_head) and derived_status == Status.primed:
+                    derived_status = Status.queued
+                # Only include status when it actually changes and is not 'active'
+                try:
+                    if self._to_status(existing_status) != self._to_status(derived_status):  # type: ignore[arg-type]
+                        write_entries["status"] = derived_status
+                except Exception:
+                    write_entries["status"] = derived_status
 
             # Skip no-op writes when the current row already matches the desired state
-            row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(int(tid))
             try:
                 cur_sched = {**(row.get("schedule") or {})}
                 cur_qid = row.get("queue_id")
@@ -3095,22 +3018,8 @@ class TaskScheduler(BaseTaskScheduler):
             entries_by_tid[int(tid)] = write_entries
 
         if entries_by_tid:
-            try:
-                self._view.write_entries_by_task_ids(entries_by_tid=entries_by_tid)
-            except Exception:
-                # Fallback to per-task validated writes for robustness
-                for tid, write_entries in entries_by_tid.items():
-                    row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(
-                        int(tid),
-                    )
-                    self._validated_write(
-                        task_id=int(tid),
-                        entries=write_entries,
-                        err_prefix=f"While materializing queue {target_qid} (task {tid}):",
-                        current_row=row,
-                        skip_cross_queue_guard=True,
-                        skip_sync=True,
-                    )
+            # Prefer a single batched write; fall back internally to per-task
+            self._write_entries_batched(entries_by_tid=entries_by_tid)
 
         # No additional start_at write needed – applied on head in the previous step
 
@@ -3305,25 +3214,38 @@ class TaskScheduler(BaseTaskScheduler):
         # 9) Apply atomically: reuse current_row and skip cross-queue guard (already validated)
         for tid, sch in by_id.items():
             is_head = sch.get("prev_task") is None
-            desired_status = (
-                Status.scheduled
-                if (is_head and sch.get("start_at") is not None)
-                else Status.queued
+            head_has_start_at = sch.get("start_at") is not None
+
+            row = rows_by_id.get(int(tid))
+            existing_status = row.get("status") if row else Status.queued
+            desired_status = derive_status_after_queue_edit(
+                existing_status=existing_status,
+                is_head=is_head,
+                head_has_start_at=head_has_start_at,
             )
+            # Non-head cannot remain primed
+            if (not is_head) and desired_status == Status.primed:
+                desired_status = Status.queued
+
             top_qid = provided_qid.get(int(tid))
             if top_qid is None:
-                row = rows_by_id.get(int(tid))
                 top_qid = row.get("queue_id") if row else None
+
+            entries = {
+                "schedule": sch,
+                **({"queue_id": int(top_qid)} if isinstance(top_qid, int) else {}),
+            }
+            try:
+                if self._to_status(existing_status) != self._to_status(desired_status):  # type: ignore[arg-type]
+                    entries["status"] = desired_status
+            except Exception:
+                entries["status"] = desired_status
 
             self._validated_write(
                 task_id=int(tid),
-                entries={
-                    "schedule": sch,
-                    "status": desired_status,
-                    **({"queue_id": int(top_qid)} if isinstance(top_qid, int) else {}),
-                },
+                entries=entries,
                 err_prefix=f"While applying set_schedules_atomic (task {tid}):",
-                current_row=rows_by_id.get(int(tid)),
+                current_row=row,
                 skip_cross_queue_guard=True,
             )
 
