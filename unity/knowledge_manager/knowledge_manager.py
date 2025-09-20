@@ -1356,9 +1356,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         *,
         filenames: Union[str, List[str]],
-        table: str = "content",
+        table: str = "Content",
         replace_existing: bool = True,
         batch_size: int = 3,
+        embed_along: bool = True,
+        embedding_config: Dict[str, Any] | None = None,
         **parse_options: Any,
     ) -> Dict[str, Any]:
         """
@@ -1398,6 +1400,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             batch_records = []
             batch_files = []
             processed_count = 0
+            total_inserted_log_event_ids = []
 
             # Process documents as they complete parsing
             async for result in self._file_manager.parse_async(
@@ -1466,11 +1469,11 @@ class KnowledgeManager(BaseKnowledgeManager):
                                 self._delete_rows(table=table, filter=filter_expr)
                                 total_deleted += deleted_count
                                 print(
-                                    f"🗑️  Deleted {deleted_count} old records for {filename}",
+                                    f"✅ Deleted {deleted_count} old records for {filename}",
                                 )
                         except Exception as e:
                             print(
-                                f"⚠️  Failed to delete old records for {filename}: {e}",
+                                f"❌ Failed to delete old records for {filename}: {e}",
                             )
 
                 # Add to batch
@@ -1493,7 +1496,9 @@ class KnowledgeManager(BaseKnowledgeManager):
                             print(
                                 f"📥 Inserting batch of {len(batch_records)} records from {len(batch_files)} documents...",
                             )
-                            self._add_rows(table=table, rows=batch_records)
+                            result = self._add_rows(table=table, rows=batch_records)
+                            inserted_log_event_ids = [log.id for log in result]
+                            total_inserted_log_event_ids.extend(inserted_log_event_ids)
                             total_inserted += len(batch_records)
 
                             # Update file results for this batch
@@ -1507,6 +1512,32 @@ class KnowledgeManager(BaseKnowledgeManager):
                                 }
 
                             print(f"✅ Batch inserted successfully")
+
+                            # Optional: embed along after this batch is inserted
+                            if embed_along and embedding_config:
+                                try:
+                                    tables_cfg = embedding_config.get("tables", {})
+                                    table_cfg = tables_cfg.get(table, {})
+                                    to_embed = table_cfg.get("columns_to_embed", [])
+                                    # Restrict embedding to rows just inserted in this batch
+                                    for col in to_embed:
+                                        src = col.get("source_column")
+                                        dst = col.get("target_column")
+                                        if src and dst:
+                                            print(
+                                                f"🔮 Embedding {table}.{src} -> {dst} (embed_along) for {len(inserted_log_event_ids)} rows",
+                                            )
+                                            self._vectorize_column(
+                                                table=table,
+                                                source_column=src,
+                                                target_column_name=dst,
+                                                from_ids=inserted_log_event_ids,
+                                            )
+                                            print(
+                                                f"✅ Embedded {table}.{src} -> {dst} (embed_along) for {len(inserted_log_event_ids)} rows",
+                                            )
+                                except Exception as e:
+                                    print(f"❌ Failed to embed along: {e}")
 
                         except Exception as e:
                             # Update file results for failed batch
@@ -1539,6 +1570,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 "total_inserted": total_inserted,
                 "total_deleted": total_deleted,
                 "file_results": list(file_results.values()),
+                "inserted_log_event_ids": total_inserted_log_event_ids,
             }
 
         except Exception as e:
@@ -1550,6 +1582,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         table: str,
         source_column: str,
         target_column_name: str,
+        *,
+        from_ids: List[int] | None = None,
     ) -> None:
         """
         Ensure a vector column exists, creating it if necessary.
@@ -1572,6 +1606,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             context,
             embed_column=target_column_name,
             source_column=source_column,
+            from_ids=from_ids,
         )
 
     def _search(
