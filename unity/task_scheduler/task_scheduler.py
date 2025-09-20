@@ -687,6 +687,28 @@ class TaskScheduler(BaseTaskScheduler):
                         detach=True,
                     )
                 else:
+                    # When UNITY_TS_EXEC_CHAIN is set, start with chain linkage
+                    # but return a single ActiveTask (not ActiveQueue).
+                    try:
+                        _env_chain = os.getenv("UNITY_TS_EXEC_CHAIN", "")
+                        _prefer_single_chain = str(_env_chain).strip().lower() in {
+                            "1",
+                            "true",
+                            "yes",
+                        }
+                    except Exception:
+                        _prefer_single_chain = False
+
+                    if _prefer_single_chain:
+                        return await self._execute_internal(
+                            task_id=int(stripped),
+                            parent_chat_context=parent_chat_context,
+                            clarification_up_q=clarification_up_q,
+                            clarification_down_q=clarification_down_q,
+                            activated_by=ActivatedBy.explicit,
+                            detach=False,
+                        )
+
                     return await self._execute_queue_internal(
                         task_id=int(stripped),
                         parent_chat_context=parent_chat_context,

@@ -4139,14 +4139,12 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                 self._delegate.stop(reason)  # type: ignore[misc]
             return
 
-        # Determine behaviour for this outer handle
-        # cancel=True  → hard cancel (result() raises CancelledError)
-        # cancel=False → graceful stop; in persist-mode return last answer, else cancel
+        # cancel=True → hard cancel; cancel=False → graceful (persist returns last answer)
         if cancel_flag:
             self._cancel_event.set()
             return
 
-        # Graceful stop: honour persist-mode where the inner loop returns a final answer
+        # Graceful stop
         if self._persist:
             self._stop_event.set()
         else:
