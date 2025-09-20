@@ -130,7 +130,7 @@ async def initialize_schema(
 
 async def check_existing_data(
     knowledge_manager: KnowledgeManager,
-    table_name: str = "content",
+    table_name: str = "Content",
 ) -> bool:
     """
     Check if the knowledge base already contains data.
@@ -170,17 +170,19 @@ def find_documents_to_ingest(docs_path: Path) -> List[Path]:
 
 
 async def ingest_documents(
-    docs_path: Path,
+    config: Dict[str, Any],
     knowledge_manager: KnowledgeManager,
     use_tool_loops: bool = False,
     rag_agent: Optional[IntranetRAGAgent] = None,
     batch_size: int = 5,
+    embed_along: bool = True,
 ) -> Dict[str, Any]:
     """
     Ingest documents into the knowledge base.
 
     Args:
-        docs_path: Directory containing documents to ingest
+        config: Configuration dict containing paths and settings. Must include
+                key 'documents_path' pointing to the directory to ingest.
         knowledge_manager: KnowledgeManager instance
         use_tool_loops: Whether to use tool loops or direct method
         rag_agent: Optional RAG agent instance (required if use_tool_loops=True)
@@ -188,6 +190,7 @@ async def ingest_documents(
     Returns:
         Dict with ingestion results
     """
+    docs_path = Path(config.get("documents_path", "intranet/policies"))
     doc_files = find_documents_to_ingest(docs_path)
 
     if not doc_files:
@@ -225,10 +228,26 @@ async def ingest_documents(
             logger.info(f"📋 Ingesting {len(doc_files)} documents (direct method)...")
             from intranet.scripts.utils import ingest_documents_direct
 
+            # Load embedding configuration if we plan to embed along
+            embedding_config = None
+            try:
+                if embed_along:
+                    from .rag_agent import load_embedding_configuration
+
+                    schema_path = config.get(
+                        "schema_path",
+                        str(Path(__file__).parent.parent / "flat_schema.json"),
+                    )
+                    embedding_config = load_embedding_configuration(schema_path)
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to load embedding configuration: {e}")
+
             results = await ingest_documents_direct(
                 knowledge_manager,
                 docs_path,
                 batch_size=batch_size,
+                embed_along=embed_along,
+                embedding_config=embedding_config,
             )
 
             processed = results.get("processed", 0)
@@ -328,6 +347,7 @@ class SystemInitializer:
         config: Dict[str, Any],
         overwrite: bool = False,
         batch_size: int = 5,
+        embed_along: bool = True,
     ) -> Dict[str, Any]:
         """
         Complete system initialization workflow.
@@ -363,28 +383,28 @@ class SystemInitializer:
                     )
 
             # Step 2: Ingest documents if none exist (fast-path via Agent pipeline)
-            docs_path = Path(
-                config.get("documents_path", "intranet/data/documents"),
-            )
             ingestion_result = await ingest_documents(
-                docs_path,
+                config,
                 self.knowledge_manager,
                 self.use_tool_loops,
                 self.rag_agent,
                 batch_size=batch_size,
+                embed_along=embed_along,
             )
             results["document_ingestion"] = ingestion_result
 
             # Step 3: Pre-embed configured columns
-            schema_path = config.get(
-                "schema_path",
-                str(Path(__file__).parent.parent / "flat_schema.json"),
-            )
-            embedding_result = await pre_embed_columns(
-                self.knowledge_manager,
-                schema_path,
-            )
-            results["pre_embedding"] = embedding_result
+            # Run a separate pre-embed pass only if not embedding along
+            if not embed_along:
+                schema_path = config.get(
+                    "schema_path",
+                    str(Path(__file__).parent.parent / "flat_schema.json"),
+                )
+                embedding_result = await pre_embed_columns(
+                    self.knowledge_manager,
+                    schema_path,
+                )
+                results["pre_embedding"] = embedding_result
 
             results["success"] = True
             logger.info("🎉 System initialization completed successfully")

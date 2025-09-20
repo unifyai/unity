@@ -55,6 +55,7 @@ def ensure_derived_column(
     *,
     referenced_logs_context: str | None = None,
     derived: bool | None = None,
+    from_ids: list[int] | None = None,
 ) -> None:
     """
     Ensure a derived column exists with the given equation.
@@ -71,6 +72,17 @@ def ensure_derived_column(
     lock = _get_column_lock(context, key)
     with lock:
         try:
+            referenced_logs = {}
+            if from_ids:
+                # Instruct backend to scope the operation to a subset of log entries
+                referenced_logs = {
+                    "lg": list(from_ids),
+                }
+            else:
+                referenced_logs = {
+                    "lg": {"context": referenced_logs_context or context},
+                }
+
             unify.create_derived_logs(
                 context=context,
                 key=key,
@@ -92,6 +104,8 @@ def ensure_vector_column(
     embed_column: str,
     source_column: str,
     derived_expr: str | None = None,
+    *,
+    from_ids: list[int] | None = None,
 ) -> None:
     """
     Ensure that a vector column exists in the given context. If it does not,
@@ -112,6 +126,7 @@ def ensure_vector_column(
             context=context,
             key=source_column,
             equation=derived_expr,
+            from_ids=from_ids,
         )
 
     # Define the embedding equation with explicit lg scoping and ensure the embedding column.
@@ -120,5 +135,6 @@ def ensure_vector_column(
         context=context,
         key=embed_column,
         equation=embed_expr,
+        from_ids=from_ids,
     )
     return None

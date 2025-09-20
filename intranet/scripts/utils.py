@@ -146,7 +146,7 @@ def initialize_script_environment() -> bool:
 
 
 async def initialize_single_table_schema(knowledge_manager):
-    """Create the `content` table based on *flat_schema.json* (v3)."""
+    """Create the `Content` table based on *flat_schema.json* (v3)."""
 
     print("📋 Initializing single-table schema from flat_schema.json …")
 
@@ -156,11 +156,11 @@ async def initialize_single_table_schema(knowledge_manager):
             flat_schema = json.load(f)
 
         # Extract column → type mapping from JSON definition
-        col_defs = flat_schema["tables"]["content"]["columns"]
+        col_defs = flat_schema["tables"]["Content"]["columns"]
         columns = {name: info["type"] for name, info in col_defs.items()}
 
         knowledge_manager._create_table(
-            name="content",
+            name="Content",
             columns=columns,
         )
 
@@ -262,6 +262,8 @@ async def ingest_documents_direct(
     knowledge_manager,
     documents_dir: Path,
     batch_size: int = 5,
+    embed_along: bool = True,
+    embedding_config: dict | None = None,
 ):
     """
     Ingest documents using the unified parser and Knowledge Manager's ingestion tool.
@@ -337,9 +339,11 @@ async def ingest_documents_direct(
         # Use the Knowledge Manager's batch ingestion tool
         result = await knowledge_manager._ingest_documents(
             filenames=filenames,
-            table="content",
+            table="Content",
             replace_existing=True,
             batch_size=batch_size,
+            embed_along=embed_along,
+            embedding_config=embedding_config,
         )
 
         if result.get("success"):
@@ -401,7 +405,7 @@ async def store_document_single_table(document, knowledge_manager):
         with open(schema_path, "r", encoding="utf-8") as f:
             schema_json = json.load(f)
 
-        allowed_cols = set(schema_json["tables"]["content"]["columns"].keys())
+        allowed_cols = set(schema_json["tables"]["Content"]["columns"].keys())
 
         # Convert document to flat records (assumed to include summary/title fields)
         flat_records = document.to_flat_records()
@@ -419,7 +423,7 @@ async def store_document_single_table(document, knowledge_manager):
         ]
 
         # Store batch
-        knowledge_manager._add_rows(table="content", rows=cleaned)
+        knowledge_manager._add_rows(table="Content", rows=cleaned)
 
         print(f"💾 Stored {len(cleaned)} content records in single table")
 
