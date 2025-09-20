@@ -216,9 +216,7 @@ class ActiveTask(BaseActiveTask):
 
     @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
-        ret = self._actor_handle.done()
-        self._mirror_status("active")
-        return ret
+        return self._actor_handle.done()
 
     @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:

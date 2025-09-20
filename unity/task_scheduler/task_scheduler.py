@@ -371,12 +371,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Centralised local view for queue membership, allocator and light caching.
         self._view = LocalTaskView(self._store)
 
-        # Eagerly snapshot the total number of tasks once at construction time so
-        # `_num_tasks()` can serve from memory. Subsequent mutations keep it in sync.
-        try:
-            self._num_tasks_cached = int(self._view.get_metric_count(key="task_id"))
-        except Exception:
-            self._num_tasks_cached = None
+        # `_num_tasks()` will lazily populate and maintain the cached count.
 
         # In-memory checkpoints for reversible multi-queue edits within a session
         # Keyed by opaque checkpoint ids; values contain a minimal snapshot of all queues
@@ -4089,13 +4084,10 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Deprecated: _get_task_queue removed in favor of explicit helpers.
 
-    # Small helper for ActiveQueue to await linkage stabilisation
+    # Small helper retained for compatibility – no-op after simplification.
     @_ts_log_tool_runtime
     def _get_linkage_barrier(self, *, task_id: int):
-        try:
-            return self._linkage_barriers.get(int(task_id))
-        except Exception:
-            return None
+        return None
 
     # ------------------------------------------------------------------ #
     #  Pure neighbour selection helper                                    #
