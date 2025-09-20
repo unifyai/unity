@@ -21,6 +21,7 @@ import sys
 import signal
 import threading
 from pathlib import Path
+import time
 
 # Local helpers live in intranet.scripts.utils
 from utils import initialize_script_environment, get_config_values, activate_project
@@ -111,6 +112,12 @@ async def main():
         default=5,
         help="Number of documents to process in parallel (default: 5)",
     )
+    parser.add_argument(
+        "--no-embed-along",
+        action="store_true",
+        default=False,
+        help="Disable embedding along ingestion (embed after all documents)",
+    )
     args = parser.parse_args()
 
     # (Re)activate project
@@ -120,26 +127,37 @@ async def main():
     cfg["schema_path"] = str(Path(__file__).parent.parent / "flat_schema.json")
 
     initializer = SystemInitializer(use_tool_loops=args.use_tool_loops)
+
+    # Start wall-clock timer for full initialisation
+    _t0 = time.perf_counter()
     result, was_shutdown = await _run_or_shutdown(
         initializer.initialize_system(
             cfg,
             overwrite=args.overwrite,
             batch_size=args.batch_size,
+            embed_along=(not args.no_embed_along),
         ),
     )
+    _elapsed_s = time.perf_counter() - _t0
     if was_shutdown:
-        print("🧹 Shutdown requested – exiting before completion.")
+        print(
+            f"🧹 Shutdown requested – exiting before completion after {_elapsed_s:.2f}s.",
+        )
         sys.exit(130)  # 130 = terminated by CtrlC
 
     if result.get("success"):
-        print("🎉 System initialisation completed!")
+        print(
+            f"🎉 System initialisation completed in {_elapsed_s:.2f}s ({_elapsed_s/60:.2f} min)!",
+        )
         # Future server starts can skip init
         import os
 
         os.environ["RAG_SKIP_INIT"] = "true"
         sys.exit(0)
     else:
-        print(f"❌ Initialisation failed: {result.get('error')}")
+        print(
+            f"❌ Initialisation failed after {_elapsed_s:.2f}s: {result.get('error')}",
+        )
         sys.exit(1)
 
 

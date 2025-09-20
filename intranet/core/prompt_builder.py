@@ -135,7 +135,7 @@ def build_intranet_update_instructions() -> str:
    - Do **not** manage embedding/vector columns; they are handled internally.
 
    File ingestion (when requested)
-   - Use `ingest_documents` to parse and insert records into the content table (set the `table` argument appropriately).
+   - Use `ingest_documents` to parse and insert records into the Content table (set the `table` argument appropriately).
      When replacing existing content, set `replace_existing=True`.
 
    Coherence & verification

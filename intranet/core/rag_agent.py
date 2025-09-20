@@ -732,7 +732,7 @@ class IntranetRAGAgent:
             try:
                 # Get documents count
                 doc_results = self.knowledge_manager._search(
-                    tables=["content"],
+                    tables=["Content"],
                     filters={"content_type": "document"},
                     limit=1000,
                 )
@@ -740,7 +740,7 @@ class IntranetRAGAgent:
 
                 # Get sections count
                 section_results = self.knowledge_manager._search(
-                    tables=["content"],
+                    tables=["Content"],
                     filters={"content_type": "section"},
                     limit=1000,
                 )
@@ -748,7 +748,7 @@ class IntranetRAGAgent:
 
                 # Count policies (documents with type 'policy')
                 policy_results = self.knowledge_manager._search(
-                    tables=["content"],
+                    tables=["Content"],
                     filters={"content_type": "document", "document_type": "policy"},
                     limit=1000,
                 )
@@ -756,8 +756,8 @@ class IntranetRAGAgent:
 
                 # Get available tables
                 available_tables = [
-                    "content",
-                ]  # We know we have at least the content table
+                    "Content",
+                ]  # We know we have at least the Content table
 
             except Exception as e:
                 print(f"⚠️ Could not get detailed stats: {e}")

@@ -325,7 +325,9 @@ async def ensure_system_initialized():
 
         # Initialize system using the new modular approach
         initializer = SystemInitializer(use_tool_loops=use_tool_loops)
-        results = await initializer.initialize_system(config)
+        # allow runtime override via env
+        embed_along = os.environ.get("RAG_EMBED_ALONG", "true").lower() != "false"
+        results = await initializer.initialize_system(config, embed_along=embed_along)
 
         if results.get("success"):
             logger.info("🎉 System initialization completed successfully")
