@@ -235,9 +235,6 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 if "stopped" in text.lower():
                     self._final_result = text
                     break
-
-                # Linkage barrier wait removed – rely on synchronous writes and live queue view.
-
                 # Determine the next task to run using the live queue only
                 next_tid: Optional[int] = self._next_runnable_follower()
 

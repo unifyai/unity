@@ -401,13 +401,6 @@ class TaskScheduler(BaseTaskScheduler):
         # Note: multi-instance heuristics were removed; LocalTaskView and
         # targeted reads handle correctness without this state.
 
-        # Linkage barriers: per-task events set after queue linkage updates
-        # complete for a given activation. ActiveQueue can await these to avoid
-        # racing reads before symmetric neighbour writes are visible.
-        import asyncio as _aio  # local import to avoid top-level cost
-
-        self._linkage_barriers: Dict[int, _aio.Event] = {}
-
         # Duplicate caches (queue index, log-id memoization, allocator) are now centralized
         # in LocalTaskView. This scheduler no longer maintains parallel copies.
 
@@ -740,25 +733,6 @@ class TaskScheduler(BaseTaskScheduler):
             task_id=task_id,
             detach=detach,
         )
-        # Yield the event loop until the current row reflects the expected
-        # sub-head linkage when chaining (prev=None, next=desired_next).
-        # Avoids relying on arbitrary sleeps while remaining low-latency.
-        if not detach and desired_next is not None:
-            for _ in range(5):  # a handful of yields should suffice
-                try:
-                    rows_after = self._filter_tasks(
-                        filter=f"task_id == {task_id}",
-                        limit=1,
-                    )
-                    if rows_after:
-                        sched_after = rows_after[0].get("schedule") or {}
-                        if (sched_after.get("prev_task") is None) and (
-                            sched_after.get("next_task") == desired_next
-                        ):
-                            break
-                except Exception:
-                    pass
-                await asyncio.sleep(0)
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
         _task_desc = task_row.get("description") or task_row.get("name") or ""
@@ -1661,284 +1635,31 @@ class TaskScheduler(BaseTaskScheduler):
             seen_names.add(str(name))
             seen_descs.add(str(desc))
 
-        # Batched fast path: simple specs (no schedule/trigger/queue edits) and no explicit ordering
-        simple_allowed = queue_ordering is None and all(
-            not any(
-                k in spec
-                for k in (
-                    "schedule",
-                    "trigger",
-                    "deadline",
-                    "repeat",
-                    "priority",
-                    "response_policy",
-                    "status",
-                    "queue_id",
-                )
-            )
-            for spec in tasks
-        )
-
+        # Always create tasks sequentially to preserve ascending id assignment
         created_ids: List[int] = []
-        if simple_allowed:
-            # Single deduplication read across all names/descriptions
-            try:
-                clauses: list[str] = []
-                for spec in tasks:
-                    nm = spec.get("name")
-                    ds = spec.get("description")
-                    if nm:
-                        clauses.append(f"name == {nm!r}")
-                    if ds:
-                        clauses.append(f"description == {ds!r}")
-                filter_expr = " or ".join(clauses) if clauses else None
-                existing = (
-                    self._view.get_entries(
-                        filter=filter_expr,
-                        limit=len(tasks) + 1,
-                    )
-                    if filter_expr
-                    else []
-                )
-            except Exception:
-                existing = []
-            # Check collisions precisely
-            if existing:
-                existing_names = {r.get("name") for r in existing}
-                existing_descs = {r.get("description") for r in existing}
-                for idx, spec in enumerate(tasks):
-                    if spec.get("name") in existing_names:
-                        raise ValueError(
-                            f"A task with {'name'!r} = {spec.get('name')!r} already exists",
-                        )
-                    if spec.get("description") in existing_descs:
-                        raise ValueError(
-                            f"A task with {'description'!r} = {spec.get('description')!r} already exists",
-                        )
+        for spec in tasks:
+            payload: Dict[str, Any] = {}
+            for key in (
+                "name",
+                "description",
+                "status",
+                "schedule",
+                "trigger",
+                "deadline",
+                "repeat",
+                "priority",
+                "response_policy",
+            ):
+                if key in spec:
+                    payload[key] = spec[key]
 
-            # Decide statuses once (no extra reads within this tool call)
-            assign_primed = self._active_task is None and (
-                self._primed_task is None
-                or self._to_status(self._primed_task.get("status")) != Status.primed
-            )  # type: ignore[arg-type]
+            # When queue_ordering is provided, avoid auto-priming during creation.
+            # Defer head-state selection to the explicit queue materialization below.
+            if queue_ordering is not None and "status" not in payload:
+                payload["status"] = Status.queued
 
-            entries_list: List[Dict[str, Any]] = []
-            primed_index: Optional[int] = (
-                0 if assign_primed and len(tasks) > 0 else None
-            )
-            for idx, spec in enumerate(tasks):
-                desired_status = (
-                    Status.primed
-                    if primed_index is not None and idx == primed_index
-                    else Status.queued
-                )
-                task_payload = Task(
-                    name=str(spec.get("name")),
-                    description=str(spec.get("description")),
-                    status=desired_status,
-                    schedule=None,
-                    trigger=None,
-                    deadline=None,
-                    repeat=None,
-                    priority=Priority.normal,
-                    response_policy=None,
-                    queue_id=None,
-                ).to_post_json()
-                entries_list.append(task_payload)
-
-            # Create all in one backend call. Prefer consuming returned rows directly
-            # to avoid additional backend reads within this tool call.
-            resp = self._view.create_many(entries_list=entries_list)
-            rows = []
-            created_log_ids: List[int] = []
-
-            # The storage adapter may return either a list of unify.Log objects
-            # (preferred) or a dict with identifiers. Handle both without re-reading.
-            if isinstance(resp, list):
-                rows = resp
-                try:
-                    created_log_ids = [
-                        int(getattr(lg, "id", None))
-                        for lg in rows
-                        if getattr(lg, "id", None) is not None
-                    ]
-                except Exception:
-                    created_log_ids = []
-            else:
-                try:
-                    created_log_ids = list(resp.get("log_event_ids") or [])
-                except Exception:
-                    created_log_ids = []
-                if not created_log_ids:
-                    # Some client variants may return a different key
-                    for alt in ("ids", "log_ids"):
-                        try:
-                            created_log_ids = list(resp.get(alt) or [])
-                            if created_log_ids:
-                                break
-                        except Exception:
-                            created_log_ids = []
-                # When only ids are available, fetch the fresh rows once using a
-                # single by-id lookup (still within this tool call).
-                try:
-                    if created_log_ids:
-                        rows = self._view.get_rows_by_log_ids(log_ids=created_log_ids)
-                except Exception:
-                    rows = []
-            # Fallback: fetch by pairwise (name AND description) to avoid collisions
-            if not rows:
-                try:
-                    pair_clauses: list[str] = []
-                    for spec in tasks:
-                        nm = spec.get("name")
-                        ds = spec.get("description")
-                        if nm is None or ds is None:
-                            continue
-                        pair_clauses.append(
-                            f"(name == {nm!r} and description == {ds!r})",
-                        )
-                    filter_expr = " or ".join(pair_clauses) if pair_clauses else None
-                    rows = (
-                        self._view.get_rows(
-                            filter=filter_expr,
-                            limit=max(10, len(tasks) * 2),
-                            return_ids_only=False,
-                        )
-                        if filter_expr
-                        else []
-                    )
-                except Exception:
-                    rows = []
-            # Derive task_ids from the returned rows without extra reads.
-            # Preserve input order by matching (name, description) keys.
-            by_key: Dict[tuple[str, str], int] = {}
-            try:
-                for lg in rows or []:
-                    e = getattr(lg, "entries", {}) or {}
-                    nm = str(e.get("name"))
-                    ds = str(e.get("description"))
-                    tid_maybe = e.get("task_id")
-                    if tid_maybe is not None:
-                        by_key[(nm, ds)] = int(tid_maybe)
-                        # LocalTaskView manages memoization centrally
-            except Exception:
-                by_key = {}
-
-            created_ids = []
-            for spec in tasks:
-                key = (str(spec.get("name")), str(spec.get("description")))
-                tid = by_key.get(key)
-                if tid is not None:
-                    created_ids.append(int(tid))
-
-            # If we couldn't derive all ids from the direct create response, fall back
-            # to a single by-id read using the created log ids collected above.
-            if (len(created_ids) < len(tasks)) and created_log_ids:
-                try:
-                    rows2 = self._view.get_rows_by_log_ids(log_ids=created_log_ids)
-                except Exception:
-                    rows2 = []
-                if rows2:
-                    by_key = {}
-                    try:
-                        for lg in rows2:
-                            e = getattr(lg, "entries", {}) or {}
-                            nm = str(e.get("name"))
-                            ds = str(e.get("description"))
-                            tid_maybe = e.get("task_id")
-                            if tid_maybe is not None:
-                                by_key[(nm, ds)] = int(tid_maybe)
-                                # LocalTaskView manages memoization centrally
-                    except Exception:
-                        by_key = {}
-                    created_ids = []
-                    for spec in tasks:
-                        key = (str(spec.get("name")), str(spec.get("description")))
-                        tid = by_key.get(key)
-                        if tid is not None:
-                            created_ids.append(int(tid))
-
-            # If mapping is still incomplete (unexpected), fall back to a single
-            # names-only read to complete ids, keeping the call within this tool run.
-            if (len(created_ids) < len(tasks)) and (not rows):
-                try:
-                    name_list = [str(spec.get("name")) for spec in tasks]
-                    list_literal = "[" + ", ".join(repr(n) for n in name_list) + "]"
-                    ents = self._view.get_entries(
-                        filter=f"name in {list_literal}",
-                        limit=len(tasks),
-                    )
-                except Exception:
-                    ents = []
-                if ents:
-                    by_name: Dict[str, int] = {}
-                    for r in ents:
-                        try:
-                            by_name[str(r.get("name"))] = int(r.get("task_id"))
-                        except Exception:
-                            continue
-                    created_ids = [
-                        int(by_name[nm]) for nm in name_list if nm in by_name
-                    ]
-
-            # Reflect primed pointer in memory directly from created rows when available
-            if primed_index is not None:
-                try:
-                    primed_found: Optional[Dict[str, Any]] = None
-                    for r in rows or []:
-                        e = getattr(r, "entries", {}) or {}
-                        if e.get("status") == str(Status.primed):
-                            primed_found = e
-                            break
-                    if primed_found is None and created_log_ids:
-                        try:
-                            rows3 = self._view.get_rows_by_log_ids(
-                                log_ids=created_log_ids,
-                            )
-                        except Exception:
-                            rows3 = []
-                        for r in rows3 or []:
-                            e = getattr(r, "entries", {}) or {}
-                            if e.get("status") == str(Status.primed):
-                                primed_found = e
-                                break
-                    if primed_found is not None:
-                        self._primed_task = dict(primed_found)
-                except Exception:
-                    pass
-
-            # Maintain cached total count (+N new rows)
-            try:
-                if self._num_tasks_cached is not None and created_ids:
-                    self._num_tasks_cached += len(created_ids)
-            except Exception:
-                pass
-        else:
-            # Create tasks sequentially to preserve ascending id assignment
-            created_ids = []
-            for spec in tasks:
-                payload: Dict[str, Any] = {}
-                for key in (
-                    "name",
-                    "description",
-                    "status",
-                    "schedule",
-                    "trigger",
-                    "deadline",
-                    "repeat",
-                    "priority",
-                    "response_policy",
-                ):
-                    if key in spec:
-                        payload[key] = spec[key]
-
-                # When queue_ordering is provided, avoid auto-priming during creation.
-                # Defer head-state selection to the explicit queue materialization below.
-                if queue_ordering is not None and "status" not in payload:
-                    payload["status"] = Status.queued
-
-                out = self._create_task(**payload)
-                created_ids.append(int(out["details"]["task_id"]))
+            out = self._create_task(**payload)
+            created_ids.append(int(out["details"]["task_id"]))
 
         queues_report: List[Dict[str, Any]] = []
 
@@ -3611,8 +3332,6 @@ class TaskScheduler(BaseTaskScheduler):
     # ------------------------------------------------------------------ #
     #  Diagnostics                                                        #
     # ------------------------------------------------------------------ #
-
-    # Deprecated: _explain_queue removed. Compose using _list_queues() and _get_queue().
 
     @_ts_log_tool_runtime
     def _partition_queue(

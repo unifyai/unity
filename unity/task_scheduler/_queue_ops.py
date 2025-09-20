@@ -267,8 +267,6 @@ def detach_from_queue_for_activation(
                         next_sched.pop("start_at", None)
                         _update_schedule(next_log, next_sched)
 
-    # Linkage barrier signalling removed – detachment is synchronous for our purposes.
-
 
 def attach_with_links(
     scheduler: "TaskScheduler",
