@@ -8,7 +8,6 @@ runtime components (e.g., FileManager) via dependency injection.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import os
 from abc import ABC, abstractmethod
@@ -133,43 +132,24 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
         **options: Any,
     ) -> List[Any]:
         """
-        Parse multiple files in parallel.
+        Parse multiple files (sequentially by default).
 
-        Args:
-            file_paths: Sequence of file paths to parse
-            batch_size: Number of files to process in parallel (default: 3)
-            **options: Additional options passed to parse()
-
-        Returns:
-            List of parsed results in the same order as input files
+        Concrete parsers should override this with an optimized implementation
+        (including any safe parallelization). The base implementation iterates
+        over inputs and calls parse() for each path, preserving order, and
+        saves results if enabled.
         """
         if not file_paths:
             return []
 
-        # Use ThreadPoolExecutor for I/O-bound parsing tasks
-        results = [None] * len(file_paths)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
-            # Create futures with their indices
-            future_to_index = {
-                executor.submit(self.parse, path, **options): i
-                for i, path in enumerate(file_paths)
-            }
-
-            # Collect results as they complete
-            for future in concurrent.futures.as_completed(future_to_index):
-                index = future_to_index[future]
-                try:
-                    result = future.result()
-                    results[index] = result
-                    # Save result if enabled
-                    self._save_parsed_result_if_enabled(file_paths[index], result)
-                except Exception as e:
-                    # Re-raise with context about which file failed
-                    raise RuntimeError(
-                        f"Failed to parse {file_paths[index]}: {e}",
-                    ) from e
-
+        results: List[Any] = []
+        for path in file_paths:
+            try:
+                result = self.parse(path, **options)
+                results.append(result)
+                self._save_parsed_result_if_enabled(path, result)
+            except Exception as e:
+                raise RuntimeError(f"Failed to parse {path}: {e}") from e
         return results
 
     async def parse_batch_async(
@@ -182,6 +162,12 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
         """
         Parse multiple files asynchronously, yielding results as they complete.
 
+        Implementation detail:
+        - Stream results by running parse() calls in a bounded executor pool
+          (size=batch_size) and yielding (index, result) as each completes.
+          This avoids long waits when a concrete parser's batch method buffers
+          until completion, while keeping concurrency modest.
+
         Args:
             file_paths: Sequence of file paths to parse
             batch_size: Number of files to process in parallel (default: 3)
@@ -193,27 +179,23 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
         if not file_paths:
             return
 
+        loop = asyncio.get_event_loop()
+
         # Create semaphore to limit concurrent parsing
-        semaphore = asyncio.Semaphore(batch_size)
+        semaphore = asyncio.Semaphore(max(1, batch_size))
 
         async def parse_with_semaphore(
             index: int,
             path: Union[str, Path],
         ) -> Tuple[int, Any]:
             async with semaphore:
-                # Run parse in executor since it's a blocking operation
-                loop = asyncio.get_event_loop()
                 try:
-                    # Create a partial function with the options
-                    import functools
-
-                    parse_with_options = functools.partial(self.parse, **options)
+                    # Run parse in executor since it's a blocking operation
                     result = await loop.run_in_executor(
                         None,
-                        parse_with_options,
-                        path,
+                        lambda: self.parse(path, **options),
                     )
-                    # Save result if enabled (run in executor to avoid blocking)
+                    # Persist parsed result if enabled
                     await loop.run_in_executor(
                         None,
                         self._save_parsed_result_if_enabled,
@@ -224,13 +206,10 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
                 except Exception as e:
                     raise RuntimeError(f"Failed to parse {path}: {e}") from e
 
-        # Create tasks for all files
         tasks = [
-            asyncio.create_task(parse_with_semaphore(i, path))
-            for i, path in enumerate(file_paths)
+            asyncio.create_task(parse_with_semaphore(i, p))
+            for i, p in enumerate(file_paths)
         ]
-
-        # Yield results as they complete
         for coro in asyncio.as_completed(tasks):
             yield await coro
 

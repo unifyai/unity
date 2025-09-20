@@ -44,7 +44,16 @@ opencv-python
 
 # Document parsing
 langchain>=0.3.27
-docling
+tiktoken>=0.11.0
+docling>=2.49.0
+spacy>=3.8.7
+
+# Uncomment this based on your OS
+# # Needed for Python Word COM automation (Windows only)
+# pywin32>=306; platform_system == "Windows"
+
+# # Wrapper around Microsoft Word (Windows/macOS only)
+# docx2pdf>=0.1.8; platform_system == "Windows" or platform_system == "Darwin"
 
 # Web search SDKs
 tavily-python
