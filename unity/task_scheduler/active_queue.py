@@ -536,10 +536,13 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 + "\nInterjection:"
                 + f"\n{(message or '').strip()}"
             )
-            # Guard router latency to avoid indefinite hangs
-            # raw = await client.generate(user)
+            # Guard router latency to avoid indefinite hangs (env-tunable for tests)
             try:
-                raw = await asyncio.wait_for(client.generate(user), timeout=5.0)
+                timeout_s = float(os.getenv("UNITY_TS_ROUTER_TIMEOUT_SECONDS", "60.0"))
+            except Exception:
+                timeout_s = 60.0
+            try:
+                raw = await asyncio.wait_for(client.generate(user), timeout=timeout_s)
             except asyncio.TimeoutError:
                 raw = ""
         except Exception:
