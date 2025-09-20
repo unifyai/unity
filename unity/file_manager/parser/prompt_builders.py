@@ -95,9 +95,9 @@ def build_paragraph_summary_prompt() -> str:
     # Token budget for downstream embedding (text-embedding-3-small ~8.1k tokens).
     # We keep a small safety margin by default.
     try:
-        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"))
+        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "8000"))
     except Exception:
-        emb_budget = 6000
+        emb_budget = 8000
 
     return f"""
 You are a precision summarization assistant for diverse document types.
@@ -138,6 +138,10 @@ OUTPUT BUDGET:
 - The ENTIRE summary must be ≤ {emb_budget} tokens (cl100k_base approximation).
 - If needed, compress by removing redundancy and prose, but NEVER drop numeric values or technical terms.
 
+TOKEN ESTIMATION AND DIRECTIVES:
+- Approximate tokens are estimated as ~0.25 tokens per UTF-8 byte.
+- If a COMPRESSION DIRECTIVE is appended at the end of this prompt, you MUST apply it to reduce length by at least the specified percentage while preserving all numbers and key terms.
+
 PARAGRAPH TO SUMMARIZE:
 """
 
@@ -145,9 +149,9 @@ PARAGRAPH TO SUMMARIZE:
 def build_section_summary_prompt() -> str:
     """Build prompt for section-level summarization from paragraph summaries."""
     try:
-        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"))
+        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "8000"))
     except Exception:
-        emb_budget = 6000
+        emb_budget = 8000
 
     return f"""
 You are synthesizing multiple summaries into a comprehensive higher-level summary.
@@ -186,6 +190,10 @@ OUTPUT BUDGET:
 - The ENTIRE summary must be ≤ {emb_budget} tokens (cl100k_base).
 - Prioritize density and factual completeness over stylistic prose.
 
+TOKEN ESTIMATION AND DIRECTIVES:
+- Approximate tokens are estimated as ~0.25 tokens per UTF-8 byte.
+- If a COMPRESSION DIRECTIVE is appended at the end of this prompt, you MUST apply it to reduce length by at least the specified percentage while preserving all numbers and key terms.
+
 INPUT PARAGRAPH SUMMARIES TO SYNTHESIZE:
 """
 
@@ -193,9 +201,9 @@ INPUT PARAGRAPH SUMMARIES TO SYNTHESIZE:
 def build_document_summary_prompt() -> str:
     """Build prompt for document-level summarization from section summaries."""
     try:
-        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"))
+        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "8000"))
     except Exception:
-        emb_budget = 6000
+        emb_budget = 8000
 
     return f"""
 You are creating a comprehensive document summary from multiple section summaries.
@@ -238,6 +246,10 @@ OUTPUT BUDGET:
 - The ENTIRE document summary must be ≤ {emb_budget} tokens (cl100k_base).
 - Use terse bullets when needed; retain ALL numbers and proper nouns verbatim.
 
+TOKEN ESTIMATION AND DIRECTIVES:
+- Approximate tokens are estimated as ~0.25 tokens per UTF-8 byte.
+- If a COMPRESSION DIRECTIVE is appended at the end of this prompt, you MUST apply it to reduce length by at least the specified percentage while preserving all numbers and key terms.
+
 SECTION SUMMARIES TO SYNTHESIZE:
 """
 
@@ -245,9 +257,9 @@ SECTION SUMMARIES TO SYNTHESIZE:
 def build_chunked_text_summary_prompt(chunk_number: int, total_chunks: int) -> str:
     """Build prompt for summarizing a chunk of text when document is split."""
     try:
-        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "6000"))
+        emb_budget = int(os.environ.get("EMBEDDING_MAX_INPUT_TOKENS", "8000"))
     except Exception:
-        emb_budget = 6000
+        emb_budget = 8000
 
     return f"""
 You are summarizing chunk {chunk_number} of {total_chunks} from a larger document.
@@ -270,6 +282,10 @@ OUTPUT BUDGET:
 - Keep the chunk summary ≤ {emb_budget} tokens (cl100k_base).
 - If necessary, compress by removing redundancy; preserve numbers and key terms.
 
+TOKEN ESTIMATION AND DIRECTIVES:
+- Approximate tokens are estimated as ~0.25 tokens per UTF-8 byte.
+- If a COMPRESSION DIRECTIVE is appended at the end of this prompt, you MUST apply it to reduce length by at least the specified percentage while preserving all numbers and key terms.
+
 For incomplete elements, add markers:
 - [CONTINUES FROM PREVIOUS] - if starting mid-sentence/thought
 - [CONTINUES TO NEXT] - if ending mid-sentence/thought
@@ -277,3 +293,21 @@ For incomplete elements, add markers:
 
 TEXT CHUNK {chunk_number}/{total_chunks}:
 """
+
+
+def build_picture_description_prompt() -> str:
+    """Prompt for picture/figure description retaining all factual details."""
+    return (
+        "Explain clearly what the image depicts and conveys — do not merely list items.\n"
+        "- Overview: one or two sentences stating the figure's purpose and subject.\n"
+        "- Detailed explanation (use exact labels/terms from the image):\n"
+        "  • If a flowchart/block diagram: walk through the full process in order, naming each node/connector exactly and indicating direction/conditions.\n"
+        "    Rather than repeating which node is connected to which, explain in depth the actual flow of the process(es) that is being depicted in the diagram.\n"
+        "  • If a chart/graph: name axes/series, describe trends, peaks, changes, correlations, and comparative differences; provide values where readable.\n"
+        "  • If a table: summarize headers and the most important rows/columns with exact figures.\n"
+        "- Transcribe visible text verbatim (titles, labels, legends, annotations).\n"
+        "- Retain ALL numeric values exactly as shown (units, scales, percentages, dates, counts).\n"
+        "- Reason about relationships and implications that are evident from the image (sequence, cause–effect, comparisons), without guessing beyond what is visible.\n"
+        "- Mention colors/shapes/symbols only when they encode meaning (e.g., legend mapping).\n"
+        "- Use short paragraphs or bullets; remain strictly factual and non-speculative."
+    )
