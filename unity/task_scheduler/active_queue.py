@@ -42,9 +42,12 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         # lifetime of this ActiveQueue instance.
         try:
             initial_q = self._s._get_queue_for_task(task_id=self._current_task_id)
-            self._passthrough_enabled: bool = len(initial_q) == 1
+            size = len(initial_q) if initial_q is not None else 0
+            # Treat isolated/detached (no queue membership) or true singleton as passthrough
+            self._passthrough_enabled: bool = size <= 1
         except Exception:
-            self._passthrough_enabled = False
+            # Fallback to passthrough to preserve inner handle semantics in ambiguous cases
+            self._passthrough_enabled = True
 
         # Background driver
         self._driver = asyncio.create_task(self._drive())
@@ -296,17 +299,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         if not (message or "").strip():
             return
 
-        # Optional bypass: disable LLM router via env flag and route to current task
-        try:
-            if str(os.getenv("UNITY_TS_DISABLE_LLM_ROUTER", "")).lower() in {
-                "1",
-                "true",
-                "yes",
-            }:
-                await self._current_handle.interject(message)
-                return
-        except Exception:
-            pass
+        # Always use the LLM router for multi-task routing
 
         # Perform routing via helper; keep main method small
         queue_rows: list[dict] = self._build_queue_rows_snapshot()

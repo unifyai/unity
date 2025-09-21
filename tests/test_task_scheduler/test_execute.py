@@ -1,10 +1,10 @@
 """
-Tests for `TaskScheduler.execute` which returns an `ActiveTask` handle.
+Tests for `TaskScheduler.execute` which returns an `ActiveQueue` handle.
 
 These largely mirror *test_active_task.py* but go through the full
 `TaskScheduler` surface so that we cover the integration layer that
-retrieves the task from storage, wraps it in `ActiveTask`, and wires the
-actor‐instance into the scheduler.
+retrieves the task from storage, wraps it in `ActiveTask` internally, and wires the
+actor‐instance into the scheduler via an `ActiveQueue` public handle.
 """
 
 from __future__ import annotations

@@ -672,48 +672,26 @@ class TaskScheduler(BaseTaskScheduler):
                 "A task is marked as active, but no active handle is present – reconcile state before starting another task.",
             )
 
-        # Fast path: numeric task_id provided → start at that id using queue semantics
+        # Fast path: numeric task_id provided → start at that id
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
-                # Honor explicit override when provided; default remains chained
+                # Honor explicit override when provided; default is chained
                 if isolated is True:
-                    return await self._execute_internal(
-                        task_id=int(stripped),
-                        parent_chat_context=parent_chat_context,
-                        clarification_up_q=clarification_up_q,
-                        clarification_down_q=clarification_down_q,
-                        activated_by=ActivatedBy.explicit,
-                        detach=True,
-                    )
-                else:
-                    # When UNITY_TS_EXEC_CHAIN is set, start with chain linkage
-                    # but return a single ActiveTask (not ActiveQueue).
-                    try:
-                        _env_chain = os.getenv("UNITY_TS_EXEC_CHAIN", "")
-                        _prefer_single_chain = str(_env_chain).strip().lower() in {
-                            "1",
-                            "true",
-                            "yes",
-                        }
-                    except Exception:
-                        _prefer_single_chain = False
-
-                    if _prefer_single_chain:
-                        return await self._execute_internal(
-                            task_id=int(stripped),
-                            parent_chat_context=parent_chat_context,
-                            clarification_up_q=clarification_up_q,
-                            clarification_down_q=clarification_down_q,
-                            activated_by=ActivatedBy.explicit,
-                            detach=False,
-                        )
-
                     return await self._execute_queue_internal(
                         task_id=int(stripped),
                         parent_chat_context=parent_chat_context,
                         clarification_up_q=clarification_up_q,
                         clarification_down_q=clarification_down_q,
+                        detach=True,
+                    )
+                else:
+                    return await self._execute_queue_internal(
+                        task_id=int(stripped),
+                        parent_chat_context=parent_chat_context,
+                        clarification_up_q=clarification_up_q,
+                        clarification_down_q=clarification_down_q,
+                        detach=False,
                     )
             except (ValueError, RuntimeError):
                 # Fall back to the outer loop (will ask/clarify/create)
@@ -882,6 +860,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        detach: bool = False,
     ) -> SteerableToolHandle:
         """Start queue execution at `task_id` and return a composite queue handle."""
         first = await self._execute_internal(
@@ -890,8 +869,8 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             activated_by=ActivatedBy.explicit,
-            # Always use queue semantics – followers remain attached
-            detach=False,
+            # Detach first task when explicitly requested; otherwise keep queue semantics
+            detach=bool(detach),
         )
         return ActiveQueue(
             self,
@@ -968,32 +947,14 @@ class TaskScheduler(BaseTaskScheduler):
         ) -> SteerableToolHandle:  # type: ignore[valid-type]
             """Start ONLY the specified task by first detaching it from the queue.
 
-            Behavioural rules
-            -----------------
-            - Use this when the user explicitly requests to run a task "in isolation"
-              or to "detach it entirely from the queue".
-            - Detachment semantics:
-              • If the task is the current head, its successor (if any) becomes the new head
-                and inherits the queue-level start_at timestamp.
-              • The detached task loses its schedule entirely (no prev/next/start_at).
-              • Followers of the detached task remain linked to each other.
-            - This does NOT move the task into a new queue, and does NOT partition queues.
-
-            Post-conditions (for the outer loop / LLM):
-            - Mode: "isolated" (detached execution).
-            - The started task is NO LONGER a member of its former queue.
-            - You MUST re-query queues using `list_queues()` / `get_queue(queue_id=…)` before
-              any subsequent queue edits. Do NOT include the detached task id in `reorder_queue`
-              `new_order` arrays for its former queue.
+            Returns an ActiveQueue handle that wraps the isolated task (singleton passthrough).
             """
 
-            # Run internal execute with detach=True to enforce isolation semantics
-            handle = await self._execute_internal(
+            handle = await self._execute_queue_internal(
                 task_id=task_id,
                 parent_chat_context=parent_chat_context,
                 clarification_up_q=clarification_up_q,
                 clarification_down_q=clarification_down_q,
-                activated_by=ActivatedBy.explicit,
                 detach=True,
             )
             # Signal pass-through so the outer loop adopts this handle

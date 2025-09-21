@@ -13,7 +13,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 ### High‑level picture
 
 - `TaskScheduler` is the orchestrator. It composes read/write “tools” and runs LLM loops for `ask`, `update`, and `execute`. It guarantees invariants and a single active task at a time.
-- Execution starts a task by detaching it from the queue (isolation) or by chaining the queue. Detachment records a `ReintegrationPlan` so a deferred task can be reinstated exactly where it came from.
+- Execution starts a task either by detaching it from the queue (isolation) or by chaining the queue. Detachment records a `ReintegrationPlan` so a deferred task can be reinstated exactly where it came from. The public execution handle is always an `ActiveQueue`.
 - All reads/writes go through `TasksStore` (Unify I/O) and `LocalTaskView` (cache of queue membership, head start_at, and ids). Queue edits use a single validated write funnel that enforces invariants and keeps neighbor pointers symmetric.
 - For reorders, a small `queue_engine` computes minimal, invariant‑preserving updates (no direct DB logic inside planning).
 
@@ -26,10 +26,10 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
   - Uses `TasksStore` and `LocalTaskView` for I/O and caching. Exposes `ContactManager.ask` among its tools for cross‑domain flows.
 
 - `active_task.py`
-  - `ActiveTask`: a per‑task, steerable handle that wraps the actor’s live plan. Mirrors status into the Tasks row on pause/resume/stop/result. Classifies interjections (cancel/defer) using the scheduler and triggers reinstatement on defer.
+  - `ActiveTask`: a per‑task, steerable handle that wraps the actor’s live plan. Mirrors status into the Tasks row on pause/resume/stop/result. Classifies interjections (cancel/defer) using the scheduler and triggers reinstatement on defer. Returned internally; the public execution surface uses `ActiveQueue`.
 
 - `active_queue.py`
-  - `ActiveQueue`: a composite handle that sequentially executes a queue (head→tail), adopting each `ActiveTask` in turn. Tracks completions and supports queue‑aware `interject` and `ask`. Provides a passthrough mode when the queue is a true singleton.
+  - `ActiveQueue`: a composite handle that sequentially executes a queue (head→tail), adopting each `ActiveTask` in turn. Tracks completions and supports queue‑aware `interject` and `ask`. Provides a passthrough mode for singleton or isolated executions.
 
 - `_queue_ops.py`
   - Low‑level, activation‑time link manipulation. Implements detachment semantics for isolation vs chained execution and records a `ReintegrationPlan`. Provides `attach_with_links` for symmetric re‑attachment.
@@ -70,7 +70,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
    - Exposes creation, deletion, cancellation, and queue manipulation tools, plus atomic materialization (`set_queue`) and bulk schedule edits. Enforces queue/schedule invariants via a single validated write funnel. Auto‑checkpoints queue edits for easy revert.
 
 3) Execute (run now)
-   - Guards single‑active. If given a numeric id, can run in isolation (detach, followers keep schedule) or as a chain (preserve links). Otherwise uses an outer loop with explicit queue planning tools. Always checkpoints at session start. Returns an `ActiveTask` or `ActiveQueue` handle.
+   - Guards single‑active. If given a numeric id, can run in isolation (detach, followers keep schedule) or as a chain (preserve links). Otherwise uses an outer loop with explicit queue planning tools. Always checkpoints at session start. Returns an `ActiveQueue` handle in all cases (singleton passthrough for isolated/single‑task).
 
 
 ### Queue/schedule invariants (enforced centrally)
@@ -97,8 +97,8 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 
 ### Execution handles
 
-- `ActiveTask`: steerable handle for a single running task; mirrors status and clears the scheduler’s active pointer when done.
-- `ActiveQueue`: driver that sequences tasks using persisted `next_task` links, supports interjection routing across the queue, and provides a completion summary.
+- `ActiveTask`: internal steerable handle for a single running task; mirrors status and clears the scheduler’s active pointer when done.
+- `ActiveQueue`: public execution handle that sequences tasks using persisted `next_task` links, supports interjection routing across the queue, and provides a completion summary. Uses passthrough when the queue is a singleton/isolated.
 
 
 ### Clarification and contacts
@@ -116,7 +116,6 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 ### Common environment variables
 
 - `UNITY_TS_LOCAL_VIEW_OFF`: disable `LocalTaskView` caching.
-- `UNITY_TS_DISABLE_LLM_ROUTER`: bypass queue‑level interjection routing in `ActiveQueue`.
 - `UNITY_SIM_ACTOR_DURATION`: default simulated actor duration (seconds).
 
 

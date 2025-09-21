@@ -410,8 +410,7 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
 
     ts = TaskScheduler()
 
-    # Force "chain" execution for this test
-    monkeypatch.setenv("UNITY_TS_EXEC_CHAIN", "true")
+    # Chain execution is the default; no environment variable required.
 
     # Create a chain of three tasks scheduled for next week
     future = datetime.now(timezone.utc) + timedelta(days=7)

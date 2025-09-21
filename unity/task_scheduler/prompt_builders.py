@@ -486,10 +486,9 @@ def build_execute_prompt(
         "Decision policy (isolation vs chain)",
         "------------------------------------",
         "• Consider the broader chat context and the user's exact phrasing to infer execution scope (single task now vs the whole sequence now).",
-        "• When intent is ambiguous or unspecified, prefer starting the task **in isolation** (single‑task‑now) rather than chaining the queue.",
         "• Isolation may require light queue maintenance: when the head is detached, the next task should inherit the queue's `start_at` and become `scheduled` (followers remain queued behind it).",
         "• Choose queue/chain execution when the context clearly indicates running the sequence now (e.g., the user agreed to process all items in a batch).",
-        "• Do not use brittle heuristics or regex for this decision – reason from the conversation and your plan.",
+        "• Do not use brittle heuristics or regex for this decision – use semantic reasoning and explicit tools.",
         "",
         "Tool semantics (for your decision)",
         "-----------------------------------",
@@ -513,8 +512,7 @@ def build_execute_prompt(
         f"   – After each successful edit, immediately call `{checkpoint_fname}(label='post-edit')` to allow reverting if the user changes their mind. If the user requests a revert, call `{revert_checkpoint_fname}(checkpoint_id=<latest id>)` or `{reinstate_task_fname}(task_id=<id>, allow_active=false)` depending on context.",
         f"   – If you did not capture the last checkpoint id, call `{latest_checkpoint_fname}()` to retrieve it.",
         (
-            f"3) EXECUTE by choosing `{execute_isolated_by_id_fname}` or `{execute_by_id_fname}` based on the decision policy above. "
-            "Do NOT modify `start_at` timestamps to force execution."
+            f"3) EXECUTE by choosing `{execute_isolated_by_id_fname}` or `{execute_by_id_fname}` based on the decision policy above. Do NOT modify `start_at` timestamps to force execution."
             if execute_isolated_by_id_fname
             else f"3) EXECUTE by calling `{execute_by_id_fname}(task_id=<head of the 'now' queue>)`. Do NOT modify `start_at` timestamps to force execution."
         ),
@@ -554,7 +552,7 @@ def build_execute_prompt(
         "",
         "Reporting",
         "---------",
-        "• Always include the executed task id(s) and a brief note about the resulting queue state in your final response.",
+        "• Execution always returns an ActiveQueue handle. Always include the executed task id(s) and a brief note about the resulting queue state in your final response.",
     ]
 
     return "\n".join(lines)
