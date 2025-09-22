@@ -27,6 +27,236 @@ if TYPE_CHECKING:  # avoid import cycles at runtime
     from .task_scheduler import TaskScheduler
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Private helpers (extracted to reduce ActiveQueue size, same-file & private)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _InterjectionRouter:
+    @staticmethod
+    async def route(
+        *,
+        queue_rows: list[dict],
+        message: str,
+        current_task_id: int,
+    ) -> tuple[list[dict], bool]:
+        """Return (routes, uncovered_flag) using a dedicated LLM call with timeout.
+
+        Mirrors the previous `_route_interjection_llm` logic verbatim so that
+        behaviour remains unchanged while keeping `ActiveQueue` concise.
+        """
+        try:
+
+            def _safe_dump(value):
+                try:
+                    import json as _json  # local import
+
+                    return _json.dumps(value, default=str)
+                except Exception:
+                    return str(value)
+
+            client = unify.AsyncUnify(
+                "gpt-5@openai",
+                cache=True,
+                traced=True,
+                reasoning_effort="high",
+                service_tier="priority",
+            )
+            schema_hint = '{\n  "type": "object",\n  "properties": {\n    "routes": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "task_ids": {"type": "array", "items": {"type": "integer"}},\n          "instruction": {"type": "string"}\n        },\n        "required": ["task_ids", "instruction"]\n      }\n    },\n    "directives": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "kind": {"type": "string", "enum": ["all", "first", "last", "by_description"]},\n          "description_match": {"type": "string"}\n        },\n        "required": ["kind"]\n      }\n    },\n    "uncovered_directives": {"type": "array", "items": {"type": "string"}}\n  },\n  "required": ["routes"]\n}'
+            sys = (
+                "You route user interjections to one or more tasks in a queue.\n"
+                "Return ONLY JSON matching the schema below. Never include commentary.\n"
+                f"Schema:\n{schema_hint}\n"
+                "Guidelines: Select task_ids explicitly from the provided queue.\n"
+                "- If the instruction applies to all tasks, include all task_ids.\n"
+                "- If it targets the last task, include ONLY the last task_id.\n"
+                "- If it mentions a task by name/description, choose the best matching ids.\n"
+                "- If nothing special is implied, target ONLY the current task.\n"
+                "- You MUST include a separate route for each distinct directive present in the user's message; list these under 'directives' and set 'uncovered_directives' to [] when all are mapped.\n"
+                "Ambiguity & clarification policy:\n"
+                "- Do NOT guess. When the instruction is ambiguous or underspecified (e.g., phrases like 'the rest', 'later', 'soon',\n"
+                "  conflicting directives, or missing explicit task_ids/clear directives), mark those items under 'uncovered_directives'.\n"
+                "- Only include unambiguous routes in 'routes'. If nothing can be routed unambiguously, return routes: [].\n"
+                "- Examples of ambiguity that MUST produce non-empty 'uncovered_directives':\n"
+                "  'do the rest later', 'maybe the last one unless it's urgent', 'whichever is best',\n"
+                "  or any directive that cannot be mapped deterministically to concrete task_ids.\n"
+            )
+            client.set_system_message(sys)
+
+            try:
+                first_task_id: int | None = None
+                last_task_id: int | None = None
+                if queue_rows:
+                    first_task_id = (
+                        int(queue_rows[0].get("task_id"))
+                        if queue_rows[0].get("task_id") is not None
+                        else None
+                    )
+                    last_task_id = (
+                        int(queue_rows[-1].get("task_id"))
+                        if queue_rows[-1].get("task_id") is not None
+                        else None
+                    )
+            except Exception:
+                first_task_id = None
+                last_task_id = None
+
+            user = (
+                "Chain (head→tail):\n"
+                + _safe_dump(queue_rows)
+                + "\nMetadata:\n"
+                + f"first_task_id: {first_task_id}\n"
+                + f"last_task_id: {last_task_id}\n"
+                + "current_task_id: "
+                + str(current_task_id)
+                + "\nInterjection:"
+                + f"\n{(message or '').strip()}"
+            )
+
+            try:
+                timeout_s = float(os.getenv("UNITY_TS_ROUTER_TIMEOUT_SECONDS", "60.0"))
+            except Exception:
+                timeout_s = 60.0
+
+            try:
+                raw = await asyncio.wait_for(client.generate(user), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                raw = ""
+
+            try:
+                import json as _json
+
+                data = _json.loads(raw)
+            except Exception:
+                return [], True
+
+            routes = data.get("routes") if isinstance(data, dict) else None
+            if not isinstance(routes, list):
+                return [], True
+            uncovered = data.get("uncovered_directives") or []
+            uncovered_flag = bool(isinstance(uncovered, list) and uncovered)
+            # Normalise routes: cast ids to int, drop unknown ids and empty instructions
+            known_ids = {
+                int(r.get("task_id"))
+                for r in queue_rows
+                if r.get("task_id") is not None
+            }
+            norm_routes: list[dict] = []
+            try:
+                for r in routes:
+                    instr = str(r.get("instruction", "")).strip()
+                    if not instr:
+                        continue
+                    ids_raw = r.get("task_ids", [])
+                    ids_int: list[int] = []
+                    for t in ids_raw:
+                        try:
+                            tid = int(t)
+                            if tid in known_ids:
+                                ids_int.append(tid)
+                        except Exception:
+                            continue
+                    if ids_int:
+                        norm_routes.append({"task_ids": ids_int, "instruction": instr})
+            except Exception:
+                norm_routes = []
+            return norm_routes, uncovered_flag
+        except Exception:
+            return [], True
+
+
+class _QueueSnapshot:
+    @staticmethod
+    def build_rows(scheduler: "TaskScheduler", current_task_id: int) -> list[dict]:
+        """Build a compact queue snapshot (head→tail) using the scheduler's live view."""
+        try:
+            queue = scheduler._get_queue_for_task(task_id=current_task_id) or []
+        except Exception:
+            queue = []
+        out: list[dict] = []
+        for t in queue:
+            try:
+                out.append(
+                    {
+                        "task_id": getattr(t, "task_id", None),
+                        "name": getattr(t, "name", None),
+                        "description": getattr(t, "description", None),
+                        "status": getattr(t, "status", None),
+                        "schedule": getattr(t, "schedule", None),
+                    },
+                )
+            except Exception:
+                continue
+        return out
+
+    @staticmethod
+    def build_preamble(
+        scheduler: "TaskScheduler",
+        current_task_id: int,
+    ) -> Optional[str]:
+        """Return a concise queue preamble (headline + task list) or None on failure."""
+        try:
+            queue_rows: list[dict] = _QueueSnapshot.build_rows(
+                scheduler,
+                current_task_id,
+            )
+
+            total_count = len(queue_rows)
+            # Identify current index
+            current_index = -1
+            for idx, r in enumerate(queue_rows):
+                if r.get("task_id") == current_task_id:
+                    current_index = idx
+                    break
+
+            # Count statuses
+            def _to_status_str(row: dict) -> str:
+                try:
+                    return str(scheduler._to_status(row.get("status")))
+                except Exception:
+                    return str(row.get("status"))
+
+            completed_count = sum(
+                1 for r in queue_rows if _to_status_str(r) == "completed"
+            )
+            remaining_count = max(0, total_count - completed_count)
+
+            # Next tasks preview (up to 3)
+            next_names: list[str] = []
+            if current_index >= 0:
+                for j in range(current_index + 1, min(current_index + 4, total_count)):
+                    nm = queue_rows[j].get("name")
+                    if nm:
+                        next_names.append(str(nm))
+
+            # High-level summary line
+            if current_index >= 0 and current_index < total_count:
+                current_name = queue_rows[current_index].get("name") or "(unnamed task)"
+                headline = (
+                    f"Chain status: {completed_count}/{total_count} completed; "
+                    f"{remaining_count} remaining; executing {current_index + 1}/{total_count}: "
+                    f"{current_name}."
+                )
+            else:
+                headline = (
+                    f"Chain status: {completed_count}/{total_count} completed; "
+                    f"{remaining_count} remaining; executing: (unknown current index)."
+                )
+            if next_names:
+                headline += f" Next: {', '.join(next_names)}."
+
+            # Essential rows: only id and name to keep preamble concise
+            details_lines: list[str] = ["Chain tasks (head→tail):"]
+            for r in queue_rows:
+                tid = r.get("task_id")
+                name = r.get("name") or ""
+                details_lines.append(f"- Task {tid}: {name}")
+
+            return "CHAIN CONTEXT\n" + headline + "\n" + "\n".join(details_lines)
+        except Exception:
+            return None
+
+
 class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
     def __init__(
         self,
@@ -80,29 +310,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
     # Snapshot helper (head→tail)
     # ----------------------------
     def _build_queue_rows_snapshot(self) -> list[dict]:
-        """
-        Build a compact queue snapshot (head→tail) using the scheduler's live
-        queue view. Returns a list of simple dict rows.
-        """
-        try:
-            queue = self._s._get_queue_for_task(task_id=self._current_task_id) or []
-        except Exception:
-            queue = []
-        out: list[dict] = []
-        for t in queue:
-            try:
-                out.append(
-                    {
-                        "task_id": getattr(t, "task_id", None),
-                        "name": getattr(t, "name", None),
-                        "description": getattr(t, "description", None),
-                        "status": getattr(t, "status", None),
-                        "schedule": getattr(t, "schedule", None),
-                    },
-                )
-            except Exception:
-                continue
-        return out
+        # Backwards-compat wrapper while callers migrate; delegates to helper
+        return _QueueSnapshot.build_rows(self._s, self._current_task_id)
 
     # ----------------------------
     # Internal clarification tool
@@ -311,11 +520,15 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         # Always use the LLM router for multi-task routing
 
         # Perform routing via helper; keep main method small
-        queue_rows: list[dict] = self._build_queue_rows_snapshot()
+        queue_rows: list[dict] = _QueueSnapshot.build_rows(
+            self._s,
+            self._current_task_id,
+        )
 
-        routes, uncovered = await self._route_interjection_llm(
+        routes, uncovered = await _InterjectionRouter.route(
             queue_rows=queue_rows,
             message=message,
+            current_task_id=self._current_task_id,
         )
 
         if uncovered:
@@ -353,129 +566,12 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         queue_rows: list[dict],
         message: str,
     ) -> tuple[list[dict], bool]:
-        """Return (routes, uncovered_flag) using a dedicated LLM call with timeout.
-
-        On any error, returns ([], True) so callers can apply the clarification
-        or fallback policy without duplicating error handling.
-        """
-        try:
-
-            def _safe_dump(value):
-                try:
-                    import json as _json  # local import
-
-                    return _json.dumps(value, default=str)
-                except Exception:
-                    return str(value)
-
-            client = unify.AsyncUnify(
-                "gpt-5@openai",
-                cache=True,
-                traced=True,
-                reasoning_effort="high",
-                service_tier="priority",
-            )
-            schema_hint = '{\n  "type": "object",\n  "properties": {\n    "routes": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "task_ids": {"type": "array", "items": {"type": "integer"}},\n          "instruction": {"type": "string"}\n        },\n        "required": ["task_ids", "instruction"]\n      }\n    },\n    "directives": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "kind": {"type": "string", "enum": ["all", "first", "last", "by_description"]},\n          "description_match": {"type": "string"}\n        },\n        "required": ["kind"]\n      }\n    },\n    "uncovered_directives": {"type": "array", "items": {"type": "string"}}\n  },\n  "required": ["routes"]\n}'
-            sys = (
-                "You route user interjections to one or more tasks in a queue.\n"
-                "Return ONLY JSON matching the schema below. Never include commentary.\n"
-                f"Schema:\n{schema_hint}\n"
-                "Guidelines: Select task_ids explicitly from the provided queue.\n"
-                "- If the instruction applies to all tasks, include all task_ids.\n"
-                "- If it targets the last task, include ONLY the last task_id.\n"
-                "- If it mentions a task by name/description, choose the best matching ids.\n"
-                "- If nothing special is implied, target ONLY the current task.\n"
-                "- You MUST include a separate route for each distinct directive present in the user's message; list these under 'directives' and set 'uncovered_directives' to [] when all are mapped.\n"
-                "Ambiguity & clarification policy:\n"
-                "- Do NOT guess. When the instruction is ambiguous or underspecified (e.g., phrases like 'the rest', 'later', 'soon',\n"
-                "  conflicting directives, or missing explicit task_ids/clear directives), mark those items under 'uncovered_directives'.\n"
-                "- Only include unambiguous routes in 'routes'. If nothing can be routed unambiguously, return routes: [].\n"
-                "- Examples of ambiguity that MUST produce non-empty 'uncovered_directives':\n"
-                "  'do the rest later', 'maybe the last one unless it's urgent', 'whichever is best',\n"
-                "  or any directive that cannot be mapped deterministically to concrete task_ids.\n"
-            )
-            client.set_system_message(sys)
-
-            try:
-                first_task_id: int | None = None
-                last_task_id: int | None = None
-                if queue_rows:
-                    first_task_id = (
-                        int(queue_rows[0].get("task_id"))
-                        if queue_rows[0].get("task_id") is not None
-                        else None
-                    )
-                    last_task_id = (
-                        int(queue_rows[-1].get("task_id"))
-                        if queue_rows[-1].get("task_id") is not None
-                        else None
-                    )
-            except Exception:
-                first_task_id = None
-                last_task_id = None
-
-            user = (
-                "Chain (head→tail):\n"
-                + _safe_dump(queue_rows)
-                + "\nMetadata:\n"
-                + f"first_task_id: {first_task_id}\n"
-                + f"last_task_id: {last_task_id}\n"
-                + "current_task_id: "
-                + str(self._current_task_id)
-                + "\nInterjection:"
-                + f"\n{(message or '').strip()}"
-            )
-
-            try:
-                timeout_s = float(os.getenv("UNITY_TS_ROUTER_TIMEOUT_SECONDS", "60.0"))
-            except Exception:
-                timeout_s = 60.0
-
-            try:
-                raw = await asyncio.wait_for(client.generate(user), timeout=timeout_s)
-            except asyncio.TimeoutError:
-                raw = ""
-
-            try:
-                import json as _json
-
-                data = _json.loads(raw)
-            except Exception:
-                return [], True
-
-            routes = data.get("routes") if isinstance(data, dict) else None
-            if not isinstance(routes, list):
-                return [], True
-            uncovered = data.get("uncovered_directives") or []
-            uncovered_flag = bool(isinstance(uncovered, list) and uncovered)
-            # Normalise routes: cast ids to int, drop unknown ids and empty instructions
-            known_ids = {
-                int(r.get("task_id"))
-                for r in queue_rows
-                if r.get("task_id") is not None
-            }
-            norm_routes: list[dict] = []
-            try:
-                for r in routes:
-                    instr = str(r.get("instruction", "")).strip()
-                    if not instr:
-                        continue
-                    ids_raw = r.get("task_ids", [])
-                    ids_int: list[int] = []
-                    for t in ids_raw:
-                        try:
-                            tid = int(t)
-                            if tid in known_ids:
-                                ids_int.append(tid)
-                        except Exception:
-                            continue
-                    if ids_int:
-                        norm_routes.append({"task_ids": ids_int, "instruction": instr})
-            except Exception:
-                norm_routes = []
-            return norm_routes, uncovered_flag
-        except Exception:
-            return [], True
+        # Backwards-compat wrapper; delegate to helper
+        return await _InterjectionRouter.route(
+            queue_rows=queue_rows,
+            message=message,
+            current_task_id=self._current_task_id,
+        )
 
     def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
         try:
@@ -607,67 +703,10 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             except TypeError:
                 return await self._current_handle.ask(question)
 
-        queue_preamble: str | None = None
-        try:
-            # Build queue snapshot (includes terminal statuses when available)
-            queue_rows: list[dict] = self._build_queue_rows_snapshot()
-
-            total_count = len(queue_rows)
-            # Identify current index
-            current_index = -1
-            for idx, r in enumerate(queue_rows):
-                if r.get("task_id") == self._current_task_id:
-                    current_index = idx
-                    break
-
-            # Count statuses
-            def _to_status_str(row: dict) -> str:
-                try:
-                    return str(self._s._to_status(row.get("status")))
-                except Exception:
-                    return str(row.get("status"))
-
-            completed_count = sum(
-                1 for r in queue_rows if _to_status_str(r) == "completed"
-            )
-            remaining_count = max(0, total_count - completed_count)
-
-            # Next tasks preview (up to 3)
-            next_names: list[str] = []
-            if current_index >= 0:
-                for j in range(current_index + 1, min(current_index + 4, total_count)):
-                    nm = queue_rows[j].get("name")
-                    if nm:
-                        next_names.append(str(nm))
-
-            # High-level summary line
-            if current_index >= 0 and current_index < total_count:
-                current_name = queue_rows[current_index].get("name") or "(unnamed task)"
-                headline = (
-                    f"Chain status: {completed_count}/{total_count} completed; "
-                    f"{remaining_count} remaining; executing {current_index + 1}/{total_count}: "
-                    f"{current_name}."
-                )
-            else:
-                headline = (
-                    f"Chain status: {completed_count}/{total_count} completed; "
-                    f"{remaining_count} remaining; executing: (unknown current index)."
-                )
-            if next_names:
-                headline += f" Next: {', '.join(next_names)}."
-
-            # Essential rows: only id and name to keep preamble concise
-            details_lines: list[str] = ["Chain tasks (head→tail):"]
-            for r in queue_rows:
-                tid = r.get("task_id")
-                name = r.get("name") or ""
-                details_lines.append(f"- Task {tid}: {name}")
-
-            queue_preamble = (
-                "CHAIN CONTEXT\n" + headline + "\n" + "\n".join(details_lines)
-            )
-        except Exception:
-            queue_preamble = None
+        queue_preamble: str | None = _QueueSnapshot.build_preamble(
+            self._s,
+            self._current_task_id,
+        )
 
         composed_question = (
             f"{queue_preamble}\n\nUSER QUESTION:\n{question}"
