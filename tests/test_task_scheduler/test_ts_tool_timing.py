@@ -393,8 +393,12 @@ def test_tool_attach_with_links_timing():
         "task_id"
     ]
     ts._set_queue(queue_id=None, order=[a, c])
+    # Call the queue utility directly now that the scheduler wrapper was removed
+    from unity.task_scheduler.queue_utils import attach_with_links as _attach_with_links
+
     t0 = time.perf_counter()
-    ts._attach_with_links(
+    _attach_with_links(
+        ts,
         task_id=b,
         prev_task=a,
         next_task=c,

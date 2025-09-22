@@ -73,7 +73,6 @@ from .queue_utils import (
     sched_prev as _q_prev,
     sched_next as _q_next,
     sync_adjacent_links as _q_sync_adjacent_links,
-    attach_with_links as _q_attach_with_links,
 )
 from .activation_ops import (
     detach_from_queue_for_activation as _ops_detach_for_activation,
@@ -3580,25 +3579,6 @@ class TaskScheduler(BaseTaskScheduler):
             detach=detach,
         )
 
-    @_ts_log_tool_runtime
-    def _attach_with_links(
-        self,
-        *,
-        task_id: int,
-        prev_task: Optional[int],
-        next_task: Optional[int],
-        head_start_at: Optional[str],
-        err_prefix: str,
-    ) -> None:
-        _q_attach_with_links(
-            self,
-            task_id=task_id,
-            prev_task=prev_task,
-            next_task=next_task,
-            head_start_at=head_start_at,
-            err_prefix=err_prefix,
-        )
-
     _TERMINAL_STATUSES = {Status.completed, Status.cancelled, Status.failed}
 
     # ------------------------------------------------------------------ #
@@ -3645,67 +3625,7 @@ class TaskScheduler(BaseTaskScheduler):
         else:
             self._primed_task = None
 
-    # ------------------------------------------------------------------ #
-    #  Pure neighbour selection helper                                    #
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _select_final_neighbours(
-        *,
-        task_id: int,
-        was_head: bool,
-        original_prev: Optional[int],
-        original_next: Optional[int],
-        queue_ids: list[int],
-        is_viable: "Callable[[Optional[int]], bool]",
-    ) -> tuple[Optional[int], Optional[int]]:
-        """
-        Decide `(final_prev, final_next)` for reinstatement using a minimal, deterministic
-        policy and no I/O.
-
-        Policy:
-        - If `was_head`: `final_prev=None`; `final_next` is `original_next` if viable,
-          otherwise the current head (first in `queue_ids`) if different from `task_id`,
-          otherwise `None`.
-        - If middle: `final_prev` is `original_prev` if viable, else `None`;
-          `final_next` is `original_next` if viable and distinct from `final_prev`, else `None`.
-        - Avoid self-loops and identical prev/next; prefer keeping prev and dropping next.
-        """
-        current_head_id = queue_ids[0] if queue_ids else None
-
-        def _clean(tid: Optional[int]) -> Optional[int]:
-            return None if tid == task_id else tid
-
-        if was_head:
-            final_prev = None
-            if is_viable(original_next):
-                final_next = original_next
-            else:
-                final_next = (
-                    current_head_id
-                    if (current_head_id is not None and current_head_id != task_id)
-                    else None
-                )
-        else:
-            # Prefer restoring the original predecessor when still viable; else become head.
-            final_prev = original_prev if is_viable(original_prev) else None
-            # Preserve the original successor when viable and not equal to prev.
-            final_next = (
-                original_next
-                if (is_viable(original_next) and original_next != final_prev)
-                else None
-            )
-
-        final_prev = _clean(final_prev)
-        final_next = _clean(final_next)
-        if (
-            final_prev is not None
-            and final_next is not None
-            and final_prev == final_next
-        ):
-            final_next = None
-
-        return final_prev, final_next
+    # (moved) _select_final_neighbours: now defined in reintegration.py
 
     # Update Task(s) Status / Schedule / Deadline / Repetition / Priority
 
@@ -4176,23 +4096,6 @@ class TaskScheduler(BaseTaskScheduler):
     # ------------------------------------------------------------------ #
     #  (removed) checkpoint persistence                                   #
     # ------------------------------------------------------------------ #
-
-    # ------------------------------------------------------------------ #
-    #  Best-effort helper                                                 #
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _best_effort(func: "Callable[[], Any]") -> None:
-        """
-        Execute func and intentionally swallow any exceptions.
-
-        Use only for non-critical maintenance paths (e.g., cache refresh,
-        neighbour status fix-ups) where failure must not affect correctness.
-        """
-        try:
-            func()
-        except Exception:
-            pass
 
     @staticmethod
     def _normalize_filter_expr(expr: Optional[str]) -> Optional[str]:

@@ -10,7 +10,7 @@ reconciles adjacent task state when the head changes.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Callable
 
 import unify
 
@@ -111,7 +111,7 @@ class ReintegrationManager:
             queue_list = self._s._get_queue_for_task(task_id=tid)
         queue_ids = [t.task_id for t in queue_list]
 
-        final_prev, final_next = self._s._select_final_neighbours(
+        final_prev, final_next = _select_final_neighbours(
             task_id=tid,
             was_head=was_head,
             original_prev=prev_tid,
@@ -157,7 +157,11 @@ class ReintegrationManager:
             err_prefix=f"While reinstating task {tid}:",
         )
 
-        self._s._attach_with_links(
+        # Use queue_utils to attach with symmetric linkage and invariant enforcement
+        from .queue_utils import attach_with_links as _attach_with_links
+
+        _attach_with_links(
+            self._s,
             task_id=tid,
             prev_task=final_prev,
             next_task=final_next,
@@ -194,7 +198,7 @@ class ReintegrationManager:
                             new_status="queued",
                         )
 
-            self._s._best_effort(_fix_next_status)
+            _best_effort(_fix_next_status)
 
         if desired_status == Status.primed:
             self._s._refresh_primed_cache(tid)
@@ -208,3 +212,61 @@ class ReintegrationManager:
             "outcome": "task reinstated to previous queue position",
             "details": {"task_id": tid},
         }
+
+
+def _best_effort(func: Callable[[], Any]) -> None:
+    try:
+        func()
+    except Exception:
+        pass
+
+
+def _select_final_neighbours(
+    *,
+    task_id: int,
+    was_head: bool,
+    original_prev: Optional[int],
+    original_next: Optional[int],
+    queue_ids: list[int],
+    is_viable: Callable[[Optional[int]], bool],
+) -> tuple[Optional[int], Optional[int]]:
+    """
+    Decide (final_prev, final_next) for reinstatement using a minimal, deterministic
+    policy and no I/O.
+
+    Policy:
+    - If was_head: final_prev=None; final_next is original_next if viable, otherwise the
+      current head (first in queue_ids) if different from task_id, otherwise None.
+    - If middle: final_prev is original_prev if viable, else None; final_next is
+      original_next if viable and distinct from final_prev, else None.
+    - Avoid self-loops and identical prev/next; prefer keeping prev and dropping next.
+    """
+    current_head_id = queue_ids[0] if queue_ids else None
+
+    def _clean(tid: Optional[int]) -> Optional[int]:
+        return None if tid == task_id else tid
+
+    if was_head:
+        final_prev = None
+        if is_viable(original_next):
+            final_next = original_next
+        else:
+            final_next = (
+                current_head_id
+                if (current_head_id is not None and current_head_id != task_id)
+                else None
+            )
+    else:
+        final_prev = original_prev if is_viable(original_prev) else None
+        final_next = (
+            original_next
+            if (is_viable(original_next) and original_next != final_prev)
+            else None
+        )
+
+    final_prev = _clean(final_prev)
+    final_next = _clean(final_next)
+    if final_prev is not None and final_next is not None and final_prev == final_next:
+        final_next = None
+
+    return final_prev, final_next
