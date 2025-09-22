@@ -3685,9 +3685,16 @@ class HierarchicalActor(BaseActor):
                                     reason=f"Final error:\n{last_error_reason}",
                                 )
 
+                        exit_seq = -1
+                        if isinstance(
+                            self.action_provider.browser.backend,
+                            MagnitudeBrowserBackend,
+                        ):
+                            exit_seq = self.action_provider.browser.backend.current_seq
+
                         post_state = {
                             "url": await self.action_provider.browser.get_current_url(),
-                            "screenshot": await self.action_provider.browser.get_screenshot(),
+                            "screenshot": None,
                         }
 
                         step_cache_miss_counter = plan.runtime.cache_miss_counter
@@ -3707,6 +3714,7 @@ class HierarchicalActor(BaseActor):
                             interactions=copy.deepcopy(local_interactions),
                             return_value_repr=repr(result),
                             cache_miss_counter=step_cache_miss_counter,
+                            exit_seq=exit_seq,
                         )
 
                         plan._spawn_async_verification(item)
