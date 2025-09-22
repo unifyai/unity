@@ -4125,30 +4125,11 @@ class TaskScheduler(BaseTaskScheduler):
 
         cid = _short_id(8)
         self._queue_checkpoints[cid] = snapshot
-        try:
-            if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                "1",
-                "true",
-                "yes",
-            }:
-                self._persist_checkpoint(cid, label, snapshot)
-        except Exception:
-            pass
         return {"outcome": "checkpointed", "details": {"checkpoint_id": cid}}
 
     def revert_to_checkpoint(self, *, checkpoint_id: str) -> Dict[str, Any]:
         """Revert all queues to a previously created checkpoint."""
         snap = self._queue_checkpoints.get(str(checkpoint_id))
-        if snap is None:
-            try:
-                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    snap = self._load_checkpoint(str(checkpoint_id))
-            except Exception:
-                snap = None
         assert snap is not None, f"Unknown checkpoint_id={checkpoint_id}"
         for q in snap.get("queues", []):
             qid = q.get("queue_id")
@@ -4182,14 +4163,6 @@ class TaskScheduler(BaseTaskScheduler):
                     "outcome": "ok",
                     "details": {"checkpoint_id": cid, "label": snap.get("label")},
                 }
-            if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                "1",
-                "true",
-                "yes",
-            }:
-                latest = self._get_latest_persisted_checkpoint()
-                if latest is not None:
-                    return {"outcome": "ok", "details": latest}
             return {
                 "outcome": "none",
                 "details": {"checkpoint_id": None, "label": None},
@@ -4271,36 +4244,8 @@ class TaskScheduler(BaseTaskScheduler):
         return self._view.write_entries(logs=logs, entries=entries, overwrite=overwrite)
 
     # ------------------------------------------------------------------ #
-    #  Optional checkpoint persistence                                   #
+    #  (removed) checkpoint persistence                                   #
     # ------------------------------------------------------------------ #
-
-    def _persist_checkpoint(
-        self,
-        cid: str,
-        label: Optional[str],
-        snapshot: Dict[str, Any],
-    ) -> None:
-        try:
-            # Route through storage/view to centralize backend I/O
-            _ = self._store.save_checkpoint(
-                checkpoint_id=cid,
-                label=label,
-                payload=snapshot,
-            )
-        except Exception:
-            pass
-
-    def _load_checkpoint(self, cid: str) -> Optional[Dict[str, Any]]:
-        try:
-            return self._store.load_checkpoint(checkpoint_id=cid)
-        except Exception:
-            return None
-
-    def _get_latest_persisted_checkpoint(self) -> Optional[Dict[str, Any]]:
-        try:
-            return self._store.get_latest_checkpoint()
-        except Exception:
-            return None
 
     # ------------------------------------------------------------------ #
     #  Best-effort helper                                                 #
