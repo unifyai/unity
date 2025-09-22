@@ -966,7 +966,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         except Exception as e:
             return ""
 
-    async def navigate(self, url: str) -> str:
+    async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
         """Navigates the browser using the dedicated /nav endpoint."""
         await self._ensure_async_initialized()
         print(f"🐍 PYTHON: Navigating to URL: {url}")
@@ -1004,6 +1004,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
             self._log_stream_task.cancel()
         if self._log_consumer_task and not self._log_consumer_task.done():
             self._log_consumer_task.cancel()
+        if self._command_processor_task and not self._command_processor_task.done():
+            self._command_processor_task.cancel()
 
         try:
             self._sync_request("POST", "/stop")
