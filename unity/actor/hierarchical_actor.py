@@ -958,6 +958,7 @@ class _ActionProviderProxy:
             return real_attr
 
         async def async_wrapper(*args, **kwargs):
+            wait = kwargs.pop("wait", True)
             ctx_run_id = current_run_id_var.get()
             plan_run_id = self._plan.run_id
             if ctx_run_id != plan_run_id:
@@ -983,7 +984,12 @@ class _ActionProviderProxy:
 
             call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs)})"
             if diag_prefix:
-                logger.info(f"{diag_prefix} 🐍 PYTHON: Executing {call_repr}")
+                logger.info(
+                    f"{diag_prefix} 🐍 PYTHON: Executing {call_repr} (wait={wait})",
+                )
+
+            func_name = self._plan.call_stack[-1] if self._plan.call_stack else "global"
+            context = {"function_name": func_name}
 
             cache_key = self._plan.actor._generate_cache_key(
                 self._plan,
@@ -1039,7 +1045,12 @@ class _ActionProviderProxy:
                 backend._current_capture_queue = capture_q
 
             try:
-                tool_output = await real_attr(*args, **kwargs)
+                tool_output = await real_attr(
+                    *args,
+                    wait=wait,
+                    context=context,
+                    **kwargs,
+                )
             finally:
                 if is_magnitude:
                     await asyncio.sleep(0.25)
