@@ -298,17 +298,17 @@ async def _send_sms_message_via_number(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            await _publish_event(
-                {
-                    "topic": to_number,
-                    "to": "past",
-                    "event": SMSMessageSentEvent(
-                        content=message,
-                        role="Assistant",
-                        timestamp=datetime.now().isoformat(),
-                    ).to_dict(),
-                },
-            )
+            # await _publish_event(
+            #     {
+            #         "topic": to_number,
+            #         "to": "past",
+            #         "event": SMSMessageSentEvent(
+            #             content=message,
+            #             role="Assistant",
+            #             timestamp=datetime.now().isoformat(),
+            #         ).to_dict(),
+            #     },
+            # )
             return response_text
 
 

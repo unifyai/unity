@@ -5,12 +5,14 @@ import json
 from typing import Dict, Callable, Literal, Union, Optional
 import contextlib
 from pathlib import Path
+from dataclasses import dataclass
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_core import from_json
 
 from unity.events.event_bus import EVENT_BUS
 from unity.conversation_manager_2.new_events import *
+from unity.conversation_manager_2.prompt_utils import *
 # from unity.conversation_manager.comms_actions import _send_sms_message_via_number
 from unity.helpers import run_script, terminate_process
 from unity.conversation_manager_2.prompt_utils import NotificationBar, ContactThread, ThreadMessage
@@ -19,7 +21,13 @@ from unity.conversation_manager_2.prompt_utils import NotificationBar, ContactTh
 import redis.asyncio as redis
 from openai import AsyncOpenAI
 
-
+@dataclass
+class Contact:
+    id: int
+    name: str
+    is_boss: bool
+    number: str
+    email: str
 class ActionEvent:
     def __init__(self, action):
         self.action = action
@@ -31,20 +39,8 @@ MAX_PENDING_EVENTS = 10
 
 CONV_CONTEXT_LENGTH = 50
 
-instructions = """
-You are a general purpose assistant that is conversing with a user
-You will recieve a bunch of user events, these are events such as the user's phone utterance, whatsapp messages recieved, etc.
-Reply to the user using the following format if you are on a call:
-{
-    "phone_utterance": <YOUR RESPONSE TO THE USER OVER THE PHONE>,
-    "actions": <ACTIONS TO TAKE BASED ON USER INPUTS>
-}
-
-otherwise just reply with the right set of actions:
-{
-    "actions": <ACTIONS TO TAKE BASED ON USER INPUTS>
-}
-""".strip()
+with open(Path(__file__).parent.resolve() / "prompts" / "v1.md") as f:
+    SYS = f.read()
 # actions
 
 # conductor
@@ -68,21 +64,26 @@ class SendEmail(BaseModel):
 
 class SendSMS(BaseModel):
     action_name: Literal["send_sms"]
+    number_or_id: str = Field(..., description="Exact number or contact id of the contact to sms")
     message: str
 
 
 class MakeCall(BaseModel):
     action_name: Literal["make_call"]
+    number_or_id: str = Field(..., description="Exact number or contact id of the contact to call")
+
 
 # comms actions (other users)
 ...
 
-actions = Union[AskConductor, WaitForNextEvent, SendSMS, SendEmail, MakeCall]
+actions = Union[WaitForNextEvent, SendSMS, MakeCall]
 class ResponsePhone(BaseModel):
+    thoughts: str
     phone_utterance: str
     actions: Optional[list[actions]]
 
 class Response(BaseModel):
+    thoughts: str
     actions: Optional[list[actions]]
 
 responses_model = {
@@ -234,15 +235,19 @@ class ConversationManager:
 
         # this will probs be retrieved from a database or whatever
         self.contacts_map = {
-            "+12697784020": {
-                "name": "Yasser Ahmed",
-                "is_boss": True,
-                "summary": ...
-            }
+            "+12697784020": Contact("1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"),
+            "+13502381308": Contact("2", "Dan Lenton", False, "+13502381308", "dan@unify.ai")
         }
 
-        self.active_conversations = []
-        self.message_history = []
+        self.inverted_contacts_map = {v.id:v for v in self.contacts_map.values()}
+        
+
+        self.state = {
+            "notifications": NotificationBar(),
+            "active_conversations": {},
+            "stale_conversations": {}
+        }
+        self.chat_history = []
     
     async def _init_past_events(self):
         # TODO: this should be generalized to retrieve the entire
@@ -258,29 +263,19 @@ class ConversationManager:
         self.is_past_events_init.set()
     
     async def run_llm(self):
-        # format events as message
-        input_messages = []
-        current_user_message = []
-        for e in self.past_events + self.inflight_events:
-            if isinstance(e, ActionEvent):
-                if current_user_message:
-                    input_messages.append({"role": "user", "content": "\n".join(current_user_message)})
-                    current_user_message = []
-                input_messages.append({"role": "assistant", "content": str(e)})
-            else:
-                current_user_message.append(str(e))
-        if current_user_message:
-                input_messages.append({"role": "user", "content": "\n".join(current_user_message)})
-                current_user_message = []
-        print(input_messages)
+        active_convs = "\n\n".join([str(c) for c in self.state["active_conversations"].values()])
+        notif = str(self.state["notifications"])
+        prompt = f"<notifications>\n{add_spaces(notif)}\n</notifications>\n<active_conversations>\n{add_spaces(active_convs)}\n</active_conversations>"
+        input_message = [{"role": "user", "content": prompt}]
+        print(input_message[0])
         if self.mode in ["call", "gmeet"]:
             print("running...")
             last_phone_utterance = ""
             out = ""
             async with self.openai_client.responses.stream(
                 model="gpt-4.1",
-                instructions=instructions,
-                input=input_messages,
+                instructions=SYS,
+                input=self.chat_history+input_message,
                 text_format=responses_model[self.mode]
             ) as stream:
                 first_chunk = True
@@ -307,23 +302,31 @@ class ConversationManager:
             print(parsed_out)
                          
         else:
-            out = await self.openai_client.responses.parse(model="gpt-4.1", instructions=instructions, input=input_messages, text_format=responses_model[self.mode])  
+            out = await self.openai_client.responses.parse(model="gpt-4.1", instructions=SYS, input=self.chat_history+input_message, text_format=responses_model[self.mode])  
             parsed_out = out.output[0].content[0].parsed.model_dump()
             out = out.output[0].content[0].text
         
         print(parsed_out)
-        if parsed_out["actions"] is not None:
-                for action in parsed_out["actions"]:
-                    if action["action_name"] == "send_sms":
-                        print("sending sms message")
-                        await _send_sms_message_via_number(self.user_number, action["message"], self.event_broker)
-        self.past_events.extend(self.inflight_events.copy())
-        self.inflight_events.clear()
-        self.past_events.append(ActionEvent(out))
+        self.state["notifications"].clear()
+        if parsed_out["actions"] is not None: 
+            for action in parsed_out["actions"]:
+                if action["action_name"] == "send_sms":
+                    print("sending sms message")
+                    contact_num_id = action["number_or_id"]
+                    contact = self.contacts_map.get(contact_num_id) or self.inverted_contacts_map.get(contact_num_id)
+                    await _send_sms_message_via_number(contact.number, action["message"], self.event_broker)
+                    if contact.id not in self.state["active_conversations"]:
+                        self.state["active_conversations"][contact.id] = ConversationContact(contact.id, contact.name, contact.is_boss, False)
+                        self.state["notifications"].push_notif(f"Adding '{contact.name}' to active conversations")
+
+                    self.state["active_conversations"][contact.id].push_message("sms", 
+                                                                       message=ThreadMessage("You", action["message"], datetime.now()))
+
+        self.chat_history.append(input_message[0])
+        self.chat_history.append({"role": "assistant", "content": out})
+        print(self.chat_history)
     
     async def scheduele_llm_run(self, delay=1, cancel_running=False):
-        self.inflight_events = self.pending_events.copy()
-        self.pending_events.clear()
 
         if self.schedueled_response and not self.schedueled_response.done():
             with contextlib.suppress(asyncio.CancelledError):
@@ -371,53 +374,145 @@ class ConversationManager:
                 else:
                     event = Event.from_json(msg["data"])
                     print(event)
-                    self.pending_events.append(event)
-                    if isinstance(event, PhoneCallInitiated):
-                        # start phone call process and wait untils its done, we should probably make sure
-                        # first that any running llm calls are awaited, and any schedueled llm calls are canceled
-                        # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
-                        if self.mode in ["call", "gmeet"]:
-                            # can't make the call
-                            ...
-                        else:
-                            print("I WAS HERE...")
-                            if self.schedueled_response and not self.schedueled_response.done():
-                                self.schedueled_response.cancel()
-                                with contextlib.suppress(asyncio.CancelledError):
-                                    await self.schedueled_response
-                            if self.current_response and not self.current_response.done():
-                                await self.current_response
-                        
-                            # start the process here
-                            target_path = Path(__file__).parent.resolve() / "medium_scripts" / "call.py"
-                            self.call_proc = run_script(
-                                str(target_path),
-                                "dev",
-                                self.user_number,
-                                self.assistant_number,
-                                self.tts_provider,
-                                self.voice_id if self.voice_id else "None",
-                                "None",
-                                str(False),
-                            )
-                    elif isinstance(event, PhoneCallStarted):
-                        self.mode = "call"
-                        await self.scheduele_llm_run(0, cancel_running=True)
-                    elif isinstance(event, PhoneCallEnded):
-                        terminate_process(self.call_proc)
-                    elif isinstance(event, PhoneUtterance):
-                        await self.scheduele_llm_run(0, cancel_running=True)
-                    elif len(self.pending_events) >= MAX_PENDING_EVENTS:
-                        # check if there is any running responses, wait for the response and then run
-                        # this should also probably wait for the run to fully complete to avoid filling pending events
-                        await self.scheduele_llm_run(0)
-                    else:
-                        # otherwise (whatsapp, sms, email) just scheduele another llm run after 2 seconds
-                        # if there is no response at the moment, if there is a response, cancel it, and scheduel
-                        # check if there is a schedueled response, rescheduele
-                        if self.mode == "text":
-                            await self.scheduele_llm_run(2, cancel_running=True)
+                    await self.handle_event(event)
+                    
+    async def handle_event(self, event: Event):
+        if isinstance(event, PhoneCallInitiated):
+            # start phone call process and wait untils its done, we should probably make sure
+            # first that any running llm calls are awaited, and any schedueled llm calls are canceled
+            # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
+            if self.mode in ["call", "gmeet"]:
+                # can't make the call
+                ...
+            else:
+                if self.schedueled_response and not self.schedueled_response.done():
+                    self.schedueled_response.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await self.schedueled_response
+                if self.current_response and not self.current_response.done():
+                    await self.current_response
+            
+                # start the process here
+                target_path = Path(__file__).parent.resolve() / "medium_scripts" / "call.py"
+                self.call_proc = run_script(
+                    str(target_path),
+                    "dev",
+                    self.user_number,
+                    self.assistant_number,
+                    self.tts_provider,
+                    self.voice_id if self.voice_id else "None",
+                    "None",
+                    str(False),
+                )
+                active_conversations = self.state["active_conversations"]
+                stale_conversations = self.state["stale_conversations"]
+                notifs = self.state["notifications"]
+                
+                contact = self.contacts_map.get(event.contact)
+                if not contact:
+                    # will deal with this later
+                    ...
+                if contact.id in active_conversations:
+                    # just add a message to the phone thread
+                    conv_c = active_conversations[contact.id]
 
+                elif contact.id in stale_conversations:
+                    conv_c = stale_conversations.pop(contact.id)
+                    active_conversations[contact.id] = conv_c
+                    
+                else:
+                    conv_c = ConversationContact(contact.id, name=contact.name, is_boss=contact.is_boss, on_phone=True)
+                    active_conversations[contact.id] = conv_c
+                    notifs.push_notif(f"Adding '{contact.name}' to active conversations")
+
+                conv_c.push_message("phone", message=ThreadMessage(contact.name, "<Phone call Initiated...>", event.timestamp))
+                notifs.push_notif(f"Phone call initiated by '{contact.name}'")
+
+                
+
+        elif isinstance(event, PhoneCallStarted):
+            self.mode = "call"
+            active_conversations = self.state["active_conversations"]
+            stale_conversations = self.state["stale_conversations"]
+            notifs = self.state["notifications"]
+            
+            contact = self.contacts_map.get(event.contact)
+            if not contact:
+                # will deal with this later
+                ...
+            if contact.id in active_conversations:
+                # just add a message to the phone thread
+                conv_c = active_conversations[contact.id]
+
+            elif contact.id in stale_conversations:
+                conv_c = stale_conversations.pop(contact.id)
+                active_conversations[contact.id] = conv_c
+                
+            else:
+                conv_c = ConversationContact(contact.id, name=contact.name, is_boss=contact.is_boss, on_phone=True)
+                active_conversations[contact.id] = conv_c
+                notifs.push_notif(f"Adding '{contact.name}' to active conversations")
+
+            conv_c.push_message("phone", message=ThreadMessage(contact.name, "<Phone call Initiated...>", event.timestamp))
+            notifs.push_notif("Phone call initiated by '{contact.name}'")
+
+            await self.scheduele_llm_run(0, cancel_running=True)
+        elif isinstance(event, PhoneCallEnded):
+            terminate_process(self.call_proc)
+        elif isinstance(event, PhoneUtterance):
+            active_conversations = self.state["active_conversations"]
+            stale_conversations = self.state["stale_conversations"]
+            notifs = self.state["notifications"]
+            
+            contact = self.contacts_map.get(event.contact)
+            if not contact:
+                # will deal with this later
+                ...
+            if contact.id in active_conversations:
+                # just add a message to the phone thread
+                conv_c = active_conversations[contact.id]
+
+            elif contact.id in stale_conversations:
+                conv_c = stale_conversations.pop(contact.id)
+                active_conversations[contact.id] = conv_c
+                
+            else:
+                conv_c = ConversationContact(contact.id, name=contact.name, is_boss=contact.is_boss, on_phone=True)
+                active_conversations[contact.id] = conv_c
+                notifs.push_notif(f"Adding '{contact.name}' to active conversations")
+            conv_c.push_message("phone", message=ThreadMessage(contact.name, event.content, event.timestamp))
+            notifs.push_notif(f"Phone utterance recieved from '{contact.name}'")
+            await self.scheduele_llm_run(0, cancel_running=True)
+
+        else:
+            # otherwise (whatsapp, sms, email) just scheduele another llm run after 2 seconds
+            # if there is no response at the moment, if there is a response, cancel it, and scheduel
+            # check if there is a schedueled response, rescheduele
+            if self.mode == "text":
+                active_conversations = self.state["active_conversations"]
+                stale_conversations = self.state["stale_conversations"]
+                notifs = self.state["notifications"]
+                
+                contact = self.contacts_map.get(event.contact)
+                if not contact:
+                    # will deal with this later
+                    ...
+                if contact.id in active_conversations:
+                    # just add a message to the phone thread
+                    conv_c = active_conversations[contact.id]
+
+                elif contact.id in stale_conversations:
+                    conv_c = stale_conversations.pop(contact.id)
+                    active_conversations[contact.id] = conv_c
+                    
+                else:
+                    conv_c = ConversationContact(contact.id, name=contact.name, is_boss=contact.is_boss, on_phone=True)
+                    active_conversations[contact.id] = conv_c
+                    notifs.push_notif(f"Adding '{contact.name}' to active conversations")
+
+                conv_c.push_message("sms", message=ThreadMessage(contact.name, event.content, event.timestamp))
+                notifs.push_notif(f"SMS message recieved from '{contact.name}'")
+                await self.scheduele_llm_run(2, cancel_running=True)
 
 
 # think about the end behaviour (how the events should look like in the end)

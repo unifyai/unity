@@ -6,8 +6,14 @@ def add_spaces(string: str, num_spaces: int=4):
     return "\n".join(num_spaces * " "+ l for l in ls)
 
 class NotificationBar:
-    def __init__(self, notifs):
-        self.notifs = notifs
+    def __init__(self):
+        self.notifs = []
+    
+    def push_notif(self, n):
+        self.notifs.append(n)
+    
+    def clear(self):
+        self.notifs = []
     
     def __str__(self):
         return "\n".join([f"[Notification] {n}" for n in self.notifs])
@@ -33,9 +39,7 @@ class ContactThread:
         return bool(self.messages)
     
     def __str__(self):
-        thread_content = ""
-        for m in self.messages:
-            thread_content += str(m)
+        thread_content = "\n".join(str(m) for m in self.messages)
         thread_content = thread_content.strip()
         return f"""
 <{self.thread_name}>
@@ -43,7 +47,8 @@ class ContactThread:
 </{self.thread_name}>""".strip()
 
 class ConversationContact:
-    def __init__(self, name, is_boss=False, on_phone=False):
+    def __init__(self, id, name, is_boss=False, on_phone=False):
+        self.id = id
         self.name = name
         self.is_boss = is_boss
         self.on_phone = on_phone
@@ -63,6 +68,6 @@ class ConversationContact:
                 threads.append(t)
         threads_content = "\n\n".join(str(t) for t in threads)
         return f"""
-<contact name="{self.name}" is_boss="{self.is_boss}">
+<contact id="{self.id}" name="{self.name}" is_boss="{self.is_boss}">
 {add_spaces(threads_content)}
 </contact>""".strip()
