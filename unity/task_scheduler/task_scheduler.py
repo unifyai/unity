@@ -60,14 +60,14 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..common.semantic_search import fetch_top_k_by_references, backfill_rows
-from ._queue_utils import (
+from .queue_utils import (
     sched_prev as _q_prev,
     sched_next as _q_next,
     sync_adjacent_links as _q_sync_adjacent_links,
+    attach_with_links as _q_attach_with_links,
 )
-from ._queue_ops import (
+from .activation_ops import (
     detach_from_queue_for_activation as _ops_detach_for_activation,
-    attach_with_links as _ops_attach_with_links,
 )
 from .reintegration import ReintegrationManager
 from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
@@ -3651,7 +3651,7 @@ class TaskScheduler(BaseTaskScheduler):
         head_start_at: Optional[str],
         err_prefix: str,
     ) -> None:
-        _ops_attach_with_links(
+        _q_attach_with_links(
             self,
             task_id=task_id,
             prev_task=prev_task,
