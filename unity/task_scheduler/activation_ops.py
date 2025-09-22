@@ -1,3 +1,10 @@
+"""Queue detachment and reintegration planning for task activation.
+
+Detaches a task for activation in either isolation (followers remain linked to each
+other) or chained mode (followers remain attached to the activated task). Always
+records a ``ReintegrationPlan`` to restore deferred tasks to their exact positions.
+"""
+
 from __future__ import annotations
 
 from typing import Optional, Dict, Any, TYPE_CHECKING
@@ -14,45 +21,32 @@ if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 
 
-"""
-This module previously exposed a `get_task_queue` helper used by
-`TaskScheduler._get_task_queue`. The scheduler now provides explicit helpers:
-`_get_queue(queue_id=...)`, `_walk_queue_from_task(task_id=...)`, and
-`_get_queue_for_task(task_id=...)`. The generic traversal is kept within the
-scheduler to ensure a single invariant funnel for reads and writes.
-"""
-
-
 def detach_from_queue_for_activation(
     scheduler: "TaskScheduler",
     *,
     task_id: int,
     detach: bool = True,
 ) -> None:
-    """Detach a task from the runnable queue ahead of activation.
+    """Detach a runnable task ahead of activation and record a reintegration plan.
 
-    Behavioural contract (from tests):
-    - General: Always record a ``ReintegrationPlan`` capturing ``prev_task``,
-      ``next_task``, whether the task was the head (``was_head``), the task's
-      original ``start_at`` (if any), the original status, and the queue head's
-      ``start_at`` at the time of detachment (``head_start_at``). This plan is
-      the only source used later by reinstatement.
-    - Isolated activation (default):
-      * If detaching the head: promote the next task to head, copy the head-level
+    Semantics:
+    - General: Record a ``ReintegrationPlan`` capturing ``prev_task``, ``next_task``,
+      whether the task was the head (``was_head``), the task's original ``start_at``
+      (if any), the original status, and the queue head's ``start_at`` at the moment
+      of detachment (``head_start_at``). Reinstatement uses only this plan.
+    - Isolated activation (``detach=True``, default):
+      * If detaching the head: promote the successor to head, copy the head-level
         ``start_at`` to it, and set its status to ``scheduled``. The detached task
         loses its schedule.
       * If detaching a middle task: unlink it from neighbours (``prev.next = next``
-        and ``next.prev = prev``) and ensure the successor does not carry a
-        ``start_at`` timestamp (only heads may carry it). The detached task loses
-        its schedule.
-    - Chained activation: keep the queue behind the
-      activated task attached to it. When promoting the activated task to head,
-      place any head-level ``start_at`` on it (use the previous head's timestamp
-      when the current task did not have one) and remove ``start_at`` from the
-      immediate successor.
+        and ``next.prev = prev``). Ensure the successor does not carry ``start_at``
+        (only heads may carry it). The detached task loses its schedule.
+    - Chained activation (``detach=False``): keep the queue behind the activated task
+      attached to it. When promoting the activated task to head, place the queue-level
+      ``start_at`` on it (prefer its own ``start_at``; otherwise use the head's), and
+      remove ``start_at`` from the immediate successor.
 
-    These semantics are intentionally minimal and exist solely to make
-    reinstatement deterministic and easy to reason about.
+    These rules make reinstatement deterministic and easy to reason about.
     """
 
     candidate_rows = scheduler._filter_tasks(
@@ -135,7 +129,7 @@ def detach_from_queue_for_activation(
             return None
         return _log_cache.get(int(tid))
 
-    # Small local helpers to reduce repetition and keep behaviour identical
+    # Small local helpers to reduce repetition
     def _log_id(log_or_id: Any) -> Any:
         return log_or_id.id if hasattr(log_or_id, "id") else log_or_id
 

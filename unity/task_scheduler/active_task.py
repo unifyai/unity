@@ -1,3 +1,14 @@
+"""
+ActiveTask provides a handle for a single running task backed by an actor.
+
+It wraps a SteerableToolHandle returned by a BaseActor and, when a scheduler
+is provided, mirrors lifecycle status to the task row and clears the scheduler's
+active pointer on completion or stop. It supports read-only ask, steering via
+interject (cancel/defer), pausing/resuming, stopping, and result retrieval. On
+defer, it attempts to reinstate the task to its previous queue position using
+the scheduler.
+"""
+
 import functools
 import asyncio
 from typing import Optional, Dict, Callable, TYPE_CHECKING
@@ -265,7 +276,7 @@ class ActiveTask(BaseActiveTask):
             ):
                 self._scheduler._active_task = None  # type: ignore[attr-defined]
 
-    # Centralised reinstate caller to avoid duplication and tolerate older signatures
+    # Centralized reinstate caller to avoid duplication and select an available scheduler API
     def _call_reinstate_public(self, *, task_id: int) -> None:
         sched = self._scheduler
         if sched is None:
@@ -283,7 +294,7 @@ class ActiveTask(BaseActiveTask):
         except Exception:
             pass
 
-        # Backwards compatibility: private method, with graceful arg fallback
+        # Fallback to private method if the public API is unavailable; handle optional arguments
         try:
             sched._reinstate_task_to_previous_queue(task_id=task_id, _allow_active=True)  # type: ignore[attr-defined]
         except TypeError:

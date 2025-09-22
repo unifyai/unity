@@ -1,3 +1,14 @@
+"""
+Abstract base contracts for steerable tasks and the task scheduler.
+
+This module defines two abstract interfaces:
+- BaseActiveTask: a live, steerable task handle (pause, resume, interject, ask, stop)
+- BaseTaskScheduler: the public surface for reading, mutating, and executing task lists
+
+Implementations provide storage, I/O, and execution details. This module
+specifies current behavior and method signatures only.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,15 +21,13 @@ from ..singleton_registry import SingletonABCMeta
 
 class BaseActiveTask(SteerableToolHandle, ABC):
     """
-    Abstract contract that every concrete active activity must satisfy.
+    Abstract interface for a live, steerable long‑running activity.
 
-    An active activity represents a long‑running operation that can be steered
-    at runtime (pause / resume / interject / ask / stop) and that ultimately
-    resolves to a single result string.
+    The activity can be paused, resumed, interjected, queried (ask), or
+    stopped, and ultimately resolves to a single result string.
 
-    Sub‑classes must provide concrete implementations of all abstract members
-    below and expose them via ``valid_tools`` so that higher‑level agents (or
-    the UI) can discover the currently available controls.
+    Concrete implementations must implement the abstract members and expose the
+    currently available controls via ``valid_tools``.
     """
 
     # Public API
@@ -64,15 +73,15 @@ class BaseActiveTask(SteerableToolHandle, ABC):
 
 class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
     """
-    *Public* contract that every concrete **task-list-manager** must satisfy.
+    Public contract for a task‑list manager.
 
-    Managers expose exactly **two** user-facing methods:
+    Managers expose three user‑facing methods:
+    • `ask` – answer questions about the current task list (read‑only)
+    • `update` – create, modify, delete, or reorder tasks and queues
+    • `execute` – start task execution and return a live steerable handle
 
-    • `ask`    – answer questions about the current task list
-    • `update` – create, modify or delete tasks and queues
-
-    Implementations may use Unify logs, a local DB, a remote API or even a
-    purely simulated LLM – but they all obey the signatures & docstrings below.
+    Implementations choose their storage and execution strategy; this base
+    class defines the required behavior and method signatures.
     """
 
     # ------------------------------------------------------------------ #
@@ -229,14 +238,12 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
 
         Execution scope via explicit reordering
         --------------------------------------
-        The execute flow no longer uses implicit routing modes. Instead, it
-        exposes queue inspection and an explicit reorder primitive so the agent
-        can express desired behaviour directly:
+        The execute flow uses explicit queue inspection and reordering:
         - Use `_get_queue(queue_id=...)` or `_get_queue_for_task(task_id=...)` to
           read the current order.
         - Use `_reorder_queue(queue_id=..., new_order=[...])` when membership is
-          unchanged or `_set_queue(queue_id=..., order=[...])` when membership
-          changes to place the desired subset/order at the head (e.g., "just X",
+          unchanged, or `_set_queue(queue_id=..., order=[...])` when membership
+          changes, to place the desired subset/order at the head (e.g., "just X",
           "first two now", or "all").
         - Then call `execute_by_id(task_id=<head>)` to start.
 
@@ -298,10 +305,9 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         allow_active : bool, default ``False``
             When ``True``, permit reinstatement while a task is currently active.
 
-        Notes
-        -----
-        This public method is the canonical entrypoint. Concrete schedulers may
-        delegate to an internal implementation. Backwards‑compatibility helpers
-        should accept additional kwargs and ignore unknown ones.
+        Returns
+        -------
+        dict[str, str]
+            Implementation‑specific status details.
         """
         raise NotImplementedError

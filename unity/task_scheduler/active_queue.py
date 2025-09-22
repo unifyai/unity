@@ -1,3 +1,16 @@
+"""
+Queue execution handle for running a chain of tasks head→tail.
+
+ActiveQueue sequences tasks using the live queue order, adopting each task's
+steerable handle in turn. It:
+- Routes interjections to current and future tasks with an LLM-based router,
+  queuing messages for later delivery when needed.
+- Provides queue-aware ask() by prepending a compact chain status and task list.
+- Emits per-task completion events and a final chain summary.
+- Uses passthrough when the queue is a singleton to preserve the inner handle's
+  behavior and timing characteristics.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -150,11 +163,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         return True
 
     def _next_runnable_follower(self) -> Optional[int]:
-        """Return the next runnable task id after the current one, from the live queue.
-
-        Relies solely on the scheduler's queue view (non-terminal membership),
-        avoiding local schedule.next hints and repair scans.
-        """
+        """Return the next runnable task id after the current one based on the live queue."""
         try:
             live_queue = (
                 self._s._get_queue_for_task(task_id=self._current_task_id) or []
@@ -272,7 +281,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     pass
         finally:
             self._done_evt.set()
-            # No waiter/cursor machinery – active_task_done() awaits on the completions queue
+            # active_task_done() awaits on the completions queue
 
     # ----- Steerable surface proxies -----
     async def interject(self, message: str) -> None:  # type: ignore[override]
@@ -672,7 +681,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 _return_reasoning_steps=_return_reasoning_steps,
             )
         except TypeError:
-            # Older handles may not accept the kwarg – retry without it.
+            # Retry without the kwarg if not accepted.
             return await self._current_handle.ask(composed_question)  # type: ignore[arg-type]
 
     @property

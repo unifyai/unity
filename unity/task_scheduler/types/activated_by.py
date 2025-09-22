@@ -1,3 +1,5 @@
+"""Activation reasons for a task instance entering the active state."""
+
 from enum import StrEnum
 
 
