@@ -181,6 +181,16 @@ class MagnitudeBrowserBackend(BrowserBackend):
         self._log_consumer_task: Optional[asyncio.Task] = None
         self._async_initialized: bool = False
 
+        # Command queue infrastructure
+        self._command_queue = asyncio.Queue()
+        self._command_processor_task = None
+        self._active_commands = {}  # Tracks commands for cancellation
+        self._seq: int = 0  # Add sequence number counter
+        self._processed_seq: int = -1  # Track the last completed sequence number
+        self._barrier_events: dict[int, asyncio.Event] = (
+            {}
+        )  # For barrier synchronization
+
         # Keep the simpler initialization from HEAD but add logging support
         MagnitudeBrowserBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
