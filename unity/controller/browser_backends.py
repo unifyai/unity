@@ -788,7 +788,13 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 f"⚠️ Warning: Failed to send interrupt request. The browser action may continue in the background. Error: {e}",
             )
 
-    async def observe(self, query: str, response_format: Any = str) -> Any:
+    async def observe(
+        self,
+        query: str,
+        response_format: Any = str,
+        wait: bool = True,
+        context: dict = None,
+    ) -> Any:
         """
         Extracts structured information from the current page using the Magnitude BrowserAgent.
 
@@ -852,6 +858,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
                              **Highly recommended for reliable extraction.**
         """
         await self._ensure_async_initialized()
+
+        await self.barrier()
 
         def _safe_model_json_schema(model: type[BaseModel]):
             try:
