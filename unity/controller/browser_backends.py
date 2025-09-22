@@ -879,6 +879,28 @@ class MagnitudeBrowserBackend(BrowserBackend):
             return response_format.model_validate(data)
         return data
 
+    def clear_commands_from_failed_function(self, function_name: str):
+        """
+        Removes all queued and active commands that were issued by a specific function.
+        """
+        new_queue = asyncio.Queue()
+        while not self._command_queue.empty():
+            seq, command_id, func, args, kwargs, future = (
+                self._command_queue.get_nowait()
+            )
+            context = self._active_commands.get(command_id, [None, {}])[1]
+            if context.get("function_name") != function_name:
+                new_queue.put_nowait((seq, command_id, func, args, kwargs, future))
+            else:
+                logger.warning(
+                    f"Cancelling queued command from failed function '{function_name}': {self._active_commands.get(command_id, ['unknown'])[0]}",
+                )
+                if future:
+                    future.cancel()
+                self._active_commands.pop(command_id, None)
+
+        self._command_queue = new_queue
+
     async def query(self, query: str, response_format: Any = str) -> Any:
         """
         Asks questions about the agent's action history and memory context.
