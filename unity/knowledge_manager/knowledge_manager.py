@@ -103,6 +103,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._search_join,
                 self._filter_multi_join,
                 self._search_multi_join,
+                include_class_name=False,
             ),
         }
 
