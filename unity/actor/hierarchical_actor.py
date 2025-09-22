@@ -65,6 +65,7 @@ class VerificationWorkItem:
     interactions: list
     return_value_repr: str
     cache_miss_counter: int
+    exit_seq: int
 
 
 @dataclass
