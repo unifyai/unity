@@ -147,6 +147,7 @@ class StartupEvent(Event):
         self.voice_provider = kwargs.pop("voice_provider", None)
         self.voice_id = kwargs.pop("voice_id", None)
         kwargs.pop("user_phone_number", None)  # legacy field
+        kwargs.pop("tts_provider", None)  # legacy field
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -289,6 +290,7 @@ class PhoneCallInitiatedEvent(Event):
         self.voice_id = voice_id
         self.voice_provider = voice_provider
         self.outbound = outbound
+        kwargs.pop("tts_provider", None)  # legacy field
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
