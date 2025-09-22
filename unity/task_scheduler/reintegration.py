@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 from .types.reintegration_plan import ReintegrationPlan
 from .queue_engine import derive_status_after_queue_edit
+from .queue_utils import sched_prev as _q_prev
 
 
 class ReintegrationManager:
@@ -187,7 +188,7 @@ class ReintegrationManager:
                     next_row = next_rows[0]
                     next_sched = next_row.get("schedule") or {}
                     if (
-                        self._s._sched_prev(next_sched) is not None
+                        _q_prev(next_sched) is not None
                         and (next_sched.get("start_at") is None)
                         and self._s._to_status(next_row.get("status"))
                         in {Status.scheduled, Status.primed}
