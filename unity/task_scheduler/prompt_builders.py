@@ -1,3 +1,13 @@
+"""
+Prompt builders for the Task Scheduler.
+
+This module constructs system prompts for the scheduler's ask, update, and
+execute methods, plus a helper for the simulated scheduler. Each builder
+derives tool names dynamically from the provided tool dictionary, validates the
+required tools, and composes guidance and examples that reflect current
+behavior.
+"""
+
 from __future__ import annotations
 
 import json
@@ -401,7 +411,7 @@ def build_update_prompt(
         "Task schema:",
         json.dumps(Task.model_json_schema(), indent=4),
         "",
-        f"Current UTC time is {_now()}.",
+        f"Current UTC time is {now_utc_str()}.",
         clar_section,
     ]
 
@@ -419,7 +429,7 @@ def build_execute_prompt(
     """
     Build the **system** prompt for the `execute` method.
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    sig_json = json.dumps(sig_dict(tools), indent=4)
 
     # Resolve names dynamically
     ask_fname = tool_name(tools, "ask")
@@ -439,7 +449,7 @@ def build_execute_prompt(
     revert_checkpoint_fname = tool_name(tools, "revert_to_checkpoint")
     latest_checkpoint_fname = tool_name(tools, "get_latest_checkpoint")
 
-    # For execute, legacy names may be absent; require only the stable set
+    # Require the core tools needed for execution
     require_tools(
         {
             "ask": ask_fname,

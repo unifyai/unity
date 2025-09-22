@@ -1,3 +1,12 @@
+"""Task Scheduler: create, schedule, update, and execute tasks with queues.
+
+This module provides the concrete TaskScheduler which:
+- exposes read-only ask and mutating update methods;
+- manages runnable queues (head→tail) with invariant-preserving operations;
+- executes tasks individually or as a chain and tracks a single active task;
+- records reintegration plans to restore deferred tasks precisely.
+"""
+
 from __future__ import annotations
 
 import os
@@ -378,10 +387,8 @@ class TaskScheduler(BaseTaskScheduler):
         # (queue_id, head_id, order list, and queue-level start_at).
         self._queue_checkpoints: Dict[str, Dict[str, Any]] = {}
 
-        # ID of the *single* task that is allowed to be in the **active**
-        # state at any moment.  This will be maintained by a forthcoming
-        # tool; until then it may legitimately stay as ``None``.
-        # Pointer to the currently active task (if any)
+        # Pointer to the single currently active task handle (or None).
+        # Exactly one task can be active at a time.
         self._active_task: Optional[TaskScheduler.ActivePointer] = None
         primed_tasks = self._filter_tasks(filter="status == 'primed'")
         if primed_tasks:
@@ -398,11 +405,8 @@ class TaskScheduler(BaseTaskScheduler):
         # original position on defer stop. Map: task_id -> ReintegrationPlan
         self._reintegration_plans: dict[int, "ReintegrationPlan"] = {}
         self._reintegration_manager = ReintegrationManager(self)
-        # Note: multi-instance heuristics were removed; LocalTaskView and
-        # targeted reads handle correctness without this state.
-
-        # Duplicate caches (queue index, log-id memoization, allocator) are now centralized
-        # in LocalTaskView. This scheduler no longer maintains parallel copies.
+        # Queue index, log-id memoization and id allocator are centralized in
+        # LocalTaskView.
 
         # Lightweight cached count of tasks within the current Tasks context.
         # - Populated lazily on first use by _num_tasks()
@@ -2111,7 +2115,6 @@ class TaskScheduler(BaseTaskScheduler):
             start_at = sched.get("start_at")
             qid = h.get("queue_id")
             if not isinstance(qid, int):
-                # Skip any legacy rows lacking a numeric queue_id
                 continue
 
             # Compute chain size purely in-memory to avoid extra backend reads
@@ -2444,8 +2447,8 @@ class TaskScheduler(BaseTaskScheduler):
         Behaviour
         ---------
         - Maintains neighbour pointers symmetrically.
-        - Ensures exactly one head owns ``start_at`` (carried from the former
-          head if present) and sets statuses consistently:
+        - Ensures exactly one head owns ``start_at`` (preserves the queue-level
+          timestamp when present) and sets statuses consistently:
             • head with ``start_at`` → ``scheduled``;
             • non-heads → at most ``queued``.
         - The active task (if any) in this queue retains its ``active`` status.
@@ -2453,8 +2456,8 @@ class TaskScheduler(BaseTaskScheduler):
         Guidance for callers (outer loop / LLM):
         - Always refresh the queue membership immediately before constructing `new_order`
           by calling `list_queues()` and `get_queue(queue_id=…)`.
-        - If a task was started via `execute_isolated_by_id`, it is DETACHED and no longer a
-          member of its former queue; do NOT include it in `new_order` for that queue.
+        - Tasks executed in isolation are detached from their queues; do not
+          include detached tasks in `new_order` for that queue.
         - This method asserts that `new_order` is an exact permutation of the current queue;
           if you see an assertion error, refresh state and reconstruct `new_order` accordingly.
         """
@@ -2932,7 +2935,7 @@ class TaskScheduler(BaseTaskScheduler):
                 "next_task": next_tid,
             }
             if idx == 0:
-                # Prefer provided queue_start_at; else preserve previously-captured head start
+                # Prefer provided queue_start_at; else preserve the existing head start
                 if queue_start_at is not None:
                     sched["start_at"] = queue_start_at
                 elif existing_head_start is not None:
@@ -2994,7 +2997,7 @@ class TaskScheduler(BaseTaskScheduler):
             # Prefer a single batched write; fall back internally to per-task
             self._write_entries_batched(entries_by_tid=entries_by_tid)
 
-        # No additional start_at write needed – applied on head in the previous step
+        # No additional start_at write needed – applied on head above
 
         # Auto-checkpoint (avoid extra reads by using local state)
         try:
@@ -3003,7 +3006,7 @@ class TaskScheduler(BaseTaskScheduler):
             cid = _short_id(8)
             snap = {"label": "auto:_set_queue", "queues": []}
             order_now = list(int(x) for x in order)
-            # Prefer explicit queue_start_at; else preserved head start captured earlier
+            # Prefer explicit queue_start_at; else preserve the captured head start
             head_start = (
                 queue_start_at if queue_start_at is not None else existing_head_start
             )
@@ -3246,8 +3249,7 @@ class TaskScheduler(BaseTaskScheduler):
             - ``queue_start_at`` (str | datetime | None, optional): when set, the
               head of this queue will carry this ``start_at`` and the queue head
               status becomes ``scheduled``; otherwise it remains ``queued``.
-            - ``queue_name`` (str | None, optional): unused metadata; accepted for
-              future compatibility.
+            - ``queue_name`` (str | None, optional): unused metadata (accepted for future use).
 
             The first part is applied to the identified source queue. Subsequent
             parts are materialised as new queues (fresh ``queue_id``s).
@@ -3696,8 +3698,6 @@ class TaskScheduler(BaseTaskScheduler):
         else:
             self._primed_task = None
 
-    # Deprecated: _get_task_queue removed in favor of explicit helpers.
-
     # ------------------------------------------------------------------ #
     #  Pure neighbour selection helper                                    #
     # ------------------------------------------------------------------ #
@@ -3760,10 +3760,6 @@ class TaskScheduler(BaseTaskScheduler):
 
         return final_prev, final_next
 
-    # Deprecated: _update_task_queue removed. Use _reorder_queue/_set_queue directly.
-
-    # Legacy per-field updaters are no longer exposed as tools. Unified into _update_task.
-
     # Update Task(s) Status / Schedule / Deadline / Repetition / Priority
 
     @_ts_log_tool_runtime
@@ -3802,7 +3798,6 @@ class TaskScheduler(BaseTaskScheduler):
                     err_prefix=f"While changing status of task {row['task_id']}:",
                 )
 
-        # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
         entries: Dict[str, Any] = {"status": new_status_enum}
         return self._write_log_entries(logs=log_ids, entries=entries, overwrite=True)
@@ -4023,8 +4018,6 @@ class TaskScheduler(BaseTaskScheduler):
         else:
             log_id = self._get_logs_by_task_ids(task_ids=task_id)
             return self._write_log_entries(logs=log_id, entries=entries, overwrite=True)
-
-    # Legacy per-field updaters are kept above as comments; use _update_task instead.
 
     # ────────────────────────────────────────────────────────────────────
     # Small internal helpers
@@ -4277,8 +4270,6 @@ class TaskScheduler(BaseTaskScheduler):
         """
         return self._view.write_entries(logs=logs, entries=entries, overwrite=overwrite)
 
-    # (Removed) Batched updater by task_id – now resides in LocalTaskView
-
     # ------------------------------------------------------------------ #
     #  Optional checkpoint persistence                                   #
     # ------------------------------------------------------------------ #
@@ -4457,7 +4448,7 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         _allow_active: bool = False,
     ) -> ToolOutcome:
-        # Delegate to manager; keep signature for backwards-compat with existing callers/tests
+        # Delegate to the reintegration manager; accepts `_allow_active` for tests/callers
         return self._reintegration_manager.apply(
             task_id=task_id,
             allow_active=_allow_active,
@@ -4505,8 +4496,6 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
-
-    # (Removed) heuristic fallback reinstatement – rely on stored plan only
 
     # Search Across Tasks
 
@@ -4820,8 +4809,6 @@ class TaskScheduler(BaseTaskScheduler):
             if str(row.get("status")) != str(Status.active):
                 row.pop("activated_by", None)
         return row
-
-    # (Removed) LLM-based scope classifier
 
     # ------------------------------------------------------------------ #
     #  Steering intent classification (LLM-routed)                        #

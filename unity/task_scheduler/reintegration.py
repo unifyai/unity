@@ -1,3 +1,13 @@
+"""
+Reinstatement utilities for the task scheduler.
+
+Restores a deferred task to its previous queue or schedule position using a
+stored ReintegrationPlan. Selects viable neighbours, reconstructs head
+timestamps when applicable, derives the correct lifecycle status, validates
+invariants, writes symmetric links and status updates via the scheduler, and
+reconciles adjacent task state when the head changes.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -15,9 +25,10 @@ from .queue_engine import derive_status_after_queue_edit
 
 class ReintegrationManager:
     """
-    Encapsulates logic for restoring a task to its previous queue/schedule
-    position using a stored ReintegrationPlan. Behaviour mirrors the existing
-    TaskScheduler._reinstate_task_to_previous_queue contract.
+    Restores a task to its previous queue or schedule position using a
+    ReintegrationPlan. Chooses viable neighbours, sets head timestamps when
+    appropriate, derives the target status, validates invariants, attaches
+    links, updates status, and clears the consumed plan.
     """
 
     def __init__(self, scheduler: "TaskScheduler") -> None:

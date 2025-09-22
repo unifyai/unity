@@ -1,3 +1,12 @@
+"""
+Storage and local view utilities for the Task Scheduler.
+
+- TasksStore: centralizes Unify I/O for the Tasks context (contexts, fields,
+  reads/writes, metrics, checkpoints).
+- LocalTaskView: best‑effort cache for queue membership, head start_at,
+  queue‑id allocation, and log‑id memoization with convenience wrappers.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Union
@@ -10,11 +19,10 @@ import unify
 
 class TasksStore:
     """
-    Thin adapter around Unify I/O for the Tasks context.
+    Adapter around Unify I/O for the Tasks context.
 
-    Purpose: centralise all Unify calls used by TaskScheduler and helpers, so
-    refactors can adjust behaviour (e.g., overwrite semantics, retries) in one
-    place without touching higher-level logic.
+    Centralises reads, writes, field management, metrics, and checkpoint
+    helpers used by the scheduler and related utilities.
     """
 
     def __init__(self, context: str) -> None:
@@ -223,8 +231,6 @@ class TasksStore:
         entries: Union[Dict[str, Any], List[Dict[str, Any]]],
         overwrite: bool = True,
     ) -> Dict[str, str]:
-        # Preserve 'activated_by' unless the caller explicitly sets/clears it.
-
         def _norm(v: Any) -> Any:
             # Normalize enums to their underlying values
             if isinstance(v, Enum):
@@ -486,7 +492,7 @@ class TasksStore:
         """
         Return a small descriptor of the most recent checkpoint, or None.
 
-        Note: ordering semantics are backend-defined; this mirrors prior behaviour.
+        Ordering semantics are backend-defined.
         """
         ctx = self._checkpoint_context()
         try:
@@ -575,8 +581,7 @@ class LocalTaskView:
         Pass-through to the underlying store for general row retrieval.
 
         Kept in LocalTaskView so that all read I/O can be centralised and
-        optionally instrumented or toggled via environment flags in the
-        future.
+        optionally instrumented or toggled via environment flags.
         """
         return self._store.get_rows(
             filter=filter,
@@ -808,8 +813,7 @@ class LocalTaskView:
         """
         Return the next candidate queue id without advancing internal state.
 
-        Mirrors the existing policy used by TaskScheduler: the caller decides
-        when to persist a queue with this id; after persistence they may call
+        The caller persists a queue with this id and may then call
         `sync_max_queue_id_seen`.
         """
         try:
@@ -979,8 +983,7 @@ class LocalTaskView:
         """
         Batch-create multiple rows and apply light cache maintenance.
 
-        Mirrors TasksStore.create_many but centralises cache handling and
-        optional id memoisation.
+        Includes cache handling and optional id memoisation.
         """
         result = self._store.create_many(entries_list=entries_list)
         # Attempt to memoise ids when the API returns full log objects

@@ -1,3 +1,11 @@
+"""
+Queue linkage helpers for `TaskScheduler`.
+
+Provides utilities to read neighbour pointers, synchronize adjacent links, and
+attach a task between neighbours while enforcing queue invariants (head-only
+`start_at`, symmetric pointers, consistent `queue_id`).
+"""
+
 from __future__ import annotations
 
 from typing import Optional, Dict, Any, Union, TYPE_CHECKING
@@ -10,23 +18,18 @@ if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 
 
-# ---------------------------------------------------------------------------- #
-#  Queue/linkage helpers (private module)                                      #
-# ---------------------------------------------------------------------------- #
-
-
 def sched_prev(sched: Union[Schedule, dict, None]) -> Optional[int]:
-    """Return prev_task from a Schedule-like value."""
+    """Return `prev_task` from a `Schedule` or dict."""
     if sched is None:
         return None
     if isinstance(sched, dict):
         return sched.get("prev_task")
-    # assume pydantic Schedule
+    # Read attribute from Schedule model
     return getattr(sched, "prev_task", None)
 
 
 def sched_next(sched: Union[Schedule, dict, None]) -> Optional[int]:
-    """Return next_task from a Schedule-like value."""
+    """Return `next_task` from a `Schedule` or dict."""
     if sched is None:
         return None
     if isinstance(sched, dict):

@@ -1,3 +1,5 @@
+"""Task model: queue membership, scheduling/triggering, priority, and metadata."""
+
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List
 
@@ -18,10 +20,7 @@ class Task(BaseModel):
     # object never carries a queue_id field; use this top-level column solely.
     queue_id: Optional[int] = Field(
         default=None,
-        description=(
-            "Identifier of the runnable queue this task belongs to. Matches "
-            "schedule.queue_id for queued/scheduled tasks."
-        ),
+        description=("Identifier of the runnable queue this task belongs to."),
     )
     task_id: int = Field(
         default=UNASSIGNED,
@@ -89,9 +88,9 @@ class Task(BaseModel):
     @model_validator(mode="after")
     def _mutually_exclusive_schedule_trigger(self):
         """
-        * `schedule` **xor** `trigger` &nbsp;– never both.
-        * If `trigger` is present the status **must** be *triggerable*.
-        * Status *triggerable* **requires** a non-null trigger.
+        - schedule XOR trigger: never both
+        - If trigger is set, status must be triggerable
+        - triggerable status requires a non-null trigger
         """
         if self.schedule is not None and self.trigger is not None:
             raise ValueError("A task cannot have both *schedule* and *trigger*.")
