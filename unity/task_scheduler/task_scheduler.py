@@ -16,7 +16,6 @@ import functools
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
-from typing import cast
 from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
@@ -60,7 +59,6 @@ from ..actor.base import BaseActor
 from ..actor.simulated import SimulatedActor
 from .active_task import ActiveTask
 from .active_queue import ActiveQueue
-import json
 from dataclasses import dataclass
 
 from ..events.manager_event_logging import (
@@ -79,6 +77,7 @@ from .activation_ops import (
 )
 from .reintegration import ReintegrationManager
 from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
+from .llm import new_llm_client
 
 
 # Sentinel for optional-argument presence detection
@@ -497,7 +496,7 @@ class TaskScheduler(BaseTaskScheduler):
             None,
         ] = "default",
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client("gpt-5@openai")
 
         # Build a live tools dictionary so the prompt reflects reality
         tools = dict(self._ask_tools)
@@ -569,7 +568,7 @@ class TaskScheduler(BaseTaskScheduler):
             None,
         ] = "default",
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client("gpt-5@openai")
 
         # Build a live tools dictionary first (prompt needs it)
         tools = dict(self._update_tools)
@@ -896,7 +895,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """Compose tools and prompt, then start the execute reasoning loop."""
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client("gpt-5@openai")
 
         # Create an initial checkpoint at the start of execute to guarantee a known revert point
         try:
@@ -3890,15 +3889,7 @@ class TaskScheduler(BaseTaskScheduler):
     # Small internal helpers
     # ────────────────────────────────────────────────────────────────────
 
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        """Construct a configured AsyncUnify client for the given model."""
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+    # moved to unity/task_scheduler/llm.py as new_llm_client
 
     # ------------------------------------------------------------------ #
     #  Queue plan + checkpoints (shared helpers exposed as tools)        #
@@ -4582,89 +4573,4 @@ class TaskScheduler(BaseTaskScheduler):
                 row.pop("activated_by", None)
         return row
 
-    # ------------------------------------------------------------------ #
-    #  Steering intent classification (LLM-routed)                        #
-    # ------------------------------------------------------------------ #
-
-    async def _classify_steering_intent(
-        self,
-        message: str,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-    ) -> tuple[str, str]:
-        """Classify steering into: cancel | defer | pause | resume | continue | none."""
-        try:
-            client = self._new_llm_client("gpt-5@openai")
-            system = (
-                "You are a router that classifies an in-flight steering message.\n"
-                "Labels: cancel | defer | pause | resume | continue | none.\n"
-                "Definitions:\n"
-                "- cancel: abandon/kill/drop the task (terminal).\n"
-                "- defer: stop for now but resume later / return to prior queue/schedule.\n"
-                "- pause: temporarily pause, expecting explicit resume soon.\n"
-                "- resume: continue after a pause.\n"
-                "- continue: keep going (no change).\n"
-                "- none: message is not a steering instruction.\n"
-                'Output ONLY JSON with rationale first: {"rationale": <short string>, "action": <label>, "reason": <short substring or null>}'
-            )
-            client.set_system_message(system)
-
-            # Build a compact, recent-first transcript for added context
-            def _format_ctx(
-                ctx: Optional[List[Dict[str, Any]]],
-                limit_chars: int = 2000,
-            ) -> str:
-                try:
-                    if not ctx:
-                        return "(no prior context)"
-                    lines: List[str] = []
-                    total = 0
-                    for msg in reversed(ctx[-20:]):
-                        role = str(msg.get("role", "")).strip() or "user"
-                        content = str(msg.get("content", "")).strip()
-                        line = f"{role}: {content}"
-                        if total + len(line) > limit_chars:
-                            break
-                        lines.append(line)
-                        total += len(line)
-                    return "\n".join(reversed(lines)) if lines else "(no prior context)"
-                except Exception:
-                    return "(no prior context)"
-
-            ctx_block = _format_ctx(parent_chat_context)
-            user = (
-                "Recent conversation (most recent last):\n"
-                f"{ctx_block}\n\n"
-                "Steering message:\n"
-                f"{(message or '').strip()}"
-            )
-            raw = await client.generate(user)
-            import json as _json
-
-            data = None
-            try:
-                data = _json.loads(raw)
-                action = str(data.get("action", "none")).strip().lower()
-                reason = data.get("reason")
-                if action not in {
-                    "cancel",
-                    "defer",
-                    "pause",
-                    "resume",
-                    "continue",
-                    "none",
-                }:
-                    action = "none"
-                if reason is not None:
-                    reason = str(reason)
-                else:
-                    reason = message
-                return action, cast(str, reason)
-            except Exception:
-                # fallback: pattern match a minimal token
-                low = (raw or "").lower()
-                for tok in ["cancel", "defer", "pause", "resume", "continue"]:
-                    if tok in low:
-                        return tok, message
-                return "none", message
-        except Exception:
-            return "none", message
+    # Steering intent classifier moved to ActiveTask.classify_steering_intent

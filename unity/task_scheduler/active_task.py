@@ -11,11 +11,83 @@ the scheduler.
 
 import functools
 import asyncio
-from typing import Optional, Dict, Callable, TYPE_CHECKING
+from typing import Optional, Dict, Callable, TYPE_CHECKING, List
 
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
 from unity.common.llm_helpers import SteerableToolHandle
+from .llm import new_llm_client
+
+
+async def classify_steering_intent(
+    message: str,
+    parent_chat_context: Optional[List[Dict[str, Any]]] = None,  # type: ignore[name-defined]
+) -> tuple[str, str]:
+    """Classify steering into: cancel | defer | pause | resume | continue | none."""
+    try:
+        client = new_llm_client("gpt-5@openai")
+        system = (
+            "You are a router that classifies an in-flight steering message.\n"
+            "Labels: cancel | defer | pause | resume | continue | none.\n"
+            "Definitions:\n"
+            "- cancel: abandon/kill/drop the task (terminal).\n"
+            "- defer: stop for now but resume later / return to prior queue/schedule.\n"
+            "- pause: temporarily pause, expecting explicit resume soon.\n"
+            "- resume: continue after a pause.\n"
+            "- continue: keep going (no change).\n"
+            "- none: message is not a steering instruction.\n"
+            'Output ONLY JSON with rationale first: {"rationale": <short string>, "action": <label>, "reason": <short substring or null>}'
+        )
+        client.set_system_message(system)
+
+        def _format_ctx(ctx: Optional[List[Dict[str, Any]]], limit_chars: int = 2000) -> str:  # type: ignore[name-defined]
+            try:
+                if not ctx:
+                    return "(no prior context)"
+                lines: List[str] = []
+                total = 0
+                for msg in reversed(ctx[-20:]):
+                    role = str(msg.get("role", "")).strip() or "user"
+                    content = str(msg.get("content", "")).strip()
+                    line = f"{role}: {content}"
+                    if total + len(line) > limit_chars:
+                        break
+                    lines.append(line)
+                    total += len(line)
+                return "\n".join(reversed(lines)) if lines else "(no prior context)"
+            except Exception:
+                return "(no prior context)"
+
+        ctx_block = _format_ctx(parent_chat_context)
+        user = (
+            "Recent conversation (most recent last):\n"
+            f"{ctx_block}\n\n"
+            "Steering message:\n"
+            f"{(message or '').strip()}"
+        )
+        raw = await client.generate(user)
+        import json as _json  # local import
+
+        try:
+            data = _json.loads(raw)
+            action = str(data.get("action", "none")).strip().lower()
+            reason = data.get("reason")
+            if action not in {"cancel", "defer", "pause", "resume", "continue", "none"}:
+                action = "none"
+            if reason is not None:
+                reason = str(reason)
+            else:
+                reason = message
+            return action, str(reason)
+        except Exception:
+            low = (raw or "").lower()
+            for tok in ["cancel", "defer", "pause", "resume", "continue"]:
+                if tok in low:
+                    return tok, message
+            return "none", message
+    except Exception:
+        return "none", message
+
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
@@ -119,8 +191,16 @@ class ActiveTask(BaseActiveTask):
         reason: Optional[str] = None
 
         try:
-            if self._scheduler is not None:
+            if self._scheduler is not None and hasattr(
+                self._scheduler,
+                "_classify_steering_intent",
+            ):
                 intent, reason = await self._scheduler._classify_steering_intent(  # type: ignore[attr-defined]
+                    message,
+                    parent_chat_context=None,
+                )
+            else:
+                intent, reason = await classify_steering_intent(
                     message,
                     parent_chat_context=None,
                 )
