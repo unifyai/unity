@@ -382,6 +382,26 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 await asyncio.sleep(1)
 
     
+    @property
+    def current_seq(self) -> int:
+        """Returns the current command sequence number."""
+        return self._seq
+
+    async def barrier(self, *, up_to_seq: Optional[int] = None) -> None:
+        """
+        Waits until all commands up to a specific sequence number have been processed.
+        """
+        target_seq = up_to_seq if up_to_seq is not None else self._seq
+
+        if self._processed_seq >= target_seq:
+            return  # All relevant commands are already done
+
+        # Check if an event for this sequence already exists or create one
+        if target_seq not in self._barrier_events:
+            self._barrier_events[target_seq] = asyncio.Event()
+
+        await self._barrier_events[target_seq].wait()
+
     async def _request(
         self,
         method: str,
