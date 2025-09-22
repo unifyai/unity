@@ -31,10 +31,10 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 - `active_queue.py`
   - `ActiveQueue`: a composite handle that sequentially executes a queue (head→tail), adopting each `ActiveTask` in turn. Tracks completions and supports queue‑aware `interject` and `ask`. Provides a passthrough mode for singleton or isolated executions.
 
-- `_queue_ops.py`
-  - Low‑level, activation‑time link manipulation. Implements detachment semantics for isolation vs chained execution and records a `ReintegrationPlan`. Provides `attach_with_links` for symmetric re‑attachment.
+- `activation_ops.py`
+  - Low‑level, activation‑time link manipulation. Implements detachment semantics for isolation vs chained execution and records a `ReintegrationPlan`.
 
-- `_queue_utils.py`
+- `queue_utils.py`
   - Small helpers for symmetric neighbor updates and “attach between prev/next” with head‑only `start_at`. Used by the scheduler’s validated write funnel.
 
 - `queue_engine.py`
@@ -123,7 +123,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 
 - Start in `task_scheduler.py` to see public surface and tool wiring.
 - Read `storage.py` to understand I/O & caching behaviors and how queue indexes are built.
-- Inspect `_queue_ops.py` and `_queue_utils.py` to learn link semantics for activation and attachment.
+- Inspect `activation_ops.py` and `queue_utils.py` to learn link semantics for activation and attachment.
 - See `queue_engine.py` for pure planning of reorders and status derivation.
 - `active_task.py` / `active_queue.py` define the live execution handles you’ll get back from `execute`.
 - `reintegration.py` explains how deferred tasks are reinstated exactly.

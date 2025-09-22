@@ -4,10 +4,9 @@ from typing import Optional, Dict, Any, TYPE_CHECKING
 
 import unify
 
-from ._queue_utils import (
+from .queue_utils import (
     sched_prev as _q_prev,
     sched_next as _q_next,
-    attach_with_links as _q_attach_with_links,
 )
 from .types.reintegration_plan import ReintegrationPlan
 
@@ -266,23 +265,3 @@ def detach_from_queue_for_activation(
                     if next_sched.get("prev_task") == task_id:
                         next_sched.pop("start_at", None)
                         _update_schedule(next_log, next_sched)
-
-
-def attach_with_links(
-    scheduler: "TaskScheduler",
-    *,
-    task_id: int,
-    prev_task: Optional[int],
-    next_task: Optional[int],
-    head_start_at: Optional[str],
-    err_prefix: str,
-) -> None:
-    """Attach a task into the runnable queue and update neighbours symmetrically."""
-    _q_attach_with_links(
-        scheduler,
-        task_id=task_id,
-        prev_task=prev_task,
-        next_task=next_task,
-        head_start_at=head_start_at,
-        err_prefix=err_prefix,
-    )
