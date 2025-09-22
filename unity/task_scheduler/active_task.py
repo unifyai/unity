@@ -11,7 +11,7 @@ the scheduler.
 
 import functools
 import asyncio
-from typing import Optional, Dict, Callable, TYPE_CHECKING, List
+from typing import Optional, Dict, Callable, TYPE_CHECKING, List, Any
 
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
