@@ -279,7 +279,7 @@ async def main(
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_WHATSAPP_NUMBER", ""),
         os.getenv("USER_EMAIL", ""),
-        os.getenv("TTS_PROVIDER", "cartesia"),
+        os.getenv("VOICE_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
         conv_context_length=conv_context_length,
         start_local=start_local,

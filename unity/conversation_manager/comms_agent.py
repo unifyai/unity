@@ -54,7 +54,7 @@ DEFAULT_ASSISTANT_PAYLOAD = {
     "profile_photo": None,
     "country": None,
     "voice_id": None,
-    "tts_provider": "cartesia",
+    "voice_provider": "cartesia",
     "user_last_name": "",
 }
 
@@ -94,7 +94,7 @@ class CommsAgent:
         user_number: str,
         user_whatsapp_number: str,
         user_email: str = None,
-        tts_provider: str = "cartesia",
+        voice_provider: str = "cartesia",
         voice_id: str = None,
         past_events: list | None = None,
         conv_context_length: int = 50,
@@ -112,7 +112,7 @@ class CommsAgent:
         self.assistant_age = assistant_age
         self.assistant_region = assistant_region
         self.assistant_about = assistant_about
-        self.tts_provider = tts_provider
+        self.voice_provider = voice_provider
         self.voice_id = voice_id
 
         # contact data
@@ -431,7 +431,7 @@ class CommsAgent:
                                     else self.current_user["user_number"]
                                 ),
                                 self.assistant_number,
-                                self.tts_provider,
+                                self.voice_provider,
                                 self.voice_id if self.voice_id else "None",
                                 self.meet_id if self.meet_id else "None",
                                 outbound,
@@ -443,7 +443,7 @@ class CommsAgent:
                                 "console",
                                 self.current_user["user_number"],
                                 self.assistant_number,
-                                self.tts_provider,
+                                self.voice_provider,
                                 self.voice_id if self.voice_id else "None",
                                 self.meet_id if self.meet_id else "None",
                                 outbound,
@@ -1105,7 +1105,7 @@ class CommsAgent:
             "user_whatsapp_number": self.user_whatsapp_number,
             "user_email": self.user_email,
         }
-        self.tts_provider = payload["tts_provider"]
+        self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         os.environ["UNIFY_KEY"] = payload.pop("api_key")
         os.environ["USER_ID"] = self.user_id
@@ -1116,7 +1116,7 @@ class CommsAgent:
         os.environ["ASSISTANT_NAME"] = self.assistant_name
         os.environ["ASSISTANT_NUMBER"] = self.assistant_number
         os.environ["ASSISTANT_EMAIL"] = self.assistant_email
-        os.environ["TTS_PROVIDER"] = self.tts_provider
+        os.environ["VOICE_PROVIDER"] = self.voice_provider
         os.environ["VOICE_ID"] = self.voice_id
 
     async def initialize_redis(self):

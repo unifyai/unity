@@ -250,7 +250,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Get phone numbers from environment variables
     from_number = os.environ.get("CALL_FROM_NUMBER", "")
-    tts_provider = os.environ.get("TTS_PROVIDER", "cartesia")
+    voice_provider = os.environ.get("VOICE_PROVIDER", "cartesia")
     voice_id = os.environ.get("VOICE_ID", "")
     # to_number = os.environ.get("CALL_TO_NUMBER", "")
     outbound = os.environ.get("OUTBOUND", "False") == "True"
@@ -260,7 +260,7 @@ async def entrypoint(ctx: agents.JobContext):
     meet_token = None
     meet_user_room = None
 
-    print("tts_provider", tts_provider)
+    print("voice_provider", voice_provider)
     print("voice_id", voice_id)
 
     session = AgentSession(
@@ -271,7 +271,7 @@ async def entrypoint(ctx: agents.JobContext):
                 voice_id=voice_id if voice_id != "" else elevenlabs.DEFAULT_VOICE_ID,
                 model="eleven_multilingual_v2",
             )
-            if tts_provider == "elevenlabs"
+            if voice_provider == "elevenlabs"
             else cartesia.TTS(
                 voice=voice_id if voice_id != "" else cartesia.tts.TTSDefaultVoiceId,
             )
@@ -489,7 +489,7 @@ if __name__ == "__main__":
     from_number = ""
     assistant_number = ""
     to_number = ""
-    tts_provider = "cartesia"
+    voice_provider = "cartesia"
     voice_id = ""
     meet_id = ""
     outbound = "False"
@@ -499,7 +499,7 @@ if __name__ == "__main__":
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
-        tts_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
+        voice_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
         voice_id = sys.argv[5]
         meet_id = sys.argv[6] if sys.argv[6] != "None" else ""
         outbound = sys.argv[7]
@@ -507,7 +507,7 @@ if __name__ == "__main__":
 
     # Store phone numbers in environment variables to be accessed by entrypoint
     os.environ["CALL_FROM_NUMBER"] = from_number
-    os.environ["TTS_PROVIDER"] = tts_provider
+    os.environ["VOICE_PROVIDER"] = voice_provider
     os.environ["MEET_ID"] = meet_id
     if voice_id != "None":
         os.environ["VOICE_ID"] = voice_id
