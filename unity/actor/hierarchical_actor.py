@@ -2035,6 +2035,18 @@ class HierarchicalPlan(BaseActiveTask):
                 "interrupt_current_action",
             ):
                 await self.actor.action_provider.browser.backend.interrupt_current_action()
+            if isinstance(
+                self.actor.action_provider.browser.backend,
+                MagnitudeBrowserBackend,
+            ):
+                self.action_log.append(
+                    f"RECOVERY: Verification failed in '{item.function_name}'. "
+                    f"Clearing any queued commands from this function.",
+                )
+                self.actor.action_provider.browser.backend.clear_commands_from_failed_function(
+                    item.function_name,
+                )
+
             old_run_id = self.run_id
             self.run_id += 1
 
@@ -3449,6 +3461,9 @@ class HierarchicalActor(BaseActor):
 
         if not precondition or precondition.get("status") == "not_applicable":
             return
+
+        if isinstance(self.action_provider.browser.backend, MagnitudeBrowserBackend):
+            await self.action_provider.browser.backend.barrier()
 
         await self._verify_and_correct_state(
             plan=plan,
