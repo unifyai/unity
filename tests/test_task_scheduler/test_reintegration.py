@@ -436,8 +436,11 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
     original_start = (row_h.get("schedule") or {}).get("start_at")
     assert original_start
 
-    # Start the head in chain mode and let it complete
+    # Start the head in chain mode but only allow the head to complete
     handle_head = await ts.execute(text=str(head_id))
+    # Wait for just the head to finish, then stop to prevent auto-continue to mid
+    await handle_head.active_task_done()
+    handle_head.stop(cancel=True)
     await handle_head.result()
 
     # Start the second task (mid) and then request deferral "as originally scheduled"
