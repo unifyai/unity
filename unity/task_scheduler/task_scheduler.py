@@ -1980,59 +1980,6 @@ class TaskScheduler(BaseTaskScheduler):
         """Return a fresh integer queue identifier via LocalTaskView."""
         return self._view.allocate_new_queue_id()
 
-    def _head_row_for_queue(self, queue_id: Optional[int]) -> Optional[TaskRow]:
-        """Best-effort fetch of the head row for a given queue.
-
-        The "default" queue is represented by ``queue_id is None``.
-        Only non-terminal tasks are considered part of a runnable queue.
-        Returns ``None`` when no head exists (e.g., empty queue).
-        """
-        rows = [
-            r
-            for r in self._filter_tasks()
-            if r.get("schedule") is not None
-            and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
-        ]
-        heads: list[TaskRow] = []
-        for r in rows:
-            sched = r.get("schedule") or {}
-            qid = r.get("queue_id")
-            prev_id = sched.get("prev_task")
-            if qid == queue_id and prev_id is None:
-                heads.append(r)
-        if not heads:
-            return None
-        assert (
-            len(heads) == 1
-        ), f"Multiple heads detected for queue_id={queue_id}: {heads}"
-        return heads[0]
-
-    def _walk_queue(self, head_row: TaskRow) -> list[TaskRow]:
-        """Walk from ``head_row`` forward using ``next_task`` and return rows.
-
-        Defensive against missing rows or broken links; stops at first gap.
-        """
-        ordered: list[TaskRow] = []
-        cur = head_row
-        seen: set[int] = set()
-        while cur is not None:
-            tid = cur.get("task_id")
-            try:
-                if isinstance(tid, int) and tid in seen:
-                    break
-                if isinstance(tid, int):
-                    seen.add(tid)
-            except Exception:
-                pass
-            ordered.append(cur)
-            sched = cur.get("schedule") or {}
-            nxt = sched.get("next_task")
-            if nxt is None:
-                break
-            nxt_rows = self._filter_tasks(filter=f"task_id == {int(nxt)}", limit=1)
-            cur = nxt_rows[0] if nxt_rows else None
-        return ordered
-
     @_ts_log_tool_runtime
     def _list_queues(self) -> List[Dict[str, Any]]:
         """
@@ -4209,23 +4156,6 @@ class TaskScheduler(BaseTaskScheduler):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
-    # Centralised simple-field writer
-    def _update_fields_if_not_active(
-        self,
-        *,
-        task_id: int,
-        entries: Dict[str, Any],
-    ) -> Dict[str, str]:
-        """
-        Update arbitrary fields on a single task, guarding against active-task edits.
-
-        This consolidates the repetitive pattern used by name/description/deadline/
-        repetition/priority updates without changing behaviour.
-        """
-        self._ensure_not_active_task(task_id)
-        log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        return self._write_log_entries(logs=log_id, entries=entries)
-
     # ------------------------------------------------------------------ #
     #  Small centralised write helper                                     #
     # ------------------------------------------------------------------ #
@@ -4378,12 +4308,6 @@ class TaskScheduler(BaseTaskScheduler):
         if not rows:
             raise ValueError(f"No task found with id={task_id}")
         return rows[0]
-
-    def _get_single_log_obj_or_raise(self, task_id: int) -> "unify.Log":
-        """Fetch the unique unify.Log object for task_id or raise."""
-        logs = self._get_logs_by_task_ids(task_ids=task_id, return_ids_only=False)
-        assert len(logs) == 1, "Task IDs should be unique"
-        return logs[0]  # type: ignore[return-value]
 
     # Reinstate a previously isolated-and-activated task back to its prior queue position
 
