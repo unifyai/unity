@@ -8,34 +8,9 @@ from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
     now_utc_str,
-    tool_name as _shared_tool_name,
-    require_tools as _shared_require_tools,
+    tool_name,
+    require_tools,
 )
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Internal helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
-    """Return {name: '(<argspec>)', …} using shared helper."""
-    return sig_dict(tools)
-
-
-def _now() -> str:
-    """Current UTC timestamp in a compact, human-readable form."""
-    return now_utc_str()
-
-
-def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
-    """Delegate to shared tool name resolver."""
-    return _shared_tool_name(tools, needle)
-
-
-def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> None:
-    """Delegate validation to shared helper for consistent errors."""
-    _shared_require_tools(pairs, tools)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Public builders
@@ -55,21 +30,21 @@ def build_ask_prompt(
     *Never* hard-codes the number, names or argument-specs of tools – those are
     injected live from the supplied *tools* dict.
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    sig_json = json.dumps(sig_dict(tools), indent=4)
 
     # Resolve canonical tool names dynamically
-    filter_tasks_fname = _tool_name(tools, "filter_tasks")
-    search_tasks_fname = _tool_name(tools, "search_tasks")
-    list_queues_fname = _tool_name(tools, "list_queues")
-    get_queue_fname = _tool_name(tools, "get_queue")
-    get_queue_for_task_fname = _tool_name(tools, "get_queue_for_task")
-    contact_ask_fname = _tool_name(tools, "contactmanager")  # e.g. "ContactManager_ask"
+    filter_tasks_fname = tool_name(tools, "filter_tasks")
+    search_tasks_fname = tool_name(tools, "search_tasks")
+    list_queues_fname = tool_name(tools, "list_queues")
+    get_queue_fname = tool_name(tools, "get_queue")
+    get_queue_for_task_fname = tool_name(tools, "get_queue_for_task")
+    contact_ask_fname = tool_name(tools, "contactmanager")  # e.g. "ContactManager_ask"
 
     # Clarification helper (optional)
-    request_clar_fname = _tool_name(tools, "request_clarification")
+    request_clar_fname = tool_name(tools, "request_clarification")
 
     # Validate required tools (request_clar_fname is optional)
-    _require_tools(
+    require_tools(
         {
             "filter_tasks": filter_tasks_fname,
             "search_tasks": search_tasks_fname,
@@ -175,7 +150,7 @@ def build_ask_prompt(
         "Task schema:",
         json.dumps(Task.model_json_schema(), indent=4),
         "",
-        f"Current UTC time is {_now()}.",
+        f"Current UTC time is {now_utc_str()}.",
         clar_section,
     ]
 
@@ -197,27 +172,27 @@ def build_update_prompt(
     """
     Build the **system** prompt for the `update` method.
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    sig_json = json.dumps(sig_dict(tools), indent=4)
 
     # Resolve canonical tool names dynamically (required)
-    ask_fname = _tool_name(tools, "ask")
-    create_task_fname = _tool_name(tools, "create_task")
-    create_tasks_fname = _tool_name(tools, "create_tasks")
-    delete_task_fname = _tool_name(tools, "delete_task")
-    cancel_tasks_fname = _tool_name(tools, "cancel_tasks")
+    ask_fname = tool_name(tools, "ask")
+    create_task_fname = tool_name(tools, "create_task")
+    create_tasks_fname = tool_name(tools, "create_tasks")
+    delete_task_fname = tool_name(tools, "delete_task")
+    cancel_tasks_fname = tool_name(tools, "cancel_tasks")
     # Multi-queue helpers (optional if not present)
-    list_queues_fname = _tool_name(tools, "list_queues")
-    get_queue_fname = _tool_name(tools, "get_queue")
-    reorder_queue_fname = _tool_name(tools, "reorder_queue")
-    move_tasks_to_queue_fname = _tool_name(tools, "move_tasks_to_queue")
-    partition_queue_fname = _tool_name(tools, "partition_queue")
-    update_task_fname = _tool_name(tools, "update_task")
-    reinstate_task_fname = _tool_name(tools, "reinstate_task_to_previous_queue")
+    list_queues_fname = tool_name(tools, "list_queues")
+    get_queue_fname = tool_name(tools, "get_queue")
+    reorder_queue_fname = tool_name(tools, "reorder_queue")
+    move_tasks_to_queue_fname = tool_name(tools, "move_tasks_to_queue")
+    partition_queue_fname = tool_name(tools, "partition_queue")
+    update_task_fname = tool_name(tools, "update_task")
+    reinstate_task_fname = tool_name(tools, "reinstate_task_to_previous_queue")
 
     # Clarification helper (optional)
-    request_clar_fname = _tool_name(tools, "request_clarification")
+    request_clar_fname = tool_name(tools, "request_clarification")
 
-    _require_tools(
+    require_tools(
         {
             "ask": ask_fname,
             "create_task": create_task_fname,
@@ -288,8 +263,8 @@ def build_update_prompt(
         )
 
     # Atomic/edit helpers if present
-    set_queue_fname = _tool_name(tools, "set_queue")
-    set_schedules_atomic_fname = _tool_name(tools, "set_schedules_atomic")
+    set_queue_fname = tool_name(tools, "set_queue")
+    set_schedules_atomic_fname = tool_name(tools, "set_schedules_atomic")
 
     if set_queue_fname:
         usage_examples_lines.extend(
@@ -447,25 +422,25 @@ def build_execute_prompt(
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     # Resolve names dynamically
-    ask_fname = _tool_name(tools, "ask")
-    execute_by_id_fname = _tool_name(tools, "execute_by_id")
-    execute_isolated_by_id_fname = _tool_name(tools, "execute_isolated_by_id")
-    create_task_fname = _tool_name(tools, "create_task")
-    request_clar_fname = _tool_name(tools, "request_clarification")
+    ask_fname = tool_name(tools, "ask")
+    execute_by_id_fname = tool_name(tools, "execute_by_id")
+    execute_isolated_by_id_fname = tool_name(tools, "execute_isolated_by_id")
+    create_task_fname = tool_name(tools, "create_task")
+    request_clar_fname = tool_name(tools, "request_clarification")
     # Multi-queue helpers
-    list_queues_fname = _tool_name(tools, "list_queues")
-    get_queue_fname = _tool_name(tools, "get_queue")
-    reorder_queue_fname = _tool_name(tools, "reorder_queue")
-    move_tasks_to_queue_fname = _tool_name(tools, "move_tasks_to_queue")
-    partition_queue_fname = _tool_name(tools, "partition_queue")
+    list_queues_fname = tool_name(tools, "list_queues")
+    get_queue_fname = tool_name(tools, "get_queue")
+    reorder_queue_fname = tool_name(tools, "reorder_queue")
+    move_tasks_to_queue_fname = tool_name(tools, "move_tasks_to_queue")
+    partition_queue_fname = tool_name(tools, "partition_queue")
     # Reintegration & safety
-    reinstate_task_fname = _tool_name(tools, "reinstate_task_to_previous_queue")
-    checkpoint_fname = _tool_name(tools, "checkpoint_queue_state")
-    revert_checkpoint_fname = _tool_name(tools, "revert_to_checkpoint")
-    latest_checkpoint_fname = _tool_name(tools, "get_latest_checkpoint")
+    reinstate_task_fname = tool_name(tools, "reinstate_task_to_previous_queue")
+    checkpoint_fname = tool_name(tools, "checkpoint_queue_state")
+    revert_checkpoint_fname = tool_name(tools, "revert_to_checkpoint")
+    latest_checkpoint_fname = tool_name(tools, "get_latest_checkpoint")
 
     # For execute, legacy names may be absent; require only the stable set
-    _require_tools(
+    require_tools(
         {
             "ask": ask_fname,
             "execute_by_id": execute_by_id_fname,

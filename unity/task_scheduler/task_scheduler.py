@@ -1169,7 +1169,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Normalise status and extract linkage/timestamp
         status = self._to_status(status)
-        prev_task_id = self._sched_prev(schedule)
+        prev_task_id = _q_prev(schedule)
         start_at_ts = self._extract_start_at(schedule)
 
         # Head-of-queue tasks with explicit start_at must be 'scheduled'
@@ -1392,7 +1392,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         #  If the task is explicitly linked **behind**  another task (prev_task ≠ None)
         # and that task is not terminal, we NEVER mark the newcomer as *primed*.
-        prev_ptr = self._sched_prev(schedule)
+        prev_ptr = _q_prev(schedule)
 
         if trigger is not None:
             # --------  event-driven task  -------- #
@@ -1460,7 +1460,7 @@ class TaskScheduler(BaseTaskScheduler):
             if queue_id is not None:
                 derived_qid = int(queue_id)
             elif schedule is not None:
-                prev_tid = self._sched_prev(schedule)
+                prev_tid = _q_prev(schedule)
                 if prev_tid is not None:
                     try:
                         prev_row = self._get_single_row_or_raise(int(prev_tid))
@@ -1519,7 +1519,7 @@ class TaskScheduler(BaseTaskScheduler):
             prefetched = None
             try:
                 # from earlier derivation
-                prev_tid = self._sched_prev(schedule)
+                prev_tid = _q_prev(schedule)
                 if prev_tid is not None:
                     try:
                         prev_row = locals().get("prev_row")
@@ -1558,8 +1558,7 @@ class TaskScheduler(BaseTaskScheduler):
             # explicit linkage (prev/next).  If linkage was given we assume
             # the user knows where the task belongs.
             explicit_linkage = schedule is not None and (
-                self._sched_prev(schedule) is not None
-                or self._sched_next(schedule) is not None
+                _q_prev(schedule) is not None or _q_next(schedule) is not None
             )
 
             if explicit_linkage:
@@ -1937,15 +1936,6 @@ class TaskScheduler(BaseTaskScheduler):
     # Update Task Queue
 
     # --------------------  small helpers  -------------------- #
-    @staticmethod
-    def _sched_prev(sched):
-        """Thin wrapper: delegate to queue-utils (prev pointer)."""
-        return _q_prev(sched)
-
-    @staticmethod
-    def _sched_next(sched):
-        """Thin wrapper: delegate to queue-utils (next pointer)."""
-        return _q_next(sched)
 
     def _extract_start_at(self, sched):
         """Return the start_at value from a Schedule model or plain dict, or None.
@@ -3708,11 +3698,6 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Deprecated: _get_task_queue removed in favor of explicit helpers.
 
-    # Small helper retained for compatibility – no-op after simplification.
-    @_ts_log_tool_runtime
-    def _get_linkage_barrier(self, *, task_id: int):
-        return None
-
     # ------------------------------------------------------------------ #
     #  Pure neighbour selection helper                                    #
     # ------------------------------------------------------------------ #
@@ -3913,7 +3898,7 @@ class TaskScheduler(BaseTaskScheduler):
                     "Cannot add/update *start_at* – the task is trigger-based.",
                 )
             # Guard-rail: tasks with a predecessor cannot own start_at
-            if self._sched_prev(current_sched) is not None:
+            if _q_prev(current_sched) is not None:
                 raise ValueError(
                     "Cannot set 'start_at' when the task has 'prev_task'. Move it to the queue head first.",
                 )
@@ -3924,8 +3909,8 @@ class TaskScheduler(BaseTaskScheduler):
                 except Exception:
                     pass
             schedule_payload = {
-                "prev_task": self._sched_prev(current_sched),
-                "next_task": self._sched_next(current_sched),
+                "prev_task": _q_prev(current_sched),
+                "next_task": _q_next(current_sched),
                 "start_at": start_at,
             }
 
@@ -4019,9 +4004,9 @@ class TaskScheduler(BaseTaskScheduler):
             try:
                 if "schedule" in entries and isinstance(entries.get("schedule"), dict):
                     _new = entries["schedule"]
-                    _skip_sync = _new.get("prev_task") == self._sched_prev(
+                    _skip_sync = _new.get("prev_task") == _q_prev(
                         current_sched,
-                    ) and _new.get("next_task") == self._sched_next(current_sched)
+                    ) and _new.get("next_task") == _q_next(current_sched)
                     _skip_cross_guard = _skip_sync
             except Exception:
                 _skip_sync = False
