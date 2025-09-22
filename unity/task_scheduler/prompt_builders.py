@@ -22,6 +22,17 @@ from ..common.prompt_helpers import (
     require_tools,
 )
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Internal helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _now() -> str:
+    """Current UTC timestamp in a compact, human-readable form."""
+    return now_utc_str()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public builders
 # ─────────────────────────────────────────────────────────────────────────────
@@ -160,7 +171,7 @@ def build_ask_prompt(
         "Task schema:",
         json.dumps(Task.model_json_schema(), indent=4),
         "",
-        f"Current UTC time is {now_utc_str()}.",
+        f"Current UTC time is {_now()}.",
         clar_section,
     ]
 
@@ -411,7 +422,7 @@ def build_update_prompt(
         "Task schema:",
         json.dumps(Task.model_json_schema(), indent=4),
         "",
-        f"Current UTC time is {now_utc_str()}.",
+        f"Current UTC time is {_now()}.",
         clar_section,
     ]
 
