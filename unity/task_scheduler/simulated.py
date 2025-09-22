@@ -306,10 +306,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         return handle
 
-    # Set concise method docstring for ask
-    ask.__doc__ = (
-        "Return a steerable handle for a read-only, simulated ask interaction. "
-        "No storage is read or written."
+    # Preserve base doc-string (from wraps) and append a brief simulated note
+    ask.__doc__ = (ask.__doc__ or "").rstrip() + (
+        "\n\nSimulated scheduler note: returns a steerable handle backed by a shared, "
+        "stateful LLM; no real storage is read or written."
     )
 
     # ------------------------------------------------------------------ #
@@ -367,10 +367,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         return handle
 
-    # Set concise method docstring for update
-    update.__doc__ = (
-        "Return a steerable handle for a simulated update interaction. "
-        "No real storage is touched; replies may include invented task ids."
+    # Preserve base doc-string (from wraps) and append a brief simulated note
+    update.__doc__ = (update.__doc__ or "").rstrip() + (
+        "\n\nSimulated scheduler note: returns a steerable handle; no real storage is "
+        "touched and replies may include invented task ids."
     )
 
     # ------------------------------------------------------------------ #
