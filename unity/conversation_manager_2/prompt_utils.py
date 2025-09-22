@@ -1,25 +1,29 @@
 from collections import deque
 
 
-def add_spaces(string: str, num_spaces: int=4):
+def add_spaces(string: str, num_spaces: int = 4):
     ls = string.split("\n")
-    return "\n".join(num_spaces * " "+ l for l in ls)
+    return "\n".join(num_spaces * " " + l for l in ls)
+
 
 class NotificationBar:
     def __init__(self):
         self.notifs = []
-    
+
     def push_notif(self, n, timestamp=None):
         if timestamp:
             timestamp = timestamp.strftime("%A, %B %d, %Y at %I:%M %p")
-            
+
         self.notifs.append({"content": n, "timestamp": timestamp})
-    
+
     def clear(self):
         self.notifs = []
-    
+
     def __str__(self):
-        return "\n".join([f"[Notification @ {n['timestamp']}] {n['content']}" for n in self.notifs])
+        return "\n".join(
+            [f"[Notification @ {n['timestamp']}] {n['content']}" for n in self.notifs]
+        )
+
 
 class ThreadMessage:
     def __init__(self, name, content, timestamp):
@@ -30,17 +34,18 @@ class ThreadMessage:
     def __str__(self):
         return f"""[{self.name} @ {self.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]: {self.content}"""
 
+
 class ContactThread:
     def __init__(self, thread_name, max_len=15):
         self.thread_name = thread_name
         self.messages = deque(maxlen=max_len)
-    
+
     def push_message(self, m):
         self.messages.append(m)
-    
+
     def __bool__(self):
         return bool(self.messages)
-    
+
     def __str__(self):
         thread_content = "\n".join(str(m) for m in self.messages)
         thread_content = thread_content.strip()
@@ -48,6 +53,7 @@ class ContactThread:
 <{self.thread_name}>
 {add_spaces(thread_content)}
 </{self.thread_name}>""".strip()
+
 
 class ConversationContact:
     def __init__(self, id, name, is_boss=False, on_phone=False):
@@ -58,12 +64,12 @@ class ConversationContact:
         self.threads = {
             "sms": ContactThread("sms"),
             "email": ContactThread("email"),
-            "phone": ContactThread("phone")
+            "phone": ContactThread("phone"),
         }
-    
+
     def push_message(self, thread_name, message):
         self.threads[thread_name].push_message(message)
-        
+
     def __str__(self):
         threads = []
         for t in self.threads.values():

@@ -9,8 +9,6 @@ from unity.conversation_manager_2.comms_manager import CommsManager
 from unity.conversation_manager_2.event_broker import get_event_broker
 
 
-
-
 async def main(local: bool = False, project_name: str = "Assistants"):
     stop = asyncio.Event()
 
@@ -35,8 +33,8 @@ async def main(local: bool = False, project_name: str = "Assistants"):
         os.getenv("USER_EMAIL", ""),
         os.getenv("TTS_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
-        project_name=project_name
-        )
+        project_name=project_name,
+    )
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
@@ -46,6 +44,7 @@ async def main(local: bool = False, project_name: str = "Assistants"):
 
     print("Server is Running...")
     await stop.wait()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

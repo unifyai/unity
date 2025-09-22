@@ -71,13 +71,14 @@ class Assistant(Agent):
         # events_queue.put_nowait(PhoneUtteranceEvent(role="User", content=new_message.text_content))
         # we will handle this through the events manager
         print("sending user message...")
-        await event_broker.publish("app:comms:phone_utterance", 
+        await event_broker.publish(
+            "app:comms:phone_utterance",
             PhoneUtterance(
-                    contact=os.environ["CALL_FROM_NUMBER"],
-                    content=new_message.text_content,
-                ).to_json())
+                contact=os.environ["CALL_FROM_NUMBER"],
+                content=new_message.text_content,
+            ).to_json(),
+        )
         raise llm.StopResponse()
-
 
     async def llm_node(
         self,
@@ -93,7 +94,6 @@ class Assistant(Agent):
         #     await pubsub.subscribe("app:call:chunk")
         #     async for msg in pubsub.listen():
         #         ...
-
 
         while True:
             chunk = await chunk_queue.get()
@@ -137,7 +137,10 @@ async def entrypoint(ctx: agents.JobContext):
         print("Initiating graceful shutdown...")
 
         # Send end call event before cleaning tasks and closing connection
-        await event_broker.publish("app:comms:phone_call_ended", PhoneCallEnded(contact=os.environ["CALL_FROM_NUMBER"]).to_json())
+        await event_broker.publish(
+            "app:comms:phone_call_ended",
+            PhoneCallEnded(contact=os.environ["CALL_FROM_NUMBER"]).to_json(),
+        )
         print("End call event sent")
 
         # Get all running tasks except current task
@@ -190,7 +193,6 @@ async def entrypoint(ctx: agents.JobContext):
 
     ctx.room.on("participant_disconnected", on_participant_disconnected)
 
-
     assistant = Assistant(
         from_number=from_number,
         # meet_id=meet_id if meet_id else None,
@@ -214,7 +216,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     await event_broker.publish(
         "app:comms:phone_call_started",
-        PhoneCallStarted(contact=os.environ["CALL_FROM_NUMBER"]).to_json()
+        PhoneCallStarted(contact=os.environ["CALL_FROM_NUMBER"]).to_json(),
     )
 
     async def response_task():
@@ -234,28 +236,28 @@ async def entrypoint(ctx: agents.JobContext):
                     phone_utterance = result[0]
                 except:
                     phone_utterance = ""
-                # if phone_utterance:
-                #     # send assistant response as an event to be added in past events
-                #     msg = {
-                #                 "to": "past",
-                #                 "topic": from_number,
-                #                 "event": PhoneUtterance(
-                #                     role="Assistant",
-                #                     content=phone_utterance,
-                #                 ).to_dict(),
-                #             }
-                #     asyncio.create_task(
-                #         event_broker.publish("app:comms:phone_utterance",
-                #             json.dumps({
-                #                 "to": "past",
-                #                 "topic": from_number,
-                #                 "event": PhoneUtterance(
-                #                     role="Assistant",
-                #                     content=phone_utterance,
-                #                 ).to_dict(),
-                #             }),
-                #         ),
-                #     )
+                    # if phone_utterance:
+                    #     # send assistant response as an event to be added in past events
+                    #     msg = {
+                    #                 "to": "past",
+                    #                 "topic": from_number,
+                    #                 "event": PhoneUtterance(
+                    #                     role="Assistant",
+                    #                     content=phone_utterance,
+                    #                 ).to_dict(),
+                    #             }
+                    #     asyncio.create_task(
+                    #         event_broker.publish("app:comms:phone_utterance",
+                    #             json.dumps({
+                    #                 "to": "past",
+                    #                 "topic": from_number,
+                    #                 "event": PhoneUtterance(
+                    #                     role="Assistant",
+                    #                     content=phone_utterance,
+                    #                 ).to_dict(),
+                    #             }),
+                    #         ),
+                    #     )
                     # Update activity time on assistant response
                     last_activity_time = asyncio.get_event_loop().time()
                     # send interupt as an event to be added to pending events (?)
@@ -267,7 +269,9 @@ async def entrypoint(ctx: agents.JobContext):
                         asyncio.create_task(
                             event_broker.publish(
                                 "app:comms:interrupt",
-                                Interrupt(contact=os.environ["CALL_FROM_NUMBER"]).to_json()
+                                Interrupt(
+                                    contact=os.environ["CALL_FROM_NUMBER"]
+                                ).to_json(),
                             ),
                         )
         except asyncio.CancelledError:
@@ -282,7 +286,9 @@ async def entrypoint(ctx: agents.JobContext):
             print("waiting for events...")
             while True:
                 try:
-                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=None)
+                    msg = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=None
+                    )
                     if msg is None:
                         continue
                     print("done", msg)

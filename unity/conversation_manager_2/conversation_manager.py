@@ -1,5 +1,6 @@
 import os
 import asyncio
+
 # import threading
 import json
 from typing import Literal
@@ -10,7 +11,10 @@ from pydantic_core import from_json
 
 from unity.events.event_bus import EVENT_BUS
 from unity.conversation_manager_2.new_events import *
-from unity.conversation_manager_2.actions import RESPONSES_MODEL, _send_sms_message_via_number
+from unity.conversation_manager_2.actions import (
+    RESPONSES_MODEL,
+    _send_sms_message_via_number,
+)
 from unity.conversation_manager_2.state import ConversationManagerState
 from unity.helpers import run_script, terminate_process
 
@@ -22,8 +26,10 @@ from openai import AsyncOpenAI
 class ActionEvent:
     def __init__(self, action):
         self.action = action
+
     def __str__(self):
         return self.action
+
 
 MAX_PENDING_EVENTS = 10
 
@@ -33,6 +39,7 @@ CONV_CONTEXT_LENGTH = 50
 with open(Path(__file__).parent.resolve() / "prompts" / "v1.md") as f:
     SYS = f.read()
 
+
 @dataclass
 class Contact:
     id: str
@@ -40,6 +47,7 @@ class Contact:
     is_boss: bool
     number: str
     email: str
+
 
 class ConversationManager:
     def __init__(
@@ -102,24 +110,34 @@ class ConversationManager:
         # asyncio.create_task(self._init_past_events())
 
         self.event_broker = event_broker
-        self.openai_client = AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'])
+        self.openai_client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
         # this will probs be retrieved from a database or whatever
         self.phone_contacts_map = {
-            "+12697784020": Contact("1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"),
-            "+13502381308": Contact("2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"),
-            "+16605382869": Contact("3", "Ved", False, "+16605382869", "ved@unify.ai")
+            "+12697784020": Contact(
+                "1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"
+            ),
+            "+13502381308": Contact(
+                "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
+            ),
+            "+16605382869": Contact("3", "Ved", False, "+16605382869", "ved@unify.ai"),
         }
         self.email_contacts_map = {
-            "yasser@unify.ai": Contact("1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"),
-            "dan@unify.ai": Contact("2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"),
-            "ved@unify.ai": Contact("3", "Ved", False, "+16605382869", "ved@unify.ai")
+            "yasser@unify.ai": Contact(
+                "1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"
+            ),
+            "dan@unify.ai": Contact(
+                "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
+            ),
+            "ved@unify.ai": Contact("3", "Ved", False, "+16605382869", "ved@unify.ai"),
         }
 
-        self.inverted_contacts_map = {v.id:v for v in self.phone_contacts_map.values()}
-        self.state = ConversationManagerState(self.phone_contacts_map, self.email_contacts_map)
+        self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
+        self.state = ConversationManagerState(
+            self.phone_contacts_map, self.email_contacts_map
+        )
         self.chat_history = []
-    
+
     # should be re-written to account for the new refactor
     async def _init_past_events(self):
         # TODO: this should be generalized to retrieve the entire
@@ -127,13 +145,13 @@ class ConversationManager:
         # the current active contacts etc
         print("Retrieving all past events...")
         bus_events = await EVENT_BUS.search(
-        filter='type == "Comms"',
-        limit=self.conv_context_length,
-    )
+            filter='type == "Comms"',
+            limit=self.conv_context_length,
+        )
 
         self.past_events = [Event.from_bus_event(e).to_dict() for e in bus_events][::-1]
         self.is_past_events_init.set()
-    
+
     async def run_llm(self):
         prompt = str(self.state)
         print(prompt)
@@ -146,8 +164,8 @@ class ConversationManager:
             async with self.openai_client.responses.stream(
                 model="gpt-4.1",
                 instructions=SYS,
-                input=self.chat_history+input_message,
-                text_format=RESPONSES_MODEL[self.mode]
+                input=self.chat_history + input_message,
+                text_format=RESPONSES_MODEL[self.mode],
             ) as stream:
                 first_chunk = True
                 async for event in stream:
@@ -157,47 +175,66 @@ class ConversationManager:
                         parsed_out = from_json(out, allow_partial="trailing-strings")
                         if parsed_out.get("phone_utterance"):
                             if first_chunk:
-                                await self.event_broker.publish("app:call:response_gen", json.dumps({
-                                    "type": "start_gen"
-                                }))
+                                await self.event_broker.publish(
+                                    "app:call:response_gen",
+                                    json.dumps({"type": "start_gen"}),
+                                )
                                 first_chunk = False
-                            if len(last_phone_utterance) != len(parsed_out["phone_utterance"]):
-                                await self.event_broker.publish("app:call:response_gen", json.dumps({
-                                    "type": "gen_chunk",
-                                    "chunk": parsed_out["phone_utterance"][len(last_phone_utterance):]
-                                }))
+                            if len(last_phone_utterance) != len(
+                                parsed_out["phone_utterance"]
+                            ):
+                                await self.event_broker.publish(
+                                    "app:call:response_gen",
+                                    json.dumps(
+                                        {
+                                            "type": "gen_chunk",
+                                            "chunk": parsed_out["phone_utterance"][
+                                                len(last_phone_utterance) :
+                                            ],
+                                        }
+                                    ),
+                                )
                             last_phone_utterance = parsed_out["phone_utterance"]
-            await self.event_broker.publish("app:call:response_gen", json.dumps({
-                                    "type": "end_gen"
-                                }))
+            await self.event_broker.publish(
+                "app:call:response_gen", json.dumps({"type": "end_gen"})
+            )
             print(parsed_out)
-                         
+
         else:
-            out = await self.openai_client.responses.parse(model="gpt-4.1", instructions=SYS, input=self.chat_history+input_message, text_format=RESPONSES_MODEL[self.mode])  
+            out = await self.openai_client.responses.parse(
+                model="gpt-4.1",
+                instructions=SYS,
+                input=self.chat_history + input_message,
+                text_format=RESPONSES_MODEL[self.mode],
+            )
             parsed_out = out.output[0].content[0].parsed.model_dump()
             out = out.output[0].content[0].text
-        
+
         print(parsed_out)
         self.state.clear_notifications()
-        if parsed_out["actions"] is not None: 
+        if parsed_out["actions"] is not None:
             for action in parsed_out["actions"]:
                 if action["action_name"] == "send_sms":
                     print("sending sms message")
                     contact_num_id = action["number_or_id"]
-                    contact = self.phone_contacts_map.get(contact_num_id) or self.inverted_contacts_map.get(contact_num_id)
-                    await _send_sms_message_via_number(contact.number, action["message"])
+                    contact = self.phone_contacts_map.get(
+                        contact_num_id
+                    ) or self.inverted_contacts_map.get(contact_num_id)
+                    await _send_sms_message_via_number(
+                        contact.number, action["message"]
+                    )
                     event = SMSSent(contact=contact.number, content=action["message"])
                     self.state.push_event(event)
 
         self.chat_history.append(input_message[0])
         self.chat_history.append({"role": "assistant", "content": out})
         print(self.chat_history)
-    
+
     async def scheduele_llm_run(self, delay=1, cancel_running=False):
         if self.schedueled_response and not self.schedueled_response.done():
             with contextlib.suppress(asyncio.CancelledError):
                 await self.schedueled_response
-        
+
         if cancel_running:
             if self.current_response and not self.current_response.done():
                 self.current_response.cancel()
@@ -211,7 +248,7 @@ class ConversationManager:
                     await self.current_response
             self.current_response = asyncio.create_task(self.run_llm())
 
-        if delay > 0:               
+        if delay > 0:
             self.schedueled_response = asyncio.create_task(run_llm_delayed(delay))
         else:
             if not cancel_running:
@@ -219,30 +256,31 @@ class ConversationManager:
                     await self.current_response
             self.current_response = asyncio.create_task(self.run_llm())
 
-
-    
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
             await pubsub.psubscribe("app:comms:*", "app:conductor:*")
             while True:
-                msg = await pubsub.get_message(timeout=2, ignore_subscribe_messages=True)
-                
-                if msg is not None: print(msg)
+                msg = await pubsub.get_message(
+                    timeout=2, ignore_subscribe_messages=True
+                )
+
+                if msg is not None:
+                    print(msg)
 
                 # there are still pending messages and no scheduled responses or currently running responses
                 # TODO: fix this branch
                 if msg is None:
                     # if (
-                    #     self.pending_events and (not self.schedueled_response or self.schedueled_response.done()) 
+                    #     self.pending_events and (not self.schedueled_response or self.schedueled_response.done())
                     #     and (not self.current_response or self.current_response.done())
                     # ):
-                        # await self.scheduele_llm_run(0)
-                        ...
+                    # await self.scheduele_llm_run(0)
+                    ...
                 else:
                     event = Event.from_json(msg["data"])
                     print(event)
                     await self.handle_event(event)
-                    
+
     async def handle_event(self, event: Event):
         self.state.push_event(event)
         if isinstance(event, PhoneCallInitiated):
@@ -259,9 +297,11 @@ class ConversationManager:
                         await self.schedueled_response
                 if self.current_response and not self.current_response.done():
                     await self.current_response
-            
+
                 # start the process here
-                target_path = Path(__file__).parent.resolve() / "medium_scripts" / "call.py"
+                target_path = (
+                    Path(__file__).parent.resolve() / "medium_scripts" / "call.py"
+                )
                 self.call_proc = run_script(
                     str(target_path),
                     "dev",
@@ -272,16 +312,15 @@ class ConversationManager:
                     "None",
                     str(False),
                 )
-                
 
         elif isinstance(event, PhoneCallStarted):
-            self.mode = "call"            
+            self.mode = "call"
             await self.scheduele_llm_run(0, cancel_running=True)
 
         elif isinstance(event, PhoneCallEnded):
             terminate_process(self.call_proc)
 
-        elif isinstance(event, PhoneUtterance):            
+        elif isinstance(event, PhoneUtterance):
             await self.scheduele_llm_run(0, cancel_running=True)
 
         else:

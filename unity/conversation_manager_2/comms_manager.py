@@ -11,8 +11,6 @@ from unity.constants import ASYNCIO_DEBUG
 import redis.asyncio as redis
 
 
-
-
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
 startup_subscription_id = (
@@ -45,7 +43,7 @@ class CommsManager:
         self.call_proc = None
         self.credentials = None
         self.loop = asyncio.get_event_loop()
-        self.message_queue: redis.Redis  = event_broker
+        self.message_queue: redis.Redis = event_broker
 
     def handle_message(
         self,
@@ -81,33 +79,33 @@ class CommsManager:
                 # publish
                 task = asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
-
-                    "app:comms:start_up",
-                    json.dumps({
-                        "topic": "startup",
-                        "to": "past",
-                        "event": StartupEvent(
-                            api_key=event["api_key"],
-                            medium=event["medium"],
-                            assistant_id=event["assistant_id"],
-                            user_id=event["user_id"],
-                            assistant_name=event["assistant_name"],
-                            assistant_age=event["assistant_age"],
-                            assistant_region=event["assistant_region"],
-                            assistant_about=event["assistant_about"],
-                            assistant_number=event["assistant_number"],
-                            assistant_email=event["assistant_email"],
-                            user_name=event["user_name"],
-                            user_number=event["user_number"],
-                            user_whatsapp_number=event["user_whatsapp_number"],
-                            user_email=event["user_email"],
-                            tts_provider=event["tts_provider"],
-                            voice_id=event["voice_id"],
-                        ).to_dict(),
-                    }),
-                ),
-                self.loop
-
+                        "app:comms:start_up",
+                        json.dumps(
+                            {
+                                "topic": "startup",
+                                "to": "past",
+                                "event": StartupEvent(
+                                    api_key=event["api_key"],
+                                    medium=event["medium"],
+                                    assistant_id=event["assistant_id"],
+                                    user_id=event["user_id"],
+                                    assistant_name=event["assistant_name"],
+                                    assistant_age=event["assistant_age"],
+                                    assistant_region=event["assistant_region"],
+                                    assistant_about=event["assistant_about"],
+                                    assistant_number=event["assistant_number"],
+                                    assistant_email=event["assistant_email"],
+                                    user_name=event["user_name"],
+                                    user_number=event["user_number"],
+                                    user_whatsapp_number=event["user_whatsapp_number"],
+                                    user_email=event["user_email"],
+                                    tts_provider=event["tts_provider"],
+                                    voice_id=event["voice_id"],
+                                ).to_dict(),
+                            }
+                        ),
+                    ),
+                    self.loop,
                 )
             elif thread in events_map:
                 content = event["body"]
@@ -124,11 +122,10 @@ class CommsManager:
                         events_map[thread](
                             content=content,
                             contact=topic,
-                        ).to_json()
+                        ).to_json(),
                     ),
-                self.loop
-
-                 )
+                    self.loop,
+                )
                 message.ack()
             elif thread == "call":
                 try:
@@ -147,7 +144,7 @@ class CommsManager:
                                 # tts_provider=event.get("tts_provider", None),
                             ).to_json(),
                         ),
-                        self.loop
+                        self.loop,
                     )
                     # this should be handled through the comms agents i think
                     # self.call_proc = run_script(
