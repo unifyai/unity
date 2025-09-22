@@ -10,6 +10,7 @@ import aiohttp
 import requests
 from pydantic import BaseModel, PydanticUserError
 import asyncio
+import functools
 import websockets
 from .controller import Controller
 
@@ -701,14 +702,43 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 f"Warning: Could not enumerate /tmp/unify/assistant/install for persistence: {e}",
             )
 
-    async def act(self, instruction: str) -> str:
+    async def act(
+        self,
+        instruction: str,
+        wait: bool = False,
+        context: dict = None,
+    ) -> Any:
         """
         Executes a high-level browser task using the Magnitude BrowserAgent.
 
-        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the page. The agent will return successfully only if it believes the task is complete.
+        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the page.
 
         Args:
             instruction (str): A high-level, natural-language command describing the desired outcome.
+            wait (bool): If True, the function will block and wait for the action to
+                        complete in the browser before returning. If False (default),
+                        the command is added to a queue for background execution, and
+                        the function returns immediately.
+            context (dict): Internal metadata for command tracking.
+
+        ### Non-Blocking Example (`wait=False`, Default)
+        This is ideal for sequences of actions where the plan doesn't need immediate feedback.
+        ```python
+        # The plan queues up all actions and continues its own execution
+        # without waiting for the browser to finish each one.
+        await action_provider.act("Type 'testuser' into the username field", wait=False)
+        await action_provider.act("Type 'password123' into the password field", wait=False)
+        await action_provider.act("Click the 'Login' button", wait=False)
+        ```
+
+        ### Blocking Example (`wait=True`)
+        Use this when the outcome of an action is required for a subsequent decision in the plan.
+        ```python
+        # The plan pauses until the button click is complete and the new page has loaded.
+        await action_provider.act("Click the 'Proceed to Checkout' button", wait=True)
+        # Now that we've waited, we can safely observe the new page state.
+        cart_total = await action_provider.observe("What is the final total?")
+        ```
 
         Examples:
             # ✅ Good Example (Multi-Step Task)
@@ -727,8 +757,27 @@ class MagnitudeBrowserBackend(BrowserBackend):
             - instruction: "Move the mouse to coordinate 250, 400, then click."
         """
         await self._ensure_async_initialized()
-        response = await self._request("POST", "/act", {"task": instruction})
-        return response.get("status", "success")
+        context = context or {}
+        self._seq += 1
+        seq = self._seq
+        command_id = f"{context.get('function_name', 'unknown')}_{seq}"
+
+        bound_func = functools.partial(
+            self._request,
+            "POST",
+            "/act",
+            {"task": instruction},
+        )
+
+        future = asyncio.get_event_loop().create_future() if wait else None
+        self._active_commands[command_id] = (instruction, context)
+        await self._command_queue.put((seq, command_id, bound_func, [], {}, future))
+
+        if wait:
+            response = await future
+            return response.get("status", "success")
+        else:
+            return "Command queued."
 
     async def interrupt_current_action(self):
         """Sends a non-destructive request to interrupt the agent's current action loop."""
