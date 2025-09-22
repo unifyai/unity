@@ -81,3 +81,9 @@ class EmailRecieved(Event):
     subject: str
     body: str
 
+
+# assistant events
+@dataclass
+class SMSSent(Event):
+    contact: str
+    content: str

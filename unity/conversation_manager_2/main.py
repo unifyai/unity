@@ -43,6 +43,7 @@ async def main(local: bool = False, project_name: str = "Assistants"):
 
     asyncio.create_task(conversation_manager.wait_for_events())
     asyncio.create_task(comms_manager.start())
+
     print("Server is Running...")
     await stop.wait()
 

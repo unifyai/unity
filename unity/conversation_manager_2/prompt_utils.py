@@ -9,14 +9,17 @@ class NotificationBar:
     def __init__(self):
         self.notifs = []
     
-    def push_notif(self, n):
-        self.notifs.append(n)
+    def push_notif(self, n, timestamp=None):
+        if timestamp:
+            timestamp = timestamp.strftime("%A, %B %d, %Y at %I:%M %p")
+            
+        self.notifs.append({"content": n, "timestamp": timestamp})
     
     def clear(self):
         self.notifs = []
     
     def __str__(self):
-        return "\n".join([f"[Notification] {n}" for n in self.notifs])
+        return "\n".join([f"[Notification @ {n['timestamp']}] {n['content']}" for n in self.notifs])
 
 class ThreadMessage:
     def __init__(self, name, content, timestamp):
@@ -25,7 +28,7 @@ class ThreadMessage:
         self.timestamp = timestamp
 
     def __str__(self):
-        return f"""{self.name}@{self.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}: {self.content}"""
+        return f"""[{self.name} @ {self.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]: {self.content}"""
 
 class ContactThread:
     def __init__(self, thread_name, max_len=15):
