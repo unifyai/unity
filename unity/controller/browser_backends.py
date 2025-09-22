@@ -250,8 +250,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 )
                 self._log_consumer_task = asyncio.create_task(self._log_consumer())
 
+                # Start the command processor task
+                if not self._command_processor_task:
+                    self._command_processor_task = asyncio.create_task(
+                        self._process_commands(),
+                    )
+
                 self._async_initialized = True
-                logger.info("⚙️ Initialized async log streaming components")
+                logger.info("⚙️ Initialized async components")
             except Exception as e:
                 logger.warning(f"⚠️ Failed to initialize async components: {e}")
         elif websockets is None and not self._async_initialized:
@@ -327,6 +333,55 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 logger.error(f"[MagnitudeLogConsumerError] {e}")
                 await asyncio.sleep(1)  # Prevent rapid-fire error loops
 
+    async def _process_commands(self):
+        """A background worker that pulls commands, executes them in order, and handles barriers."""
+        while True:
+            try:
+                seq, command_id, func, args, kwargs, future = (
+                    await self._command_queue.get()
+                )
+
+                # Handle barrier commands
+                if command_id.startswith("barrier_"):
+                    self._processed_seq = seq
+                    # Notify any waiting barriers
+                    for barrier_seq, event in list(self._barrier_events.items()):
+                        if self._processed_seq >= barrier_seq:
+                            event.set()
+                            del self._barrier_events[barrier_seq]
+                    if future:
+                        future.set_result("ok")
+                    self._command_queue.task_done()
+                    continue
+
+                # Normal command execution
+                if command_id not in self._active_commands:
+                    self._command_queue.task_done()
+                    continue
+                try:
+                    result = await func(*args, **kwargs)
+                    if future:
+                        future.set_result(result)
+                except Exception as e:
+                    if future:
+                        future.set_exception(e)
+                finally:
+                    self._processed_seq = seq
+                    # Notify any waiting barriers after a normal command completes
+                    for barrier_seq, event in list(self._barrier_events.items()):
+                        if self._processed_seq >= barrier_seq:
+                            event.set()
+                            del self._barrier_events[barrier_seq]
+                    self._active_commands.pop(command_id, None)
+                    self._command_queue.task_done()
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Command processor crashed: {e}", exc_info=True)
+                await asyncio.sleep(1)
+
+    
     async def _request(
         self,
         method: str,
