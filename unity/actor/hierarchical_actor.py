@@ -1782,6 +1782,17 @@ class HierarchicalPlan(BaseActiveTask):
                         reason="Skipped verification for fully cached replay step.",
                     )
                 else:
+                    if isinstance(
+                        self.actor.action_provider.browser.backend,
+                        MagnitudeBrowserBackend,
+                    ):
+                        await self.actor.action_provider.browser.backend.barrier(
+                            up_to_seq=item.exit_seq,
+                        )
+                    post_state_screenshot = (
+                        await self.actor.action_provider.browser.get_screenshot()
+                    )
+
                     assessment = await self.actor._check_state_against_goal(
                         plan=self,
                         function_name=item.function_name,
@@ -1790,7 +1801,7 @@ class HierarchicalPlan(BaseActiveTask):
                         ),
                         function_source_code=item.func_source,
                         interactions=item.interactions,
-                        screenshot=item.post_state["screenshot"],
+                        screenshot=post_state_screenshot,
                         function_return_value=item.return_value_repr,
                     )
 
