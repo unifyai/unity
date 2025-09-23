@@ -4,7 +4,7 @@ import inspect
 import textwrap
 import json
 from typing import Callable, Dict, Any, Optional
-from unity.common.llm_helpers import (
+from unity.common.async_tool_loop import (
     class_api_overview,
     get_type_hints,
 )

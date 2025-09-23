@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
 
-from ..common.llm_helpers import (
+from ..common.async_tool_loop import (
     methods_to_tool_dict,
     inject_broader_context,
 )
@@ -2373,7 +2373,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Auto-checkpoint after successful edit (best-effort)
         try:
-            from ..common.llm_helpers import short_id as _short_id  # local import
+            from ..common.async_tool_loop import short_id as _short_id  # local import
 
             cid = _short_id(8)
             snap = {"label": "auto:_reorder_queue", "queues": []}
@@ -2818,7 +2818,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Auto-checkpoint (avoid extra reads by using local state)
         try:
-            from ..common.llm_helpers import short_id as _short_id  # local import
+            from ..common.async_tool_loop import short_id as _short_id  # local import
 
             cid = _short_id(8)
             snap = {"label": "auto:_set_queue", "queues": []}
@@ -3213,7 +3213,7 @@ class TaskScheduler(BaseTaskScheduler):
         details = {"default_queue": first_list, "new_queues": created}
         # Auto-checkpoint after successful edit (best-effort): capture only touched queues to avoid extra reads
         try:
-            from ..common.llm_helpers import short_id as _short_id  # local import
+            from ..common.async_tool_loop import short_id as _short_id  # local import
 
             cid = _short_id(8)
             snap = {"label": "auto:_partition_queue", "queues": []}
@@ -3845,7 +3845,7 @@ class TaskScheduler(BaseTaskScheduler):
                 },
             )
 
-        from ..common.llm_helpers import short_id as _short_id  # local import
+        from ..common.async_tool_loop import short_id as _short_id  # local import
 
         cid = _short_id(8)
         self._queue_checkpoints[cid] = snapshot

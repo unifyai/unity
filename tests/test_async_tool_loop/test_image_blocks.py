@@ -1,7 +1,7 @@
 # tests/test_image_blocks.py
 #
 # Regression tests for the image-promotion logic in
-# `unity.common.llm_helpers`.
+# `unity.common.async_tool_loop`.
 
 from __future__ import annotations
 

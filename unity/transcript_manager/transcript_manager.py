@@ -15,7 +15,7 @@ from .types.message import Message
 # New: allow Contact objects to appear in messages
 from ..contact_manager.types.contact import Contact
 from ..common.model_to_fields import model_to_fields
-from ..common.llm_helpers import (
+from ..common.async_tool_loop import (
     methods_to_tool_dict,
     make_request_clarification_tool,
     inject_broader_context,

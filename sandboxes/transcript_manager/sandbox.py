@@ -38,7 +38,7 @@ if str(ROOT) not in sys.path:
 
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.common.llm_helpers import SteerableToolHandle
+from unity.common.async_tool_loop import SteerableToolHandle
 from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
