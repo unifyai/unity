@@ -504,7 +504,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 def start_async_tool_use_loop(
     client: unify.AsyncUnify,
-    message: str,
+    message: str | dict | list[str | dict],
     tools: Dict[str, Callable],
     *,
     loop_id: Optional[str] = None,
@@ -589,6 +589,21 @@ def start_async_tool_use_loop(
         name="ToolUseLoop",
     )
 
+    # Determine initial_user_message for the handle from diverse input forms
+    init_content = None
+    if isinstance(message, dict):
+        init_content = message.get("content")
+    elif isinstance(message, list):
+        for m in message:
+            if isinstance(m, dict) and m.get("role") == "user" and m.get("content"):
+                init_content = m["content"]
+                break
+            if isinstance(m, str):
+                init_content = m
+                break
+    else:
+        init_content = message
+
     handle = AsyncToolUseLoopHandle(
         task=task,
         interject_queue=interject_queue,
@@ -597,9 +612,7 @@ def start_async_tool_use_loop(
         pause_event=pause_event,
         client=client,
         loop_id=loop_id,
-        initial_user_message=(
-            message["content"] if isinstance(message, dict) else message
-        ),
+        initial_user_message=init_content,
         persist=persist,
     )
 
