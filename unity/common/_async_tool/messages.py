@@ -308,7 +308,7 @@ async def _propagate_stop_to_nested_handles(
 ) -> None:
     try:
         for _t, _inf in list(task_info.items()):
-            h = _inf.get("handle")
+            h = _inf.handle
             if h is not None and hasattr(h, "stop"):
                 try:
                     await forward_handle_call(
