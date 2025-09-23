@@ -448,17 +448,9 @@ def build_execute_prompt(
     execute_isolated_by_id_fname = tool_name(tools, "execute_isolated_by_id")
     create_task_fname = tool_name(tools, "create_task")
     request_clar_fname = tool_name(tools, "request_clarification")
-    # Multi-queue helpers
+    # Read-only queue helpers (no mutation in execute)
     list_queues_fname = tool_name(tools, "list_queues")
     get_queue_fname = tool_name(tools, "get_queue")
-    reorder_queue_fname = tool_name(tools, "reorder_queue")
-    move_tasks_to_queue_fname = tool_name(tools, "move_tasks_to_queue")
-    partition_queue_fname = tool_name(tools, "partition_queue")
-    # Reintegration & safety
-    reinstate_task_fname = tool_name(tools, "reinstate_task_to_previous_queue")
-    checkpoint_fname = tool_name(tools, "checkpoint_queue_state")
-    revert_checkpoint_fname = tool_name(tools, "revert_to_checkpoint")
-    latest_checkpoint_fname = tool_name(tools, "get_latest_checkpoint")
 
     # Require the core tools needed for execution
     require_tools(
@@ -482,48 +474,30 @@ def build_execute_prompt(
         "Decision policy (isolation vs chain)",
         "------------------------------------",
         "• Consider the broader chat context and the user's exact phrasing to infer execution scope (single task now vs the whole sequence now).",
-        "• Isolation may require light queue maintenance: when the head is detached, the next task should inherit the queue's `start_at` and become `scheduled` (followers remain queued behind it).",
-        "• Choose queue/chain execution when the context clearly indicates running the sequence now (e.g., the user agreed to process all items in a batch).",
-        "• Do not use brittle heuristics or regex for this decision – use semantic reasoning and explicit tools.",
+        "• Choose isolation for “start X now” requests. Choose queue/chained execution only when the user clearly requests running the whole sequence now.",
+        "• Do not attempt to modify queue order or dates during execute; execute does not have queue editing tools.",
         "",
         "Tool semantics (for your decision)",
         "-----------------------------------",
         (
-            f"• `{execute_isolated_by_id_fname}(task_id=…)` – isolation semantics: detach the selected task so followers keep their schedule; when detaching the head, the next task becomes the new head and inherits `start_at`."
+            f"• `{execute_isolated_by_id_fname}(task_id=…)` – isolation: detach the selected task and start only that task."
             if execute_isolated_by_id_fname
             else ""
         ),
-        f"• `{execute_by_id_fname}(task_id=…)` – queue semantics: start at the head of the chosen queue so followers remain attached and will run afterwards.",
-        "\nCRITICAL EXECUTION WORKFLOW (plan → apply → execute):",
-        f"0) Immediately create a reversible checkpoint: `{checkpoint_fname}(label='pre-execute')`. You MUST do this at the start of the session.",
+        f"• `{execute_by_id_fname}(task_id=…)` – queue mode: start the selected task within its queue so followers remain attached.",
+        "",
+        "EXECUTION WORKFLOW (no queue mutation):",
         (
-            f"1) Inspect queues: `{list_queues_fname}()` → then `{get_queue_fname}(queue_id=<id>)` to view a specific queue (head→tail)."
+            f"1) Optionally inspect queues using `{list_queues_fname}()` and `{get_queue_fname}(queue_id=…)` to confirm context."
             if list_queues_fname and get_queue_fname
-            else "1) Inspect the queue containing the target task using the available queue tools."
+            else "1) Optionally inspect the queue containing the target task using the available queue tools."
         ),
-        f"2) PLAN the desired execution scope and timing in your thoughts (subset now vs later).",
-        f"   – To move subsets into separate queues with dates, call `{partition_queue_fname}(parts=[{{'task_ids':[...],'queue_start_at':<ISO>|None}}, ...], strategy='preserve_order')`.",
-        f"   – To target an existing queue, call `{move_tasks_to_queue_fname}(task_ids=[...], queue_id=<id>, position='front'|'back')` then `{reorder_queue_fname}(queue_id=<id>, new_order=[...])`.",
-        f"   – To reorder within a queue, call `{reorder_queue_fname}(queue_id=None, new_order=[...])`. Do NOT set `start_at` directly; it is applied to the head automatically when appropriate.",
-        f"   – After each successful edit, immediately call `{checkpoint_fname}(label='post-edit')` to allow reverting if the user changes their mind. If the user requests a revert, call `{revert_checkpoint_fname}(checkpoint_id=<latest id>)` or `{reinstate_task_fname}(task_id=<id>, allow_active=false)` depending on context.",
-        f"   – If you did not capture the last checkpoint id, call `{latest_checkpoint_fname}()` to retrieve it.",
         (
-            f"3) EXECUTE by choosing `{execute_isolated_by_id_fname}` or `{execute_by_id_fname}` based on the decision policy above. Do NOT modify `start_at` timestamps to force execution."
+            f"2) Execute by choosing `{execute_isolated_by_id_fname}` (preferred for single‑task‑now) or `{execute_by_id_fname}` (for explicit chain‑now)."
             if execute_isolated_by_id_fname
-            else f"3) EXECUTE by calling `{execute_by_id_fname}(task_id=<head of the 'now' queue>)`. Do NOT modify `start_at` timestamps to force execution."
+            else f"2) Execute by calling `{execute_by_id_fname}(task_id=<id>)`."
         ),
-        f"4) Do not write status fields directly; lifecycle is managed by the scheduler.",
-        "",
-        "Use the tools below, step-by-step, following these rules:",
-        "",
-        "GENERAL SAFETY RULE (state refresh)",
-        "-----------------------------------",
-        (
-            f"• After ANY mutating tool call (including `{execute_by_id_fname}`, `{execute_isolated_by_id_fname}`, `{reorder_queue_fname}`, `{move_tasks_to_queue_fname}`, `{partition_queue_fname}`), you MUST re-query the affected queues using `{list_queues_fname}()` and `{get_queue_fname}(queue_id=…)` before issuing further queue edits or building a new_order list."
-            if list_queues_fname and get_queue_fname
-            else "• After ANY mutating tool call, you MUST re-query the affected queues using the available queue inspection tools before issuing further edits."
-        ),
-        f"• Never assume prior queue membership or order after detaching or moving tasks. Always refresh first.",
+        "3) Do not write status fields directly; lifecycle is managed by the scheduler.",
         "",
         "CLARIFICATION POLICY (always prefer tool over prose)",
         "----------------------------------------------------",
@@ -534,13 +508,12 @@ def build_execute_prompt(
         ),
         "",
         "A. If the request contains a *numeric task_id*:",
-        "   • First inspect queues if needed using the provided queue tools.",
+        "   • Isolation is preferred when the user intent is 'start now'.",
         (
-            f"   • Execute in isolation when intent is single‑task‑now: `{execute_isolated_by_id_fname}(task_id=<id>)`."
+            f"   • Use `{execute_isolated_by_id_fname}(task_id=<id>)` for single‑task‑now, or `{execute_by_id_fname}(task_id=<id>)` when explicitly running the sequence."
             if execute_isolated_by_id_fname
-            else ""
+            else f"   • Use `{execute_by_id_fname}(task_id=<id>)`."
         ),
-        f"   • Or execute via queue chaining when intent is sequence‑now: `{execute_by_id_fname}(task_id=<id>)`.",
         "",
         "B. If the request does not include a numeric task_id:",
         f"   • Use `{ask_fname}(text=...)` to identify the correct `task_id` when referring to an existing task.",
@@ -548,7 +521,7 @@ def build_execute_prompt(
         "",
         "Reporting",
         "---------",
-        "• Execution always returns an ActiveQueue handle. Always include the executed task id(s) and a brief note about the resulting queue state in your final response.",
+        "• Execution returns an ActiveQueue handle. Include the executed task id(s) in your final response.",
     ]
 
     return "\n".join(lines)
