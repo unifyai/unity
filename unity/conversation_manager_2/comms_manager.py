@@ -99,7 +99,7 @@ class CommsManager:
                                     user_number=event["user_number"],
                                     user_whatsapp_number=event["user_whatsapp_number"],
                                     user_email=event["user_email"],
-                                    tts_provider=event["tts_provider"],
+                                    voice_provider=event["voice_provider"],
                                     voice_id=event["voice_id"],
                                 ).to_dict(),
                             }
@@ -141,7 +141,7 @@ class CommsManager:
                             PhoneCallInitiated(
                                 contact=event["caller_number"],
                                 # voice_id=event.get("voice_id", None),
-                                # tts_provider=event.get("tts_provider", None),
+                                # voice_provider=event.get("voice_provider", None),
                             ).to_json(),
                         ),
                         self.loop,

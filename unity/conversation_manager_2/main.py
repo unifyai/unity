@@ -31,7 +31,7 @@ async def main(local: bool = False, project_name: str = "Assistants"):
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_WHATSAPP_NUMBER", ""),
         os.getenv("USER_EMAIL", ""),
-        os.getenv("TTS_PROVIDER", "cartesia"),
+        os.getenv("VOICE_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
         project_name=project_name,
     )
