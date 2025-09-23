@@ -24,8 +24,15 @@ from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import ToolCallMetadata, create_tool_call_message
 from ..llm_helpers import method_to_schema, _dumps, _strip_image_keys, _collect_images
 from .loop_config import LoopConfig, TOOL_LOOP_LINEAGE
-from .tools_utils import ToolCallMessage, ToolCallMetadata, create_tool_call_message
+from .tools_utils import ToolCallMetadata, create_tool_call_message
 from .timeout_timer import TimeoutTimer
+from .messages import (
+    insert_tool_message_after_assistant,
+    ensure_placeholders_for_pending,
+    propagate_stop_once,
+    forward_handle_call,
+    schedule_missing_for_message,
+)
 
 
 class LoopLogger:
@@ -434,7 +441,7 @@ class _ToolsData:
                         call_id=call_id,
                         content="Nested async tool loop started… waiting for result.",
                     )
-                    await _insert_tool_message_after_assistant(
+                    await insert_tool_message_after_assistant(
                         assistant_meta,
                         info.assistant_msg,
                         ph,
@@ -561,7 +568,7 @@ class _ToolsData:
 
         else:
             tool_msg = create_tool_call_message(name, call_id, result)
-            await _insert_tool_message_after_assistant(
+            await insert_tool_message_after_assistant(
                 assistant_meta,
                 asst_msg,
                 tool_msg,
@@ -702,7 +709,7 @@ class DynamicToolFactory:
         ) -> Dict[str, str]:
             # Forward stop intent to the running handle with any extra kwargs
             if handle is not None and hasattr(handle, "stop"):
-                await _forward_handle_call(
+                await forward_handle_call(
                     handle,
                     "stop",
                     _kw,
@@ -739,7 +746,7 @@ class DynamicToolFactory:
             async def _interject(**_kw) -> Dict[str, str]:
                 # nested async-tool loop: delegate to its public API with full argspec
                 with suppress(Exception):
-                    await _forward_handle_call(
+                    await forward_handle_call(
                         handle,
                         "interject",
                         _kw,
@@ -809,7 +816,7 @@ class DynamicToolFactory:
 
             async def _pause(**_kw) -> Dict[str, str]:
                 with suppress(Exception):
-                    await _forward_handle_call(handle, "pause", _kw)
+                    await forward_handle_call(handle, "pause", _kw)
                 return {"status": "paused", "call_id": tool_context.call_id, **_kw}
 
             # Reflect downstream signature/annotations
@@ -848,7 +855,7 @@ class DynamicToolFactory:
 
             async def _resume(**_kw) -> Dict[str, str]:
                 with suppress(Exception):
-                    await _forward_handle_call(handle, "resume", _kw)
+                    await forward_handle_call(handle, "resume", _kw)
                 return {"status": "resumed", "call_id": tool_context.call_id, **_kw}
 
             with suppress(Exception):
@@ -915,7 +922,7 @@ class DynamicToolFactory:
                 ):
                     # Robust forwarding incl. kwargs normalisation and fallbacks
                     with suppress(Exception):
-                        await _forward_handle_call(
+                        await forward_handle_call(
                             handle,
                             _method_name,
                             _kw,
@@ -935,7 +942,7 @@ class DynamicToolFactory:
                     value (sync or async).
                     """
                     # Use shared forwarding to support flexible args and fallbacks
-                    res = await _forward_handle_call(
+                    res = await forward_handle_call(
                         handle,
                         _method_name,
                         _kw,
@@ -1069,361 +1076,6 @@ class DynamicToolFactory:
     def generate(self):
         for task in list(self.tools_data.pending):
             self._process_task(task)
-
-
-# Helper Functions
-def _normalise_kwargs_for_bound_method(bound_method, incoming_kw: dict) -> dict:
-    """Normalise kwargs for a bound method: expand nested kwargs, drop noise keys,
-    map common aliases when there is a single public param, and filter unknown keys
-    unless **kwargs is accepted."""
-    try:
-        import inspect as _inspect
-
-        sig = _inspect.signature(bound_method)
-        params = sig.parameters
-        has_varkw = any(
-            p.kind == _inspect.Parameter.VAR_KEYWORD for p in params.values()
-        )
-
-        kw = dict(incoming_kw or {})
-
-        # 1) Expand nested {"kwargs": {...}}
-        if "kwargs" in kw and isinstance(kw["kwargs"], dict):
-            nested_kw = kw.pop("kwargs")
-            for k, v in nested_kw.items():
-                kw.setdefault(k, v)
-
-        # 2) Drop common placeholder noise keys when empty
-        for _noise in ("a", "kw"):
-            if _noise in kw and (kw[_noise] is None or kw[_noise] == ""):
-                kw.pop(_noise, None)
-
-        # 3) If exactly one public param, accept common aliases
-        public_params = [n for n in params if n != "self"]
-        if len(public_params) == 1 and public_params[0] not in kw:
-            for alias in (
-                "content",
-                "message",
-                "text",
-                "prompt",
-                "guidance",
-                "instruction",
-                "question",
-                "query",
-            ):
-                if alias in kw:
-                    kw[public_params[0]] = kw.pop(alias)
-                    break
-
-        # 4) Filter unknown keys unless **kwargs is accepted
-        if not has_varkw:
-            kw = {k: v for k, v in kw.items() if k in params}
-        return kw
-    except Exception:
-        # Best-effort; return original
-        return dict(incoming_kw or {})
-
-
-async def _forward_handle_call(
-    handle: Any,
-    method_name: str,
-    kwargs: dict | None,
-    *,
-    fallback_positional_keys: list[str] | tuple[str, ...] = (),
-):
-    """Invoke a steering method on a handle with robust kwargs handling.
-
-    - Filters/normalises kwargs against the bound method's signature.
-    - If the method rejects kwargs, tries positional fallback with the first
-      available key from fallback_positional_keys (e.g., reason/content).
-    - Finally falls back to calling without arguments.
-    """
-    try:
-        bound = getattr(handle, method_name)
-    except Exception:
-        return None
-
-    try:
-        normalised = _normalise_kwargs_for_bound_method(bound, kwargs or {})
-        return await maybe_await(bound(**normalised))
-    except TypeError:
-        # Fallbacks for legacy signatures
-        for k in fallback_positional_keys:
-            if kwargs and k in kwargs:
-                try:
-                    return await maybe_await(bound(kwargs.get(k)))  # type: ignore[misc]
-                except Exception:
-                    pass
-        try:
-            return await maybe_await(bound())  # type: ignore[misc]
-        except Exception:
-            return None
-    except Exception:
-        # Defensive: never let steering failures crash the loop
-        return None
-
-
-# ASYNC TOOL USE INNER HELPERS ────────────────────────────────────────────────
-
-
-# Helper: detect helper-tool names (continue_/stop_/pause_/resume_/clarify_/interject_)
-def _is_helper_tool(name: str) -> bool:
-    return (
-        name.startswith("continue_")
-        or name.startswith("stop_")
-        or name.startswith("pause_")
-        or name.startswith("resume_")
-        or name.startswith("clarify_")
-        or name.startswith("interject_")
-    )
-
-
-# Helper: build human-readable acknowledgement content for helper tools
-def _build_helper_ack_content(name: str, args_json: Any) -> str:
-    ack_content = "Acknowledged."
-    try:
-        payload = (
-            json.loads(args_json or "{}")
-            if isinstance(args_json, str)
-            else (args_json or {})
-        )
-    except Exception:
-        payload = {}
-
-    if name.startswith("continue_"):
-        ack_content = "Continue request acknowledged. Still waiting for the original tool call to finish."
-    elif name.startswith("stop_"):
-        ack_content = "Stop request acknowledged. If the underlying call is still running, it will be stopped."
-    elif name.startswith("pause_"):
-        ack_content = "Pause request acknowledged. If the underlying call is still running, it will be paused."
-    elif name.startswith("resume_"):
-        ack_content = "Resume request acknowledged. If the underlying call was paused, it will be resumed."
-    elif name.startswith("clarify_"):
-        ans = payload.get("answer")
-        ack_content = (
-            f"Clarification answer received: {ans!r}. Waiting for the original tool to proceed."
-            if ans is not None
-            else "Clarification helper acknowledged. Waiting for the original tool to proceed."
-        )
-    elif name.startswith("interject_"):
-        guidance = payload.get("content")
-        ack_content = (
-            f"Guidance forwarded to the running tool: {guidance!r}."
-            if guidance
-            else "Interjection acknowledged and forwarded to the running tool."
-        )
-    else:
-        # Default acknowledgement for custom write-only helpers
-        ack_content = (
-            f"Operation {name!r} acknowledged and forwarded to the running tool."
-        )
-    return ack_content
-
-
-# ── small helper: keep assistant→tool chronology DRY ────────────────────
-async def _insert_tool_message_after_assistant(
-    assistant_meta: dict,
-    parent_msg: dict,
-    tool_msg: ToolCallMessage,
-    client,
-    msg_dispatcher: LoopMessageDispatcher,
-) -> None:
-    """
-    Append *tool_msg* and move it directly after *parent_msg*, while
-    updating the per-assistant `results_count` bookkeeping.
-    """
-    meta = assistant_meta.setdefault(
-        id(parent_msg),
-        {"results_count": 0},
-    )
-    await msg_dispatcher.append_msgs([tool_msg])
-    insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
-    client.messages.insert(insert_pos, client.messages.pop())
-    meta["results_count"] += 1
-
-
-# Helper: propagate a stop request to any nested SteerableToolHandle returned
-# by base tools. This ensures outer stop/cancel signals reach inner loops.
-async def _propagate_stop_to_nested_handles(
-    task_info,
-    reason: Optional[str] = None,
-) -> None:
-    try:
-        for _t, _inf in list(task_info.items()):
-            h = _inf.get("handle")
-            if h is not None and hasattr(h, "stop"):
-                try:
-                    await _forward_handle_call(
-                        h,
-                        "stop",
-                        {"reason": reason} if reason is not None else {},
-                        fallback_positional_keys=["reason"],
-                    )
-                except Exception:
-                    # Best effort – never let propagation failure crash the loop
-                    pass
-    except Exception:
-        pass
-
-
-async def _propagate_stop_once(
-    task_info,
-    stop_forward_once,
-    reason: Optional[str],
-) -> bool:
-    if stop_forward_once:
-        return stop_forward_once
-    await _propagate_stop_to_nested_handles(task_info, reason)
-    return True
-
-
-# Helper: insert a tool-acknowledgement message for helper tools
-async def _acknowledge_helper_call(
-    asst_msg: dict,
-    call_id: str,
-    name: str,
-    args_json: Any,
-    *,
-    assistant_meta,
-    client,
-    msg_dispatcher,
-) -> None:
-    tool_msg = create_tool_call_message(
-        name=name,
-        call_id=call_id,
-        content=_build_helper_ack_content(name, args_json),
-    )
-    await _insert_tool_message_after_assistant(
-        assistant_meta,
-        asst_msg,
-        tool_msg,
-        client,
-        msg_dispatcher,
-    )
-
-
-# Ensure placeholder tool messages exist for pending tasks. If assistant_msg
-# is provided, only affects tasks spawned by that assistant turn; otherwise
-# applies to all pending tasks. Returns the list of call_ids for which a
-# placeholder was created.
-async def _ensure_placeholders_for_pending(
-    assistant_msg: Optional[dict] = None,
-    *,
-    content: Optional[str] = None,
-    tools_data: _ToolsData,
-    assistant_meta,
-    client,
-    msg_dispatcher,
-) -> list[str]:
-    created: list[str] = []
-    placeholder_content = (
-        content
-        if content is not None
-        else "Pending… tool call accepted. Working on it."
-    )
-    for task in list(tools_data.pending):
-        _inf = tools_data.info.get(task)
-        if not _inf:
-            continue
-        if assistant_msg is not None and _inf.assistant_msg is not assistant_msg:
-            continue
-        if _inf.tool_reply_msg or _inf.continue_msg or _inf.clarify_placeholder:
-            continue
-
-        placeholder = create_tool_call_message(
-            name=_inf.name,
-            call_id=_inf.call_id,
-            content=placeholder_content,
-        )
-        await _insert_tool_message_after_assistant(
-            assistant_meta,
-            _inf.assistant_msg,
-            placeholder,
-            client,
-            msg_dispatcher,
-        )
-        _inf.tool_reply_msg = placeholder
-        created.append(_inf.call_id)
-
-    return created
-
-
-# Helper: schedule a subset of tool_calls on a past assistant message and
-# insert placeholders immediately. Skips already-scheduled/finished ids.
-async def _schedule_missing_for_message(
-    asst_msg: dict,
-    only_ids: set[str],
-    *,
-    tools_data: _ToolsData,
-    parent_chat_context,
-    propagate_chat_context,
-    assistant_meta,
-    client,
-    msg_dispatcher,
-) -> list[str]:
-    scheduled: list[str] = []
-    try:
-        tool_calls = asst_msg.get("tool_calls") or []
-        for idx, call in enumerate(tool_calls):
-            cid = call.get("id")
-            if cid not in only_ids:
-                continue
-
-            # Skip if already pending or completed
-            if any(task_info.call_id == cid for task_info in tools_data.info.values()):
-                continue
-            if cid in tools_data.completed_results:
-                continue
-
-            name = call["function"]["name"]
-            args_json = call["function"].get("arguments", "{}")
-
-            # Handle dynamic helpers similarly to main path
-            if _is_helper_tool(name):
-                # Do not execute helpers during backfill, only acknowledge
-                try:
-                    await _acknowledge_helper_call(
-                        asst_msg,
-                        cid,
-                        name,
-                        args_json,
-                        assistant_meta=assistant_meta,
-                        client=client,
-                        msg_dispatcher=msg_dispatcher,
-                    )
-                except Exception:
-                    pass
-                scheduled.append(cid)
-                continue
-
-            # Base tool: locate function
-            if name not in tools_data.normalized:
-                scheduled.append(cid)
-                continue
-
-            await tools_data.schedule_base_tool_call(
-                asst_msg,
-                name=name,
-                args_json=args_json,
-                call_id=cid,
-                call_idx=idx,
-                parent_chat_context=parent_chat_context,
-                propagate_chat_context=propagate_chat_context,
-                assistant_meta=assistant_meta,
-            )
-            scheduled.append(cid)
-    except Exception:
-        pass
-    # Ensure placeholders are present for backfilled items
-    with suppress(Exception):
-        await _ensure_placeholders_for_pending(
-            assistant_msg=asst_msg,
-            tools_data=tools_data,
-            assistant_meta=assistant_meta,
-            client=client,
-            msg_dispatcher=msg_dispatcher,
-        )
-    return scheduled
 
 
 def _check_valid_response_format(response_format: Any):
@@ -1673,7 +1325,7 @@ async def async_tool_use_loop_inner(
                 # Before scheduling, drop any over-quota tool calls in this message
                 tools_data.prune_over_quota_tool_calls(amsg)
                 missing_ids = set(entry["missing"])
-                await _schedule_missing_for_message(
+                await schedule_missing_for_message(
                     amsg,
                     missing_ids,
                     tools_data=tools_data,
@@ -1781,7 +1433,7 @@ async def async_tool_use_loop_inner(
                     if cancel_event.is_set():
                         # Forward stop to any nested handles before aborting
                         with suppress(Exception):
-                            _stop_forwarded_once = await _propagate_stop_once(
+                            _stop_forwarded_once = await propagate_stop_once(
                                 tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop cancelled",
@@ -1789,7 +1441,7 @@ async def async_tool_use_loop_inner(
                         raise asyncio.CancelledError
                     if stop_event.is_set() and persist:
                         with suppress(Exception):
-                            _stop_forwarded_once = await _propagate_stop_once(
+                            _stop_forwarded_once = await propagate_stop_once(
                                 tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop stopped",
@@ -1824,7 +1476,7 @@ async def async_tool_use_loop_inner(
                     # cancelled?
                     if cancel_event.is_set():
                         with suppress(Exception):
-                            _stop_forwarded_once = await _propagate_stop_once(
+                            _stop_forwarded_once = await propagate_stop_once(
                                 tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop cancelled",
@@ -1832,7 +1484,7 @@ async def async_tool_use_loop_inner(
                         raise asyncio.CancelledError
                     if stop_event.is_set() and persist:
                         with suppress(Exception):
-                            _stop_forwarded_once = await _propagate_stop_once(
+                            _stop_forwarded_once = await propagate_stop_once(
                                 tools_data.info,
                                 _stop_forwarded_once,
                                 "outer-loop stopped",
@@ -1862,7 +1514,7 @@ async def async_tool_use_loop_inner(
                     missing_ids = set(last_problem["missing"])
                     # Skip if we already scheduled for this assistant turn
                     if id(amsg) not in assistant_meta:
-                        backfilled = await _schedule_missing_for_message(
+                        backfilled = await schedule_missing_for_message(
                             amsg,
                             missing_ids,
                             tools_data=tools_data,
@@ -2019,7 +1671,7 @@ async def async_tool_use_loop_inner(
 
                 if cancel_waiter in done:
                     with suppress(Exception):
-                        _stop_forwarded_once = await _propagate_stop_once(
+                        _stop_forwarded_once = await propagate_stop_once(
                             tools_data.info,
                             _stop_forwarded_once,
                             "outer-loop cancelled",
@@ -2027,7 +1679,7 @@ async def async_tool_use_loop_inner(
                     raise asyncio.CancelledError  # cancellation wins
                 if graceful_stop_waiter in done and persist:
                     with suppress(Exception):
-                        _stop_forwarded_once = await _propagate_stop_once(
+                        _stop_forwarded_once = await propagate_stop_once(
                             tools_data.info,
                             _stop_forwarded_once,
                             "outer-loop stopped",
@@ -2053,7 +1705,7 @@ async def async_tool_use_loop_inner(
                                 call_id=call_id,
                                 content="",  # will fill below
                             )
-                            await _insert_tool_message_after_assistant(
+                            await insert_tool_message_after_assistant(
                                 assistant_meta,
                                 tools_data.info[src_task].assistant_msg,
                                 ph,
@@ -2095,7 +1747,7 @@ async def async_tool_use_loop_inner(
             # unless the model already deserves a turn
             if tools_data.pending and not llm_turn_required:
                 # Ensure placeholders exist for any pending calls before the next assistant turn
-                await _ensure_placeholders_for_pending(
+                await ensure_placeholders_for_pending(
                     content=(
                         "Still running… you can use any of the available helper tools "
                         "to interact with this tool call while it is in progress."
@@ -2185,7 +1837,7 @@ async def async_tool_use_loop_inner(
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
-            await _ensure_placeholders_for_pending(
+            await ensure_placeholders_for_pending(
                 content=(
                     "Still running… you can use any of the available helper tools "
                     "to interact with this tool call while it is in progress."
@@ -2402,7 +2054,7 @@ async def async_tool_use_loop_inner(
                                 content=_dumps(payload, indent=4),
                             )
 
-                            await _insert_tool_message_after_assistant(
+                            await insert_tool_message_after_assistant(
                                 assistant_meta,
                                 msg,
                                 tool_msg,
@@ -2420,7 +2072,7 @@ async def async_tool_use_loop_inner(
                                     + str(_exc)
                                 ),
                             )
-                            await _insert_tool_message_after_assistant(
+                            await insert_tool_message_after_assistant(
                                 assistant_meta,
                                 msg,
                                 tool_msg,
@@ -2470,7 +2122,7 @@ async def async_tool_use_loop_inner(
                                     f" • {name}({arg_json}) → cancel_{call['id']} / continue_{call['id']}"
                                 ),
                             )
-                            await _insert_tool_message_after_assistant(
+                            await insert_tool_message_after_assistant(
                                 assistant_meta,
                                 msg,
                                 tool_reply_msg,
@@ -2500,7 +2152,7 @@ async def async_tool_use_loop_inner(
                                 call_id=call["id"],
                                 content=finished,
                             )
-                            await _insert_tool_message_after_assistant(
+                            await insert_tool_message_after_assistant(
                                 assistant_meta,
                                 msg,
                                 tool_msg,
@@ -2550,7 +2202,7 @@ async def async_tool_use_loop_inner(
                             nested_handle = tools_data.info[task_to_cancel].handle
                             if nested_handle is not None:
                                 # public API call – propagates cancellation downwards
-                                await _forward_handle_call(
+                                await forward_handle_call(
                                     nested_handle,
                                     "stop",
                                     payload,
@@ -2568,7 +2220,7 @@ async def async_tool_use_loop_inner(
                             call_id=call["id"],
                             content=f"The tool call [{call_id_suffix}] has been stopped successfully.",
                         )
-                        await _insert_tool_message_after_assistant(
+                        await insert_tool_message_after_assistant(
                             assistant_meta,
                             msg,
                             tool_msg,
@@ -2611,7 +2263,7 @@ async def async_tool_use_loop_inner(
                             h = tools_data.info[tgt_task].handle
                             ev = tools_data.info[tgt_task].pause_event
                             if h is not None and hasattr(h, "pause"):
-                                await _forward_handle_call(h, "pause", payload)
+                                await forward_handle_call(h, "pause", payload)
                             elif ev is not None:
                                 ev.clear()
 
@@ -2620,7 +2272,7 @@ async def async_tool_use_loop_inner(
                             call_id=call["id"],
                             content=f"The tool call [{call_id_suffix}] has been paused successfully.",
                         )
-                        await _insert_tool_message_after_assistant(
+                        await insert_tool_message_after_assistant(
                             assistant_meta,
                             msg,
                             tool_msg,
@@ -2662,7 +2314,7 @@ async def async_tool_use_loop_inner(
                             h = tools_data.info[tgt_task].handle
                             ev = tools_data.info[tgt_task].pause_event
                             if h is not None and hasattr(h, "resume"):
-                                await _forward_handle_call(h, "resume", payload)
+                                await forward_handle_call(h, "resume", payload)
                             elif ev is not None:
                                 ev.set()
 
@@ -2671,7 +2323,7 @@ async def async_tool_use_loop_inner(
                             call_id=call["id"],
                             content=f"The tool call [{call_id_suffix}] has been resumed successfully.",
                         )
-                        await _insert_tool_message_after_assistant(
+                        await insert_tool_message_after_assistant(
                             assistant_meta,
                             msg,
                             tool_msg,
@@ -2723,7 +2375,7 @@ async def async_tool_use_loop_inner(
                                 "⏳ Waiting for the original tool to finish…"
                             ),
                         )
-                        await _insert_tool_message_after_assistant(
+                        await insert_tool_message_after_assistant(
                             assistant_meta,
                             msg,
                             tool_reply_msg,
@@ -2774,7 +2426,7 @@ async def async_tool_use_loop_inner(
                             if iq is not None:
                                 await iq.put(new_text)
                             elif h is not None and hasattr(h, "interject"):
-                                await _forward_handle_call(
+                                await forward_handle_call(
                                     h,
                                     "interject",
                                     payload,
@@ -2787,7 +2439,7 @@ async def async_tool_use_loop_inner(
                             call_id=call["id"],
                             content=f'Guidance "{new_text}" forwarded to the running tool.',
                         )
-                        await _insert_tool_message_after_assistant(
+                        await insert_tool_message_after_assistant(
                             assistant_meta,
                             msg,
                             tool_msg,
@@ -2815,7 +2467,7 @@ async def async_tool_use_loop_inner(
                                 "finish or stop one before retrying."
                             ),
                         )
-                        await _insert_tool_message_after_assistant(
+                        await insert_tool_message_after_assistant(
                             assistant_meta,
                             msg,
                             tool_msg,
@@ -2877,7 +2529,7 @@ async def async_tool_use_loop_inner(
                                         call["function"]["arguments"],
                                     ),
                                 )
-                                await _insert_tool_message_after_assistant(
+                                await insert_tool_message_after_assistant(
                                     assistant_meta,
                                     msg,
                                     tool_msg,
@@ -2932,7 +2584,7 @@ async def async_tool_use_loop_inner(
                 # Immediately insert placeholder tool replies for every newly scheduled call
                 #  to satisfy API ordering even if a user interjection arrives instantly.
                 try:
-                    await _ensure_placeholders_for_pending(
+                    await ensure_placeholders_for_pending(
                         assistant_msg=msg,
                         content="Pending… tool call accepted. Working on it.",
                         tools_data=tools_data,
@@ -3040,7 +2692,7 @@ async def async_tool_use_loop_inner(
         # we re-raise the same `CancelledError`, preserving expected asyncio
         # semantics for upstream callers.
         with suppress(Exception):
-            _stop_forwarded_once = await _propagate_stop_once(
+            _stop_forwarded_once = await propagate_stop_once(
                 tools_data.info,
                 _stop_forwarded_once,
                 "outer-loop cancelled",
