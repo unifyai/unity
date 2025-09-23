@@ -28,6 +28,7 @@ from .messages import (
     propagate_stop_once,
     forward_handle_call,
     schedule_missing_for_message,
+    build_helper_ack_content,
 )
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
@@ -1525,7 +1526,7 @@ async def async_tool_use_loop_inner(
                                 tool_msg = create_tool_call_message(
                                     name=name,
                                     call_id=call["id"],
-                                    content=_build_helper_ack_content(
+                                    content=build_helper_ack_content(
                                         name,
                                         call["function"]["arguments"],
                                     ),
