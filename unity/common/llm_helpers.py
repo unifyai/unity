@@ -175,33 +175,6 @@ def class_api_overview(cls: type) -> str:
     return "\n".join(blocks)
 
 
-def _discover_custom_public_methods(handle) -> dict[str, Callable]:
-    """
-    Return a mapping ``name → bound_method`` of *public* callables on *handle*:
-        • name does **not** start with ``_``  _and_
-        • name is not one of the management helpers above.
-    """
-    import inspect
-
-    methods: dict[str, Callable] = {}
-    for name, attr in inspect.getmembers(handle):
-        if (
-            name.startswith("_")
-            or name in _MANAGEMENT_METHOD_NAMES
-            or not callable(attr)
-        ):
-            continue
-        # Bind the method to *handle* (important for late-added attributes).
-        try:
-            bound = handle.__getattribute__(name)
-        except Exception:
-            # Attribute access raised – treat as non-callable.
-            continue
-
-        methods[name] = bound
-    return methods
-
-
 def _dumps(
     obj: Any,
     idx: List[Union[str, int]] = None,
@@ -1628,6 +1601,30 @@ class DynamicToolFactory:
         self.dynamic_tools = {}
         self.tools_data = tools_data
 
+    def _discover_custom_public_methods(self, handle) -> dict[str, Callable]:
+        """
+        Return a mapping ``name → bound_method`` of *public* callables on *handle*:
+            • name does **not** start with ``_``  _and_
+            • name is not one of the management helpers above.
+        """
+        methods: dict[str, Callable] = {}
+        for name, attr in inspect.getmembers(handle):
+            if (
+                name.startswith("_")
+                or name in _MANAGEMENT_METHOD_NAMES
+                or not callable(attr)
+            ):
+                continue
+            # Bind the method to *handle* (important for late-added attributes).
+            try:
+                bound = handle.__getattribute__(name)
+            except Exception:
+                # Attribute access raised – treat as non-callable.
+                continue
+
+            methods[name] = bound
+        return methods
+
     # helper: register a freshly-minted coroutine as a *temporary* tool
     def _register_tool(
         self,
@@ -1842,7 +1839,7 @@ class DynamicToolFactory:
         )
 
     def _expose_public_methods(self, tool_context: _ToolContext, handle: Any):
-        public_methods = _discover_custom_public_methods(handle)
+        public_methods = self._discover_custom_public_methods(handle)
 
         # ── honour handle.valid_tools, if present ──────────────
         if hasattr(handle, "valid_tools"):
