@@ -4,7 +4,7 @@ import json
 import pytest
 import unify
 
-from unity.common.llm_helpers import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_use_loop
 
 
 class _StubUnify:

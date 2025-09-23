@@ -18,7 +18,7 @@ from typing import Any, List
 
 import pytest
 import unify
-from unity.common.llm_helpers import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_use_loop
 from tests.helpers import _handle_project, SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
