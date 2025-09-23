@@ -1,4 +1,5 @@
 from contextvars import ContextVar
+from secrets import token_hex
 from ..llm_helpers import short_id
 
 # Hierarchical lineage of nested async tool loops (propagates via contextvars)
@@ -11,9 +12,11 @@ class LoopConfig:
         self._lineage = (
             list(lineage) if lineage is not None else [*parent_lineage, self._loop_id]
         )
-        self._label = (
-            "->".join(self._lineage) if self._lineage else (self._loop_id or "")
-        )
+        # Human-friendly label composed from lineage, with a short per-loop suffix
+        # e.g. "TaskScheduler.execute->TaskScheduler.ask(x2ab)"
+        _base = "->".join(self._lineage) if self._lineage else (self._loop_id or "")
+        _suffix = token_hex(2)  # 4 hex chars
+        self._label = f"{_base}({_suffix})"
 
     @property
     def loop_id(self):
