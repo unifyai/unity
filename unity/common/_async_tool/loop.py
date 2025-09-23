@@ -94,7 +94,7 @@ def _check_valid_response_format(response_format: Any):
 
 async def async_tool_use_loop_inner(
     client: unify.AsyncUnify,
-    message: str,
+    message: str | dict | list[str | dict],
     tools: Dict[str, Union[Callable, ToolSpec]],
     *,
     loop_id: Optional[str] = None,
@@ -156,9 +156,10 @@ async def async_tool_use_loop_inner(
         ``generate``.  All tokens sent to / received from the LLM flow
         through this object.
 
-    message : ``str``
+    message : ``str | dict | list[str | dict]``
         The very first user prompt that kicks-off the whole interactive
-        session.
+        session, or a batch of already-structured messages to seed the
+        conversation before backfilling unresolved tool calls.
 
     tools : ``dict[str, Callable]``
         A mapping ``name → function`` describing every callable the LLM may
@@ -292,6 +293,15 @@ async def async_tool_use_loop_inner(
         }
         await _msg_dispatcher.append_msgs([sys_msg])
 
+    # ── 0-a+. Optional: append an initial batch of messages (list support) ──
+    seeded_batch = None
+    if isinstance(message, list):
+        seeded_batch = [
+            (m if isinstance(m, dict) else {"role": "user", "content": m})
+            for m in message
+        ]
+        await _msg_dispatcher.append_msgs(seeded_batch)
+
     # ── initial prompt ───────────────────────────────────────────────────────
     # ── 0-b. Coerce tools → ToolSpec & helper lambdas ───────────────────────
     #
@@ -338,13 +348,13 @@ async def async_tool_use_loop_inner(
                     msg_dispatcher=_msg_dispatcher,
                 )
 
-    # ── initial **user** message
-    if isinstance(message, dict):
-        initial_user_msg = message
-    else:
-        initial_user_msg = {"role": "user", "content": message}
-
-    await _msg_dispatcher.append_msgs([initial_user_msg])
+    # ── initial **user** message (single-message path)
+    if seeded_batch is None:
+        if isinstance(message, dict):
+            initial_user_msg = message
+        else:
+            initial_user_msg = {"role": "user", "content": message}
+        await _msg_dispatcher.append_msgs([initial_user_msg])
 
     # ── helper: graceful early-exit when limits are hit ────────────────────
     async def _handle_limit_reached(reason: str) -> str:
