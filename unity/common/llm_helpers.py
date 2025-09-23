@@ -8,13 +8,10 @@ import secrets
 import string
 import traceback
 import dataclasses
-from dataclasses import dataclass, field
 from enum import Enum
 from pydantic import BaseModel
 import time
 from typing import (
-    TypedDict,
-    Literal,
     Tuple,
     List,
     Dict,
@@ -35,6 +32,12 @@ from dataclasses import dataclass
 from ..events.event_bus import Event, EVENT_BUS
 from contextvars import ContextVar
 from contextlib import suppress
+from .async_tool.tools_utils import (
+    ToolCallMetadata,
+    ToolCallMessage,
+    create_tool_call_message,
+)
+from .async_tool.loop import TimeoutTimer
 
 
 def short_id(length=4):
@@ -894,7 +897,7 @@ class _AsyncToolLoopMessageDispatcher:
         self,
         client: unify.AsyncUnify,
         cfg: _AsyncToolLoopConfig,
-        timer: _TimeoutTimer,
+        timer: TimeoutTimer,
     ):
         self._client = client
         self._cfg = cfg
@@ -1210,63 +1213,6 @@ class _AsyncToolLoopLogger:
     def error(self, msg, prefix=""):
         txt = f"{prefix} [{self._label}] {msg}"
         LOGGER.error(txt)
-
-
-class _TimeoutTimer:
-    def __init__(
-        self,
-        timeout: Optional[int],
-        max_steps: Optional[int],
-        raise_on_limit: bool,
-        client,
-    ):
-        self._timeout = timeout
-        self._client = client
-        self._max_steps = max_steps
-        self._raise_on_limit = raise_on_limit
-        self.reset()
-
-    def remaining_time(self) -> Optional[float]:
-        if self._timeout is None:
-            return None
-
-        return self._timeout - (time.perf_counter() - self.last_activity_ts)
-
-    def reset(self):
-        """Refresh the rolling timeout."""
-        self.last_activity_ts = time.perf_counter()
-        self.last_msg_count = (
-            0 if not self._client.messages else len(self._client.messages)
-        )
-
-    def has_exceeded_time(self) -> bool:
-        """
-        Return whether we exceeded the timeout threshold, raises Exception if raise_on_limit is set
-        """
-        if self._timeout is None:
-            return False
-
-        ret = time.perf_counter() - self.last_activity_ts > self._timeout
-        if self._raise_on_limit and ret:
-            raise asyncio.TimeoutError(
-                f"Loop exceeded {self._timeout}s wall-clock limit",
-            )
-        return ret
-
-    def has_exceeded_msgs(self) -> bool:
-        """
-        Return whether we exceeded the messages threshold, raises Exception if raise_on_limit is set
-        """
-        if self._max_steps is None:
-            return False
-
-        ret = len(self._client.messages) >= self._max_steps
-        if self._raise_on_limit and ret:
-            raise RuntimeError(
-                f"Conversation exceeded max_steps={self._max_steps} "
-                f"(len(client.messages)={len(self._client.messages)})",
-            )
-        return ret
 
 
 class _ToolsData:
@@ -1766,46 +1712,6 @@ class _AsyncToolLoopToolFailureTracker:
 
     def reset_failures(self):
         self._consecutive_failures = 0
-
-
-@dataclass
-class ToolCallMetadata:
-    name: str
-    call_id: str
-    call_dict: dict
-    call_idx: int
-    chat_context: str
-    assistant_msg: dict
-    is_interjectable: bool
-    tool_schema: dict
-    llm_arguments: dict
-    raw_arguments_json: str
-    waiting_for_clarification: bool = False
-    tool_reply_msg: dict | None = None
-    continue_msg: dict | None = None
-    clarify_placeholder: dict | None = None
-    handle: Any | None = None
-    interject_queue: asyncio.Queue[str] | None = None
-    clar_up_queue: asyncio.Queue[str] | None = None
-    clar_down_queue: asyncio.Queue[str] | None = None
-    pause_event: asyncio.Event | None = None
-    scheduled_time: float = field(default_factory=time.perf_counter)
-
-
-class ToolCallMessage(TypedDict):
-    role: Literal["tool"]
-    tool_call_id: str
-    name: str
-    content: str
-
-
-def create_tool_call_message(name: str, call_id: str, content: str) -> ToolCallMessage:
-    return {
-        "role": "tool",
-        "tool_call_id": call_id,
-        "name": name,
-        "content": content,
-    }
 
 
 class DynamicToolFactory:
@@ -2393,7 +2299,7 @@ async def _async_tool_use_loop_inner(
 
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
-    timer: _TimeoutTimer = _TimeoutTimer(
+    timer: TimeoutTimer = TimeoutTimer(
         timeout=timeout,
         max_steps=max_steps,
         raise_on_limit=raise_on_limit,
