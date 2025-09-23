@@ -11,7 +11,7 @@ import uuid
 import inspect
 import base64
 
-from unity.common.llm_helpers import (
+from unity.common.async_tool_loop import (
     _strip_image_keys,
 )
 from unity.common.async_tool_loop import (

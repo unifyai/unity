@@ -1,5 +1,5 @@
 from contextvars import ContextVar
-from ..llm_helpers import short_id
+from ..async_tool_loop import short_id
 
 # Hierarchical lineage of nested async tool loops (propagates via contextvars)
 TOOL_LOOP_LINEAGE: ContextVar[list[str]] = ContextVar("TOOL_LOOP_LINEAGE", default=[])

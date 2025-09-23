@@ -8,7 +8,7 @@ import json
 import copy
 import uuid
 
-from unity.common.llm_helpers import (
+from unity.common.async_tool_loop import (
     _strip_image_keys,
 )
 from unity.common.async_tool_loop import (

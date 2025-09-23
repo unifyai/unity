@@ -21,7 +21,7 @@ from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
-from ..common.llm_helpers import methods_to_tool_dict
+from ..common.async_tool_loop import methods_to_tool_dict
 from ..common.async_tool_loop import start_async_tool_use_loop
 from . import prompt_builders as pb
 from .base import BaseMemoryManager

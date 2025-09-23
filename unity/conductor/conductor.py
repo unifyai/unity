@@ -12,7 +12,7 @@ import unify
 
 from typing import Callable, Dict, Optional
 
-from ..common.llm_helpers import (
+from ..common.async_tool_loop import (
     methods_to_tool_dict,
     ToolSpec,
 )

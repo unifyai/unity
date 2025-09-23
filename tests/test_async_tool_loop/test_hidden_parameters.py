@@ -5,7 +5,7 @@ import asyncio
 import pytest
 import unify
 
-import unity.common.llm_helpers as llmh
+import unity.common.async_tool_loop as llmh
 
 
 # --------------------------------------------------------------------------- #

@@ -14,7 +14,7 @@ from ..common.context_store import TableStore
 import unify
 from .types.contact import Contact
 from .base import BaseContactManager
-from ..common.llm_helpers import (
+from ..common.async_tool_loop import (
     methods_to_tool_dict,
     inject_broader_context,
     make_request_clarification_tool,
