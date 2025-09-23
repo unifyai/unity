@@ -159,7 +159,11 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
             return ("defer", message)
         return ("continue", message)
 
-    monkeypatch.setattr(ts, "_classify_steering_intent", force_defer, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.classify_steering_intent",
+        force_defer,
+        raising=True,
+    )
 
     # Explicit trigger when B becomes active (no timing)
     b_active_evt: asyncio.Event = asyncio.Event()
