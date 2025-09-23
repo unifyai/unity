@@ -20,10 +20,10 @@ async def test_ask_tool_selection_real_loop(monkeypatch):
     def forced_prompt_builder(*, tools: Dict[str, Any]) -> str:
         return (
             "You are an automated test assistant.\n"
-            "1) Call `search` with query='Tasty Cola Ltd.' exactly once.\n"
-            "2) Then call `extract` with urls='https://tasty.example.com' exactly once.\n"
-            "3) Then call `crawl` with start_url='https://tasty.example.com/docs' exactly once.\n"
-            "4) Then call `map` with query='beverage products' exactly once.\n"
+            "1) Call `search` with query='weather information' exactly once.\n"
+            "2) Then call `extract` with urls='https://finance.example.com/news' exactly once.\n"
+            "3) Then call `crawl` with start_url='https://finance.example.com/news' exactly once.\n"
+            "4) Then call `map` with url='https://finance.example.com/news' exactly once.\n"
             "After completing step 4, respond with the single token 'ws_tools_ok'.\n"
             "Do not call any extra tools."
         )
@@ -36,7 +36,7 @@ async def test_ask_tool_selection_real_loop(monkeypatch):
     )
 
     # Create the WebSearch instance (Tavily client won't be used because we override tools).
-    ws = WebSearch(api_key="dummy")
+    ws = WebSearch()
 
     # Track calls for each tool.
     calls = {"search": 0, "extract": 0, "crawl": 0, "map": 0}
@@ -74,7 +74,7 @@ async def test_ask_tool_selection_real_loop(monkeypatch):
         return {"base_url": start_url, "results": []}
 
     async def dummy_map(
-        query: str,
+        url: str,
         *,
         instructions: str | None = None,
         max_depth: int | None = None,
@@ -135,7 +135,7 @@ async def test_ask_with_reasoning_steps_wrapper(monkeypatch):
         raising=True,
     )
 
-    ws = WebSearch(api_key="dummy")
+    ws = WebSearch()
     handle = await ws.ask("What is this?", _return_reasoning_steps=True)
     answer, messages = await handle.result()
 
@@ -179,7 +179,7 @@ async def test_ask_forwards_parent_context_and_preprocess(monkeypatch):
         raising=True,
     )
 
-    ws = WebSearch(api_key="dummy")
+    ws = WebSearch()
     parent_ctx = [
         {"role": "user", "content": "Context A."},
         {"role": "assistant", "content": "Context B."},
