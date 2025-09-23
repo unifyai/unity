@@ -494,3 +494,65 @@ async def test_max_concurrent_limit_is_obeyed() -> None:  # noqa: D401
     assert (
         peak == 1
     ), "More than one instance ran concurrently despite max_concurrent=1."
+
+
+# --------------------------------------------------------------------------- #
+#  SEEDED TRANSCRIPT → FINAL REAL TOOL CALL                                   #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_seeded_messages_then_final_tool_call():
+    """
+    Seed the loop with three messages:
+      1) user instruction to first call `fast_tool`, then use `add(2, 3)`
+      2) assistant tool selection for `fast_tool`
+      3) tool reply from `fast_tool`
+
+    The loop should then perform the final (real) tool call `add(2, 3)` and
+    return the result.
+    """
+    client = new_client()
+
+    call_id = "seeded_fast_1"
+    seeded = [
+        {
+            "role": "user",
+            "content": (
+                "First call the async tool `fast_tool` (which just returns a token), "
+                "then use the `add` tool with 2 and 3 and reply with the result only."
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": "fast_tool", "arguments": "{}"},
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": call_id,
+            "name": "fast_tool",
+            "content": '"fast"',
+        },
+    ]
+
+    answer = await start_async_tool_use_loop(
+        client,
+        message=seeded,
+        tools={"fast_tool": fast_tool, "add": add},
+        max_consecutive_failures=2,
+    ).result()
+
+    # The model should have used the add tool to compute 2 + 3
+    assert answer.strip().startswith("5")
+
+    # Verify that both tool calls (seeded fast_tool and real add) are present
+    tool_names = [m.get("name") for m in client.messages if m.get("role") == "tool"]
+    assert "fast_tool" in tool_names and "add" in tool_names
