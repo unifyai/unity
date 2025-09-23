@@ -499,23 +499,6 @@ def method_to_schema(
     return schema
 
 
-# Shared steering helpers – reduce duplication across dynamic helper tools
-def _adopt_signature_and_annotations(from_callable, to_wrapper) -> None:
-    """Copy signature and annotations (excluding 'self') from from_callable to to_wrapper."""
-    try:
-        import inspect as _inspect
-
-        to_wrapper.__signature__ = _inspect.signature(from_callable)
-        try:
-            ann = dict(getattr(from_callable, "__annotations__", {}))
-            ann.pop("self", None)
-            to_wrapper.__annotations__ = ann
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-
 def _normalise_kwargs_for_bound_method(bound_method, incoming_kw: dict) -> dict:
     """Normalise kwargs for a bound method: expand nested kwargs, drop noise keys,
     map common aliases when there is a single public param, and filter unknown keys
@@ -1433,7 +1416,23 @@ class DynamicToolFactory:
         self.dynamic_tools = {}
         self.tools_data = tools_data
 
-    def _discover_custom_public_methods(self, handle) -> dict[str, Callable]:
+    # Shared steering helpers – reduce duplication across dynamic helper tools
+    @staticmethod
+    def _adopt_signature_and_annotations(from_callable, to_wrapper) -> None:
+        """Copy signature and annotations (excluding 'self') from from_callable to to_wrapper."""
+        try:
+            to_wrapper.__signature__ = inspect.signature(from_callable)
+            try:
+                ann = dict(getattr(from_callable, "__annotations__", {}))
+                ann.pop("self", None)
+                to_wrapper.__annotations__ = ann
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    @staticmethod
+    def _discover_custom_public_methods(handle) -> dict[str, Callable]:
         """
         Return a mapping ``name → bound_method`` of *public* callables on *handle*:
             • name does **not** start with ``_``  _and_
@@ -1519,7 +1518,7 @@ class DynamicToolFactory:
         # Expose full argspec of handle.stop in the helper schema
         with suppress(Exception):
             if handle is not None and hasattr(handle, "stop"):
-                _adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
+                self._adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
 
     def _create_interject_tool(
         self,
@@ -1551,7 +1550,7 @@ class DynamicToolFactory:
 
             # Expose the downstream handle's signature to the LLM
             with suppress(Exception):
-                _adopt_signature_and_annotations(
+                self._adopt_signature_and_annotations(
                     getattr(handle, "interject"),
                     _interject,
                 )
@@ -1612,7 +1611,7 @@ class DynamicToolFactory:
 
             # Reflect downstream signature/annotations
             with suppress(Exception):
-                _adopt_signature_and_annotations(
+                self._adopt_signature_and_annotations(
                     getattr(handle, "pause"),
                     _pause,
                 )
@@ -1650,7 +1649,7 @@ class DynamicToolFactory:
                 return {"status": "resumed", "call_id": tool_context.call_id, **_kw}
 
             with suppress(Exception):
-                _adopt_signature_and_annotations(
+                self._adopt_signature_and_annotations(
                     getattr(handle, "resume"),
                     _resume,
                 )
