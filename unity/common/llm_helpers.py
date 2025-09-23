@@ -4,8 +4,6 @@ import json
 import asyncio
 import functools
 import inspect
-import secrets
-import string
 import traceback
 import dataclasses
 from enum import Enum
@@ -30,26 +28,25 @@ import unify
 from ..constants import LOGGER
 from dataclasses import dataclass
 from ..events.event_bus import Event, EVENT_BUS
-from contextvars import ContextVar
 from contextlib import suppress
 from ._async_tool.tools_utils import (
     ToolCallMetadata,
     ToolCallMessage,
     create_tool_call_message,
 )
-from ._async_tool.loop import TimeoutTimer
+from ._async_tool.loop import (
+    TimeoutTimer,
+    TOOL_LOOP_LINEAGE,
+    short_id,
+    LoopConfig,
+    LoopLogger,
+)
 from ._async_tool.utils import maybe_await
-
-
-def short_id(length=4):
-    alphabet = string.ascii_lowercase + string.digits  # base36
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+from .tool_spec import ToolSpec, normalise_tools
 
 
 TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
-# Hierarchical lineage of nested async tool loops (propagates via contextvars)
-TOOL_LOOP_LINEAGE: ContextVar[list[str]] = ContextVar("TOOL_LOOP_LINEAGE", default=[])
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Image-handling helpers
@@ -100,49 +97,6 @@ def _strip_image_keys(obj):
         return [_strip_image_keys(v) for v in obj]
     else:
         return obj
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 0.  metadata wrapper - lets us attach `max_concurrent` to a tool
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-@dataclass(slots=True)
-class ToolSpec:
-    """
-    Wrap the real *callable* together with optional metadata.
-
-    Only ``max_concurrent`` is required today but we deliberately keep this
-    extensible – adding cost caps, rate limits, auth scopes, … later will not
-    change any external API.
-    """
-
-    fn: Callable
-    max_concurrent: Optional[int] = None  # «None» ⇒ unlimited
-    # Hidden per-loop quota: when set, the tool will only be callable
-    # `max_total_calls` times within a single async tool-use loop. Once
-    # exhausted, the tool is silently hidden from the exposed schema and
-    # any additional invocations are minimally acknowledged without
-    # revealing quota details to the LLM.
-    max_total_calls: Optional[int] = None
-
-    # Let a ToolSpec be invoked like the underlying callable (nice for tests)
-    def __call__(self, *a, **kw):  # pragma: no cover
-        return self.fn(*a, **kw)
-
-
-def _normalise_tools(
-    raw: Dict[str, Union[Callable, "ToolSpec"]],
-) -> Dict[str, "ToolSpec"]:
-    """
-    Accept the *legacy* ``dict[name → callable]`` or the new
-    ``dict[name → ToolSpec]`` and always return a *uniform*
-    ``dict[name → ToolSpec]``.
-    """
-    out: Dict[str, ToolSpec] = {}
-    for n, v in raw.items():
-        out[n] = v if isinstance(v, ToolSpec) else ToolSpec(fn=v)
-    return out
 
 
 # Dynamic-handle helpers ––––––––––––––––––––––––––––––––––––––––––––––––––––––
@@ -711,7 +665,7 @@ def _chat_context_repr(
 # ── small helper: publish to the EventBus (if configured) ──────────────
 async def _to_event_bus(
     messages: Union[Dict, List[Dict]],
-    loop_cfg: _AsyncToolLoopConfig,
+    loop_cfg: LoopConfig,
 ) -> None:
     """
     Emit *messages* to the shared EventBus (if configured).
@@ -889,7 +843,7 @@ class _AsyncToolLoopMessageDispatcher:
     def __init__(
         self,
         client: unify.AsyncUnify,
-        cfg: _AsyncToolLoopConfig,
+        cfg: LoopConfig,
         timer: TimeoutTimer,
     ):
         self._client = client
@@ -1163,56 +1117,11 @@ def _check_valid_response_format(response_format: Any):
 # ASYNC TOOL USE LOOP ────────────────────────────────────────────────────────
 
 
-class _AsyncToolLoopConfig:
-    def __init__(self, loop_id, lineage, parent_lineage):
-        self._loop_id = loop_id if loop_id is not None else short_id()
-        self._lineage = (
-            list(lineage) if lineage is not None else [*parent_lineage, self._loop_id]
-        )
-        self._label = (
-            "->".join(self._lineage) if self._lineage else (self._loop_id or "")
-        )
-
-    @property
-    def loop_id(self):
-        return self._loop_id
-
-    @property
-    def lineage(self):
-        return self._lineage
-
-    @property
-    def label(self):
-        return self._label
-
-
-class _AsyncToolLoopLogger:
-    def __init__(self, cfg: _AsyncToolLoopConfig, log_steps: bool | str) -> None:
-        self._label = cfg.label
-        self._log_steps = log_steps
-
-    @property
-    def log_steps(self):
-        return self._log_steps
-
-    @property
-    def log_label(self):
-        return self._label
-
-    def info(self, msg, prefix=""):
-        txt = f"{prefix} [{self._label}] {msg}"
-        LOGGER.info(txt)
-
-    def error(self, msg, prefix=""):
-        txt = f"{prefix} [{self._label}] {msg}"
-        LOGGER.error(txt)
-
-
 class _ToolsData:
-    def __init__(self, tools, *, client, logger: _AsyncToolLoopLogger):
+    def __init__(self, tools, *, client, logger: LoopLogger):
         self._client = client
         self._logger = logger
-        self.normalized = _normalise_tools(tools)
+        self.normalized = normalise_tools(tools)
         self.pending: Set[asyncio.Task] = set()
         self.info: Dict[asyncio.Task, ToolCallMetadata] = {}
         # Per-tool hidden total-call quotas (counted per loop instance)
@@ -2268,8 +2177,8 @@ async def _async_tool_use_loop_inner(
         been fed back into the conversation.
     """
     # unique id / lineage
-    cfg = _AsyncToolLoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
-    logger = _AsyncToolLoopLogger(cfg, log_steps)
+    cfg = LoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
+    logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # normalise optional graceful stop event
@@ -2831,7 +2740,7 @@ async def _async_tool_use_loop_inner(
                     tool_choice_mode, filtered = "auto", {
                         n: s.fn for n, s in tools_data.normalized.items()
                     }
-                policy_tools_norm = _normalise_tools(filtered)
+                policy_tools_norm = normalise_tools(filtered)
             else:
                 tool_choice_mode = "auto"
                 policy_tools_norm = tools_data.normalized
