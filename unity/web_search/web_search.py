@@ -20,7 +20,7 @@ class WebSearch(BaseWebSearch):
     Manages web search and extraction.
     """
 
-    def __init__(self, api_key: str):
+    def __init__(self):
         self.tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
         # Build the tools mapping once; copy when used
         self._ask_tools: Dict[str, Any] = methods_to_tool_dict(
@@ -102,7 +102,7 @@ class WebSearch(BaseWebSearch):
         -------
         Dict[str, Any]
             Structured search output with keys:
-            - "answer": Optional concise summary string.
+            - "answer": Concise summary string.
             - "results": Ranked list of sources with titles, URLs and snippets.
             - "images": When requested, a list of related images (may be empty).
         """
@@ -143,7 +143,7 @@ class WebSearch(BaseWebSearch):
             - "results": Successful extractions with cleaned content/metadata.
             - "failed_results": Any URLs that could not be extracted.
         """
-        response = self.tavily_client.extract(url=urls, include_images=include_images)
+        response = self.tavily_client.extract(urls=urls, include_images=include_images)
         return {
             "results": response.get("results", []),
             "failed_results": response.get("failed_results", []),
@@ -199,7 +199,7 @@ class WebSearch(BaseWebSearch):
 
     def _map(
         self,
-        query: str,
+        url: str,
         *,
         instructions: str | None = None,
         max_depth: int | None = None,
@@ -212,8 +212,8 @@ class WebSearch(BaseWebSearch):
 
         Parameters
         ----------
-        query : str
-            The topic or objective to map.
+        url : str
+            The root URL to begin the mapping.
         instructions : str | None, default None
             Natural language guidance for the mapping process.
         max_depth : int | None, default None
@@ -233,7 +233,7 @@ class WebSearch(BaseWebSearch):
             - "results": List of mapped items/pages relevant to the query.
         """
         response = self.tavily_client.map(
-            query=query,
+            url=url,
             instructions=instructions,
             max_depth=max_depth,
             max_breadth=max_breadth,
