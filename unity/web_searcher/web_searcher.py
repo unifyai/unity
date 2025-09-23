@@ -3,19 +3,20 @@ import json
 from tavily import TavilyClient
 from typing import List, Dict, Any, Optional
 import unify
-from ..common.llm_helpers import (
+from unity.common.async_tool_loop import (
     start_async_tool_use_loop,
-    inject_broader_context,
-    TOOL_LOOP_LINEAGE,
     SteerableToolHandle,
+    TOOL_LOOP_LINEAGE,
+)
+from unity.common.llm_helpers import (
+    inject_broader_context,
     methods_to_tool_dict,
 )
-from ..events.manager_event_logging import log_manager_call
-from . import prompt_builders
-from .base import BaseWebSearch
+from unity.events.manager_event_logging import log_manager_call
+from unity.web_searcher import prompt_builders
 
 
-class WebSearch(BaseWebSearch):
+class WebSearcher:
     """
     Manages web search and extraction.
     """
@@ -31,7 +32,7 @@ class WebSearch(BaseWebSearch):
             include_class_name=False,
         )
 
-    @log_manager_call("WebSearch", "ask", payload_key="question")
+    @log_manager_call("WebSearcher", "ask", payload_key="question")
     async def ask(
         self,
         text: str,

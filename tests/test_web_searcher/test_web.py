@@ -1,9 +1,13 @@
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
 import asyncio
 import pytest
 from typing import Any, Dict, List
 
 from tests.helpers import _handle_project
-from unity.web_search.web_search import WebSearch
+from unity.web_searcher.web_searcher import WebSearcher
 from unity.common.llm_helpers import inject_broader_context
 
 
@@ -11,7 +15,7 @@ from unity.common.llm_helpers import inject_broader_context
 @_handle_project
 async def test_ask_tool_selection_real_loop(monkeypatch):
     """
-    Use a real LLM client and real tool loop, but replace the WebSearch tools with
+    Use a real LLM client and real tool loop, but replace the WebSearcher tools with
     lightweight dummies and a deterministic system prompt to force tool selection.
     Ensures the LLM uses search, extract, crawl, and map exactly once.
     """
@@ -30,13 +34,13 @@ async def test_ask_tool_selection_real_loop(monkeypatch):
 
     # Patch the prompt builder to our deterministic instruction.
     monkeypatch.setattr(
-        "unity.web_search.prompt_builders.build_ask_prompt",
+        "unity.web_searcher.prompt_builders.build_ask_prompt",
         forced_prompt_builder,
         raising=True,
     )
 
     # Create the WebSearch instance (Tavily client won't be used because we override tools).
-    ws = WebSearch()
+    ws = WebSearcher()
 
     # Track calls for each tool.
     calls = {"search": 0, "extract": 0, "crawl": 0, "map": 0}
@@ -117,7 +121,7 @@ async def test_ask_with_reasoning_steps_wrapper(monkeypatch):
     mock_client.messages = [{"role": "assistant", "content": "Test reasoning"}]
 
     monkeypatch.setattr(
-        "unity.web_search.web_search.unify.AsyncUnify",
+        "unity.web_searcher.web_searcher.unify.AsyncUnify",
         lambda *a, **kw: mock_client,
         raising=True,
     )
@@ -130,12 +134,12 @@ async def test_ask_with_reasoning_steps_wrapper(monkeypatch):
         return mock_handle
 
     monkeypatch.setattr(
-        "unity.web_search.web_search.start_async_tool_use_loop",
+        "unity.web_searcher.web_searcher.start_async_tool_use_loop",
         fake_loop,
         raising=True,
     )
 
-    ws = WebSearch()
+    ws = WebSearcher()
     handle = await ws.ask("What is this?", _return_reasoning_steps=True)
     answer, messages = await handle.result()
 
@@ -156,7 +160,7 @@ async def test_ask_forwards_parent_context_and_preprocess(monkeypatch):
     mock_client = MagicMock()
     mock_client.set_system_message = MagicMock()
     monkeypatch.setattr(
-        "unity.web_search.web_search.unify.AsyncUnify",
+        "unity.web_searcher.web_searcher.unify.AsyncUnify",
         lambda *a, **kw: mock_client,
         raising=True,
     )
@@ -174,12 +178,12 @@ async def test_ask_forwards_parent_context_and_preprocess(monkeypatch):
         return DummyHandle()
 
     monkeypatch.setattr(
-        "unity.web_search.web_search.start_async_tool_use_loop",
+        "unity.web_searcher.web_searcher.start_async_tool_use_loop",
         capture_loop,
         raising=True,
     )
 
-    ws = WebSearch()
+    ws = WebSearcher()
     parent_ctx = [
         {"role": "user", "content": "Context A."},
         {"role": "assistant", "content": "Context B."},

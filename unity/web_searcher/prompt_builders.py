@@ -2,7 +2,7 @@ from typing import Dict, Callable
 
 
 def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
-    """Return the system prompt used by WebSearch.ask formatted as sections."""
+    """Return the system prompt used by WebSearcher.ask formatted as sections."""
     have_search = "search" in tools
     have_extract = "extract" in tools
     have_crawl = "crawl" in tools
