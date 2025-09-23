@@ -42,7 +42,7 @@ def test_tool_filter_messages_timing():
     rows = tm._filter_messages(filter="exchange_id == 4242")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert rows and rows[0].exchange_id == 4242
-    assert elapsed_ms < 1200.0
+    assert elapsed_ms < 1200
     print(f"elapsed: {elapsed_ms} < 1200")
 
 
@@ -78,5 +78,5 @@ def test_tool_search_messages_timing():
     nearest = tm._search_messages(references={"content": "banking"}, k=1)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert nearest and nearest[0].content
-    assert elapsed_ms < 7500.0
+    assert elapsed_ms < 7500
     print(f"elapsed: {elapsed_ms} < 7500")
