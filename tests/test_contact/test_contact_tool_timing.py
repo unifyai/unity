@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-import os
 import time
 import pytest
 
 from unity.contact_manager.contact_manager import ContactManager
 from tests.helpers import _handle_project
-
-
-def _enable_timing():
-    os.environ["CONTACT_MANAGER_TOOL_TIMING"] = "1"
-    # Leave printing disabled by default to keep CI logs clean
-    # os.environ["CONTACT_MANAGER_TOOL_TIMING_PRINT"] = "1"
 
 
 # One test per tool, with lightweight assertions and commented timing bounds.
@@ -20,7 +13,6 @@ def _enable_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_list_columns_timing():
-    _enable_timing()
     cm = ContactManager()
     t0 = time.perf_counter()
     cols = cm._list_columns()
@@ -33,7 +25,6 @@ def test_tool_list_columns_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_create_contact_timing():
-    _enable_timing()
     cm = ContactManager()
     t0 = time.perf_counter()
     out = cm._create_contact(first_name="PerfCreate")
@@ -47,7 +38,6 @@ def test_tool_create_contact_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_update_contact_timing():
-    _enable_timing()
     cm = ContactManager()
     cid = cm._create_contact(first_name="PerfUpd")["details"]["contact_id"]
     t0 = time.perf_counter()
@@ -61,7 +51,6 @@ def test_tool_update_contact_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_filter_contacts_timing():
-    _enable_timing()
     cm = ContactManager()
     cid = cm._create_contact(first_name="PerfFilter")["details"]["contact_id"]
     t0 = time.perf_counter()
@@ -75,7 +64,6 @@ def test_tool_filter_contacts_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_delete_contact_timing():
-    _enable_timing()
     cm = ContactManager()
     cid = cm._create_contact(first_name="PerfDelete")["details"]["contact_id"]
     t0 = time.perf_counter()
@@ -89,7 +77,6 @@ def test_tool_delete_contact_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_create_custom_column_timing():
-    _enable_timing()
     cm = ContactManager()
     col = "timing_nickname"
     # ensure it's not present
@@ -107,7 +94,6 @@ def test_tool_create_custom_column_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_delete_custom_column_timing():
-    _enable_timing()
     cm = ContactManager()
     col = "timing_delete_me"
     try:
@@ -126,7 +112,6 @@ def test_tool_delete_custom_column_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_merge_contacts_timing():
-    _enable_timing()
     cm = ContactManager()
     c1 = cm._create_contact(first_name="John", surname="Doe")["details"]["contact_id"]
     c2 = cm._create_contact(first_name="Johnny", surname="Roe")["details"]["contact_id"]
@@ -145,7 +130,6 @@ def test_tool_merge_contacts_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_search_contacts_timing():
-    _enable_timing()
     cm = ContactManager()
     cm._create_contact(first_name="Alice", bio="enjoys emails")
     cm._create_contact(first_name="Bob", bio="prefers texts")

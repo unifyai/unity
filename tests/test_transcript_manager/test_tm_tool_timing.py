@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import time
 import pytest
 
@@ -9,16 +8,9 @@ from unity.transcript_manager.types.message import Message
 from tests.helpers import _handle_project
 
 
-def _enable_timing():
-    os.environ["CONTACT_MANAGER_TOOL_TIMING"] = "1"
-    # Keep prints off by default; uncomment to see console timing
-    # os.environ["CONTACT_MANAGER_TOOL_TIMING_PRINT"] = "1"
-
-
 @pytest.mark.unit
 @_handle_project
 def test_tool_list_columns_timing():
-    _enable_timing()
     tm = TranscriptManager()
     t0 = time.perf_counter()
     cols = tm._list_columns()
@@ -31,7 +23,6 @@ def test_tool_list_columns_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_filter_messages_timing():
-    _enable_timing()
     tm = TranscriptManager()
 
     # seed minimal data
@@ -58,7 +49,6 @@ def test_tool_filter_messages_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_search_messages_timing():
-    _enable_timing()
     tm = TranscriptManager()
 
     # seed

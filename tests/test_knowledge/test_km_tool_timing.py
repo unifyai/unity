@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import time
 import pytest
 
@@ -8,16 +7,9 @@ from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
 
 
-def _enable_timing():
-    os.environ["KNOWLEDGE_MANAGER_TOOL_TIMING"] = "1"
-    # Keep prints off by default to keep CI logs clean
-    # os.environ["KNOWLEDGE_MANAGER_TOOL_TIMING_PRINT"] = "1"
-
-
 @pytest.mark.unit
 @_handle_project
 def test_tool_tables_overview_timing():
-    _enable_timing()
     km = KnowledgeManager()
     t0 = time.perf_counter()
     tabs = km._tables_overview()
@@ -30,7 +22,6 @@ def test_tool_tables_overview_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_create_table_and_add_rows_timing():
-    _enable_timing()
     km = KnowledgeManager()
     km._create_table(name="PerfTable")
     t0 = time.perf_counter()
@@ -49,7 +40,6 @@ def test_tool_create_table_and_add_rows_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_filter_timing():
-    _enable_timing()
     km = KnowledgeManager()
     km._create_table(name="PerfFilter")
     km._add_rows(
@@ -71,7 +61,6 @@ def test_tool_filter_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_create_empty_column_timing():
-    _enable_timing()
     km = KnowledgeManager()
     km._create_table(name="PerfCols")
     t0 = time.perf_counter()
@@ -91,7 +80,6 @@ def test_tool_create_empty_column_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_rename_column_timing():
-    _enable_timing()
     km = KnowledgeManager()
     km._create_table(name="PerfRename")
     km._add_rows(table="PerfRename", rows=[{"x": 1}])
@@ -108,7 +96,6 @@ def test_tool_rename_column_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_delete_column_timing():
-    _enable_timing()
     km = KnowledgeManager()
     km._create_table(name="PerfDeleteCol")
     km._add_rows(table="PerfDeleteCol", rows=[{"x": 1, "y": 2}])
@@ -125,7 +112,6 @@ def test_tool_delete_column_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_delete_rows_timing():
-    _enable_timing()
     km = KnowledgeManager()
     km._create_table(name="PerfDelRows")
     km._add_rows(table="PerfDelRows", rows=[{"x": i} for i in range(5)])
@@ -140,7 +126,6 @@ def test_tool_delete_rows_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_delete_tables_timing():
-    _enable_timing()
     km = KnowledgeManager()
     km._create_table(name="TmpDelTable")
     t0 = time.perf_counter()
@@ -156,7 +141,6 @@ def test_tool_delete_tables_timing():
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_tool_search_timing():
-    _enable_timing()
     km = KnowledgeManager()
     tbl = "PerfSearch"
     km._create_table(name=tbl)
@@ -179,7 +163,6 @@ def test_tool_search_timing():
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_tool_search_join_timing():
-    _enable_timing()
     km = KnowledgeManager()
     left = "PerfLeft"
     right = "PerfRight"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -10,12 +9,6 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.repetition import RepeatPattern, Frequency
 from unity.transcript_manager.types.message import Medium
 from tests.helpers import _handle_project
-
-
-def _enable_timing():
-    os.environ["TASK_SCHEDULER_TOOL_TIMING"] = "1"
-    # Keep prints off by default to keep CI logs clean
-    # os.environ["TASK_SCHEDULER_TOOL_TIMING_PRINT"] = "1"
 
 
 def _uniq() -> str:
@@ -28,7 +21,6 @@ def _uniq() -> str:
 @pytest.mark.unit
 @_handle_project
 def test_tool_list_columns_timing():
-    _enable_timing()
     ts = TaskScheduler()
     t0 = time.perf_counter()
     cols = ts._list_columns()
@@ -40,7 +32,6 @@ def test_tool_list_columns_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_num_tasks_timing():
-    _enable_timing()
     ts = TaskScheduler()
     ts._create_task(name="TT NumTasks " + _uniq(), description="nt")
     t0 = time.perf_counter()
@@ -53,7 +44,6 @@ def test_tool_num_tasks_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_create_task_timing():
-    _enable_timing()
     ts = TaskScheduler()
     t0 = time.perf_counter()
     out = ts._create_task(name="TT Create " + _uniq(), description="timing create")
@@ -65,7 +55,6 @@ def test_tool_create_task_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_create_tasks_timing():
-    _enable_timing()
     ts = TaskScheduler()
     t0 = time.perf_counter()
     resp = ts._create_tasks(
@@ -83,7 +72,6 @@ def test_tool_create_tasks_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_filter_tasks_timing():
-    _enable_timing()
     ts = TaskScheduler()
     tid = ts._create_task(name="TT Filter " + _uniq(), description="flt")["details"][
         "task_id"
@@ -99,7 +87,6 @@ def test_tool_filter_tasks_timing():
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_tool_search_tasks_timing():
-    _enable_timing()
     ts = TaskScheduler()
     ts._create_task(name="TT Search " + _uniq(), description="banking and budgeting")
     t0 = time.perf_counter()
@@ -112,7 +99,6 @@ def test_tool_search_tasks_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_delete_task_timing():
-    _enable_timing()
     ts = TaskScheduler()
     tid = ts._create_task(name="TT Delete " + _uniq(), description="del")["details"][
         "task_id"
@@ -127,7 +113,6 @@ def test_tool_delete_task_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_cancel_tasks_timing():
-    _enable_timing()
     ts = TaskScheduler()
     tid = ts._create_task(name="TT Cancel " + _uniq(), description="can")["details"][
         "task_id"
@@ -142,7 +127,6 @@ def test_tool_cancel_tasks_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_list_queues_timing():
-    _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT LQ A " + _uniq(), description="a")["details"][
         "task_id"
@@ -163,7 +147,6 @@ def test_tool_list_queues_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_get_queue_timing():
-    _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT GQ A " + _uniq(), description="a")["details"][
         "task_id"
@@ -183,7 +166,6 @@ def test_tool_get_queue_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_get_queue_for_task_timing():
-    _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT GTQ A " + _uniq(), description="a")["details"][
         "task_id"
@@ -202,7 +184,6 @@ def test_tool_get_queue_for_task_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_set_queue_timing():
-    _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT SQ A " + _uniq(), description="a")["details"][
         "task_id"
@@ -220,7 +201,6 @@ def test_tool_set_queue_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_reorder_queue_timing():
-    _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT RQ A " + _uniq(), description="a")["details"][
         "task_id"
@@ -241,7 +221,6 @@ def test_tool_reorder_queue_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_move_tasks_to_queue_timing():
-    _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT MV A " + _uniq(), description="a")["details"][
         "task_id"
@@ -261,7 +240,6 @@ def test_tool_move_tasks_to_queue_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_set_schedules_atomic_timing():
-    _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT SSA A " + _uniq(), description="a")["details"][
         "task_id"
@@ -292,7 +270,6 @@ def test_tool_set_schedules_atomic_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_partition_queue_timing():
-    _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT PQ A " + _uniq(), description="a")["details"][
         "task_id"
@@ -317,7 +294,6 @@ def test_tool_partition_queue_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_update_task_timing():
-    _enable_timing()
     ts = TaskScheduler()
     # Start with a triggerable task so we can clear trigger and set start_at in one call
     tid = ts._create_task(
@@ -362,7 +338,6 @@ def test_tool_update_task_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_detach_from_queue_for_activation_timing():
-    _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT Det A " + _uniq(), description="a")["details"][
         "task_id"
@@ -381,7 +356,6 @@ def test_tool_detach_from_queue_for_activation_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_attach_with_links_timing():
-    _enable_timing()
     ts = TaskScheduler()
     a = ts._create_task(name="TT Att A " + _uniq(), description="a")["details"][
         "task_id"
@@ -416,7 +390,6 @@ def test_tool_attach_with_links_timing():
 @pytest.mark.unit
 @_handle_project
 def test_tool_validated_write_timing():
-    _enable_timing()
     ts = TaskScheduler()
     tid = ts._create_task(name="TT VW " + _uniq(), description="d")["details"][
         "task_id"
