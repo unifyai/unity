@@ -42,9 +42,13 @@ def detach_from_queue_for_activation(
         and ``next.prev = prev``). Ensure the successor does not carry ``start_at``
         (only heads may carry it). The detached task loses its schedule.
     - Chained activation (``detach=False``): keep the queue behind the activated task
-      attached to it and preserve the existing ``schedule`` entirely. Do not rewrite
-      neighbour links or move the queue-level ``start_at`` during execution; only
-      lifecycle statuses change as tasks start/complete.
+      attached to it and preserve the existing ``schedule`` for followers. Do not move
+      the queue-level ``start_at`` during execution. However, when the activated task
+      is not already the head (it has a ``prev_task``), detach it cleanly from its
+      predecessor by setting the predecessor's ``next_task`` to ``None`` and the
+      current task's ``prev_task`` to ``None``. This makes the activated task the
+      effective head of the active execution while avoiding per-step rewrites for the
+      rest of the chain.
 
     These rules make reinstatement deterministic and easy to reason about.
     """
@@ -232,7 +236,25 @@ def detach_from_queue_for_activation(
             _update_schedule(cur_log, {}, extra={"schedule": None, "queue_id": None})
     else:
         # ----- Chained queue execution semantics -----
-        # Preserve the existing schedule entirely during chained activation.
-        # No neighbour rewrites, no head promotion, and no start_at movement.
-        # We still recorded a ReintegrationPlan above for potential defer/restore.
-        pass
+        # Detach ONLY from the predecessor when the activated task is not already
+        # the head, keeping followers attached and not moving start_at.
+        if prev_tid is not None:
+            # 1) Disconnect previous neighbour's next pointer if it still points to us
+            prev_log = _get_log_obj(prev_tid)
+            if prev_log is not None:
+                prev_sched = _load_sched(prev_log)
+                if prev_sched.get("next_task") == task_id:
+                    prev_sched["next_task"] = None
+                    _update_schedule(prev_log, prev_sched)
+
+            # 2) Promote current task to effective head by clearing its prev_task only
+            cur_log = _get_log_obj(task_id)
+            if cur_log is not None:
+                cur_sched = _load_sched(cur_log)
+                # Preserve next pointer and any existing start_at on the task;
+                # do not introduce or migrate start_at here.
+                new_sched: Dict[str, Any] = {**cur_sched}
+                new_sched["prev_task"] = None
+                _update_schedule(cur_log, new_sched)
+
+        # If already head (prev_tid is None), do nothing: preserve schedule fully.
