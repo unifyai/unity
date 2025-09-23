@@ -383,7 +383,12 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         return True
 
     def _next_runnable_follower(self) -> Optional[int]:
-        """Return the next runnable task id after the current one based on the live queue."""
+        """Return the next runnable task id after the current one based on the live queue.
+
+        Fallback behaviour: if the current task is no longer part of the runnable
+        queue (e.g., it just completed and runnable views exclude it), consult the
+        current task's stored ``schedule.next_task`` to identify the follower.
+        """
         try:
             live_queue = (
                 self._s._get_queue_for_task(task_id=self._current_task_id) or []
@@ -408,13 +413,36 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except Exception:
             cur_id = None
 
-        # If current id is not found (e.g., task was detached/is isolated), do not chain.
+        # If current id is not found (e.g., task just completed and is excluded from
+        # the live runnable view), fall back to the stored next pointer on the row.
         try:
             if cur_id is None:
                 return None
             idx = ids.index(cur_id)
         except ValueError:
-            return None
+            # Fallback: read the current row and follow its schedule.next_task
+            try:
+                rows = self._s._filter_tasks(
+                    filter=f"task_id == {int(self._current_task_id)}",
+                    limit=1,
+                )
+                if not rows:
+                    return None
+                sched = (
+                    (rows[0].get("schedule") or {}) if isinstance(rows[0], dict) else {}
+                )
+                nxt = sched.get("next_task") if isinstance(sched, dict) else None
+                try:
+                    nxt_int = int(nxt) if nxt is not None else None
+                except Exception:
+                    nxt_int = None  # type: ignore[assignment]
+                # Prefer returning a follower that is present in the runnable view; otherwise
+                # return the pointer as-is and let the callee handle missing rows defensively.
+                if nxt_int is None:
+                    return None
+                return nxt_int if (nxt_int in ids or ids == []) else nxt_int
+            except Exception:
+                return None
 
         # Return the first follower, if any
         return ids[idx + 1] if (idx + 1) < len(ids) else None
