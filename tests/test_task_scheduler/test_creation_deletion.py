@@ -12,6 +12,7 @@ def test_create_task():
     task_scheduler._create_task(
         name="Promote Jeff Smith",
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
+        entrypoint=101,
     )
     task_list = task_scheduler._filter_tasks()
     assert len(task_list) == 1
@@ -31,7 +32,7 @@ def test_create_task():
     assert row["task_id"] == 0
     assert row["instance_id"] == 0
     assert row["response_policy"] is None
-    # New field surfaced by the Task model; should be present but unset on creation
+    assert "entrypoint" in row and row["entrypoint"] == 101
     assert "activated_by" in row and row["activated_by"] is None
 
 

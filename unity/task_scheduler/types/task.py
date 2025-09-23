@@ -70,6 +70,13 @@ class Task(BaseModel):
             "a contact's own response_policy, the task-level policy takes precedence."
         ),
     )
+    entrypoint: Optional[int] = Field(
+        default=None,
+        description=(
+            "Optional function_id from the Functions table that should be invoked to perform this task. "
+            "When null, the task is executed by an Actor interpreting the free-form description on the fly."
+        ),
+    )
     activated_by: Optional[ActivatedBy] = Field(
         default=None,
         description=(

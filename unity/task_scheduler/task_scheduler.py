@@ -1159,6 +1159,7 @@ class TaskScheduler(BaseTaskScheduler):
         repeat: RepeatLike = None,
         priority: Priority = Priority.normal,
         response_policy: Optional[str] = None,
+        entrypoint: Optional[int] = None,
     ) -> ToolOutcome:
         """
         Create a **brand-new task** and, depending on its attributes, place it
@@ -1170,6 +1171,9 @@ class TaskScheduler(BaseTaskScheduler):
             Short, human-friendly label (unique across all tasks).
         description : str
             Detailed free-text explanation of what should be done.
+        entrypoint : int | None, default ``None``
+            Optional function_id from the Functions table that should be invoked to perform this task. When null,
+            the task is executed by an Actor interpreting the description on the fly.
         status : Status | None, default ``None``
             Desired initial lifecycle state.  When omitted the method infers
             one based on *schedule* and current queue status.
@@ -1368,6 +1372,7 @@ class TaskScheduler(BaseTaskScheduler):
             priority=priority,
             response_policy=response_policy,
             queue_id=derived_qid,
+            entrypoint=entrypoint,
         ).to_post_json()
 
         # ------------------  write log immediately  ------------------ #
@@ -1574,6 +1579,7 @@ class TaskScheduler(BaseTaskScheduler):
                 "repeat",
                 "priority",
                 "response_policy",
+                "entrypoint",
             ):
                 if key in spec:
                     payload[key] = spec[key]
@@ -3547,6 +3553,7 @@ class TaskScheduler(BaseTaskScheduler):
         repeat: Optional[List[Union["RepeatPattern", Dict[str, Any]]]] = None,
         priority: Optional[Union["Priority", str]] = None,
         trigger: Any = _UNSET,
+        entrypoint: Any = _UNSET,
     ) -> Dict[str, Any]:
         """
         Update one or more fields of an existing task.
@@ -3600,6 +3607,7 @@ class TaskScheduler(BaseTaskScheduler):
             and repeat is None
             and priority is None
             and not _trigger_provided
+            and entrypoint is _UNSET
         ):
             raise ValueError("At least one field must be provided for an update.")
 
@@ -3703,6 +3711,16 @@ class TaskScheduler(BaseTaskScheduler):
             entries["schedule"] = schedule_payload
         if desired_status is not None:
             entries["status"] = desired_status
+        # entrypoint set/clear
+        if entrypoint is not _UNSET:
+            # allow None to clear it
+            if entrypoint is None:
+                entries["entrypoint"] = None
+            else:
+                try:
+                    entries["entrypoint"] = int(entrypoint)
+                except Exception:
+                    raise ValueError("entrypoint must be an integer or None")
 
         # If clearing a trigger (trigger explicitly None) and current status is triggerable
         if (
