@@ -1,6 +1,6 @@
 """
 End-to-end tests for the *control-tool* extension of
-`unity.common.llm_helpers._async_tool_use_loop_inner`.
+`unity.common.async_tool_loop._async_tool_use_loop_inner`.
 
 What we verify
 --------------
