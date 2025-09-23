@@ -32,12 +32,13 @@ from dataclasses import dataclass
 from ..events.event_bus import Event, EVENT_BUS
 from contextvars import ContextVar
 from contextlib import suppress
-from .async_tool.tools_utils import (
+from ._async_tool.tools_utils import (
     ToolCallMetadata,
     ToolCallMessage,
     create_tool_call_message,
 )
-from .async_tool.loop import TimeoutTimer
+from ._async_tool.loop import TimeoutTimer
+from ._async_tool.utils import maybe_await
 
 
 def short_id(length=4):
@@ -565,14 +566,6 @@ def method_to_schema(
     return schema
 
 
-async def _maybe_await(obj):
-    """Return *obj* if it is a value, or `await` and return its result if it is
-    an awaitable."""
-    if inspect.isawaitable(obj):
-        return await obj
-    return obj
-
-
 # Shared steering helpers – reduce duplication across dynamic helper tools
 def _adopt_signature_and_annotations(from_callable, to_wrapper) -> None:
     """Copy signature and annotations (excluding 'self') from from_callable to to_wrapper."""
@@ -663,17 +656,17 @@ async def _forward_handle_call(
 
     try:
         normalised = _normalise_kwargs_for_bound_method(bound, kwargs or {})
-        return await _maybe_await(bound(**normalised))
+        return await maybe_await(bound(**normalised))
     except TypeError:
         # Fallbacks for legacy signatures
         for k in fallback_positional_keys:
             if kwargs and k in kwargs:
                 try:
-                    return await _maybe_await(bound(kwargs.get(k)))  # type: ignore[misc]
+                    return await maybe_await(bound(kwargs.get(k)))  # type: ignore[misc]
                 except Exception:
                     pass
         try:
-            return await _maybe_await(bound())  # type: ignore[misc]
+            return await maybe_await(bound())  # type: ignore[misc]
         except Exception:
             return None
     except Exception:
@@ -792,7 +785,7 @@ async def _generate_with_preprocess(
     **gen_kwargs,
 ):
     if preprocess_msgs is None:
-        return await _maybe_await(client.generate(**gen_kwargs))
+        return await maybe_await(client.generate(**gen_kwargs))
 
     import copy
 
@@ -823,7 +816,7 @@ async def _generate_with_preprocess(
     original_container = getattr(client, target_attr)
     setattr(client, target_attr, patched)
     try:
-        result = await _maybe_await(client.generate(**gen_kwargs))
+        result = await maybe_await(client.generate(**gen_kwargs))
 
         # Append any new messages the LLM produced back to canonical log
         current_msgs = getattr(client, target_attr)
@@ -1890,7 +1883,7 @@ class DynamicToolFactory:
 
             async def _pause() -> Dict[str, str]:
                 if handle_available and hasattr(handle, "pause"):
-                    await _maybe_await(handle.pause())
+                    await maybe_await(handle.pause())
                 elif pause_event is not None:
                     pause_event.clear()
                 return {"status": "paused", "call_id": tool_context.call_id}
@@ -1928,7 +1921,7 @@ class DynamicToolFactory:
 
             async def _resume() -> Dict[str, str]:
                 if handle_available and hasattr(handle, "resume"):
-                    await _maybe_await(handle.resume())
+                    await maybe_await(handle.resume())
                 elif pause_event is not None:
                     pause_event.set()
                 return {"status": "resumed", "call_id": tool_context.call_id}
@@ -2405,7 +2398,7 @@ async def _async_tool_use_loop_inner(
             with suppress(Exception):
                 inf = tools_data.info.get(task)
                 if inf is not None and inf.handle is not None and hasattr(inf.handle, "stop"):  # type: ignore[attr-defined]
-                    await _maybe_await(inf.handle.stop())
+                    await maybe_await(inf.handle.stop())
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tools_data.pending, return_exceptions=True)
@@ -3666,7 +3659,7 @@ async def _async_tool_use_loop_inner(
                                     "stop",
                                 )
                             ):
-                                await _maybe_await(nested_handle.stop())
+                                await maybe_await(nested_handle.stop())
                         if not t.done():
                             t.cancel()
                     await asyncio.gather(*tools_data.pending, return_exceptions=True)
