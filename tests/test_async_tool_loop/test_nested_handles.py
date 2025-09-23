@@ -4,7 +4,7 @@ import json
 import asyncio
 import unify
 
-from unity.common.llm_helpers import (
+from unity.common.async_tool_loop import (
     start_async_tool_use_loop,
     AsyncToolUseLoopHandle,
 )

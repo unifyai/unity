@@ -14,8 +14,10 @@ from typing import Callable, Dict, Optional
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    start_async_tool_use_loop,
     ToolSpec,
+)
+from ..common.async_tool_loop import (
+    start_async_tool_use_loop,
     TOOL_LOOP_LINEAGE,
 )
 from ..contact_manager.base import BaseContactManager

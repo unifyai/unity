@@ -4,7 +4,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union
 
-from ..common.llm_helpers import SteerableToolHandle
+from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 
 

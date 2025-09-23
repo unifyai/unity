@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional
 
 import unify
 from .base import BaseKnowledgeManager
-from ..common.llm_helpers import SteerableToolHandle
+from ..common.async_tool_loop import SteerableToolHandle
 from .prompt_builders import (
     build_refactor_prompt,
     build_update_prompt,
