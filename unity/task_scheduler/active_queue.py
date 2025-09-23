@@ -331,7 +331,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             # Only operate when both channels are available
             if self._clar_up is None or self._clar_down is None:
                 return None
-            # Enqueue question; await answer
+            # Enqueue question; await answer (blocking semantics by design)
             try:
                 self._clar_up.put_nowait(question)
             except Exception:
@@ -572,11 +572,21 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
 
         if uncovered:
             if self._clar_up is not None and self._clar_down is not None:
-                await self._request_clarification(
-                    "Your instruction could not be routed to all intended tasks without guessing. "
-                    "Please specify exact task_ids, or use clear directives such as 'all', 'first', 'last', "
-                    "or name the tasks explicitly, and provide the instruction for each group.",
-                )
+
+                async def _clar_flow():
+                    try:
+                        await self._request_clarification(
+                            "Your instruction could not be routed to all intended tasks without guessing. "
+                            "Please specify exact task_ids, or use clear directives such as 'all', 'first', 'last', "
+                            "or name the tasks explicitly, and provide the instruction for each group.",
+                        )
+                    except Exception:
+                        pass
+
+                try:
+                    asyncio.create_task(_clar_flow())
+                except Exception:
+                    pass
                 return
             await self._current_handle.interject(message)
             return
