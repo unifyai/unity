@@ -94,15 +94,20 @@ class KnowledgeManager(BaseKnowledgeManager):
             include_class_name=False,
         )
 
+        self._multi_table_ask_tools = methods_to_tool_dict(
+            self._filter_join,
+            self._search_join,
+            self._filter_multi_join,
+            self._search_multi_join,
+            include_class_name=False,
+        )
+
+        # We decide in `ask` method whether to include the multi-table tools or not
         self._ask_tools = {
             **methods_to_tool_dict(
                 self._tables_overview,
                 self._filter,
                 self._search,
-                self._filter_join,
-                self._search_join,
-                self._filter_multi_join,
-                self._search_multi_join,
                 include_class_name=False,
             ),
         }
@@ -557,7 +562,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
+        tables_overview = self._tables_overview()
+        include_join_info = len(tables_overview) > 1
+
+        # We decide in `ask` method whether to include the multi-table tools or not
         tools = dict(self._ask_tools)
+        if len(tables_overview) > 1:
+            tools.update(dict(self._multi_table_ask_tools))
 
         if clarification_up_q is not None and clarification_down_q is not None:
 
@@ -604,7 +615,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
-        table_schemas_json = json.dumps(self._tables_overview(), indent=4)
+        table_schemas_json = json.dumps(tables_overview, indent=4)
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
@@ -617,6 +628,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
                 case_specific_instructions=case_specific_instructions,
+                include_join_info=include_join_info,
             ),
         )
         handle = start_async_tool_use_loop(
