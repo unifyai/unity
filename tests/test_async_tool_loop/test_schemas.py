@@ -13,7 +13,7 @@ import unify
 import pytest
 from pydantic import BaseModel
 
-import unity.common.async_tool_loop as llmh
+import unity.common.llm_helpers as llmh
 
 
 # --------------------------------------------------------------------------- #

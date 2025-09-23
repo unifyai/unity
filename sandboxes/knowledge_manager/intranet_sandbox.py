@@ -62,7 +62,7 @@ from sandboxes.scenario_builder import ScenarioBuilder
 
 # ────────────────────────────────  unity imports  ───────────────────────────
 from intranet.core.rag_agent import IntranetRAGAgent
-from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.llm_helpers import SteerableToolHandle
 from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,

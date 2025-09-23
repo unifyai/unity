@@ -120,7 +120,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
     """An *early* interjection (sent before delegate adoption) must be forwarded
     to the inner handle once the outer loop adopts it.
 
-    Prior to the buffering logic introduced in `async_tool_loop.py` this behaviour
+    Prior to the buffering logic introduced in `llm_helpers.py` this behaviour
     was missing – the outer loop would consume the interjection itself and the
     nested handle would *never* see it.  The test therefore fails on the old
     implementation and passes now.

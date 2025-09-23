@@ -16,6 +16,7 @@ from unity.conversation_manager.events import (
     PhoneCallInitiatedEvent,
     PhoneCallStopEvent,
     InterruptEvent,
+    SMSMessageSentEvent,
     WhatsappMessageSentEvent,
 )
 from unity.conversation_manager.prompt_builders import (
@@ -38,7 +39,7 @@ import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-from unity.common.async_tool_loop import (
+from unity.common.llm_helpers import (
     methods_to_tool_dict,
 )
 from unity.common.async_tool_loop import (
@@ -334,7 +335,7 @@ async def _send_email_via_address(
     from_email = os.getenv("ASSISTANT_EMAIL")
 
     print(
-        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}",
+        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}"
     )
     async with aiohttp.ClientSession() as session:
         async with session.post(

@@ -5,7 +5,7 @@ import functools
 import json
 from typing import Optional, Awaitable, Dict, Callable, Tuple, Any, Union
 from ..constants import LOGGER
-from .async_tool_loop import short_id
+from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.loop import async_tool_use_loop_inner
 

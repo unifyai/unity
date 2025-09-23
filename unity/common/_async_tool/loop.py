@@ -18,7 +18,7 @@ from .messages import (
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import ToolCallMetadata, create_tool_call_message
-from ..async_tool_loop import method_to_schema, _dumps
+from ..llm_helpers import method_to_schema, _dumps
 from .loop_config import LoopConfig, TOOL_LOOP_LINEAGE
 from .tools_utils import ToolCallMetadata, create_tool_call_message
 from .timeout_timer import TimeoutTimer

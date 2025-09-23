@@ -14,7 +14,7 @@ from .types.file import File
 
 import unify
 
-from ..common.async_tool_loop import (
+from ..common.llm_helpers import (
     methods_to_tool_dict,
     inject_broader_context,
     make_request_clarification_tool,
