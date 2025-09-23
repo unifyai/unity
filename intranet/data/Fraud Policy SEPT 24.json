@@ -1,0 +1,100 @@
+{
+    "easy": [
+      {
+        "question": "What is the main purpose of the Housing Counter Fraud Policy?",
+        "answer": "To prevent, detect, investigate, sanction and seek financial redress in cases of suspected tenancy fraud so homes go to people in genuine housing need. :contentReference[oaicite:0]{index=0}"
+      },
+      {
+        "question": "Who does the policy apply to?",
+        "answer": "All staff, colleagues, contractors and tenants. :contentReference[oaicite:1]{index=1}"
+      },
+      {
+        "question": "How does the policy define ‘fraud’?",
+        "answer": "Any false representation (including failure to declare information) or abuse of position carried out to receive a gain, cause loss, or expose another to risk of loss—whether intentional or not. :contentReference[oaicite:2]{index=2}"
+      },
+      {
+        "question": "Name three examples of tenancy fraud covered by the policy.",
+        "answer": "Unlawful subletting (a criminal offence), abandonment/non-occupation as principal home, and wrongly claimed succession. (Others include key selling, fraudulent applications, unauthorised assignments/mutual exchanges, joint tenancy fraud, failure to notify death, RTB/Acquire fraud, and ‘cuckooing’.) :contentReference[oaicite:3]{index=3}"
+      },
+      {
+        "question": "What is a Notice to Quit (NTQ) and the basic validity rules?",
+        "answer": "A written legal notice ending a contractual tenancy; it must be in writing, give at least 4 weeks’ notice expiring on the first or last day of a tenancy period (for weekly tenancies), and contain prescribed information. :contentReference[oaicite:4]{index=4}"
+      },
+      {
+        "question": "What are ‘mesne profits’?",
+        "answer": "Payments taken from an occupier who is not a tenant for use and occupation (not rent), avoiding creation of a tenancy; typically equivalent to the property’s rental value. :contentReference[oaicite:5]{index=5}"
+      },
+      {
+        "question": "Which laws are commonly used to tackle tenancy fraud?",
+        "answer": "Prevention of Social Housing Fraud Act 2013; Fraud Act 2006; Housing Act 1985 (Sch. 2 Ground 5); Housing Act 1988 (Sch. 2 Ground 17); Theft Acts 1968/1978. :contentReference[oaicite:6]{index=6}"
+      },
+      {
+        "question": "How can the public report suspected fraud and how is social media handled?",
+        "answer": "Through any channel (staff, phone, email, social media). If reports are made via social media, Midland Heart replies privately to protect confidentiality and promotes reporting routes widely (including translated materials). :contentReference[oaicite:7]{index=7}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "A neighbour suspects a flat is sublet via an online listing. What initial steps should Midland Heart take under the policy?",
+        "answer": "Log and promptly investigate, gathering evidence from sources such as neighbours, staff/contractors, tenancy checks, data-matching with agencies, and the Police; liaise internally and with partners while complying with Data Protection legislation. :contentReference[oaicite:8]{index=8}"
+      },
+      {
+        "question": "You suspect abandonment: the tenant is rarely present and mail piles up. What procedure references guide the response?",
+        "answer": "Treat as potential non-occupation/abandonment of principal home; follow Customer Hub and Housing Management procedures and investigate thoroughly before taking action. :contentReference[oaicite:9]{index=9}"
+      },
+      {
+        "question": "A deceased tenant’s relative claims succession but evidence is unclear. How should this be handled?",
+        "answer": "Treat as a potential ‘wrongly claimed succession’; follow the Succession Policy/Procedure and, if fraud is evidenced, consider possession action under relevant Housing Act grounds. :contentReference[oaicite:10]{index=10}"
+      },
+      {
+        "question": "Unlawful subletting is confirmed. What actions and support are available?",
+        "answer": "Pursue possession proceedings and support/encourage criminal prosecution by Police/Local Authority; consider recovery of unlawful profit. Offer support and housing options advice to any sub-tenants at risk of homelessness. :contentReference[oaicite:11]{index=11}"
+      },
+      {
+        "question": "A tenant applies for a joint tenancy with a partner, then plans to move out immediately. Why is this a risk and how to respond?",
+        "answer": "It may be ‘joint tenancy fraud’ (creating a joint tenancy then the original tenant leaves so an ineligible person remains). Investigate promptly and apply sanctions where fraud is proven. :contentReference[oaicite:12]{index=12}"
+      },
+      {
+        "question": "What identity/evidence measures help prevent fraud at sign-up and checks?",
+        "answer": "Signed declarations; proof of identity/residency (incl. Child Benefit details if relevant); full-face photographs if no photo ID; collection of National Insurance numbers; periodic and targeted tenancy checks. :contentReference[oaicite:13]{index=13}"
+      },
+      {
+        "question": "Can Midland Heart publicise outcomes of fraud cases?",
+        "answer": "Yes—details of action (e.g., prosecutions, possession orders, unlawful profit orders) may be publicised to deter fraud, subject to legal/privacy constraints. :contentReference[oaicite:14]{index=14}"
+      },
+      {
+        "question": "How are data-sharing and privacy addressed during investigations?",
+        "answer": "Information may be shared with agencies (Police, Local Authorities, other RPs) for prevention/investigation, in legal proceedings, to meet legal obligations, or to protect vital interests—always in line with the Data Protection Act 2018/GDPR and privacy notices (including participation in the National Fraud Initiative). :contentReference[oaicite:15]{index=15}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "A tenant has a live Right to Buy (RTB) application and is suspected of full-property subletting. Design the end-to-end approach (evidence, legal routes, tenancy outcome, publicity).",
+        "answer": "Gather evidence (neighbours, staff, tenancy checks, data matching, partner intel). If unlawful subletting/fraud is confirmed, cancel the RTB application, seek possession (and criminal action by Police/LA), and pursue recovery of unlawful profit. Subject to legal/privacy constraints, publicise outcomes to deter fraud and protect housing stock; consider any exceptional circumstances proportionately. :contentReference[oaicite:16]{index=16}"
+      },
+      {
+        "question": "A vulnerable tenant appears to be ‘cuckooed’. How do fraud, safeguarding and ASB policies interact here?",
+        "answer": "Treat ‘cuckooing’ as a fraud/ASB risk affecting a vulnerable person; coordinate with Safeguarding and ASB procedures, liaise with Police/partners, and take proportionate tenancy enforcement while prioritising the tenant’s safety and legal information-sharing duties. :contentReference[oaicite:17]{index=17}"
+      },
+      {
+        "question": "Explain when to use Notice to Quit, Deed of Surrender, or eviction to end a tenancy in fraud cases.",
+        "answer": "An NTQ (with prescribed content/timing) ends certain contractual tenancies; a Deed of Surrender mutually ends a fixed-term tenancy; eviction follows a possession order and warrant executed by Court Bailiff. Choice depends on tenure/legal route and evidence of fraud. :contentReference[oaicite:18]{index=18}"
+      },
+      {
+        "question": "What are ‘mesne profits’ and when are they used instead of rent?",
+        "answer": "They are payments for use/occupation by a non-tenant (no tenancy is created). Use them once a tenancy has ended or where occupation is unauthorised, typically set at the rental value. :contentReference[oaicite:19]{index=19}"
+      },
+      {
+        "question": "How does Midland Heart ensure capability and consistency in investigations over time?",
+        "answer": "It shares good practice on investigation techniques, undertakes periodic checks and data-matching, liaises with partners, and monitors performance data (cases investigated/detected/sanctioned, costs and fraud value). :contentReference[oaicite:20]{index=20}"
+      },
+      {
+        "question": "Outline lawful bases for information-sharing during a live fraud case.",
+        "answer": "To meet legal obligations; in connection with legal proceedings/court orders; to protect vital interests in life-or-death situations; and in anti-fraud initiatives like the National Fraud Initiative—always under Data Protection Act 2018/GDPR. :contentReference[oaicite:21]{index=21}"
+      },
+      {
+        "question": "A suspect offers to surrender the tenancy if prosecution is dropped. What does policy say about discretion?",
+        "answer": "Midland Heart may apply discretion on a case-by-case basis considering individual circumstances but aims to pursue proportionate legal enforcement to protect stock and deter fraud. :contentReference[oaicite:22]{index=22}"
+      }
+    ]
+  }

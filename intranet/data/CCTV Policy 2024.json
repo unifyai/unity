@@ -1,0 +1,100 @@
+{
+    "easy": [
+      {
+        "question": "What are the main purposes for which Midland Heart operates CCTV?",
+        "answer": "To enhance safety and security; detect and prevent crime and ASB; protect assets and property; support incident investigations; and investigate health & safety or Code of Conduct breaches in communal office space. :contentReference[oaicite:0]{index=0}"
+      },
+      {
+        "question": "Who does the CCTV policy apply to and where?",
+        "answer": "All staff, residents, visitors and contractors across Midland Heart’s residential buildings, offices, communal areas and external premises where its CCTV is installed and operated. :contentReference[oaicite:1]{index=1}"
+      },
+      {
+        "question": "What is the default retention period for CCTV footage and how is it stored?",
+        "answer": "Images are stored securely in encrypted format and kept no longer than 31 days before automatic overwrite, unless required for investigations or legal proceedings. :contentReference[oaicite:2]{index=2}"
+      },
+      {
+        "question": "Who authorises holding images beyond the default retention period?",
+        "answer": "The CCTV Manager authorises extended retention and reviews it monthly, deleting images when no longer required for evidential purposes. :contentReference[oaicite:3]{index=3}"
+      },
+      {
+        "question": "How should an individual request access to footage that includes their personal data?",
+        "answer": "Submit a written request to the Data Protection team with date, time, location and a lawful reason; identity verification may be required. :contentReference[oaicite:4]{index=4}"
+      },
+      {
+        "question": "Can Midland Heart disclose footage to the police or prosecution authorities?",
+        "answer": "Yes, disclosures to third parties like the police or other prosecuting authorities can be made in accordance with applicable laws and regulations. :contentReference[oaicite:5]{index=5}"
+      },
+      {
+        "question": "Where are cameras not permitted to be placed?",
+        "answer": "In areas where people have a reasonable expectation of privacy (e.g., private property interiors, restrooms or other sensitive areas). :contentReference[oaicite:6]{index=6}"
+      },
+      {
+        "question": "What are Rapid Deployment Cameras used for?",
+        "answer": "Short-term, flexible surveillance to deter crime, assist health & safety and support investigations where fixed CCTV may be impractical. :contentReference[oaicite:7]{index=7}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "A Housing Officer wants to review footage of a foyer incident to identify who forced a door. What approvals and controls apply?",
+        "answer": "Access is restricted to authorised personnel and granted based on job role and necessity, as determined by the CCTV Manager; any viewing must be for a legitimate purpose consistent with the policy. :contentReference[oaicite:8]{index=8}"
+      },
+      {
+        "question": "Your team proposes fitting cameras over a car park. What siting rules and transparency steps must be followed?",
+        "answer": "Site cameras where surveillance is justified (entrances/exits, car parks, communal spaces), avoid private areas, consider lighting/line-of-sight, and display appropriate signage explaining CCTV presence and purpose. Document the rationale and monitor compliance. :contentReference[oaicite:9]{index=9}"
+      },
+      {
+        "question": "A tenant emails asking for a copy of footage showing them slipping in a lobby. What should you ask them to provide and to whom?",
+        "answer": "They must write to the Data Protection team with details (date, time, location) and a lawful reason; identity may need verifying before disclosure. :contentReference[oaicite:10]{index=10}"
+      },
+      {
+        "question": "When can covert surveillance be used and who signs it off?",
+        "answer": "Only in exceptional circumstances (credible suspicions of criminality/serious malpractice/ASB) where no less intrusive method exists. Written approval must come from the Director of Housing, defining scope, duration and limitations. :contentReference[oaicite:11]{index=11}"
+      },
+      {
+        "question": "How should staff use Body Worn Video (BWV) during a sensitive tenant interaction?",
+        "answer": "Use trained personnel; exercise discretion around sensitive/private information; inform individuals of recording where practical; deployment decisions rest with line managers. :contentReference[oaicite:12]{index=12}"
+      },
+      {
+        "question": "A fleet van is involved in a minor collision. What does the dashcam record and how long is it retained?",
+        "answer": "Dashcams support accident investigations and do not record sound (audio disabled). Footage is typically overwritten after ~48 hours due to device capacity. :contentReference[oaicite:13]{index=13}"
+      },
+      {
+        "question": "A resident wants to install a private doorbell camera overlooking a shared hallway. What permissions and limits apply?",
+        "answer": "They must inform Midland Heart and obtain written consent, ensure compliance with privacy laws, and avoid interfering with common areas; Midland Heart is not liable for the resident’s system or its footage. :contentReference[oaicite:14]{index=14}"
+      },
+      {
+        "question": "What governance measures evidence that CCTV is run compliantly over time?",
+        "answer": "Periodic reviews, audits, system performance checks, access monitoring, incident response protocols, and ongoing training and awareness for staff involved in CCTV operations. :contentReference[oaicite:15]{index=15}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "An ASB hotspot emerges. You plan to deploy temporary cameras, later reuse footage in a joint Police investigation, and retain specific clips for three months. Map the compliant end-to-end steps.",
+        "answer": "Deploy Rapid Deployment Cameras for a legitimate purpose; ensure signage and document siting decisions. Access/use is restricted to authorised personnel; third-party disclosures follow law. Extended retention beyond 31 days must be authorised by the CCTV Manager and reviewed monthly until no longer needed, when it’s deleted. Consider DPIA oversight via the DPO where appropriate. :contentReference[oaicite:16]{index=16}"
+      },
+      {
+        "question": "A manager requests covert monitoring of an office to investigate suspected misconduct. What threshold, approvals, and limits govern this?",
+        "answer": "Covert surveillance is a last resort for credible criminal/serious malpractice/ASB concerns when no less intrusive option exists; it requires written approval from the Director of Housing specifying scope, duration, justification and limits. :contentReference[oaicite:17]{index=17}"
+      },
+      {
+        "question": "A resident alleges your foyer camera captures inside their flat through a window. What immediate checks and remedial actions align with policy?",
+        "answer": "Review siting (line-of-sight, field of view) and ensure cameras aren’t placed where privacy is reasonably expected; adjust positioning/遮ling and update documentation; verify signage and respond to the concern promptly. :contentReference[oaicite:18]{index=18}"
+      },
+      {
+        "question": "During a safeguarding visit, a colleague uses BWV capturing audio of a distressed witness. How should they manage recording and disclosure?",
+        "answer": "Apply training; use discretion with sensitive content; inform individuals where practical; store securely with authorised access only; share externally only under lawful grounds and with appropriate approvals. :contentReference[oaicite:19]{index=19}"
+      },
+      {
+        "question": "Police request dashcam footage and vehicle-tracking data from a crash three days ago. What can you supply and why?",
+        "answer": "Dashcam footage is usually overwritten after ~48 hours; if still available it can be disclosed lawfully. Tracking data can support the timeline (e.g., speed/location) if retained—share in line with legal gateways and policy controls. :contentReference[oaicite:20]{index=20}"
+      },
+      {
+        "question": "A tenant demands full system access after an incident. What access rights apply and how should you respond?",
+        "answer": "Access is restricted to authorised personnel. Individuals can request footage containing their own personal data via a written request to the Data Protection team with specifics; identity verification may be required. :contentReference[oaicite:21]{index=21}"
+      },
+      {
+        "question": "You must demonstrate policy effectiveness to leadership. Which KPIs are appropriate and what do they evidence?",
+        "answer": "Monitor Privacy Compliance (e.g., signage, access restrictions), Data Security (encryption, secure storage, audits), Training & Awareness, and stakeholder Feedback/Satisfaction to evidence lawful, effective and trusted CCTV operations. :contentReference[oaicite:22]{index=22}"
+      }
+    ]
+  }

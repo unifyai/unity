@@ -298,7 +298,12 @@ async def ensure_system_initialized():
 
         project_root = Path(__file__).parent.parent.parent
         sys.path.insert(0, str(project_root))
-        activate_project("Intranet", overwrite=False)
+        # Best-effort activation without forcing context creation. Avoid raising
+        # on races when multiple workers initialize simultaneously.
+        try:
+            activate_project("Intranet", overwrite=False)
+        except Exception as e:
+            logger.warning(f"activate_project best-effort failed (continuing): {e}")
         return True
 
     try:
@@ -312,7 +317,12 @@ async def ensure_system_initialized():
         # Set up Unity project context
         project_root = Path(__file__).parent.parent.parent
         sys.path.insert(0, str(project_root))
-        activate_project("Intranet", overwrite=True)
+        try:
+            activate_project("Intranet", overwrite=True)
+        except Exception as e:
+            # When multiple workers start together, one may have already created
+            # contexts. Treat duplicate-creation as benign and continue.
+            logger.warning(f"activate_project overwrite best-effort: {e}")
 
         # Get configuration
         config = get_config_values()
@@ -327,7 +337,33 @@ async def ensure_system_initialized():
         initializer = SystemInitializer(use_tool_loops=use_tool_loops)
         # allow runtime override via env
         embed_along = os.environ.get("RAG_EMBED_ALONG", "true").lower() != "false"
-        results = await initializer.initialize_system(config, embed_along=embed_along)
+        # Serialize expensive initialize_system across workers using a simple
+        # file lock to prevent duplicate context creation during startup.
+        from pathlib import Path as _P
+        import time as _t
+
+        lock_path = _P("/tmp/intranet_init.lock")
+        got_lock = False
+        for _ in range(60):
+            try:
+                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                os.close(fd)
+                got_lock = True
+                break
+            except FileExistsError:
+                _t.sleep(0.25)
+
+        try:
+            results = await initializer.initialize_system(
+                config,
+                embed_along=embed_along,
+            )
+        finally:
+            if got_lock:
+                try:
+                    os.remove(str(lock_path))
+                except Exception:
+                    pass
 
         if results.get("success"):
             logger.info("🎉 System initialization completed successfully")

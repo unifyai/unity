@@ -1,0 +1,100 @@
+{
+    "easy": [
+      {
+        "question": "What is the aim of the Electrical Safety Management Policy?",
+        "answer": "To manage and ensure safety of fixed electrical installations (landlord, domestic and workplace supplies), protecting tenants, residents, employees and the public. :contentReference[oaicite:23]{index=23}"
+      },
+      {
+        "question": "Where does the policy apply?",
+        "answer": "All Midland Heart properties where we retain responsibility, including general needs, independent/retirement/specialist schemes (and communal areas), offices, and agency-managed/leased properties. :contentReference[oaicite:24]{index=24}"
+      },
+      {
+        "question": "What is an EICR and why is it used?",
+        "answer": "An Electrical Installation Condition Report identifies damage, defects and deterioration before they pose a risk. :contentReference[oaicite:25]{index=25}"
+      },
+      {
+        "question": "How often are fixed installations inspected/tested?",
+        "answer": "Domestic properties: at change of occupancy or every 5 years; communal parts and offices/workplaces: every 5 years; new domestic installs: 5 years. :contentReference[oaicite:26]{index=26}"
+      },
+      {
+        "question": "How often is PAT testing done?",
+        "answer": "Every 2 years in offices/other work locations and in communal areas/ furnished domestic tenancies. :contentReference[oaicite:27]{index=27}"
+      },
+      {
+        "question": "What contractor competencies are required?",
+        "answer": "Registration with NICEIC/NAPIT (or equivalent), Part P self-cert scheme, City & Guilds NVQ III and 2391/2394/2395 (or equivalent), competence with BS 7671 and related standards. :contentReference[oaicite:28]{index=28}"
+      },
+      {
+        "question": "How are concerns/complaints received and handled on social media?",
+        "answer": "Via any channel (staff, phone, email, social). Social media reports receive a private reply to protect confidentiality. :contentReference[oaicite:29]{index=29}"
+      },
+      {
+        "question": "What is Midland Heart’s stance when things go wrong?",
+        "answer": "Accept responsibility and put things right quickly. :contentReference[oaicite:30]{index=30}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "A tenant cannot do weekday access for EICR. What does the policy allow?",
+        "answer": "We will endeavour to make reasonable adjustments (e.g., flexible working patterns for contractors) and agree a suitable arrangement with the tenant. :contentReference[oaicite:31]{index=31}"
+      },
+      {
+        "question": "How does responsibility differ for leaseholders/shared owners?",
+        "answer": "Periodic domestic inspection/testing responsibility often remains with the leaseholder/shared owner; Midland Heart undertakes periodic checks for communal areas where we retain responsibility. :contentReference[oaicite:32]{index=32}"
+      },
+      {
+        "question": "List key elements of the Electrical Safety Operational Framework.",
+        "answer": "Planned repairs/maintenance/upgrades; FSLSS programme (tests for fire alarms, emergency lighting, automated doors); remedials within appropriate timescales; inspection/testing aligned to BS 7671 Guidance Note 3; robust records/quality monitoring; competency assurance. :contentReference[oaicite:33]{index=33}"
+      },
+      {
+        "question": "What assurance activities check contractor quality and competence?",
+        "answer": "External independent testing; continuous internal auditing; procurement/contract-management checks via a training matrix reviewed regularly (monthly). :contentReference[oaicite:34]{index=34}"
+      },
+      {
+        "question": "An advocate emails about a tenant’s electrical safety concern. Can you discuss details?",
+        "answer": "Only with the tenant’s written consent (MP/Councillor enquiries are exceptions that do not require written consent). :contentReference[oaicite:35]{index=35}"
+      },
+      {
+        "question": "What guidance standard sets inspection/testing frequency?",
+        "answer": "‘Guidance Note 3’ of the current edition of IET Wiring Regulations (BS 7671). :contentReference[oaicite:36]{index=36}"
+      },
+      {
+        "question": "Which groups are covered by the policy beyond tenants?",
+        "answer": "Employees, members of the public and contractors working on our behalf within our buildings and homes. :contentReference[oaicite:37]{index=37}"
+      },
+      {
+        "question": "What related internal documents does the policy link to?",
+        "answer": "Electrical Safety Management Operational Framework, Electrical Technical Protocol, Health & Safety Policy, Reasonable Adjustment Policy, Safeguarding & Wellbeing Policy, Data Protection Policy, Code of Conduct for Contractors. :contentReference[oaicite:38]{index=38}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "Outline a compliance plan for a mixed estate with domestic, communal and office supplies coming due within 6 months—including remedials and records.",
+        "answer": "Programme EICRs for domestic dwellings (5-year/change of occupancy), 5-year tests for communal/office supplies, and 2-year PAT cycles; ensure remedial works are completed within appropriate timescales; retain robust records and quality monitoring; verify contractor competency (NICEIC/NAPIT etc.); and audit outcomes. :contentReference[oaicite:39]{index=39}"
+      },
+      {
+        "question": "A shared-owner’s flat has no recent EICR. What is Midland Heart responsible for?",
+        "answer": "A bespoke approach applies—domestic testing responsibility often remains with the leaseholder/shared owner; Midland Heart undertakes communal area checks where responsible. :contentReference[oaicite:40]{index=40}"
+      },
+      {
+        "question": "A social media post alleges unsafe electrics in a block. What’s the compliant response path?",
+        "answer": "Reply privately to protect confidentiality; log the concern; follow the inspection/testing programme; arrange access with reasonable adjustments; and communicate outcomes appropriately. :contentReference[oaicite:41]{index=41}"
+      },
+      {
+        "question": "You discover a contractor team lacks current C&G 2391/2394/2395 for testers. What actions align with policy?",
+        "answer": "Use procurement/contract-management checks to address competence gaps, require accredited qualifications/registrations, and use internal/external audits to assure quality. :contentReference[oaicite:42]{index=42}"
+      },
+      {
+        "question": "How does the FSLSS programme integrate with electrical compliance?",
+        "answer": "It includes tests of key electrically-powered life-safety components (fire alarms, emergency lighting, automated doors) alongside the broader electrical inspection/testing regime. :contentReference[oaicite:43]{index=43}"
+      },
+      {
+        "question": "After an incident, a tenant demands disclosure via an advocate. What must be verified?",
+        "answer": "Obtain written consent before discussing the case with the advocate; otherwise communicate directly with the tenant, respecting GDPR and Data Protection procedures. :contentReference[oaicite:44]{index=44}"
+      },
+      {
+        "question": "Set a 24-month PAT schedule for mixed spaces and justify it.",
+        "answer": "PAT is required every 2 years in offices/other work locations and in communal areas/furnished domestic tenancies, aligning with the policy’s frequency table. :contentReference[oaicite:45]{index=45}"
+      }
+    ]
+  }

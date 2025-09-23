@@ -1,0 +1,92 @@
+{
+    "easy": [
+      {
+        "question": "What is the purpose of the Hot Water & Hot Surfaces Policy?",
+        "answer": "To manage and control risks from hot water and hot surfaces (e.g., scalding/burns) and comply with health and safety legislation and codes of practice. :contentReference[oaicite:45]{index=45}"
+      },
+      {
+        "question": "Which locations are in scope?",
+        "answer": "Independent/Retirement/Specialist Accommodation (incl. communal areas), offices/onsite storage, leasehold/mutual schemes where we retain responsibility, general needs (risk-based approach per HSG274 Part 2), and agency-managed/leased properties where we retain responsibility. :contentReference[oaicite:46]{index=46}"
+      },
+      {
+        "question": "How are vulnerable residents identified and protected?",
+        "answer": "By assessing vulnerability (e.g., reduced capacity/mobility/temperature sensitivity) and applying control measures such as signage, blending devices (TMVs), and radiator guards. :contentReference[oaicite:47]{index=47}"
+      },
+      {
+        "question": "What are blending devices and TMVs?",
+        "answer": "Blending devices (e.g., TMVs, thermostatic taps/showers) regulate hot water temperature to reduce scalding risk. :contentReference[oaicite:48]{index=48}"
+      },
+      {
+        "question": "How often are TMVs inspected and ‘failsafe’ tested?",
+        "answer": "Immersive TMVs: service every 12 months. Non-immersive TMVs: service every 12 months with a 6-monthly failsafe (cold-water isolation) and temperature check. :contentReference[oaicite:49]{index=49}"
+      },
+      {
+        "question": "Who manages TMV servicing and who delivers it?",
+        "answer": "The Building Safety Team manages it; appointed specialist contractors deliver it. :contentReference[oaicite:50]{index=50}"
+      },
+      {
+        "question": "What happens if a scalding incident is reported?",
+        "answer": "The Local Responsible Person immediately notifies the Director of Building Safety, Head of Building Safety Compliance, Area/Operations Manager, and Head of Safety & Facilities with the H&S Manager. :contentReference[oaicite:51]{index=51}"
+      },
+      {
+        "question": "How are concerns reported and how is social media handled?",
+        "answer": "Through any channel (staff, phone, email, social media); social media receives a private reply to protect confidentiality. :contentReference[oaicite:52]{index=52}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "A tenant can only allow access after 6pm for TMV servicing. How does the policy address this?",
+        "answer": "Midland Heart will make reasonable adjustments—e.g., flexible contractor working patterns—to facilitate preferred availability where practicable. :contentReference[oaicite:53]{index=53}"
+      },
+      {
+        "question": "An advocate emails about hot radiator burns risk for a vulnerable resident. What consent rules apply and what controls might follow?",
+        "answer": "Written tenant consent is needed to discuss case details with the advocate; controls may include radiator guards and hazard signage following a vulnerability assessment. :contentReference[oaicite:54]{index=54}"
+      },
+      {
+        "question": "How does the policy link with national guidance for water systems in general needs homes?",
+        "answer": "General needs are risk-assessed per HSG274 Part 2 and in full compliance with ACoP L8. :contentReference[oaicite:55]{index=55}"
+      },
+      {
+        "question": "A refurbishment is planned in a new development. What temperature control requirement applies?",
+        "answer": "Install blending devices to control water temperatures in line with Building Regulations. :contentReference[oaicite:56]{index=56}"
+      },
+      {
+        "question": "Define the ‘Responsible Person’ and ‘Specialist Contractor’.",
+        "answer": "Responsible Person: has authority/competence to ensure procedures are carried out effectively. Specialist Contractor: recognised as having sufficient technical knowledge/experience to deliver engaged works. :contentReference[oaicite:57]{index=57}"
+      },
+      {
+        "question": "A resident requests communications in a non-written format. How should the team respond?",
+        "answer": "Use the resident’s preferred method if advised; otherwise discuss and agree reasonable adjustments to ensure effective communication and access. :contentReference[oaicite:58]{index=58}"
+      },
+      {
+        "question": "What are examples of ‘hot surfaces’ under the policy?",
+        "answer": "Radiators and associated pipework operating at temperatures that may present burn/scald risk. :contentReference[oaicite:59]{index=59}"
+      },
+      {
+        "question": "Which internal documents does this policy align with?",
+        "answer": "Legionella Policy & Procedure, Health & Safety Policy, Accident Reporting Procedure, Contract Management Framework, water hygiene guidance/training, and the Complaints/Reasonable Adjustments Policy. :contentReference[oaicite:60]{index=60}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "A serious scald occurs at a retirement scheme shower. Outline the immediate and follow-up actions across roles, hardware, and governance.",
+        "answer": "Notify the named leaders (Director of Building Safety, Head of Building Safety Compliance, Area/Operations, Head of Safety & Facilities/H&S Manager); isolate and check the outlet; inspect TMV (service/failsafe and temperature checks); review vulnerability assessments and install/upgrade blending devices/signage; audit similar outlets scheme-wide; ensure records, contractor competence, and compliance with ACoP L8/HSG274; communicate with residents and consider reasonable adjustments to access. :contentReference[oaicite:61]{index=61}"
+      },
+      {
+        "question": "Temperature complaints persist despite annual servicing. What technical checks and programme changes are justified?",
+        "answer": "Increase monitoring frequency (e.g., re-test failsafe sooner on non-immersive outlets), verify TMV specification/installation, review blending settings, and assess additional controls (guards/signage) for identified vulnerabilities, all within HSG274/ACoP L8 framework. :contentReference[oaicite:62]{index=62}"
+      },
+      {
+        "question": "A councillor raises a constituent’s concern about hot pipes. What information-sharing rules apply and how should the case proceed?",
+        "answer": "MP/Councillor enquiries do not require written consent; acknowledge and progress per policy—risk assess, implement controls (e.g., guards), and keep appropriate records. :contentReference[oaicite:63]{index=63}"
+      },
+      {
+        "question": "How should Midland Heart demonstrate ongoing compliance and learning across schemes?",
+        "answer": "Maintain servicing/testing records, evidence Responsible Person oversight, monitor contractor performance, escalate incidents via the notification chain, and align with internal frameworks/training and external guidance (ACoP L8/HSG274/Part G). :contentReference[oaicite:64]{index=64}"
+      },
+      {
+        "question": "In mixed tenure blocks, who falls within the duty of this policy?",
+        "answer": "Tenants/residents where Midland Heart retains responsibility for water system safety (including leasehold/mutual schemes, agency-managed/leased properties), plus employees, contractors, and members of the public in our buildings. :contentReference[oaicite:65]{index=65}"
+      }
+    ]
+  }

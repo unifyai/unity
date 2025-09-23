@@ -1,0 +1,80 @@
+{
+    "easy": [
+      {
+        "question": "How many times can a tenancy be succeeded under this policy?",
+        "answer": "Only once (one succession), regardless of tenancy type; a previous assignment to someone who could have succeeded counts as that one succession. :contentReference[oaicite:21]{index=21}"
+      },
+      {
+        "question": "Name the three types of succession outlined.",
+        "answer": "i) Joint tenants (survivorship), ii) Statutory succession, iii) Contractual rights (check legacy tenancy agreements). :contentReference[oaicite:22]{index=22}"
+      },
+      {
+        "question": "What happens if a statutory successor is under 18?",
+        "answer": "A relative or professional holds the tenancy in trust until the child is 18. :contentReference[oaicite:23]{index=23}"
+      },
+      {
+        "question": "For Secure tenancies granted before 1 April 2012, who may succeed?",
+        "answer": "A spouse/civil partner/partner or a qualifying family member who lived there as only/principal home; family members must have resided for 12 months prior to death. :contentReference[oaicite:24]{index=24}"
+      },
+      {
+        "question": "Give two eligibility checks for discretionary succession (direct offer) where no right exists.",
+        "answer": "Applicant lived there 12 months as only/principal home and can afford the property; MH also checks size suitability, arrears/ASB history and property condition. :contentReference[oaicite:25]{index=25}"
+      },
+      {
+        "question": "What is set up when remaining occupants have no right to remain after an NTQ expires?",
+        "answer": "A ‘use and occupation’ account, pending repossession; occupants are expected to pay use and occupation charges. :contentReference[oaicite:26]{index=26}"
+      },
+      {
+        "question": "List two circumstances that can permit a tenancy assignment.",
+        "answer": "Court order on relationship breakdown; or assignment to someone who would have qualified to succeed (subject to tenure rules). :contentReference[oaicite:27]{index=27}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "A sole Assured tenant dies. Their adult child lived there 2 years. Summarise statutory rights and next steps.",
+        "answer": "For Assured tenancies, statutory succession is limited to spouse/civil partner/partner. The adult child has no statutory right; consider any contractual right (legacy tenancy) and MH’s discretionary offer criteria (12 months’ residence etc.). Otherwise, proceed with NTQ/death of tenant process and housing options advice. :contentReference[oaicite:28]{index=28}"
+      },
+      {
+        "question": "A Secure tenancy (pre-2012) is succeeded by a spouse who then under-occupies by two bedrooms. What happens?",
+        "answer": "MH discusses rehousing to right-size; assesses under-occupation extent and needs, affordability, and offers suitable alternative before possession action. Proceedings must be issued within 12 months of the death (or 12 months from MH becoming aware). :contentReference[oaicite:29]{index=29}"
+      },
+      {
+        "question": "In a relationship breakdown of joint Assured tenants, neither agrees who will stay. What is MH’s approach?",
+        "answer": "MH advises independent legal advice. If one joint tenant ends the tenancy, MH will contact both; if the other wishes to remain and is eligible, MH may make a direct offer of the property. :contentReference[oaicite:30]{index=30}"
+      },
+      {
+        "question": "What Right to Rent rules apply to assignments vs. statutory succession?",
+        "answer": "Assignments are treated as new tenancies—R2R checks are required before approval/execution. Statutory successions arise by law and do not trigger pre-tenancy R2R checks, though MH must act if later informed the successor has no leave to remain. :contentReference[oaicite:31]{index=31}"
+      },
+      {
+        "question": "List the immediate family categories for Secure tenancy assignments (pre-2012) and the residence test.",
+        "answer": "Spouse/partner/civil partner; parents; grandparents; child/grandchild; siblings; uncle/aunt; nephew/niece (includes step/half/marital/illegitimate relations). They must have lived with the tenant for at least 12 months as only/principal home. :contentReference[oaicite:32]{index=32}"
+      },
+      {
+        "question": "What protections under the Localism Act 2011 apply to ‘lifetime’ tenants in a mutual exchange?",
+        "answer": "Where exchanging with a fixed-term tenant (min 2-year social rent), assignment is replaced by surrender and grant of new tenancies so the lifetime tenant retains lifetime status. This protection doesn’t apply where the fixed-term property has an Affordable Rent. :contentReference[oaicite:33]{index=33}"
+      },
+      {
+        "question": "Name two grounds that will cause MH to refuse a mutual exchange.",
+        "answer": "Grounds in Schedule 14 Localism Act 2011/Schedule 3 Housing Act 1985 apply, and MH will also refuse if the incoming person would be refused under the Allocations Policy. :contentReference[oaicite:34]{index=34}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "Siblings (A & B) both claim succession after a Secure tenant (pre-2012) dies. A lived there 2 years; B lived there 6 months. A and B cannot agree. Outline MH’s lawful process to determine the successor and manage disputes.",
+        "answer": "Statutory succession is available to a spouse/partner or, for pre-2012 Secure tenancies, a qualifying family member who occupied as only/principal home and (if not spouse/partner) lived there 12 months. If more than one potential successor, MH may name the successor assessing circumstances/Allocations Policy. Non-successful occupants receive housing options advice; if no right, follow Death of Tenant process → NTQ → use & occupation and possession. :contentReference[oaicite:35]{index=35}"
+      },
+      {
+        "question": "Draft decision criteria for a discretionary succession where the applicant meets all tests except size (home is two bedrooms larger than need).",
+        "answer": "Where all criteria are met except size, MH will make one offer of suitable alternative accommodation rather than grant the existing home; record authorised manager approval and rationale. :contentReference[oaicite:36]{index=36}"
+      },
+      {
+        "question": "An Assured tenant (tenancy pre-2012) wishes to assign to an adult niece who has lived there 18 months. What must be checked in the tenancy and policy before consenting?",
+        "answer": "Confirm the tenancy allows assignment to immediate family (pre-2012) and that MH’s consent is not unreasonably withheld where the agreement allows. Verify eligibility list, 12-month residence as only/principal home, no ASB/debt, size/affordability, and complete R2R checks; execute a Deed of Assignment. :contentReference[oaicite:37]{index=37}"
+      },
+      {
+        "question": "Two ‘lifetime’ tenants plan a three-way mutual exchange including a fixed-term Affordable Rent property. How do the Localism Act protections apply and what tenancy outcomes result?",
+        "answer": "Where a lifetime tenant exchanges with a fixed-term tenant, protections require surrender/grant to preserve lifetime status—except where the fixed-term is Affordable Rent (protection doesn’t apply). Map each pairing accordingly and ensure permissions/grounds checked before execution. :contentReference[oaicite:38]{index=38}"
+      }
+    ]
+  }

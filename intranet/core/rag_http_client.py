@@ -130,6 +130,8 @@ class RAGHTTPClient:
         question: str,
         conversation_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        *,
+        session: Optional[aiohttp.ClientSession] = None,
     ) -> RAGResponse:
         """
         Send a query to the RAG API.
@@ -159,7 +161,41 @@ class RAGHTTPClient:
                 if self.timeout:
                     timeout_config = aiohttp.ClientTimeout(total=self.timeout)
 
-                async with aiohttp.ClientSession() as session:
+                # Reuse provided session when available for connection pooling
+                if session is None:
+                    async with aiohttp.ClientSession() as _session:
+                        async with _session.post(
+                            f"{self.base_url}/query",
+                            json=request_data,
+                            timeout=timeout_config,
+                        ) as response:
+                            response_time = time.time() - start_time
+
+                            if response.status == 200:
+                                response_data = await response.json()
+                                return RAGResponse.from_api_response(
+                                    response_data,
+                                    response_time,
+                                )
+                            else:
+                                error_text = await response.text()
+                                print(
+                                    f"❌ API returned status {response.status}: {error_text}",
+                                )
+
+                                return RAGResponse(
+                                    answer="",
+                                    sources=[],
+                                    follow_up_questions=[],
+                                    conversation_id=conversation_id or "",
+                                    user_id=user_id,
+                                    timestamp=datetime.now().isoformat(),
+                                    confidence=None,
+                                    response_time=response_time,
+                                    error=f"HTTP {response.status}: {error_text}",
+                                    query=question,
+                                )
+                else:
                     async with session.post(
                         f"{self.base_url}/query",
                         json=request_data,
@@ -253,35 +289,61 @@ class RAGHTTPClient:
         """
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def query_with_semaphore(question: str, index: int) -> RAGResponse:
-            async with semaphore:
-                conversation_id = f"{conversation_prefix}_{index:04d}"
-                user_id = f"eval_user_{index:04d}"
+        # Create a shared connector/session to maximise connection reuse
+        connector_limit = max(100, int(max_concurrent))
+        timeout_config = None
+        if self.timeout:
+            timeout_config = aiohttp.ClientTimeout(total=self.timeout)
 
-                print(f"📋 Querying {index + 1}/{len(questions)}: {question[:60]}...")
-                response = await self.query(question, conversation_id, user_id)
+        async with aiohttp.TCPConnector(
+            limit=connector_limit,
+            limit_per_host=connector_limit,
+        ) as connector:
+            async with aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout_config,
+            ) as session:
 
-                if response.error:
-                    print(f"❌ Query {index + 1} failed: {response.error}")
-                else:
-                    print(
-                        f"✅ Query {index + 1} completed in {response.response_time:.2f}s",
-                    )
+                async def query_with_semaphore(
+                    question: str,
+                    index: int,
+                ) -> RAGResponse:
+                    async with semaphore:
+                        conversation_id = f"{conversation_prefix}_{index:04d}"
+                        user_id = f"eval_user_{index:04d}"
 
-                return response
+                        print(
+                            f"📋 Querying {index + 1}/{len(questions)}: {question[:60]}...",
+                        )
+                        response = await self.query(
+                            question,
+                            conversation_id,
+                            user_id,
+                            session=session,
+                        )
 
-        # Create tasks for all queries
-        tasks = [
-            query_with_semaphore(question, i) for i, question in enumerate(questions)
-        ]
+                        if response.error:
+                            print(f"❌ Query {index + 1} failed: {response.error}")
+                        else:
+                            print(
+                                f"✅ Query {index + 1} completed in {response.response_time:.2f}s",
+                            )
 
-        print(
-            f"🚀 Starting batch of {len(questions)} queries with max {max_concurrent} concurrent...",
-        )
+                        return response
 
-        # Execute all tasks
-        start_time = time.time()
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
+                # Create tasks for all queries
+                tasks = [
+                    query_with_semaphore(question, i)
+                    for i, question in enumerate(questions)
+                ]
+
+                print(
+                    f"🚀 Starting batch of {len(questions)} queries with max {max_concurrent} concurrent...",
+                )
+
+                # Execute all tasks
+                start_time = time.time()
+                responses = await asyncio.gather(*tasks, return_exceptions=True)
         total_time = time.time() - start_time
 
         # Handle any exceptions

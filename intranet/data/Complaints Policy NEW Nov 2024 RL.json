@@ -1,0 +1,104 @@
+{
+    "easy": [
+      {
+        "question": "What is the policy for and which external code guides it?",
+        "answer": "It sets out how Midland Heart acknowledges, investigates and responds to tenant feedback—especially complaints—in line with the Housing Ombudsman’s Complaint Handling Code (statutory from April 2024). :contentReference[oaicite:46]{index=46}"
+      },
+      {
+        "question": "Who can use the complaints policy?",
+        "answer": "All Midland Heart tenants and residents, including applicants or members of the public affected by a decision or service failure. :contentReference[oaicite:47]{index=47}"
+      },
+      {
+        "question": "Define a ‘comment’, a ‘compliment’, and a ‘service request’.",
+        "answer": "Comment = opinion/disagreement about policy/standard; Compliment = positive recognition of service/staff; Service request = asking us to put something right—if dissatisfied with action taken, it becomes a complaint. :contentReference[oaicite:48]{index=48}"
+      },
+      {
+        "question": "Do you have to say the word ‘complaint’ for it to count?",
+        "answer": "No. Any expression of dissatisfaction can be treated as a complaint and the tenant is offered that choice. :contentReference[oaicite:49]{index=49}"
+      },
+      {
+        "question": "List two common exclusions where a complaint might not be accepted.",
+        "answer": "Requests for a new service (first-time repair/ASB report), issues older than 12 months (unless ongoing), matters already exhausted, or those where legal proceedings have started. :contentReference[oaicite:50]{index=50}"
+      },
+      {
+        "question": "What channels can complaints be made through and how is social media handled?",
+        "answer": "Any channel—staff, phone, email, social media; social posts receive a private reply to maintain confidentiality. :contentReference[oaicite:51]{index=51}"
+      },
+      {
+        "question": "What consents are needed when a representative complains? Are MPs/Councillors different?",
+        "answer": "Written tenant consent is needed for advocates/support agencies; MPs/Councillors do not need written consent as elected representatives. :contentReference[oaicite:52]{index=52}"
+      },
+      {
+        "question": "What are the core Stage 1 and Stage 2 timescales?",
+        "answer": "Stage 1: acknowledge within 5 working days and respond within 10 working days; Stage 2: acknowledge within 5 working days and respond within 20 working days; limited extensions apply. (See the two-stage diagram on page 4.) :contentReference[oaicite:53]{index=53}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "A tenant reports a missed repair for the first time. When does it become a complaint under the policy?",
+        "answer": "The first report is a service request; if the tenant becomes dissatisfied with the action taken to resolve it, it is raised as a complaint while resolution continues. :contentReference[oaicite:54]{index=54}"
+      },
+      {
+        "question": "A contractor-related issue is raised. Does the tenant need to complain to the contractor separately?",
+        "answer": "No. Contractor issues are investigated under Midland Heart’s complaints policy; residents should not go through two processes. :contentReference[oaicite:55]{index=55}"
+      },
+      {
+        "question": "What should your Stage 1 response include to meet policy standards?",
+        "answer": "Be clear what we are/aren’t responsible for; let the tenant set out concerns and outcomes; confirm understanding; consider all relevant evidence; address each point with reasons; and consider remedies early. :contentReference[oaicite:56]{index=56}"
+      },
+      {
+        "question": "When can timescales be extended and what must be communicated?",
+        "answer": "Extensions must be reasonable and capped (Stage 1 +10 working days; Stage 2 +20). We must explain the reason(s) and provide Ombudsman contact details when advising of extensions. :contentReference[oaicite:57]{index=57}"
+      },
+      {
+        "question": "A tenant seeks a review two months after the Stage 1 outcome. Who handles Stage 2 and by when?",
+        "answer": "Stage 2 is considered by someone different—usually the relevant Director/Head of Service—and a final response is due within 20 working days of acknowledgment. :contentReference[oaicite:58]{index=58}"
+      },
+      {
+        "question": "Your complaint response closes the case but several actions remain outstanding. What should happen next?",
+        "answer": "We track agreed actions and keep the tenant informed; failure to deliver actions/timescales entitles the tenant to request escalation. :contentReference[oaicite:59]{index=59}"
+      },
+      {
+        "question": "What remedies can be offered and how is compensation handled?",
+        "answer": "Apology, action for delay, reconsidered decisions, record amendments, financial remedy, and policy/practice changes; compensation follows our matrix and Ombudsman guidance and may be offset against debts owed. :contentReference[oaicite:60]{index=60}"
+      },
+      {
+        "question": "How do ‘reasonable adjustments’ feature in the process?",
+        "answer": "We discuss individual needs, agree proportionate adjustments to enable participation, and may seek expert support; there’s no fixed list—speedy agreement is aimed for. :contentReference[oaicite:61]{index=61}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "A multi-issue complaint spans ASB handling, a missed repair and alleged staff conduct, with social posts and an MP enquiry. Design a compliant handling plan (channels, consent, staging, and learning).",
+        "answer": "Respond to social posts privately; accept the complaint without requiring the word ‘complaint’; log at Stage 1 within 5 working days and issue a response within 10 (extension rules apply). Handle contractor/staff matters in our process; an MP enquiry requires no written consent. If unresolved, escalate within two months to Stage 2 (different decision-maker). Capture outcomes and learning for Board reporting and Code compliance. :contentReference[oaicite:62]{index=62}"
+      },
+      {
+        "question": "A tenant requests escalation after 13 months about a historic missed appointment. Can you accept it and what discretion exists?",
+        "answer": "Issues older than 12 months are normally excluded unless part of an ongoing issue. However, the policy allows discretion after considering individual circumstances; reasons must be explained and Ombudsman details provided if not accepted. :contentReference[oaicite:63]{index=63}"
+      },
+      {
+        "question": "During Stage 1 you need more time and plan to offer a remedy early. What are your obligations?",
+        "answer": "Notify the tenant of the extension (reasoned, within the cap) and provide Ombudsman contact details; remedies can be offered at any stage and should reflect impact (per matrix/guidance). :contentReference[oaicite:64]{index=64}"
+      },
+      {
+        "question": "Legal disrepair proceedings are filed mid-complaint. How does that affect complaints handling?",
+        "answer": "Aspects subject to legal proceedings move to the legal process and are handled by Insurance/Legal (e.g., disrepair, personal injury); other separable issues may continue through complaints. :contentReference[oaicite:65]{index=65}"
+      },
+      {
+        "question": "Map the data protection duties when a support worker complains on a tenant’s behalf via email and survey feedback also shows dissatisfaction.",
+        "answer": "Written consent is required before discussing case details with the representative; survey expressions of dissatisfaction aren’t complaints by themselves but interviewers signpost the right to complain; all data handling must comply with GDPR and internal DP policy. :contentReference[oaicite:66]{index=66}"
+      },
+      {
+        "question": "What governance and reporting demonstrate a positive complaints culture and Code compliance?",
+        "answer": "Regular Board reports on volumes/outcomes/refusals, performance and Code self-assessment; details of any severe maladministration; an Executive Director leads complaints culture and a governing-body member holds lead responsibility. :contentReference[oaicite:67]{index=67}"
+      },
+      {
+        "question": "When and how are building safety complaints treated differently?",
+        "answer": "They are escalated to the appropriate responsible person for building safety as part of our aims and handling principles under the policy. :contentReference[oaicite:68]{index=68}"
+      },
+      {
+        "question": "A tenant’s behaviour becomes persistently abusive during a complaint. What policy tool addresses this while keeping the complaint on track?",
+        "answer": "The Unreasonable Persistent Complainant Policy can be used to manage unacceptable actions/behaviour, while still progressing the complaint fairly. :contentReference[oaicite:69]{index=69}"
+      }
+    ]
+  }

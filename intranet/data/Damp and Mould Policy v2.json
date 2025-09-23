@@ -1,0 +1,100 @@
+{
+    "easy": [
+      {
+        "question": "What is the overall purpose of Midland Heart’s Damp & Mould Policy?",
+        "answer": "To ensure homes are safe and healthy by thoroughly investigating reports, delivering effective repairs and improvements, and proactively preventing damp, mould and condensation. :contentReference[oaicite:23]{index=23}"
+      },
+      {
+        "question": "What homes are in scope?",
+        "answer": "All rented homes fully owned by Midland Heart, homes where Midland Heart has landlord responsibilities, and any communal areas owned or managed by Midland Heart. :contentReference[oaicite:24]{index=24}"
+      },
+      {
+        "question": "Define ‘damp’, ‘mould’ and ‘condensation’ as used in the policy.",
+        "answer": "Damp = excess moisture from ingress/rising/condensation; Mould = fungus thriving in damp/humid conditions; Condensation = warm moist air meeting cool surfaces, often due to poor ventilation/heating/insulation. :contentReference[oaicite:25]{index=25}"
+      },
+      {
+        "question": "How should tenants report damp and mould?",
+        "answer": "Report via a phone call to the hub so the case is accurately logged and tracked (staff/contractors can also raise). :contentReference[oaicite:26]{index=26}"
+      },
+      {
+        "question": "What are the Stage 1 targets for treatment and assessment?",
+        "answer": "Anti-fungicidal treatment aimed within 28 days; a property assessment report issued within 14 days. :contentReference[oaicite:27]{index=27}"
+      },
+      {
+        "question": "Name two triggers for escalation to Stage 2.",
+        "answer": "Severe mould or a Category 1/2 HHSRS hazard; or a repeat report about the same area within 18 months. :contentReference[oaicite:28]{index=28}"
+      },
+      {
+        "question": "What are the Stage 2 targets for surveys and works?",
+        "answer": "Issue technical survey findings within 14 days and aim to complete Stage 2 works within 90 days. :contentReference[oaicite:29]{index=29}"
+      },
+      {
+        "question": "What level of post-inspection applies at each stage?",
+        "answer": "DM1: 10% sample post-inspected; DM2: 100% of jobs post-inspected. :contentReference[oaicite:30]{index=30}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "A tenant submits photos of black spots in a bedroom and reports no leaks. What happens at Stage 1 and what advice might follow?",
+        "answer": "Trained operatives attend to apply anti-fungicidal treatment and complete a condition report. If no ingress/structural cause and heating/ventilation are adequate, guidance is provided on managing condensation to prevent recurrence. :contentReference[oaicite:31]{index=31}"
+      },
+      {
+        "question": "When is a decant considered and who manages works?",
+        "answer": "If it’s unsafe to remain during works, Midland Heart arranges day-to-day arrangements or a temporary decant. Stage 2 works are managed by the Specialist Damp & Mould Team. :contentReference[oaicite:32]{index=32}"
+      },
+      {
+        "question": "The survey finds no property defects but conditions vary by lifestyle and occupancy. What’s the next step?",
+        "answer": "Refer to a Customer Liaison Officer to agree a tailored strategy, potentially including sensors for temperature/humidity to spot patterns and manage contributing conditions. :contentReference[oaicite:33]{index=33}"
+      },
+      {
+        "question": "Access was refused twice for a scheduled visit. How do KPIs apply?",
+        "answer": "KPI timeframes pause when access is not provided and restart once access is granted, with reasonable efforts to secure access as per tenancy obligations and the No Access Policy. :contentReference[oaicite:34]{index=34}"
+      },
+      {
+        "question": "A Councillor emails about a constituent’s damp. Do you need written consent to discuss the case?",
+        "answer": "No. MP or Councillor enquiries do not require written consent; they’re handled via the usual complaints/enquiry process. :contentReference[oaicite:35]{index=35}"
+      },
+      {
+        "question": "When would you escalate from repeated repairs to planned/cyclical replacement?",
+        "answer": "When recurring issues or component failures suggest a full replacement under planned maintenance would be more effective and sustainable; decisions are made via a formal review. :contentReference[oaicite:36]{index=36}"
+      },
+      {
+        "question": "Who owns the policy and who implements it operationally?",
+        "answer": "Overall responsibility: Director for Repairs and Maintenance (James Watkins). Implementation/management: Head of Specialist Repairs (Usman Ahmed) and the dedicated damp & mould team. :contentReference[oaicite:37]{index=37}"
+      },
+      {
+        "question": "Do leaseholders/shared owners fall within the scope for remedial works?",
+        "answer": "They are responsible for managing conditions in their own homes under their lease; Midland Heart can offer advice and guidance. :contentReference[oaicite:38]{index=38}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "Severe mould is identified as an HHSRS Category 1 hazard. The tenant resists access; a neighbour’s gutter (privately owned) is also leaking into the tenant’s wall. Outline the lawful route to resolve both access and third-party causes swiftly.",
+        "answer": "Issue notice of intent to enter where necessary to address serious hazards; pauses in KPIs due to no access are recorded and then restart once access is granted. For neighbour-caused defects, engage the owner/landlord to agree works and access; if unsuccessful, consider legal action including Access to Neighbouring Land Act 1992 remedies or orders compelling works to abate nuisance. :contentReference[oaicite:39]{index=39}"
+      },
+      {
+        "question": "A vulnerable household with hoarding struggles to prep rooms for treatment. Describe the reasonable-adjustment approach and cross-team support.",
+        "answer": "Discuss needs with the household (no fixed list), agree reasonable adjustments, coordinate with Tenancy Services and safeguarding partners, and signpost to external agencies; ensure works proceed safely and effectively. :contentReference[oaicite:40]{index=40}"
+      },
+      {
+        "question": "Incoming complaint plus an MP enquiry are received about the same case. How are they logged and progressed without breaching data rules?",
+        "answer": "Log both: treat the MP enquiry via the usual process (no written consent required), manage the complaint under the Complaints Policy, and ensure all data handling aligns with Data Protection requirements. :contentReference[oaicite:41]{index=41}"
+      },
+      {
+        "question": "After treatment, damp reoccurs in 12 months in the same area. What does the policy require?",
+        "answer": "The case automatically progresses to Stage 2 for detailed survey and, where needed, major works, with survey findings issued within 14 days and works aimed within 90 days. :contentReference[oaicite:42]{index=42}"
+      },
+      {
+        "question": "Contractors failed to meet standards on several DM2 jobs. What escalation and assurance measures are available?",
+        "answer": "Use formal contract measures to manage performance (e.g., corrective actions/training), hold regular meetings, and rely on 100% post-inspection for DM2 to verify quality and outcomes. :contentReference[oaicite:43]{index=43}"
+      },
+      {
+        "question": "How does the policy ensure organisational learning and oversight for damp & mould cases?",
+        "answer": "Board receives regular updates (case volumes by stage, open cases, KPI performance); a Customer Scrutiny Panel reviews performance and changes; Operations Committee gets six-monthly detailed updates. :contentReference[oaicite:44]{index=44}"
+      },
+      {
+        "question": "When is alternative accommodation used and what forms can it take?",
+        "answer": "If unsafe to remain during works, Midland Heart may arrange day-to-day arrangements or a temporary decant to another property until works are complete. :contentReference[oaicite:45]{index=45}"
+      }
+    ]
+  }

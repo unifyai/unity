@@ -1,0 +1,72 @@
+{
+    "easy": [
+      {
+        "question": "What is the purpose of the Legionella Policy and which standards guide it?",
+        "answer": "To control/manage Legionella risk across Midland Heart’s buildings/homes and comply with legal duties. It follows HSE’s ACOP L8 and HSG274 technical guidance (Parts 1–3), with related British Standards for assessments and water system hygiene. :contentReference[oaicite:34]{index=34}"
+      },
+      {
+        "question": "Which locations are in scope?",
+        "answer": "Independent/Retirement/Specialist accommodation (incl. communal areas), offices/onsite storage, leasehold/mutual schemes where Midland Heart retains responsibility, general needs (risk-based per HSG274 Part 2 and ACOP L8), and agency-managed/leased properties where Midland Heart retains responsibility. :contentReference[oaicite:35]{index=35}"
+      },
+      {
+        "question": "What are the five headline steps ACOP L8 expects organisations to take?",
+        "answer": "Identify/assess sources of risk; prepare a written control scheme; implement/manage the scheme (appoint a competent Responsible Person); maintain records and check effectiveness; and provide training for delegated roles. :contentReference[oaicite:36]{index=36}"
+      },
+      {
+        "question": "Who can raise concerns and how are social media reports handled?",
+        "answer": "Anyone via any channel (staff, phone, email, social). Social media reports get a private reply to protect confidentiality. :contentReference[oaicite:37]{index=37}"
+      },
+      {
+        "question": "What are TMVs and why are they mentioned?",
+        "answer": "Thermostatic mixer valves control outlet temperatures (e.g., 41°C at basins/showers, 44°C at baths) to reduce scald risk and are part of water hygiene controls. :contentReference[oaicite:38]{index=38}"
+      },
+      {
+        "question": "List two ‘duty roles’ defined in the policy.",
+        "answer": "Responsible Person (authority/competence to ensure timely, effective procedures) and Local Responsible Person (building manager aware of water hygiene requirements). A Specialist Contractor supports risk assessment/monitoring. :contentReference[oaicite:39]{index=39}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "A tenant can only allow access after 6pm for water hygiene checks. What does the policy allow?",
+        "answer": "Midland Heart will endeavour to make reasonable adjustments, including flexible contractor working patterns, to facilitate access outside standard hours where practicable. :contentReference[oaicite:40]{index=40}"
+      },
+      {
+        "question": "A support worker emails about a resident’s water safety complaint. What consent rule applies?",
+        "answer": "Written consent is required to discuss personal case details with advocates/support agencies. MP/Councillor enquiries don’t require written consent. :contentReference[oaicite:41]{index=41}"
+      },
+      {
+        "question": "Summarise Midland Heart’s posture when things go wrong.",
+        "answer": "Accept responsibility and put things right quickly, while escalating to the Building Safety team per the policy. :contentReference[oaicite:42]{index=42}"
+      },
+      {
+        "question": "A general needs home is due for a water hygiene review. Which guidance sets the risk-based approach?",
+        "answer": "HSG274 Part 2 governs hot and cold water systems, applied alongside ACOP L8. :contentReference[oaicite:43]{index=43}"
+      },
+      {
+        "question": "Who are the first three escalation contacts if legionella bacteria are reported from planned maintenance samples?",
+        "answer": "Director of Building Safety; Head of Building Safety Compliance; Contract Manager (Compliance). (Further: Head of Safety & Facilities; Group Health & Safety Assurance Manager.) :contentReference[oaicite:44]{index=44}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "A suspected Legionnaires’ disease case appears linked to a scheme’s water system. Draft the immediate response plan (roles, customer comms, technical actions, and assurance).",
+        "answer": "Notify the Building Safety escalation chain (Director of Building Safety → Head of Building Safety Compliance → Contract Manager → Head of Safety & Facilities → H&S Assurance Manager) and the water hygiene specialist contractor; coordinate with the Local Responsible Person to contact affected residents; review risk assessment and written control scheme; initiate flushing/disinfection and temperature/quality monitoring as advised; document actions and verify effectiveness with records/training checks per ACOP L8/HSG274. :contentReference[oaicite:45]{index=45}"
+      },
+      {
+        "question": "How should Midland Heart evidence end-to-end compliance for an office building with complex water systems?",
+        "answer": "Maintain a current risk assessment (BS 8580-1 aligned), a written control scheme, contractor competence records, monitoring logs (temps, biocide/disinfection per PD guidance), TMV checks, training logs for responsible persons, incident/escalation records, and periodic effectiveness reviews. :contentReference[oaicite:46]{index=46}"
+      },
+      {
+        "question": "A resident with sensory impairments struggles with written appointment letters. What adjustments and governance should be shown in records?",
+        "answer": "Agree alternative communication (e.g., phone, SMS, large print or home visit arrangements), schedule flexible access, and record the reasonable-adjustment decision and outcomes, evidencing a person-centred approach. :contentReference[oaicite:47]{index=47}"
+      },
+      {
+        "question": "Outline how roles (Duty Holder, Responsible Person, Local Responsible Person, Specialist Contractor) interact during a routine audit.",
+        "answer": "The Duty Holder ensures competent appointments; the Responsible Person oversees the control scheme and verifies records; Local Responsible Persons provide site access/knowledge; the Specialist Contractor performs risk assessment/monitoring and remains independent from remedial works; audit checks competency, records and scheme effectiveness. :contentReference[oaicite:48]{index=48}"
+      },
+      {
+        "question": "A cluster of low-use rooms is identified after occupancy changes. What targeted controls should be added to the written scheme?",
+        "answer": "Introduce flushing regimes, verify outlet temperatures, review TMV settings, consider temporary decommissioning or pipework modifications, and record monitoring frequencies and responsibilities; review effectiveness at the next management check. :contentReference[oaicite:49]{index=49}"
+      }
+    ]
+  }

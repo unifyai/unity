@@ -1,0 +1,104 @@
+{
+    "easy": [
+      {
+        "question": "What is the aim of the Aids & Adaptations Policy?",
+        "answer": "To support customers to live independently and safely by providing appropriate minor and major adaptations."
+      },
+      {
+        "question": "Who can request adaptations under the policy?",
+        "answer": "Customers in general needs (including affordable rent) and those in retirement and supported living properties."
+      },
+      {
+        "question": "Give three examples of minor adaptations.",
+        "answer": "Grab rails, lever taps, and over-bath showers (others may include half-steps or small handrails)."
+      },
+      {
+        "question": "Give three examples of major adaptations.",
+        "answer": "Stairlifts or through-floor lifts, large ramps, and level-access showers (also door widening or major structural changes)."
+      },
+      {
+        "question": "How are minor adaptations typically funded?",
+        "answer": "From the landlord’s revenue budget, with non-standard items considered case by case."
+      },
+      {
+        "question": "What is a DFG and who manages it?",
+        "answer": "A Disabled Facilities Grant, managed by the local authority; it’s means-tested and mandatory for certain purposes."
+      },
+      {
+        "question": "Who is not eligible for landlord-funded adaptations?",
+        "answer": "Shared owners/leaseholders and customers with live Right-to-Buy/Right-to-Acquire applications (permission may be granted, but funding is not provided)."
+      },
+      {
+        "question": "What residency requirement applies to the person needing the adaptation?",
+        "answer": "They must be a permanent resident of the household (with residency checks)."
+      },
+      {
+        "question": "For a child with shared access between two homes, where are adaptations usually carried out?",
+        "answer": "At the child’s main and principal home."
+      }
+    ],
+    "medium": [
+      {
+        "question": "A tenant asks for lever taps and a grab rail after a diagnosis affecting grip strength. Are these ‘minor’ or ‘major’ works and how are they funded?",
+        "answer": "They are minor adaptations, typically funded from the landlord’s revenue budget (non-standard items may be considered case by case)."
+      },
+      {
+        "question": "Who can request adaptations—do retirement and supported living customers qualify?",
+        "answer": "Yes. Requests are considered from general-needs customers (including affordable rent) and from customers in retirement and supported living properties."
+      },
+      {
+        "question": "A shared-ownership leaseholder requests a stairlift funded by the landlord. What’s the policy position?",
+        "answer": "The landlord will not fund adaptations for shared owners/leaseholders (and those applying for Right to Buy/Acquire). Permission for works may be granted, but funding is not provided."
+      },
+      {
+        "question": "A parent with 50/50 custody wants a level-access shower for the child at both homes. What does the policy say about shared access scenarios?",
+        "answer": "Adaptations for children with shared access are usually only carried out at the child’s main and principal home."
+      },
+      {
+        "question": "When are requests typically referred to the local authority for a Disabled Facilities Grant (DFG), and what’s notable about DFGs?",
+        "answer": "Major adaptations are generally referred to the local authority for a DFG. DFGs are the primary council assistance, mandatory for certain purposes and subject to means testing."
+      },
+      {
+        "question": "If demand for major adaptations exceeds the capital budget, how are cases prioritized?",
+        "answer": "They are prioritized using Occupational Therapy (OT) clinical priority criteria and by chronological order, subject to budget availability."
+      },
+      {
+        "question": "Give three example ‘major works’.",
+        "answer": "Examples include large ramps, stairlifts or through-floor lifts, door widening, drop-down kerbs, level-access showers, and major structural alterations."
+      },
+      {
+        "question": "List the core eligibility points for the person in the household who needs the adaptation.",
+        "answer": "They must be the tenant/tenant’s partner/immediate family member; be a permanent resident (validated via residency checks); and have a long-term disability that significantly affects day-to-day activities in and around the home."
+      }
+    ],
+    "hard": [
+      {
+        "question": "A tenant (permanent resident with a long-term mobility impairment) requests a through-floor lift. The property is under-occupied and they are exploring a transfer. Walk through eligibility, major vs minor, DFG interplay, rehousing preference, and budget management to reach a likely outcome.",
+        "answer": "They meet disability/residency eligibility; a through-floor lift is a major adaptation typically routed via DFG. Because the home is under-occupied and a move is under consideration, rehousing may be prioritized as the more practical, cost-effective option. Major adaptations are subject to a finite capital budget; if needed, prioritization follows OT criteria and chronology. Likely outcome: progress rehousing first, considering DFG only if a move proves unsuitable and the property meets suitability and future-letting tests."
+      },
+      {
+        "question": "A tenant with a live Right-to-Buy application requests a level-access shower immediately. What happens now, and what might change if RTB is withdrawn?",
+        "answer": "Major adaptations are normally not approved while a Right-to-Buy application is in progress. The tenant can be signposted to DFG support after purchase. If the RTB is withdrawn, the request can be reconsidered under the landlord’s policy."
+      },
+      {
+        "question": "An OT proposes door widening and a stairlift, and the landlord is asked for permission. The tenant then says they plan to mutual-exchange within months. How should the case be handled?",
+        "answer": "Where a customer intends to move (transfer or mutual exchange), major adaptations at the current property are generally not approved. Exceptions can be considered via an Adaptations Panel on a case-by-case basis."
+      },
+      {
+        "question": "The local authority’s DFG team is delayed; meanwhile, a language barrier makes it hard to gather consents and scope. What adjustments and communications should be put in place to keep things moving?",
+        "answer": "Arrange interpreting services and agree reasonable adjustments to communication and appointments; provide accessible information and signpost to supportive agencies; and brief specialist contractors to account for the customer’s demographics and adjustments during works."
+      },
+      {
+        "question": "A budget squeeze creates a mid-year waitlist for major adaptations. Two similar cases are pending: Case A (higher OT priority, submitted later) and Case B (lower OT priority, submitted earlier). Who goes first and why?",
+        "answer": "Use OT clinical priority as the primary ordering and chronology as secondary. Case A, with higher OT priority, should be scheduled first, subject to operational judgment and budget availability."
+      },
+      {
+        "question": "A disabled adult son (permanent resident) in a general-needs tenancy needs a large ramp and drop-down kerb. The parent asks the landlord to fund everything. Decide funding routes and landlord considerations.",
+        "answer": "Large ramps and drop-down kerbs are major adaptations normally routed through the local authority’s DFG (means-tested and mandatory for certain purposes). The landlord also considers property suitability, scope, future-letting implications, and whether rehousing is the better long-term solution."
+      },
+      {
+        "question": "An applicant meets disability criteria but is not a permanent resident (stays intermittently). The family requests an over-bath shower, lever taps, and likely a future stairlift. What, if anything, is approved now and why?",
+        "answer": "Eligibility generally requires the disabled person to be a permanent household member. Without permanent residency, the requests would not normally be approved. If residency becomes permanent and criteria are met, minor items could be revenue-funded and a stairlift would be handled as a major adaptation via DFG and suitability checks."
+      }
+    ]
+  }
