@@ -905,19 +905,6 @@ def configure_sandbox_logging(
     if log_in_terminal:
         _sh = _logging.StreamHandler(_sys.stdout)
         _sh.setFormatter(_fmt)
-
-        # Exclude noisy per-tool timing lines from the main terminal.
-        # These lines are still sent to file/TCP handlers so they can be viewed via the dedicated port.
-        class _ExcludeToolTiming(_logging.Filter):
-            def filter(self, record: _logging.LogRecord) -> bool:  # noqa: D401
-                try:
-                    msg = record.getMessage()
-                except Exception:
-                    # If formatting the message fails, do not block the record
-                    return True
-                return "[tool-timing]" not in str(msg)
-
-        _sh.addFilter(_ExcludeToolTiming())
         root_logger.addHandler(_sh)
         _console_handler = _sh
 
@@ -970,7 +957,6 @@ def configure_sandbox_logging(
             _srv.start()
             _bh = _BroadcastLogHandler(_srv)
             _bh.setFormatter(_fmt)
-            # Broadcast all logs, including tool-timing lines
             root_logger.addHandler(_bh)
             _actual = _srv._port
             # Also write a full-session copy to a hidden, timestamped file in CWD
