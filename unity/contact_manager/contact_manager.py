@@ -31,119 +31,6 @@ from ..common.semantic_search import (
     fetch_top_k_by_references,
     backfill_rows,
 )
-from ..constants import LOGGER
-
-# ------------------------------------------------------------------ #
-#  Optional per-tool runtime logging                                  #
-# ------------------------------------------------------------------ #
-import time
-
-
-def _env_truthy(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    raw_l = str(raw).strip().lower()
-    return raw_l in {"1", "true", "yes", "on"}
-
-
-def _timing_enabled() -> bool:
-    # Per-manager override → global fallback
-    return _env_truthy(
-        "CONTACT_MANAGER_TOOL_TIMING",
-        _env_truthy("TOOL_TIMING", False),
-    )
-
-
-def _timing_print_enabled() -> bool:
-    return _env_truthy(
-        "CONTACT_MANAGER_TOOL_TIMING_PRINT",
-        _env_truthy("TOOL_TIMING_PRINT", False),
-    )
-
-
-def _log_tool_runtime(func):
-    """Decorator to measure and optionally publish per-tool runtimes.
-
-    When CONTACT_MANAGER_TOOL_TIMING is truthy, publishes a ManagerTool event via
-    EVENT_BUS containing the tool name, category (ask/update/direct) and duration_ms.
-    Printing can be enabled with CONTACT_MANAGER_TOOL_TIMING_PRINT.
-    """
-
-    @functools.wraps(func, updated=())
-    def _wrapper(self: "ContactManager", *args, **kwargs):
-        start = time.perf_counter()
-        res = None
-        try:
-            # Any explicit returns from the finally block override the
-            # return from the try block so we store it here and
-            # return it in the finally block if needed
-            res = func(self, *args, **kwargs)
-            return res
-        finally:
-            try:
-                elapsed_ms = (time.perf_counter() - start) * 1000.0
-            except Exception:
-                elapsed_ms = -1.0
-
-            if _timing_print_enabled():
-                try:
-                    print(f"ContactManager.{func.__name__} took {elapsed_ms:.2f} ms")
-                except Exception:
-                    pass
-
-            # Emit to central logger so timing lines reach the broadcast port
-            if _timing_enabled():
-                try:
-                    LOGGER.info(
-                        f"[tool-timing] ContactManager.{func.__name__} took {elapsed_ms:.2f} ms",
-                    )
-                except Exception:
-                    pass
-
-            if not _timing_enabled():
-                return res
-
-            # Determine category best-effort at runtime
-            try:
-                if (
-                    isinstance(getattr(self, "_ask_tools", None), dict)
-                    and func.__name__ in self._ask_tools
-                ):
-                    category = "ask"
-                elif (
-                    isinstance(getattr(self, "_update_tools", None), dict)
-                    and func.__name__ in self._update_tools
-                ):
-                    category = "update"
-                else:
-                    category = "direct"
-            except Exception:
-                category = "direct"
-
-            # Publish as a lightweight event if the bus is ready and a loop is running
-            try:
-                evt = Event(
-                    type="ManagerTool",
-                    payload={
-                        "manager": "ContactManager",
-                        "tool": func.__name__,
-                        "category": category,
-                        "duration_ms": float(elapsed_ms),
-                    },
-                )
-                # Only publish when EVENT_BUS is initialised and an event loop exists
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-                if loop is not None and EVENT_BUS:
-                    asyncio.create_task(EVENT_BUS.publish(evt))
-            except Exception:
-                # Swallow any timing/logging issues – never affect tool behaviour
-                pass
-
-    return _wrapper
 
 
 class ContactManager(BaseContactManager):
@@ -563,7 +450,6 @@ class ContactManager(BaseContactManager):
         return self._store.get_columns()
 
     # Apply timing to tool methods
-    @_log_tool_runtime
     def _list_columns(
         self,
         *,
@@ -600,7 +486,6 @@ class ContactManager(BaseContactManager):
         cols = self._get_columns()
         return cols if include_types else list(cols)
 
-    @_log_tool_runtime
     def _create_custom_column(
         self,
         *,
@@ -684,7 +569,6 @@ class ContactManager(BaseContactManager):
             pass
         return response
 
-    @_log_tool_runtime
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
         """
         Delete a previously created custom column from the contacts table.
@@ -1029,7 +913,6 @@ class ContactManager(BaseContactManager):
             safe[key] = value
         return safe
 
-    @_log_tool_runtime
     def _create_contact(
         self,
         *,
@@ -1185,7 +1068,6 @@ class ContactManager(BaseContactManager):
             "details": {"contact_id": log.entries["contact_id"]},
         }
 
-    @_log_tool_runtime
     def _update_contact(
         self,
         *,
@@ -1348,7 +1230,6 @@ class ContactManager(BaseContactManager):
             "details": {"contact_id": contact_id},
         }
 
-    @_log_tool_runtime
     def _delete_contact(
         self,
         *,
@@ -1417,7 +1298,6 @@ class ContactManager(BaseContactManager):
             "details": {"contact_id": contact_id},
         }
 
-    @_log_tool_runtime
     def _merge_contacts(
         self,
         *,
@@ -1612,7 +1492,6 @@ class ContactManager(BaseContactManager):
             },
         }
 
-    @_log_tool_runtime
     def _search_contacts(
         self,
         *,
@@ -1683,7 +1562,6 @@ class ContactManager(BaseContactManager):
         )
         return [Contact(**r) for r in filled]
 
-    @_log_tool_runtime
     def _filter_contacts(
         self,
         *,
