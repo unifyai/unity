@@ -66,7 +66,7 @@ class ConversationManager:
         user_number: str,
         user_whatsapp_number: str,
         user_email: str = None,
-        tts_provider: str = "cartesia",
+        voice_provider: str = "cartesia",
         voice_id: str = None,
         past_events: list | None = None,
         conv_context_length: int = 50,
@@ -80,7 +80,7 @@ class ConversationManager:
         self.assistant_age = assistant_age
         self.assistant_region = assistant_region
         self.assistant_about = assistant_about
-        self.tts_provider = tts_provider
+        self.voice_provider = voice_provider
         self.voice_id = voice_id
 
         # contact data
@@ -307,7 +307,7 @@ class ConversationManager:
                     "dev",
                     self.user_number,
                     self.assistant_number,
-                    self.tts_provider,
+                    self.voice_provider,
                     self.voice_id if self.voice_id else "None",
                     "None",
                     str(False),
