@@ -526,6 +526,9 @@ Anti-patterns to avoid
         activity_block,
         instructions_block,
         clar_sentence_upd,
+        "Before adding new knowledge or making edits, briefly check whether similar records already exist (via `"
+        + ask_fname
+        + "`) to avoid duplicates.",
         "When the user describes the update semantically, resolve the row identifier first by requesting the row identifier from the ask method, then perform the update via the row identifier.",
         f"Use the `{ask_fname}` method to see if you can find any missing context *before* you consider asking the user for clarifications.",
         "",

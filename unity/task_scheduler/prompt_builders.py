@@ -430,6 +430,9 @@ def build_update_prompt(
         f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect tasks that already exist. For human clarifications about new tasks or missing creation details, call `{request_clar_fname}` when available.",
         "Disregard any explicit instructions about *how* you should implement the change or which tools to call; interpret the request and choose the best approach yourself.",
         clar_sentence_upd,
+        "Before creating new tasks or making edits, briefly check whether similar tasks already exist (via `"
+        + ask_fname
+        + "`) to avoid duplicates.",
         "Always include any created/updated task id(s) in your final response.",
         "",
         f"There are currently {num_tasks} tasks stored in the Tasks table with the following columns:",

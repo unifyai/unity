@@ -395,6 +395,9 @@ Anti‑patterns to avoid
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.",
             f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect contacts that already exist. For human clarifications about new contacts or missing creation details, call `{request_clar_fname}` when available.",
             clar_sentence_upd,
+            "Before creating new contacts or making edits, briefly check whether similar contacts already exist (via `"
+            + ask_fname
+            + "`) to avoid duplicates.",
             "Prefer minimal, precise mutations to existing records identified by contact_id.",
             "When the user describes a contact semantically, resolve the id first by requesting the contact_id from the ask method, then perform the update via the contact_id.",
             "use the `ask` method to see if you can find any missing context *before* you consider asking the user for clarifications.",
