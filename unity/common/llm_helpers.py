@@ -3226,7 +3226,7 @@ async def _async_tool_use_loop_inner(
                     # ── Special-case dynamic helpers ──────────────────────
                     # • continue_* → acknowledge, no scheduling
                     # • cancel_*   → cancel underlying task & purge metadata
-                    if _is_helper_tool("continue_") and name.startswith("continue_"):
+                    if name.startswith("continue_"):
                         # Helper names are of the form: continue_{toolName}_{safeId}
                         call_id_suffix = name.split("_")[-1]
 
