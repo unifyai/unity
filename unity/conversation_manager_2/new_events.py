@@ -95,3 +95,23 @@ class EmailRecieved(Event):
 class SMSSent(Event):
     contact: str
     content: str
+
+
+@dataclass
+class StartupEvent(Event):
+    api_key: str
+    medium: str
+    assistant_id: str
+    user_id: str
+    assistant_name: str
+    assistant_age: str
+    assistant_region: str
+    assistant_about: str
+    assistant_number: str
+    assistant_email: str
+    user_name: str
+    user_number: str
+    user_whatsapp_number: str
+    user_email: str
+    voice_id: str
+    voice_provider: str = "cartesia"

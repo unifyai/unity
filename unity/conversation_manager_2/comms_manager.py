@@ -1,3 +1,4 @@
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -60,6 +61,8 @@ class CommsManager:
 
                 # acknowledge message and cancel startup subscription
                 message.ack()
+                while startup_subscription_id not in self.subscribers:
+                    time.sleep(0.1)
                 self.subscribers[startup_subscription_id].cancel()
                 self.subscribers.pop(startup_subscription_id)
 
