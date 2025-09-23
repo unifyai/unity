@@ -55,71 +55,6 @@ import argparse
 from unity.common.llm_helpers import SteerableToolHandle
 from pydantic import BaseModel, Field
 
-# ---------------------------------------------------------------------------
-# Pydantic → OpenAI response_format helper
-# ---------------------------------------------------------------------------
-
-
-def pydantic_response_format(model_cls: type[BaseModel]) -> dict:
-    """Return an OpenAI-compatible JSON schema response_format for *model_cls*.
-
-    This avoids passing a raw Pydantic class (which is not JSON-serialisable)
-    into client configs/logs while still enabling structured outputs.
-    """
-    try:
-        schema = model_cls.model_json_schema()
-    except Exception:
-        # Pydantic v1 fallback
-        try:  # type: ignore[attr-defined]
-            schema = model_cls.schema()  # type: ignore[attr-defined]
-        except Exception:
-            schema = {}
-
-    # Ensure OpenAI's stricter requirements on the root schema and nested objects
-    def _enforce_object_strict(node: Any) -> None:
-        if isinstance(node, dict):
-            t = node.get("type")
-            if t == "object":
-                if not isinstance(node.get("properties"), dict):
-                    node["properties"] = {}
-                node["additionalProperties"] = False
-                # Ensure required includes ALL property keys
-                try:
-                    node["required"] = list(node["properties"].keys())
-                except Exception:
-                    node["required"] = []
-            # Recurse into common schema containers
-            for k, v in list(node.items()):
-                if isinstance(v, (dict, list)):
-                    _enforce_object_strict(v)
-        elif isinstance(node, list):
-            for item in node:
-                _enforce_object_strict(item)
-
-    try:
-        if not isinstance(schema, dict):
-            schema = {}
-        # Root object constraints
-        schema.setdefault("type", "object")
-        if not isinstance(schema.get("properties"), dict):
-            schema["properties"] = {}
-        # Root: list all properties as required
-        schema["required"] = list(schema["properties"].keys())
-        # Recursively enforce additionalProperties=false on object nodes
-        _enforce_object_strict(schema)
-    except Exception:
-        pass
-    name = getattr(model_cls, "__name__", "Response")
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": name,
-            "schema": schema,
-            "strict": True,
-        },
-    }
-
-
 # Added for direct logging of generated messages
 from unity.transcript_manager.transcript_manager import TranscriptManager
 
@@ -1359,7 +1294,7 @@ async def _route_freeform_and_apply(
 
     judge = _unify.Unify(
         "gpt-5@openai",
-        response_format=pydantic_response_format(_SteeringIntent),
+        response_format=_SteeringIntent,
     )
 
     # Build a compact, recent-first transcript to provide conversation context
@@ -2963,7 +2898,7 @@ def parse_per_task_guidance(text: str) -> dict[int, str]:
     try:
         judge = _unify.Unify(
             "gpt-5@openai",
-            response_format=pydantic_response_format(_PerTaskGuidancePayload),
+            response_format=_PerTaskGuidancePayload,
             reasoning_effort="high",
             service_tier="priority",
         )
@@ -3064,7 +2999,7 @@ def parse_simulation_overrides(text: str) -> _SimOverrides:
 
     judge = _unify.Unify(
         "gpt-5@openai",
-        response_format=pydantic_response_format(_SimOverrides),
+        response_format=_SimOverrides,
         reasoning_effort="high",
         service_tier="priority",
     )
