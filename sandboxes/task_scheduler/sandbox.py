@@ -631,14 +631,6 @@ async def _main_async() -> None:
 
     args = parser.parse_args()
 
-    # Ensure per-tool timing does NOT print to the main terminal.
-    # Timing will still be emitted via the central logger and thus the TCP stream.
-    os.environ["TOOL_TIMING_PRINT"] = "false"
-    os.environ["TASK_SCHEDULER_TOOL_TIMING_PRINT"] = "false"
-    os.environ["CONTACT_MANAGER_TOOL_TIMING_PRINT"] = "false"
-    os.environ["KNOWLEDGE_MANAGER_TOOL_TIMING_PRINT"] = "false"
-    os.environ["TRANSCRIPT_MANAGER_TOOL_TIMING_PRINT"] = "false"
-
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
     # ─────────────────── Unify context ────────────────────

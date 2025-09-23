@@ -167,46 +167,6 @@ class TranscriptManager(BaseTranscriptManager):
         return cls._LOGGER
 
     # ------------------------------------------------------------------ #
-    #  Optional per-tool runtime logging                                 #
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def _env_truthy(name: str, default: bool = False) -> bool:
-        raw = os.environ.get(name)
-        if raw is None:
-            return default
-        raw_l = str(raw).strip().lower()
-        return raw_l in {"1", "true", "yes", "on"}
-
-    @classmethod
-    def _timing_enabled(cls) -> bool:
-        # Per-manager override → global fallback
-        # Reuse ContactManager's flag names for consistency
-        cm_flag = os.environ.get("TRANSCRIPT_MANAGER_TOOL_TIMING")
-        if cm_flag is not None:
-            val = str(cm_flag).strip().lower() in {"1", "true", "yes", "on"}
-            return val
-        # Fallback to global
-        glob = os.environ.get("TOOL_TIMING")
-        return (
-            str(glob).strip().lower() in {"1", "true", "yes", "on"}
-            if glob is not None
-            else False
-        )
-
-    @classmethod
-    def _timing_print_enabled(cls) -> bool:
-        tm_flag = os.environ.get("TRANSCRIPT_MANAGER_TOOL_TIMING_PRINT")
-        if tm_flag is not None:
-            val = str(tm_flag).strip().lower() in {"1", "true", "yes", "on"}
-            return val
-        glob = os.environ.get("TOOL_TIMING_PRINT")
-        return (
-            str(glob).strip().lower() in {"1", "true", "yes", "on"}
-            if glob is not None
-            else False
-        )
-
-    # ------------------------------------------------------------------ #
     #  Small internal helper – LLM client factory                        #
     # ------------------------------------------------------------------ #
     def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
