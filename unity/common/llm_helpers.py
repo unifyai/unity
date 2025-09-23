@@ -27,7 +27,6 @@ from typing import (
 import unify
 from ..constants import LOGGER
 from dataclasses import dataclass
-from ..events.event_bus import Event, EVENT_BUS
 from contextlib import suppress
 from ._async_tool.tools_utils import (
     ToolCallMetadata,
@@ -42,7 +41,14 @@ from ._async_tool.loop import (
     LoopLogger,
 )
 from ._async_tool.utils import maybe_await
+from ._async_tool.messages import (
+    find_unreplied_assistant_entries,
+    chat_context_repr,
+    generate_with_preprocess,
+)
+from ._async_tool.event_bus_util import to_event_bus
 from .tool_spec import ToolSpec, normalise_tools
+from ._async_tool.message_dispatcher import LoopMessageDispatcher
 
 
 TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
@@ -601,161 +607,7 @@ async def _forward_handle_call(
         return None
 
 
-def _chat_context_repr(
-    parent_ctx: Optional[list[dict]],
-    current_msgs: list[dict],
-) -> list[dict]:
-    """
-    Combine **existing** ``parent_ctx`` with the *current* chat history
-    (``current_msgs``) into a depth-aware nested structure:
-
-        root_msg0
-        root_msg1
-        root_msg2
-          └── children:
-              ├── child_msg0
-              └── child_msg1
-
-    Strategy – keep the original list untouched and attach the new
-    messages as ``children`` of the *last* element.
-    """
-    ctx_block = [
-        {"role": m.get("role"), "content": m.get("content")} for m in current_msgs
-    ]
-    if not parent_ctx:
-        return ctx_block
-
-    import copy
-
-    combined = copy.deepcopy(parent_ctx)
-    combined[-1].setdefault("children", []).extend(ctx_block)
-    return combined
-
-
 # ASYNC TOOL USE INNER HELPERS ────────────────────────────────────────────────
-
-
-# ── small helper: publish to the EventBus (if configured) ──────────────
-async def _to_event_bus(
-    messages: Union[Dict, List[Dict]],
-    loop_cfg: LoopConfig,
-) -> None:
-    """
-    Emit *messages* to the shared EventBus (if configured).
-
-    Every `ToolLoop` event now carries **both** the raw chat *message*
-    and the *public method* that spawned the loop so downstream
-    subscribers can easily group / filter events.
-    """
-    if not EVENT_BUS:
-        return
-    if isinstance(messages, dict):
-        messages = [messages]
-    for message in messages:
-        await EVENT_BUS.publish(
-            Event(
-                type="ToolLoop",
-                payload={
-                    "message": message,
-                    "method": loop_cfg.loop_id,
-                    "hierarchy": list(loop_cfg.lineage),
-                    "hierarchy_label": loop_cfg.label,
-                },
-            ),
-        )
-
-
-# Helper: scan transcript for assistant messages that have tool_calls with
-# missing tool replies (before the next assistant message).
-def _find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
-    findings: list[dict] = []
-    try:
-        for i, m in enumerate(client.messages):
-            if m.get("role") != "assistant":
-                continue
-            tcs = m.get("tool_calls") or []
-            if not tcs:
-                continue
-            ids = [tc.get("id") for tc in tcs if isinstance(tc, dict)]
-            if not ids:
-                continue
-            responded: set[str] = set()
-            j = i + 1
-            while (
-                j < len(client.messages)
-                and client.messages[j].get("role") != "assistant"
-            ):
-                mm = client.messages[j]
-                if mm.get("role") == "tool":
-                    tcid = mm.get("tool_call_id")
-                    if tcid in ids:
-                        responded.add(tcid)
-                j += 1
-            missing = [c for c in ids if c not in responded]
-            if missing:
-                findings.append(
-                    {
-                        "assistant_index": i,
-                        "assistant_msg": m,
-                        "missing": missing,
-                    },
-                )
-    except Exception:
-        pass
-    return findings
-
-
-# Helper: call `client.generate` with optional preprocessing
-async def _generate_with_preprocess(
-    client: unify.AsyncUnify,
-    preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]],
-    **gen_kwargs,
-):
-    if preprocess_msgs is None:
-        return await maybe_await(client.generate(**gen_kwargs))
-
-    import copy
-
-    original_msgs = client.messages  # reference to canonical log
-    msgs_copy = copy.deepcopy(original_msgs)
-
-    try:
-        patched = preprocess_msgs(msgs_copy) or msgs_copy
-    except Exception as exc:  # resilience – don't fail the loop
-        LOGGER.error(
-            f"preprocess_msgs raised {exc!r}; using original messages.",
-        )
-        patched = msgs_copy
-
-    start_len = len(patched)
-
-    # ------------------------------------------------------------------
-    # Some ``AsyncUnify`` implementations (the real one) keep their chat
-    # transcript in a **private** attribute ``_messages`` which is what
-    # ``.generate`` reads from, while lightweight test doubles (e.g.
-    # ``SpyAsyncUnify`` in the test-suite) expose only a public
-    # ``messages`` list.  To remain compatible with *both* variants we
-    # detect the attribute that is actually consumed by the downstream
-    # ``generate`` call and patch **that** for the duration of the call.
-    # ------------------------------------------------------------------
-    target_attr = "_messages" if hasattr(client, "_messages") else "messages"
-
-    original_container = getattr(client, target_attr)
-    setattr(client, target_attr, patched)
-    try:
-        result = await maybe_await(client.generate(**gen_kwargs))
-
-        # Append any new messages the LLM produced back to canonical log
-        current_msgs = getattr(client, target_attr)
-        if len(current_msgs) > start_len:
-            original_msgs.extend(copy.deepcopy(current_msgs[start_len:]))
-
-        return result
-    finally:
-        # Always restore the canonical chat log so the outer loop remains
-        # consistent irrespective of whether we patched `_messages` or
-        # `messages`.
-        setattr(client, target_attr, original_container)
 
 
 # Helper: detect helper-tool names (continue_/stop_/pause_/resume_/clarify_/interject_)
@@ -812,31 +664,11 @@ def _build_helper_ack_content(name: str, args_json: Any) -> str:
     return ack_content
 
 
-class _AsyncToolLoopMessageDispatcher:
-    def __init__(
-        self,
-        client: unify.AsyncUnify,
-        cfg: LoopConfig,
-        timer: TimeoutTimer,
-    ):
-        self._client = client
-        self._cfg = cfg
-        self._timer = timer
-
-    async def append_msgs(
-        self,
-        msgs: list[dict],
-    ) -> None:
-        self._client.append_messages(msgs)
-        await _to_event_bus(msgs, self._cfg)
-        self._timer.reset()
-
-
 # ── small helper: add completion tool message pair ──────────────
 async def _emit_completion_pair(
     result: str,
     call_id: str,
-    msg_dispatcher: _AsyncToolLoopMessageDispatcher,
+    msg_dispatcher: LoopMessageDispatcher,
 ) -> dict:
     """
     Append a synthetic assistant→tool pair that carries the *final*
@@ -875,7 +707,7 @@ async def _insert_tool_message_after_assistant(
     parent_msg: dict,
     tool_msg: ToolCallMessage,
     client,
-    msg_dispatcher: _AsyncToolLoopMessageDispatcher,
+    msg_dispatcher: LoopMessageDispatcher,
 ) -> None:
     """
     Append *tool_msg* and move it directly after *parent_msg*, while
@@ -1218,7 +1050,7 @@ class _ToolsData:
         extra_kwargs: dict = {}
         if propagate_chat_context:
             cur_msgs = [m for m in self._client.messages if not m.get("_ctx_header")]
-            ctx_repr = _chat_context_repr(parent_chat_context, cur_msgs)
+            ctx_repr = chat_context_repr(parent_chat_context, cur_msgs)
             extra_kwargs["parent_chat_context"] = ctx_repr
 
         sig = inspect.signature(fn)
@@ -2204,7 +2036,7 @@ async def _async_tool_use_loop_inner(
         raise_on_limit=raise_on_limit,
         client=client,
     )
-    _msg_dispatcher = _AsyncToolLoopMessageDispatcher(client, cfg, timer)
+    _msg_dispatcher = LoopMessageDispatcher(client, cfg, timer)
 
     if log_steps:
         if log_steps == "full":
@@ -2264,7 +2096,7 @@ async def _async_tool_use_loop_inner(
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):
-        unreplied = _find_unreplied_assistant_entries(client)
+        unreplied = find_unreplied_assistant_entries(client)
         if unreplied:
             # backfill for all such assistant messages (oldest → newest)
             for entry in unreplied:
@@ -2455,7 +2287,7 @@ async def _async_tool_use_loop_inner(
             #      before we allow new user interjections to be appended.
             with suppress(Exception):
                 # Only consider the very latest assistant with missing replies first
-                if unreplied := _find_unreplied_assistant_entries(client):
+                if unreplied := find_unreplied_assistant_entries(client):
                     last_problem = unreplied[-1]
                     amsg = last_problem["assistant_msg"]
                     missing_ids = set(last_problem["missing"])
@@ -2821,7 +2653,7 @@ async def _async_tool_use_loop_inner(
                     _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
                 llm_task = asyncio.create_task(
-                    _generate_with_preprocess(client, preprocess_msgs, **_gen_kwargs),
+                    generate_with_preprocess(client, preprocess_msgs, **_gen_kwargs),
                     name="LLMGenerate",
                 )
                 interject_w = asyncio.create_task(
@@ -2914,7 +2746,7 @@ async def _async_tool_use_loop_inner(
                     if max_parallel_tool_calls is not None:
                         _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
-                    await _generate_with_preprocess(
+                    await generate_with_preprocess(
                         client,
                         preprocess_msgs,
                         **_gen_kwargs,
@@ -2925,7 +2757,7 @@ async def _async_tool_use_loop_inner(
                     )
 
             msg = client.messages[-1]
-            await _to_event_bus(msg, cfg)
+            await to_event_bus(msg, cfg)
 
             if log_steps:
                 try:
@@ -3433,7 +3265,7 @@ async def _async_tool_use_loop_inner(
                             cur_msgs = [
                                 m for m in client.messages if not m.get("_ctx_header")
                             ]
-                            ctx_repr = _chat_context_repr(parent_chat_context, cur_msgs)
+                            ctx_repr = chat_context_repr(parent_chat_context, cur_msgs)
                             extra_kwargs["parent_chat_context"] = ctx_repr
 
                         sig = inspect.signature(fn)
