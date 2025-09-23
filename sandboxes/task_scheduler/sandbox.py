@@ -36,7 +36,7 @@ if str(ROOT) not in sys.path:
 
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.common.llm_helpers import SteerableToolHandle
+from unity.common.async_tool_loop import SteerableToolHandle
 from unity.actor.simulated import SimulatedActor
 from sandboxes.utils import (
     record_until_enter as _record_until_enter,
