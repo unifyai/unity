@@ -757,6 +757,12 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             self._current_task_id,
         )
 
+        # Determine chain size for copy policy decisions inside the LLM
+        try:
+            chain_size = len(queue_rows)
+        except Exception:
+            chain_size = 0
+
         # Get a detailed progress update from the current task (best‑effort)
         progress_text: str = ""
         try:
@@ -773,6 +779,17 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 progress_text = ""
         except Exception:
             progress_text = ""
+
+        # Also get the inner task's direct answer to the user's question (best‑effort)
+        task_direct_text: str = ""
+        try:
+            th = await self._current_handle.ask(question)  # type: ignore[arg-type]
+            try:
+                task_direct_text = await th.result()
+            except Exception:
+                task_direct_text = ""
+        except Exception:
+            task_direct_text = ""
 
         # Compose completions snapshot since this queue started
         try:
@@ -802,6 +819,13 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             "- Prefer paraphrasing and aggregation over verbatim dumps.\n"
             "- Always reference task ids when useful; avoid unnecessary minutiae.\n"
             "- Keep answers skimmable: brief paragraphs or short bullet points.\n"
+            "\n"
+            "COPY POLICY (critical):\n"
+            "- If CHAIN_SIZE == 1 and the user’s question is about the current task (not the overall queue/chain),\n"
+            "  you MUST return exactly the CURRENT_TASK_DIRECT_ANSWER verbatim — no extra words, headings, or formatting.\n"
+            "- If CURRENT_TASK_DIRECT_ANSWER is empty/unavailable in that case, return EXACTLY CURRENT_TASK_PROGRESS verbatim.\n"
+            "- Only when the question is explicitly about the queue/chain (e.g., overall/next/remaining/how many/comparisons)\n"
+            "  should you synthesise a queue‑aware answer using the provided snapshot and progress.\n"
         )
         client.set_system_message(sys)
 
@@ -815,11 +839,15 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             (queue_preamble or "")
             + "\n\nCHAIN_ROWS_JSON:\n"
             + _safe_dump(queue_rows)
-            + "\n\nCOMPLETIONS_SINCE_START:\n"
+            + "\n\nCHAIN_SIZE: "
+            + str(chain_size)
+            + "\nCOMPLETIONS_SINCE_START:\n"
             + (completions_summary or "(none)")
             + "\n\nCURRENT_TASK_ID: "
             + str(self._current_task_id)
-            + "\nCURRENT_TASK_PROGRESS (free‑form from task):\n"
+            + "\nCURRENT_TASK_DIRECT_ANSWER (verbatim-ready):\n"
+            + (task_direct_text or "")
+            + "\nCURRENT_TASK_PROGRESS:\n"
             + (progress_text or "(unavailable)")
             + "\n\nUSER QUESTION:\n"
             + question
