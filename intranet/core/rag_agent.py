@@ -718,7 +718,7 @@ class IntranetRAGAgent:
             # Get raw stats from knowledge manager
             stats_prompt = "Provide statistics about the current knowledge base including document counts by type, departments, and search performance. Return the information in a structured format."
 
-            from unity.common.llm_helpers import start_async_tool_use_loop
+            from unity.common.async_tool_loop import start_async_tool_use_loop
 
             stats_handle = start_async_tool_use_loop(
                 self.client,
