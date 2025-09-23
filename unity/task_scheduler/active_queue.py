@@ -735,42 +735,121 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         *,
         _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":  # type: ignore[override]
-        """Answer questions with queue-aware context and delegate to inner handle.
+        """Answer questions using a queue-level LLM that decides granularity.
 
-        Builds a compact queue snapshot (head→tail) and a concise progress
-        headline, then prepends it to the forwarded question. If snapshot
-        construction fails, falls back to the raw question.
+        Policy
+        ------
+        - Construct a compact chain snapshot (head→tail) and headline.
+        - Ask the current task for a detailed progress update.
+        - Provide the LLM with: snapshot JSON, headline, completions since start,
+          and the full current-task progress. The LLM decides how much task‑level
+          detail is appropriate for the user’s question (high‑level vs granular).
+        - No pass‑through fast path; always synthesize a response with an LLM.
         """
 
-        # Fast-path: when queue remains a true singleton, delegate directly
-        if self._should_passthrough():
-            try:
-                return await self._current_handle.ask(
-                    question,
-                    _return_reasoning_steps=_return_reasoning_steps,
-                )
-            except TypeError:
-                return await self._current_handle.ask(question)
-
+        # Build queue context
         queue_preamble: str | None = _QueueSnapshot.build_preamble(
             self._s,
             self._current_task_id,
         )
-
-        composed_question = (
-            f"{queue_preamble}\n\nUSER QUESTION:\n{question}"
-            if queue_preamble
-            else question
+        queue_rows: list[dict] = _QueueSnapshot.build_rows(
+            self._s,
+            self._current_task_id,
         )
 
+        # Get a detailed progress update from the current task (best‑effort)
+        progress_text: str = ""
         try:
-            return await self._current_handle.ask(  # type: ignore[arg-type]
-                composed_question,
-                _return_reasoning_steps=_return_reasoning_steps,
+            progress_prompt = (
+                "Please provide a detailed, task‑centric progress update so far. "
+                "Focus on facts only. Include: a one‑line headline; key outputs produced; "
+                "items completed; items remaining; risks/blockers; estimated time to finish if applicable. "
+                "Be comprehensive but concise."
             )
-        except TypeError:
-            # Retry without the kwarg if not accepted.
-            return await self._current_handle.ask(composed_question)  # type: ignore[arg-type]
+            ph = await self._current_handle.ask(progress_prompt)  # type: ignore[arg-type]
+            try:
+                progress_text = await ph.result()
+            except Exception:
+                progress_text = ""
+        except Exception:
+            progress_text = ""
+
+        # Compose completions snapshot since this queue started
+        try:
+            completed_pairs = list(self._completed_tasks)
+        except Exception:
+            completed_pairs = []
+        completions_summary = (
+            ", ".join([f"Task {tid}: {name}" for tid, name in completed_pairs])
+            if completed_pairs
+            else ""
+        )
+
+        # Use an LLM to decide the appropriate granularity and compose the answer
+        client = unify.AsyncUnify(
+            "gpt-5@openai",
+            cache=True,
+            traced=True,
+            reasoning_effort="high",
+            service_tier="priority",
+        )
+
+        sys = (
+            "You answer questions about a running chain of tasks. Decide the appropriate level of detail.\n"
+            "Guidance:\n"
+            "- If the user’s question is high‑level (overall progress), respond concisely with totals, current position, and what’s next.\n"
+            "- Only include detailed, task‑specific progress when the question itself is granular.\n"
+            "- Prefer paraphrasing and aggregation over verbatim dumps.\n"
+            "- Always reference task ids when useful; avoid unnecessary minutiae.\n"
+            "- Keep answers skimmable: brief paragraphs or short bullet points.\n"
+        )
+        client.set_system_message(sys)
+
+        def _safe_dump(value: Any) -> str:
+            try:
+                return json.dumps(value, ensure_ascii=False, default=str)
+            except Exception:
+                return str(value)
+
+        user_msg = (
+            (queue_preamble or "")
+            + "\n\nCHAIN_ROWS_JSON:\n"
+            + _safe_dump(queue_rows)
+            + "\n\nCOMPLETIONS_SINCE_START:\n"
+            + (completions_summary or "(none)")
+            + "\n\nCURRENT_TASK_ID: "
+            + str(self._current_task_id)
+            + "\nCURRENT_TASK_PROGRESS (free‑form from task):\n"
+            + (progress_text or "(unavailable)")
+            + "\n\nUSER QUESTION:\n"
+            + question
+        )
+
+        answer = await client.generate(user_msg)
+
+        # Return a lightweight static handle that yields the synthesized answer
+        class _AnswerHandle(SteerableToolHandle):  # type: ignore[abstract-method]
+            def __init__(self, text: str) -> None:
+                self._text = text
+
+            async def interject(self, message: str): ...
+
+            def stop(self, reason: Optional[str] = None): ...
+
+            def pause(self): ...
+
+            def resume(self): ...
+
+            def done(self) -> bool:
+                return True
+
+            async def result(self) -> str:
+                return self._text
+
+            async def ask(self, q: str) -> "SteerableToolHandle":  # type: ignore[override]
+                return self
+
+        return _AnswerHandle(answer)
 
     @property
     def valid_tools(self) -> Dict[str, Callable]:  # type: ignore[override]
