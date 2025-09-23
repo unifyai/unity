@@ -3811,7 +3811,21 @@ async def _async_tool_use_loop_inner(
 from abc import ABC, abstractmethod
 
 
-class SteerableToolHandle(ABC):
+class SteerableHandle(ABC):
+    """Abstract base class for steerable handles."""
+
+    @abstractmethod
+    async def ask(self, question: str) -> "SteerableHandle":
+        """
+        Ask a question to the running process.
+        """
+
+    @abstractmethod
+    def interject(self, message: str) -> Awaitable[Optional[str]] | Optional[str]:
+        """Inject an additional *user* turn into the running conversation."""
+
+
+class SteerableToolHandle(SteerableHandle):
     """Abstract base class for steerable tool handles."""
 
     @abstractmethod
@@ -3819,16 +3833,6 @@ class SteerableToolHandle(ABC):
         self,
     ) -> None:
         pass
-
-    @abstractmethod
-    async def ask(self, question: str) -> "SteerableToolHandle":
-        """
-        Ask a question to the running tool.
-        """
-
-    @abstractmethod
-    def interject(self, message: str) -> Awaitable[Optional[str]] | Optional[str]:
-        """Inject an additional *user* turn into the running conversation."""
 
     @abstractmethod
     def stop(
