@@ -5,7 +5,7 @@ import threading
 import time
 
 import unify
-from ..constants import LOGGER
+import logging
 from .base import BaseActor
 from typing import Optional
 
@@ -265,7 +265,8 @@ class SimulatedActorHandle:
     def _emit_status(self, message: str) -> None:
         """Emit a status line to the central logger so it reaches the broadcast port."""
         try:
-            LOGGER.info(message)
+            # Use a dedicated logger name for simulation status so console filters can exclude it
+            logging.getLogger("unity.simulated_actor").info(message)
         except Exception:
             pass
 

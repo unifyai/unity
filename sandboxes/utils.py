@@ -899,10 +899,27 @@ def configure_sandbox_logging(
         _fh.addFilter(_LazyHTTPExcludeFilter())
         root_logger.addHandler(_fh)
 
+    # Track console handler so we can attach filters after helper classes are defined
+    _console_handler: _logging.StreamHandler | None = None
+
     if log_in_terminal:
         _sh = _logging.StreamHandler(_sys.stdout)
         _sh.setFormatter(_fmt)
+
+        # Exclude noisy per-tool timing lines from the main terminal.
+        # These lines are still sent to file/TCP handlers so they can be viewed via the dedicated port.
+        class _ExcludeToolTiming(_logging.Filter):
+            def filter(self, record: _logging.LogRecord) -> bool:  # noqa: D401
+                try:
+                    msg = record.getMessage()
+                except Exception:
+                    # If formatting the message fails, do not block the record
+                    return True
+                return "[tool-timing]" not in str(msg)
+
+        _sh.addFilter(_ExcludeToolTiming())
         root_logger.addHandler(_sh)
+        _console_handler = _sh
 
     # Helper: common filter to exclude/include HTTP-debug loggers
     class _NamePrefixFilter(_logging.Filter):
@@ -922,6 +939,15 @@ def configure_sandbox_logging(
             if self._exclude and any(name.startswith(p) for p in self._exclude):
                 return False
             return True
+
+    # Exclude simulated actor status logs from the main terminal; they will still appear in file/TCP streams
+    if _console_handler is not None:
+        try:
+            _console_handler.addFilter(
+                _NamePrefixFilter(exclude_prefixes=["unity.simulated_actor"]),
+            )
+        except Exception:
+            pass
 
     # Determine Unify Request logger prefixes (override via env if needed)
     _http_logger_env = os.getenv("HTTP_DEBUG_LOGGERS", "").strip()
@@ -944,6 +970,7 @@ def configure_sandbox_logging(
             _srv.start()
             _bh = _BroadcastLogHandler(_srv)
             _bh.setFormatter(_fmt)
+            # Broadcast all logs, including tool-timing lines
             root_logger.addHandler(_bh)
             _actual = _srv._port
             # Also write a full-session copy to a hidden, timestamped file in CWD
