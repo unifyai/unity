@@ -540,6 +540,10 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     assert "USER QUESTION:" in q
     assert "How is the queue going?" in q
 
+    # Cleanup: stop the active queue to avoid leaving background tasks running
+    h.stop(cancel=False)
+    await asyncio.wait_for(h.result(), timeout=10)
+
 
 @pytest.mark.asyncio
 @_handle_project
@@ -830,6 +834,9 @@ async def test_active_task_done_incremental(monkeypatch):
     payload3 = await inner.active_task_done()
     data3 = _json.loads(payload3 or "{}")
     assert data3 == {}
+
+    # Ensure the queue handle fully resolves to avoid lingering background tasks
+    await asyncio.wait_for(h.result(), timeout=10)
 
 
 @pytest.mark.asyncio
