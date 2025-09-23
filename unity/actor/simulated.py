@@ -263,18 +263,9 @@ class SimulatedActorHandle:
     # Status query helpers
     # ------------------------
     def _emit_status(self, message: str) -> None:
-        """Emit a status line according to configured log mode: print | log | None."""
+        """Emit a status line to the central logger so it reaches the broadcast port."""
         try:
-            if self._log_mode == "print":
-                print(message)
-            elif self._log_mode == "log":
-                try:
-                    LOGGER.info(message)
-                except Exception:
-                    pass
-            else:
-                # None ⇒ suppressed
-                pass
+            LOGGER.info(message)
         except Exception:
             pass
 

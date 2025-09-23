@@ -5,6 +5,7 @@ import json
 import asyncio
 import functools
 from typing import List, Dict, Optional, Union, Any, Callable, Literal
+from ..constants import LOGGER
 
 import unify
 from ..common.embed_utils import ensure_vector_column
@@ -83,6 +84,15 @@ def _tm_log_tool_runtime(func):
             try:
                 print(
                     f"TranscriptManager.{func.__name__} took {elapsed_ms:.2f} ms",
+                )
+            except Exception:
+                pass
+
+        # Emit to central logger so timing lines reach the broadcast port
+        if _tm_timing_enabled():
+            try:
+                LOGGER.info(
+                    f"[tool-timing] TranscriptManager.{func.__name__} took {elapsed_ms:.2f} ms",
                 )
             except Exception:
                 pass
@@ -304,6 +314,15 @@ class TranscriptManager(BaseTranscriptManager):
                     try:
                         print(
                             f"TranscriptManager.{func.__name__} took {elapsed_ms:.2f} ms",
+                        )
+                    except Exception:
+                        pass
+
+                # Emit to central logger so timing lines reach the broadcast port
+                if cls._timing_enabled():
+                    try:
+                        LOGGER.info(
+                            f"[tool-timing] TranscriptManager.{func.__name__} took {elapsed_ms:.2f} ms",
                         )
                     except Exception:
                         pass

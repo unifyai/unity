@@ -4,6 +4,7 @@ import uuid
 import unify
 import functools
 from typing import Any, Dict, List, Optional, Union
+from ..constants import LOGGER
 
 import json
 
@@ -91,6 +92,15 @@ def _km_log_tool_runtime(func):
             if _km_timing_print_enabled():
                 try:
                     print(f"KnowledgeManager.{func.__name__} took {elapsed_ms:.2f} ms")
+                except Exception:
+                    pass
+
+            # Emit to central logger so timing lines reach the broadcast port
+            if _km_timing_enabled():
+                try:
+                    LOGGER.info(
+                        f"[tool-timing] KnowledgeManager.{func.__name__} took {elapsed_ms:.2f} ms",
+                    )
                 except Exception:
                     pass
 
