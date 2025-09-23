@@ -1,44 +1,51 @@
-from tavily import TavilyClient
-from typing import List, Dict, Any, Optional
 import os
 import json
+from tavily import TavilyClient
+from typing import List, Dict, Any, Optional
 import unify
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
     inject_broader_context,
     TOOL_LOOP_LINEAGE,
     SteerableToolHandle,
+    methods_to_tool_dict,
 )
+from ..events.manager_event_logging import log_manager_call
 from . import prompt_builders
+from .base import BaseWebSearch
 
 
-class WebSearch:
+class WebSearch(BaseWebSearch):
     """
-    Manages web search and extraction using the Tavily Python SDK.
+    Manages web search and extraction.
     """
 
     def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.client = TavilyClient(api_key=self.api_key)
+        self.tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+        # Build the tools mapping once; copy when used
+        self._ask_tools: Dict[str, Any] = methods_to_tool_dict(
+            self._search,
+            self._extract,
+            self._crawl,
+            self._map,
+            include_class_name=False,
+        )
 
-    # 1. Main entrypoint
+    @log_manager_call("WebSearch", "ask", payload_key="question")
     async def ask(
         self,
         text: str,
         *,
+        _return_reasoning_steps: bool = False,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         """
         Ask a web question. Uses an async tool-use loop with web tools.
         """
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = {
-            "search": self._search,
-            "extract": self._extract,
-            "crawl": self._crawl,
-            "map": self._map,
-        }
+        tools = dict(self._ask_tools)
 
         client.set_system_message(
             prompt_builders.build_ask_prompt(tools=tools),
@@ -54,33 +61,57 @@ class WebSearch:
             preprocess_msgs=inject_broader_context,
         )
 
+        # If the caller requests reasoning steps, wrap the handle's result
+        if _return_reasoning_steps:
+            original_result = handle.result
+
+            async def wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = wrapped_result  # type: ignore[attr-defined]
+
         return handle
 
-    # 2. Core Tavily endpoints
     def _search(
         self,
         query: str,
+        *,
         max_results: int = 5,
+        start_date: str = None,
+        end_date: str = None,
+        include_images: bool = False,
     ) -> List[Dict[str, Any]]:
         """
-        Perform a web search and return top results.
+        Perform a web search and return a structured result.
 
         Parameters
         ----------
-        query: str
-            The query to search for.
-        max_results: int
-            The maximum number of results to return.
-            Default is 5.
+        query : str
+            The search query.
+        max_results : int, default 5
+            Maximum number of results to return.
+        start_date : str, default None
+            Will return all results after the specified start date ( publish date ). Required to be written in the format YYYY-MM-DD.
+        end_date : str, default None
+            Will return all results before the specified end date ( publish date ). Required to be written in the format YYYY-MM-DD.
+        include_images : bool, default False
+            Also perform an image search and include the results in the response.
 
         Returns
         -------
         Dict[str, Any]
-            A dictionary containing the answer, results, and images (if any).
+            Structured search output with keys:
+            - "answer": Optional concise summary string.
+            - "results": Ranked list of sources with titles, URLs and snippets.
+            - "images": When requested, a list of related images (may be empty).
         """
-        response = self.client.search(
+        response = self.tavily_client.search(
             query=query,
             max_results=max_results,
+            start_date=start_date,
+            end_date=end_date,
+            include_images=include_images,
             include_answer=True,
         )
         return {
@@ -89,25 +120,135 @@ class WebSearch:
             "images": response.get("images", []),
         }
 
-    def _extract(self, url_to_extract: str) -> Dict[str, Any]:
+    def _extract(
+        self,
+        urls: str | List[str],
+        *,
+        include_images: bool = False,
+    ) -> Dict[str, Any]:
         """
-        Extract clean text from a given URL.
-        """
-        return self.client.extract(url=url_to_extract)
+        Extract cleaned content from webpage URL.
 
-    def _crawl(self, start_url: str, depth: int = 1) -> Dict[str, Any]:
-        """
-        Crawl a site starting from a given URL.
-        """
-        return self.client.crawl(url=start_url, depth=depth)
+        Parameters
+        ----------
+        urls : str | List[str]
+            The URL to extract content from.
+        include_images : bool, default False
+            Also extract images from the URLs.
 
-    def _map(self, query: str) -> Dict[str, Any]:
+        Returns
+        -------
+        Dict[str, Any]
+            Parsed content payload with keys:
+            - "results": Successful extractions with cleaned content/metadata.
+            - "failed_results": Any URLs that could not be extracted.
         """
-        Perform structured search (semantic mapping).
-        """
-        return self.client.map(query=query)
+        response = self.tavily_client.extract(url=urls, include_images=include_images)
+        return {
+            "results": response.get("results", []),
+            "failed_results": response.get("failed_results", []),
+        }
 
-    # 4. LLM client helper
+    def _crawl(
+        self,
+        start_url: str,
+        *,
+        instructions: str | None = None,
+        max_depth: int | None = None,
+        max_breadth: int | None = None,
+        limit: int | None = None,
+        include_images: bool | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Graph-based website traversal.
+
+        Parameters
+        ----------
+        start_url : str
+            The root URL to begin the crawl.
+        instructions : str, default None
+            Natural language instructions for the crawler.
+        max_depth : int | None, default None
+            Maximum crawl depth (uses service defaults when None).
+        max_breadth : int | None, default None
+            Maximum number of links to follow per page (uses service defaults when None).
+        limit : int | None, default None
+            Overall limit on number of pages to crawl (uses service defaults when None).
+        include_images : bool | None, default None
+            Whether to include images in crawl results (uses service defaults when None).
+
+        Returns
+        -------
+        Dict[str, Any]
+            Crawl summary with keys:
+            - "base_url": Normalised base host for the crawl session.
+            - "results": List of discovered pages and associated content.
+        """
+        response = self.tavily_client.crawl(
+            url=start_url,
+            instructions=instructions,
+            max_depth=max_depth,
+            max_breadth=max_breadth,
+            limit=limit,
+            include_images=include_images,
+        )
+        return {
+            "base_url": response.get("base_url"),
+            "results": response.get("results", []),
+        }
+
+    def _map(
+        self,
+        query: str,
+        *,
+        instructions: str | None = None,
+        max_depth: int | None = None,
+        max_breadth: int | None = None,
+        limit: int | None = None,
+        include_images: bool | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Structured mapping over sources for complex research queries.
+
+        Parameters
+        ----------
+        query : str
+            The topic or objective to map.
+        instructions : str | None, default None
+            Natural language guidance for the mapping process.
+        max_depth : int | None, default None
+            Maximum traversal depth (uses service defaults when None).
+        max_breadth : int | None, default None
+            Maximum number of branches to explore per step (uses service defaults when None).
+        limit : int | None, default None
+            Overall limit on the number of items to consider (uses service defaults when None).
+        include_images : bool | None, default None
+            Whether to include images in the mapped results (uses service defaults when None).
+
+        Returns
+        -------
+        Dict[str, Any]
+            Mapping summary with keys:
+            - "base_url": Normalised base host when applicable.
+            - "results": List of mapped items/pages relevant to the query.
+        """
+        response = self.tavily_client.map(
+            query=query,
+            instructions=instructions,
+            max_depth=max_depth,
+            max_breadth=max_breadth,
+            limit=limit,
+            include_images=include_images,
+        )
+        return {
+            "base_url": response.get("base_url"),
+            "results": response.get("results", []),
+        }
+
+    # ------------------------------------------------------------------ #
+    #  Small internal helpers (LLM client + tool policies)               #
+    # ------------------------------------------------------------------ #
+
     def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
         return unify.AsyncUnify(
             model,
@@ -116,12 +257,3 @@ class WebSearch:
             reasoning_effort="high",
             service_tier="priority",
         )
-
-    # 3. Internal helper for summarisation
-    def _summarise(self, prompt: str) -> str:
-        """
-        Call your LLM with the built prompt.
-        Replace with actual OpenAI Responses/Anthropic call.
-        """
-        # Example placeholder
-        return f"[LLM SUMMARY OUTPUT] {prompt[:200]}..."  # truncate preview
