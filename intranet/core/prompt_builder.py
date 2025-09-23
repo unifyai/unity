@@ -76,7 +76,7 @@ def build_intranet_ask_instructions(*, generate_follow_up: bool = False) -> str:
      If multiple tables exist, prefer the one that clearly stores unified content.
 
    Semantic retrieval (primary — search **summary only**)
-   - Perform semantic search with `_search` using **only** the summary column:
+   - Perform semantic search with `_search` using **only** the summary column as the reference:
        • `{"summary": "<user_query>"}`
    - Do **not** include `content_text` in semantic `references`.
    - If precise numbers/quotes/dates are required, first get the **row ids** from the summary search,
@@ -85,10 +85,12 @@ def build_intranet_ask_instructions(*, generate_follow_up: bool = False) -> str:
 
    Tiered passes (fast → slow; expand only if needed)
    - If the initial pass is insufficient, escalate in a **single-table** hierarchy using `_search` with filters:
-       1) Paragraphs (highest precision):    `filter="content_type == 'paragraph'", k=10`
-       2) Sections (broader context):        `filter="content_type == 'section'",   k=6`
-       3) Documents (coarsest fallback):     `filter="content_type == 'document'",  k=3`
+       1) Paragraphs (highest precision):    `references={"summary": "<user_query>"}, filter="content_type == 'paragraph'", k=10`
+       2) Sections (broader context):        `references={"summary": "<user_query>"}, filter="content_type == 'section'",   k=6`
+       3) Documents (coarsest fallback):     `references={"summary": "<user_query>"}, filter="content_type == 'document'",  k=3`
    - Move to the next tier **only** when evidence is insufficient or you need more context.
+   - When using `_search`, always pass in the `references` parameter with the `summary` column as the reference.
+   - If only filtering is needed without semantic search, use `_filter` instead of `_search`.
 
    Optional narrowing
    - When the request contains strict, unambiguous structured constraints (e.g., specific ids, types or ranges),
