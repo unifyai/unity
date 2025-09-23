@@ -562,6 +562,7 @@ def build_ask_prompt(
     table_schemas_json: str,
     include_activity: bool = True,
     case_specific_instructions: str | None = None,
+    include_join_info: bool | None = None,
 ) -> str:
     """
     Build the **system message** for `KnowledgeManager.retrieve`.
@@ -587,9 +588,45 @@ def build_ask_prompt(
         tools,
     )
 
+    # Determine whether to include join-related guidance/examples.
+    # Priority: explicit flag → presence of join tools → number of tables parsed from schema.
+    if include_join_info is None:
+        # Try detecting join tools in the provided tools dict first
+        join_tools_present = any(
+            _tool_name(tools, name)
+            for name in (
+                "search_join",
+                "filter_join",
+                "search_multi_join",
+                "filter_multi_join",
+            )
+        )
+        include_join_info = bool(join_tools_present)
+        if not include_join_info:
+            # Fall back to counting tables from the schema JSON
+            try:
+                schema_obj = (
+                    json.loads(table_schemas_json) if table_schemas_json else {}
+                )
+                if isinstance(schema_obj, dict):
+                    include_join_info = len(schema_obj.keys()) > 1
+            except Exception:
+                # If parsing fails, default to conservative (no-join info)
+                include_join_info = False
+
+    join_hint = (
+        """
+           **Avoid joins on the same table** (including self-joins). When all required fields live in a single table,
+           prefer using `{filter}` directly. Reserve join operations for combining **different** tables where a join
+           is actually necessary.
+        """
+        if include_join_info
+        else ""
+    )
+
     core_instructions = (
         textwrap.dedent(
-            """
+            f"""
         Your task is to **retrieve** information requested by the user.
         Use the provided tools to search the schemas and tables so that
         every requested fact can be answered precisely.
@@ -602,10 +639,7 @@ def build_ask_prompt(
         Mandatory steps:
         1. List each distinct piece of information the question asks for.
         2. Identify which tables / columns can hold that info.
-        3. Fetch *all* relevant rows (use `{search}` if useful; use `{filter}` for precise filters).
-           **Avoid joins on the same table** (including self-joins). When all required fields live in a single table,
-           prefer using `{filter}` directly. Reserve join operations for combining **different** tables where a join
-           is actually necessary.
+        3. Fetch *all* relevant rows (use `{{search}}` for semantic search; use `{{filter}}` for precise filters).{join_hint}
         4. If the schema is awkward, refactor it before continuing.
         5. Aggregate results into a concise answer covering every fact.
         6. Double-check nothing is missing; if so, repeat the search/refactor.
@@ -618,47 +652,70 @@ def build_ask_prompt(
     )
 
     # Usage examples and anti-patterns (mirrors ContactManager style, adapted to Knowledge)
-    usage_examples_base = f"""
-Examples
---------
+    # Build usage examples dynamically depending on whether we expose join tools
+    selection_lines = [
+        "─ Tool selection (read carefully) ─",
+        f"• For ANY semantic question over free-form text, ALWAYS use `{search_fname}`. Never try to approximate meaning with a lot of brittle substring filters using the `{filter_fname}` tool.",
+        f"• Use `{filter_fname}` only for exact/boolean logic over structured fields (ids, enums, ranges, null checks) or for narrow, constrained text.",
+    ]
+    if include_join_info:
+        selection_lines.append(
+            f"• Reserve joins for combining **different** tables; if all fields live in a single table, prefer direct `{filter_fname}`. Avoid self-joins.",
+        )
 
-─ Tool selection (read carefully) ─
-• For ANY semantic question over free-form text, ALWAYS use `{search_fname}`. Never try to approximate meaning with brittle substring filters.
-• Use `{filter_fname}` only for exact/boolean logic over structured fields (ids, enums, ranges, null checks) or for narrow, constrained text.
-• Reserve joins for combining **different** tables; if all fields live in a single table, prefer direct `{filter_fname}`. Avoid self-joins.
+    parts_examples: list[str] = [
+        "Examples",
+        "--------",
+        "",
+        *selection_lines,
+        "",
+        "─ Semantic search (ranked by SUM of cosine distances across terms) ─",
+        "• Single-table search with focused references:",
+        f'  `{search_fname}(table="Products", references={{"description": "stainless steel water bottle"}}, k=5)`',
+        "",
+    ]
 
-─ Semantic search (ranked by SUM of cosine distances across terms) ─
-• Single-table search with focused references:
-  `{search_fname}(table="Products", references={{"description": "stainless steel water bottle"}}, k=5)`
+    if include_join_info:
+        parts_examples.extend(
+            [
+                "─ Join retrieval (two tables) ─",
+                "• Semantic search over a join:",
+                '  `search_join(tables=["Orders","Customers"],',
+                '              join_expr="Orders.customer_id == Customers.customer_id",',
+                '              select={"Orders.notes":"notes","Customers.industry":"industry"},',
+                '              references={"notes":"rush order","industry":"pharma"}, k=5)`',
+                "",
+                "─ Multi-join retrieval (chained joins) ─",
+                "• Chain joins with `$prev` to reference the previous step:",
+                "  `search_multi_join(joins=[",
+                '    {"tables":["Sales","Models"], "join_expr":"Sales.model_id == Models.model_id",',
+                '      "select":{"Sales.units":"units","Models.name":"model"}},',
+                '    {"tables":["$prev","Companies"], "join_expr":"_.company_id == Companies.company_id",',
+                '      "select":{"$prev.units":"units","$prev.model":"model","Companies.name":"company"}}',
+                '  ], references={"company":"Northwind","model":"Voyager"}, k=5)`',
+                "",
+            ],
+        )
 
-─ Join retrieval (two tables) ─
-• Semantic search over a join:
-  `search_join(tables=["Orders","Customers"],`
-  `            join_expr="Orders.customer_id == Customers.customer_id",`
-  `            select={{"Orders.notes":"notes","Customers.industry":"industry"}},`
-  `            references={{"notes":"rush order","industry":"pharma"}}, k=5)`
+    parts_examples.extend(
+        [
+            "─ Filtering (exact/boolean; not semantic) ─",
+            f'• Equality: `{filter_fname}(tables="Products", filter="sku == \'ABC-123\'")`',
+            f'• Range:    `{filter_fname}(tables="Sales", filter="year >= 2023 and units > 1000")`',
+            "",
+            "Anti-patterns to avoid",
+            "---------------------",
+            "• Avoid concatenating a whole row into one giant reference string; pass multiple focused references keyed by their exact columns.",
+            f"• Avoid substring filtering on large text columns; prefer `{search_fname}` for meaning. Never try to approximate meaning with a lot of brittle substring filters using the `{filter_fname}` tool.",
+            f"• Do not re-query to reconfirm facts immediately after a conclusive search; only add `{filter_fname}` if you need **new** structured constraints.",
+        ],
+    )
+    if include_join_info:
+        parts_examples.append(
+            "• Avoid joins on the same table; filter directly when possible.",
+        )
 
-─ Multi-join retrieval (chained joins) ─
-• Chain joins with `$prev` to reference the previous step:
-  `search_multi_join(joins=[`
-  `  {{"tables":["Sales","Models"], "join_expr":"Sales.model_id == Models.model_id",`
-  `    "select":{{"Sales.units":"units","Models.name":"model"}}}},`
-  `  {{"tables":["$prev","Companies"], "join_expr":"_.company_id == Companies.company_id",`
-  `    "select":{{"$prev.units":"units","$prev.model":"model","Companies.name":"company"}}}}`
-  `], references={{"company":"Northwind","model":"Voyager"}}, k=5)`
-
-─ Filtering (exact/boolean; not semantic) ─
-• Equality: `{filter_fname}(tables="Products", filter="sku == 'ABC-123'")`
-• Range:    `{filter_fname}(tables="Sales", filter="year >= 2023 and units > 1000")`
-
-Anti-patterns to avoid
----------------------
-• Avoid concatenating a whole row into one giant reference string; pass multiple focused references keyed by their exact columns.
-• Avoid substring filtering on large text columns; prefer `{search_fname}` for meaning.
-• Do not re-query to reconfirm facts immediately after a conclusive search; only add `{filter_fname}` if you need **new** structured constraints.
-• Avoid joins on the same table; filter directly when possible.
-"""
-    usage_examples = textwrap.dedent(usage_examples_base).strip()
+    usage_examples = textwrap.dedent("\n".join(parts_examples)).strip()
     if request_clar_fname:
         clarification_usage = textwrap.dedent(
             f"""

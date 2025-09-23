@@ -256,7 +256,10 @@ class IntranetRAGAgent:
         # Initialize KnowledgeManager with custom FileManager
         from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 
-        self.knowledge_manager = KnowledgeManager(file_manager=self.file_manager)
+        self.knowledge_manager = KnowledgeManager(
+            file_manager=self.file_manager,
+            include_contacts=False,
+        )
 
         # Build enabled tools
         self.enabled_tools = self._build_enabled_tools(enabled_tools or ["knowledge"])
