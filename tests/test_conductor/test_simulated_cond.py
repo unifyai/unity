@@ -6,7 +6,7 @@ import pytest
 import unify
 
 from unity.conductor.simulated import SimulatedConductor
-from unity.common.llm_helpers import AsyncToolUseLoopHandle
+from unity.common.async_tool_loop import AsyncToolUseLoopHandle
 
 # keeps each test isolated in its own Unify project / trace context
 from tests.helpers import _handle_project

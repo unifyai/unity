@@ -13,7 +13,7 @@ from unity.actor.action_provider import ActionProvider
 from unity.controller.browser import Browser
 from unity.function_manager.function_manager import FunctionManager
 import unity.actor.hierarchical_actor as hierarchical_actor_module
-from unity.common.llm_helpers import AsyncToolUseLoopHandle
+from unity.common.async_tool_loop import AsyncToolUseLoopHandle
 
 
 # --- Mocks for Dependencies ---
