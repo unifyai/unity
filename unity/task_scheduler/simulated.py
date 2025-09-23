@@ -1,4 +1,11 @@
 # unity/task_scheduler/simulated_task_scheduler.py
+"""
+Simulated task scheduler.
+
+Provides a storage-free interface that returns steerable handles for ask, update,
+and execute. All responses are produced by a shared, stateful LLM; no storage
+or queue state is read or written.
+"""
 import asyncio
 import json
 import os
@@ -15,7 +22,6 @@ from .prompt_builders import (
     build_update_prompt,
     build_simulated_method_prompt,
 )
-from ..planner.simulated import SimulatedPlanner
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
@@ -112,11 +118,15 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         self._interjections.append(message)
         return "Noted."
 
-    def stop(self) -> str:
-        """Cancel further processing so `.result()` raises."""
+    def stop(self, *, cancel: bool, reason: Optional[str] = None) -> str:
+        """Cancel further processing so `.result()` raises.
+
+        The `cancel` flag is required but ignored; the interaction is always
+        cancelled.
+        """
         self._cancelled = True
         self._done_event.set()
-        return "Stopped."
+        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     def pause(self) -> str:
         if self._paused:
@@ -145,7 +155,12 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             tools[self.pause.__name__] = self.pause
         return tools
 
-    async def ask(self, question: str) -> "SteerableToolHandle":
+    async def ask(
+        self,
+        question: str,
+        *,
+        _return_reasoning_steps: bool = False,
+    ) -> "SteerableToolHandle":
         q_msg = (
             f"Your only task is to simulate an answer to the following question: {question}\n\n"
             "However, there is a also ongoing simulated process which had the instructions given below. "
@@ -153,8 +168,8 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         )
         follow_up_prompt = "\n\n---\n\n".join(
             [q_msg]
-            + [self._initial]
-            + self._extra_msgs
+            + [self._initial_text]
+            + self._interjections
             + [f"Question to answer (as a reminder!): {question}"],
         )
 
@@ -162,7 +177,9 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             self._llm,
             follow_up_prompt,
             mode=self._mode,
-            _return_reasoning_steps=self._ret_steps,
+            _return_reasoning_steps=(
+                _return_reasoning_steps if _return_reasoning_steps else self._ret_steps
+            ),
             _requests_clarification=False,
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
@@ -171,9 +188,10 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
 
 class SimulatedTaskScheduler(BaseTaskScheduler):
     """
-    Drop-in replacement for TaskScheduler where the underlying data is
-    entirely imaginary – useful for offline demos or unit tests that only
-    need the conversational surface.
+    Simulated scheduler for demos and tests.
+
+    Uses a shared stateful LLM to produce plausible task lists and to run
+    ask/update/execute interactions without touching storage.
     """
 
     def __init__(
@@ -182,10 +200,12 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         *,
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
+        simulation_guidance: Optional[str] = None,
     ) -> None:
         self._description = description
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self._simulation_guidance = simulation_guidance
 
         # One shared, *stateful* LLM for *everything*
         self._llm = unify.AsyncUnify(
@@ -194,16 +214,27 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
-        # Mirror the real TaskScheduler tool exposure programmatically
-        # so prompts always reflect the current surface.
+        # Build tool lists programmatically so prompts match the exposed surface.
         ask_tools = mirror_task_scheduler_tools("ask")
         update_tools = mirror_task_scheduler_tools("update")
+
+        # Provide placeholder counts/columns for the simulated environment
+        from .types.task import Task as _Task
+
+        fake_task_columns = [
+            {k: str(v.annotation)} for k, v in _Task.model_fields.items()
+        ]
+
         ask_msg = build_ask_prompt(
             ask_tools,
+            num_tasks=10,
+            columns=fake_task_columns,
             include_activity=self._rolling_summary_in_prompts,
         )
         update_msg = build_update_prompt(
             update_tools,
+            num_tasks=10,
+            columns=fake_task_columns,
             include_activity=self._rolling_summary_in_prompts,
         )
 
@@ -275,6 +306,12 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         return handle
 
+    # Preserve base doc-string (from wraps) and append a brief simulated note
+    ask.__doc__ = (ask.__doc__ or "").rstrip() + (
+        "\n\nSimulated scheduler note: returns a steerable handle backed by a shared, "
+        "stateful LLM; no real storage is read or written."
+    )
+
     # ------------------------------------------------------------------ #
     #  update                                                            #
     # ------------------------------------------------------------------ #
@@ -330,14 +367,21 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         return handle
 
+    # Preserve base doc-string (from wraps) and append a brief simulated note
+    update.__doc__ = (update.__doc__ or "").rstrip() + (
+        "\n\nSimulated scheduler note: returns a steerable handle; no real storage is "
+        "touched and replies may include invented task ids."
+    )
+
     # ------------------------------------------------------------------ #
-    #  execite_task – delegate to SimulatedPlanner.execute                     #
+    #  execute_task – delegate to SimulatedActor.act                     #
     # ------------------------------------------------------------------ #
-    @functools.wraps(BaseTaskScheduler.execute_task, updated=())
-    async def execute_task(
+    @functools.wraps(BaseTaskScheduler.execute, updated=())
+    async def execute(
         self,
         text: str,
         *,
+        isolated: Optional[bool] = None,
         parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
@@ -349,7 +393,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         The implementation pretends that the supplied *text* uniquely
         identifies the task – no attempt is made to reconcile with a real data
-        store.  A new :class:`unity.planner.simulated.SimulatedPlan` is spun up
+        store.  A new :class:`unity.actor.simulated.SimulatedPlan` is spun up
         and its handle returned.
         """
         should_log = self._log_events or log_events
@@ -360,17 +404,20 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             await publish_manager_method_event(
                 call_id,
                 "TaskScheduler",
-                "execute_task",
+                "execute",
                 phase="incoming",
                 request=text,
             )
 
         task_description = f"{text} (simulated)"
-        planner = SimulatedPlanner(
-            timeout=10,
+        from ..actor.simulated import SimulatedActor
+
+        actor = SimulatedActor(
+            duration=10,
             _requests_clarification=_requests_clarification,
+            simulation_guidance=self._simulation_guidance,
         )
-        handle = await planner.execute(
+        handle = await actor.act(
             task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
@@ -382,7 +429,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 handle,
                 call_id,
                 "TaskScheduler",
-                "execute_task",
+                "execute",
             )
 
         return handle

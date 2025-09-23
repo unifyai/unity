@@ -40,10 +40,11 @@ import aiohttp
 import logging
 import sys
 import time
+from datetime import datetime
 import wave
 from contextlib import contextmanager
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
-from typing import List, Optional, Tuple, Any, Coroutine
+from typing import List, Optional, Tuple, Any, Coroutine, cast, Dict, Literal
 from av import AudioFrame
 import pyaudio
 import math
@@ -56,7 +57,6 @@ from pydantic import BaseModel, Field
 
 # Added for direct logging of generated messages
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from sandboxes.scenario_builder import ScenarioBuilder
 
 from dotenv import load_dotenv
 
@@ -470,7 +470,7 @@ async def _speak_async(text: str) -> None:
                 if hasattr(frame, "data"):  # mid-2024 builds
                     return bytes(frame.data)
                 if hasattr(frame, "to_wav_bytes"):  # old fallback → strip header
-                    return frame.to_wav_bytes()[44:]
+                    return cast(bytes, frame.to_wav_bytes())[44:]
                 return bytes(frame)  # last-resort
 
             async with tts.synthesize(text) as synth_stream:
@@ -539,6 +539,16 @@ def speak(text: str) -> None:
         threading.Thread(target=_run_in_thread, daemon=True).start()
 
 
+def speak_and_wait(text: str) -> None:
+    """Speak *text* and block until TTS playback has finished or was skipped.
+
+    Convenience wrapper for places that want an immediate audible affirmation
+    before continuing with a longer-running task.
+    """
+    speak(text)
+    _wait_for_tts_end()
+
+
 def stop_speaking() -> None:
     """Cancel any in-flight TTS playback immediately if active."""
     try:
@@ -597,6 +607,7 @@ def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
                 char = msvcrt.getche().decode("utf-8")
                 if char == "\r":  # Enter key
                     print()  # Move to next line after Enter
+                    # Return the typed characters exactly as entered (no trimming)
                     return True, "".join(input_chars)
                 input_chars.append(char)
 
@@ -607,7 +618,11 @@ def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
         # Unix implementation using select
         rlist, _, _ = select.select([sys.stdin], [], [], timeout)
         if rlist:
-            return True, sys.stdin.readline().strip()
+            # Preserve user input exactly as typed, removing only the trailing newline
+            line = sys.stdin.readline()
+            if line.endswith("\n"):
+                line = line[:-1]
+            return True, line
         return False, None
 
 
@@ -707,11 +722,26 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         help="stream logs to terminal in addition to writing .logs.txt (default is file-only)",
     )
     parser.add_argument(
+        "--no_clarifications",
+        action="store_true",
+        help="disable interactive clarification requests (both text and voice)",
+    )
+    parser.add_argument(
         "--log_tcp_port",
         type=int,
         default=-1,
         metavar="PORT",
         help="serve logs over TCP on localhost:PORT (default -1 auto-picks an available port; 0 disables; >0 binds requested port)",
+    )
+    parser.add_argument(
+        "--http_log_tcp_port",
+        type=int,
+        default=-1,
+        metavar="PORT",
+        help=(
+            "serve Unify Request logs (logger: 'unify_requests' only) over TCP on localhost:PORT "
+            "(default -1 auto-picks when UNIFY_REQUESTS_DEBUG is set; 0 disables; >0 binds requested port)"
+        ),
     )
     return parser
 
@@ -819,14 +849,17 @@ class _BroadcastLogHandler(logging.Handler):
 
 def configure_sandbox_logging(
     log_in_terminal: bool = False,
-    log_file: Optional[str] = ".logs.txt",
+    log_file: Optional[str] = ".logs_main.txt",
     tcp_port: int = 0,
+    http_tcp_port: int = 0,
+    unify_requests_log_file: Optional[str] = ".logs_unify_requests.txt",
 ) -> None:
     """Configure logging to a file by default, with optional terminal streaming.
 
     - Overwrites the given log_file on each run.
     - Adds a StreamHandler to stdout when log_in_terminal is True.
     - Optionally serves logs over TCP on localhost:tcp_port for external viewing.
+    - Supports a dedicated Unify Request log stream/file that captures only the 'unify_requests' logger.
     - Prints a short hint on how to watch the last 50 lines live.
     """
     import sys as _sys
@@ -844,9 +877,26 @@ def configure_sandbox_logging(
         "%Y-%m-%d %H:%M:%S",
     )
 
+    # Resolve the main log file path to an absolute path for clearer, clickable output
+    _abs_main_log: Optional[str] = None
     if log_file:
-        _fh = _logging.FileHandler(log_file, mode="w", encoding="utf-8")
+        try:
+            _abs_main_log = os.path.abspath(log_file)
+        except Exception:
+            _abs_main_log = log_file
+
+    if _abs_main_log:
+        _fh = _logging.FileHandler(_abs_main_log, mode="w", encoding="utf-8")
         _fh.setFormatter(_fmt)
+
+        # Exclude Unify Request logs from the main log file to keep it high-level
+        # (Unify Request logs have their own dedicated file and stream)
+        class _LazyHTTPExcludeFilter(_logging.Filter):
+            def filter(self, record: _logging.LogRecord) -> bool:
+                name = record.name or ""
+                return not any(name.startswith(p) for p in _HTTP_PREFIXES)
+
+        _fh.addFilter(_LazyHTTPExcludeFilter())
         root_logger.addHandler(_fh)
 
     if log_in_terminal:
@@ -854,7 +904,36 @@ def configure_sandbox_logging(
         _sh.setFormatter(_fmt)
         root_logger.addHandler(_sh)
 
-    # Optional TCP broadcast for external terminals
+    # Helper: common filter to exclude/include HTTP-debug loggers
+    class _NamePrefixFilter(_logging.Filter):
+        def __init__(
+            self,
+            include_prefixes: Optional[list[str]] = None,
+            exclude_prefixes: Optional[list[str]] = None,
+        ) -> None:
+            super().__init__()
+            self._include = tuple(include_prefixes or [])
+            self._exclude = tuple(exclude_prefixes or [])
+
+        def filter(self, record: _logging.LogRecord) -> bool:  # noqa: D401
+            name = record.name or ""
+            if self._include and not any(name.startswith(p) for p in self._include):
+                return False
+            if self._exclude and any(name.startswith(p) for p in self._exclude):
+                return False
+            return True
+
+    # Determine Unify Request logger prefixes (override via env if needed)
+    _http_logger_env = os.getenv("HTTP_DEBUG_LOGGERS", "").strip()
+    if _http_logger_env:
+        _HTTP_PREFIXES = [p.strip() for p in _http_logger_env.split(",") if p.strip()]
+    else:
+        # Restrict to only Unify Request logs by default
+        _HTTP_PREFIXES = [
+            "unify_requests",  # Unify SDK dedicated request logger
+        ]
+
+    # Optional TCP broadcast for external terminals (main logs)
     # tcp_port semantics:
     #   -1 → auto-pick a free port and enable streaming by default
     #    0 → disabled
@@ -867,17 +946,98 @@ def configure_sandbox_logging(
             _bh.setFormatter(_fmt)
             root_logger.addHandler(_bh)
             _actual = _srv._port
+            # Also write a full-session copy to a hidden, timestamped file in CWD
+            _ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            _hidden_name = f".logs_{_ts}.txt"
+            # Resolve the hidden full-session log path to absolute for printing
+            try:
+                _abs_hidden = os.path.abspath(_hidden_name)
+            except Exception:
+                _abs_hidden = _hidden_name
+
+            _fh_all = _logging.FileHandler(_abs_hidden, mode="w", encoding="utf-8")
+            _fh_all.setFormatter(_fmt)
+            root_logger.addHandler(_fh_all)
             print(
                 f"📡 Log stream on 127.0.0.1:{_actual} – connect via: nc 127.0.0.1 {_actual} (Ctrl-C to detach)",
             )
+            print(f"📝 Full session logs: {_abs_hidden}")
         except Exception as _exc:
             print(f"⚠️  Failed to start log TCP stream on port {tcp_port}: {_exc}")
 
+    # Dedicated Unify Request debug stream (enabled when port provided or UNIFY_REQUESTS_DEBUG truthy and http_tcp_port == -1)
+    _unify_debug_env = os.getenv("UNIFY_REQUESTS_DEBUG", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    _start_http_stream = False
+    _http_bind_port = http_tcp_port
+    if http_tcp_port == -1:
+        _start_http_stream = _unify_debug_env
+        _http_bind_port = -1  # auto-pick if enabled
+    elif http_tcp_port > 0:
+        _start_http_stream = True
+
+    if _start_http_stream:
+        try:
+            # Ensure 'unify_requests' logger emits DEBUG when UNIFY_REQUESTS_DEBUG is truthy
+            if _unify_debug_env:
+                for _name in _HTTP_PREFIXES:
+                    try:
+                        _logging.getLogger(_name).setLevel(_logging.DEBUG)
+                    except Exception:
+                        pass
+            _srv_http = _LogBroadcastServer(_http_bind_port)
+            _srv_http.start()
+            _bh_http = _BroadcastLogHandler(_srv_http)
+            _bh_http.setFormatter(_fmt)
+            # Only include the Unify Request logger category
+            _bh_http.addFilter(_NamePrefixFilter(include_prefixes=_HTTP_PREFIXES))
+
+            # Attach to root but exclude these from main console/broadcast by filtering there
+            root_logger.addHandler(_bh_http)
+            _http_actual = _srv_http._port
+
+            # Exclude Unify Request logs from the main stream and console if present
+            for h in list(root_logger.handlers):
+                if h is _bh_http:
+                    continue
+                if isinstance(h, (_logging.StreamHandler, _BroadcastLogHandler)):
+                    h.addFilter(_NamePrefixFilter(exclude_prefixes=_HTTP_PREFIXES))
+
+            print(
+                f"📡 Unify Request debug stream on 127.0.0.1:{_http_actual} – connect via: nc 127.0.0.1 {_http_actual} (Ctrl-C to detach)",
+            )
+        except Exception as _exc:
+            print(
+                f"⚠️  Failed to start Unify Request debug TCP stream on port {http_tcp_port}: {_exc}",
+            )
+
+    # Dedicated Unify Request debug file
+    _abs_http_log: Optional[str] = None
+    if unify_requests_log_file:
+        try:
+            _abs_http_log = os.path.abspath(unify_requests_log_file)
+        except Exception:
+            _abs_http_log = unify_requests_log_file
+
+    if _abs_http_log:
+        try:
+            _fh_http = _logging.FileHandler(_abs_http_log, mode="w", encoding="utf-8")
+            _fh_http.setFormatter(_fmt)
+            _fh_http.addFilter(_NamePrefixFilter(include_prefixes=_HTTP_PREFIXES))
+            root_logger.addHandler(_fh_http)
+            print(f"📝 Unify Request logs to {_abs_http_log}")
+        except Exception as _exc:
+            print(f"⚠️  Failed to open Unify Request log file {_abs_http_log}: {_exc}")
+
     # Friendly hints
-    if log_file:
+    if _abs_main_log:
         print(
-            "📝 Logging to .logs.txt (overwrites each run). "
-            "To follow live with scrollback: less +F .logs.txt (Ctrl-C to pause, F to resume, q to quit). "
+            f"📝 Logging to {_abs_main_log} (overwrites each run). "
+            f"To follow live with scrollback: less +F {_abs_main_log} (Ctrl-C to pause, F to resume, q to quit). "
             "Pass --log_in_terminal to also stream logs here.",
         )
 
@@ -900,33 +1060,103 @@ def input_now(timeout: float = 0.1) -> Optional[str]:
     return txt if has_input else None
 
 
-def steering_controls_hint() -> str:
-    """Return a one-line hint with available in-flight steering commands."""
-    return "Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /r (record voice), /stop, /help"
+def steering_controls_hint(
+    pending_clarification: bool = False,
+    *,
+    voice_enabled: bool = False,
+) -> str:
+    """Return a one-line hint with available in-flight steering commands.
+
+    Clarification controls are included only when a clarification is pending.
+    Clarification-related commands are emphasized in bold to stand out.
+    """
+    base_parts: list[str] = [
+        "/i <text>",
+        "/pause",
+        "/resume",
+        "/ask <q>",
+        "/freeform <text> (or plain text)",
+    ]
+    if voice_enabled:
+        base_parts.append("/r (record voice)")
+    base_parts.extend(["/stop [reason]", "/help"])
+
+    hint = "Controls: " + ", ".join(base_parts)
+
+    if pending_clarification:
+        B = "\u001b[1m"
+        R = "\u001b[0m"
+        clar_parts = [
+            f"{B}/c <answer> (clarify){R}",
+            f"{B}/rc (record clarification){R}" if voice_enabled else None,
+        ]
+        clar_parts = [p for p in clar_parts if p is not None]
+        hint = hint + ", " + ", ".join(clar_parts)
+
+    return hint
 
 
 # Shared steering intent model and router system prompt
 class _SteeringIntent(BaseModel):
-    action: str = Field(..., pattern="^(ask|interject|pause|resume|stop|status)$")
+    action: str = Field(
+        ...,
+        pattern="^(ask|interject|pause|resume|stop|status|sim_rule)$",
+    )
+    # Optional free-form reason only used when action == "stop"
+    reason: Optional[str] = None
+    # When action == "stop", router MUST set this boolean:
+    # True ⇒ cancel/abandon (terminal); False ⇒ defer/postpone (non-terminal)
+    cancel: Optional[bool] = None
+    # When action == "sim_rule": selector + params (all optional; router fills what applies)
+    selector_type: Optional[str] = Field(
+        default=None,
+        description="one of: task_id | queue_index | search_query | name_regex | scheduled_window",
+    )
+    task_id: Optional[int] = None
+    queue_index: Optional[int] = None  # 1-based
+    search_query: Optional[str] = None
+    name_regex: Optional[str] = None
+    window_start_iso: Optional[str] = None
+    window_end_iso: Optional[str] = None
+    sim_steps: Optional[int] = None
+    sim_duration_seconds: Optional[float] = None
+    sim_guidance: Optional[str] = None
+    sim_one_shot: Optional[bool] = None
 
 
 def _steering_router_sys() -> str:
     return (
         "You are a router that maps a user's free-form message to one of these steering commands: "
         "'ask', 'interject', 'pause', 'resume', 'stop', or 'status'.\n"
-        "Decide based on the user's intent relative to an ONGOING task.\n"
+        "You will be given a short transcript with the latest user message at the end. Decide based on the user's intent given the conversation and whether a task is currently running.\n"
         "Definitions:\n"
-        "- 'interject': Any directive that would change, add, remove, create, continue, or otherwise steer what the running task should do next. "
-        "Treat polite or indirect phrasing (e.g., 'could you', 'please', 'let's', 'why don't we'), and requests containing action verbs (set/add/update/change/modify/remove/delete/replace/make/use/fill/assign/write/generate) as interjections. "
-        "If a message mixes a question with a requested action, choose 'interject'.\n"
-        "- 'ask': A read-only question about the running task or its data (progress, status, what has happened/what will happen, counts, why, how long). "
-        "It must NOT request any change to behaviour or data.\n"
+        "- 'ask': A read-only question about the running task or its data. This includes progress/status/completion checks (e.g., 'how is it going', 'any update', 'have you scheduled X yet', 'is it done', 'what will happen next', 'ETA', 'what changed'). "
+        "Polite or indirect forms that request information only (e.g., 'could you let me know …?') are still 'ask'. It must NOT request any change to behaviour or data.\n"
+        "- 'interject': A directive that would change, add, remove, create, continue, or otherwise steer what the running task should do next. "
+        "Polite or indirect phrasing ('could you', 'please', 'let's', 'why don't we') is 'interject' only when it instructs an action (do/make/change/create/update/etc.), not when merely asking for status or information. If a message mixes a question with a requested action, choose 'interject'.\n"
         "- 'pause'/'resume'/'stop'/'status': Direct control commands. Map common synonyms: 'continue' ⇒ 'resume'.\n"
-        "Rules:\n"
-        "- Only decide the action; do not rewrite, summarize, or clean the user's text.\n"
-        "- Ignore pleasantries and judge the semantics.\n"
-        "- When uncertain between 'ask' and 'interject', choose 'interject' (safer).\n"
-        "Return ONLY JSON matching the response schema with an 'action' field."
+        "Stop semantics (required):\n"
+        "- When choosing 'stop', you MUST also include a boolean 'cancel':\n"
+        "  • cancel=true  ⇒ abandon/cancel/drop/scrap/kill the task (terminal).\n"
+        "  • cancel=false ⇒ defer/postpone/not now/do it later/next week/tomorrow/as originally planned (non-terminal; reinstate to prior queue).\n"
+        "- Include a concise 'reason' when present in the user's wording; otherwise set reason to null.\n"
+        "Conversation-aware rules:\n"
+        "- If a task is RUNNING and the user asks to postpone/not do it now but do it later, choose 'stop' with cancel=false.\n"
+        "- If a task is RUNNING and the user explicitly cancels/abandons/drops it, choose 'stop' with cancel=true.\n"
+        "- If a task is RUNNING and the user asks to pause/hold temporarily, choose 'pause'. If PAUSED and the user asks to continue, choose 'resume'.\n"
+        "- If the request is to update/modify/steer the currently running task (without stopping/cancelling), choose 'interject'.\n"
+        "Stop reason extraction:\n"
+        "- Provide a short 'reason' phrase taken from the user's message when present (no paraphrase). Otherwise reason=null.\n"
+        "Disambiguation guidance:\n"
+        "- Yes/no verification like 'have you X yet?', 'did you manage to …?', and meta-requests for an update are 'ask' if they do not instruct new work.\n"
+        "- Requests that initiate or alter work now (e.g., 'schedule them now', 'go ahead and send the email', 'create two more tasks') are 'interject'.\n"
+        "- When uncertain between 'ask' and 'interject', prefer 'ask' unless the message contains an explicit directive to take or change an action.\n"
+        "Examples:\n"
+        "- 'Could you let me know how that's coming along? Have you scheduled the tasks yet?' → action: ask\n"
+        "- 'Could you schedule the tasks now?' → action: interject\n"
+        "- 'Let's not do it now; start it tomorrow morning as planned.' → action: stop, cancel: false, reason: 'start it tomorrow morning as planned'\n"
+        "- 'Cancel this task – we don't need it anymore.' → action: stop, cancel: true, reason: 'we don't need it anymore'\n"
+        "Return ONLY JSON matching the response schema with fields: 'action', 'cancel' (required when action=='stop'), and optional 'reason' (string or null)."
     )
 
 
@@ -936,11 +1166,14 @@ async def _apply_steering_action(
     text: str,
     enable_voice_steering: bool,
     HELP_TEXT: str,
+    *,
+    reason: Optional[str] = None,
+    cancel: Optional[bool] = None,
 ) -> bool:
     """Apply a routed steering action. Returns True if the caller should break (on stop)."""
     try:
         if action == "ask":
-            print(f"asking question: {text}")
+            print(f"❓ Asking question: {text}")
             nested = await handle.ask(text)
             ans = await nested.result()
             print(f"[ask] → {ans}")
@@ -994,10 +1227,29 @@ async def _apply_steering_action(
             return False
         if action == "stop":
             print("stopping…")
-            handle.stop()
-            print("✅ Stop sent.")
+            # Require explicit cancel flag – no heuristics here
+            if not isinstance(cancel, bool):
+                print(
+                    "⚠️  Router did not provide required 'cancel' boolean for stop; ignoring",
+                )
+                return False
+            _used_reason: Optional[str] = None
+            if isinstance(reason, str) and reason.strip():
+                _used_reason = reason.strip()
+            handle.stop(cancel=cancel, reason=_used_reason)
+            if _used_reason:
+                print(
+                    (
+                        "✅ Cancel sent, with reason: "
+                        if cancel
+                        else "✅ Stop (defer) sent, with reason: "
+                    )
+                    + _used_reason,
+                )
+            else:
+                print("✅ Cancel sent." if cancel else "✅ Stop (defer) sent.")
             if enable_voice_steering:
-                speak("Stop sent")
+                speak("Cancel sent" if cancel else "Stop sent")
                 _wait_for_tts_end()
                 print(HELP_TEXT)
             else:
@@ -1035,19 +1287,168 @@ async def _route_freeform_and_apply(
     text: str,
     enable_voice_steering: bool,
     HELP_TEXT: str,
+    chat_context: Optional[list[dict]] = None,
+    is_task_running: Optional[bool] = None,
 ) -> bool:
     import unify as _unify
 
-    judge = _unify.Unify("gpt-4o@openai", response_format=_SteeringIntent)
-    intent = _SteeringIntent.model_validate_json(
-        judge.set_system_message(_steering_router_sys()).generate(text),
+    judge = _unify.Unify(
+        "gpt-5@openai",
+        response_format=_SteeringIntent,
     )
+
+    # Build a compact, recent-first transcript to provide conversation context
+    def _format_ctx(ctx: list[dict], limit_chars: int = 2000) -> str:
+        try:
+            lines: list[str] = []
+            total = 0
+            for msg in reversed(ctx[-20:]):  # last 20 turns max
+                role = str(msg.get("role", "")).strip() or "user"
+                content = str(msg.get("content", "")).strip()
+                line = f"{role}: {content}"
+                if total + len(line) > limit_chars:
+                    break
+                lines.append(line)
+                total += len(line)
+            return "\n".join(reversed(lines)) if lines else "(no prior context)"
+        except Exception:
+            return "(no prior context)"
+
+    ctx_block = _format_ctx(chat_context or [])
+    running_hint = (
+        "RUNNING"
+        if (is_task_running is True)
+        else ("UNKNOWN" if is_task_running is None else "NOT_RUNNING")
+    )
+
+    router_input = (
+        "Conversation (most recent last):\n"
+        f"{ctx_block}\n\n"
+        f"Task state: {running_hint}.\n"
+        "Latest user message:\n"
+        f"{text}"
+    )
+
+    intent = _SteeringIntent.model_validate_json(
+        judge.set_system_message(_steering_router_sys()).generate(router_input),
+    )
+
+    # Prefer passing the user's full utterance as the stop reason when a reason is detected.
+    # If the router did not detect a reason, omit it entirely (user likely said just "stop").
+    reason_override: Optional[str] = None
+    if intent.action == "stop":
+        try:
+            if (
+                isinstance(getattr(intent, "reason", None), str)
+                and intent.reason.strip()
+            ):
+                reason_override = text.strip()
+        except Exception:
+            reason_override = None
+
+    # Handle simulation rule creation (does not steer the running handle)
+    if intent.action == "sim_rule":
+        try:
+            selector = None
+            if (
+                getattr(intent, "selector_type", None) == "task_id"
+                and intent.task_id is not None
+            ):
+                selector = SimulationSelector(by_task_id=int(intent.task_id))
+            elif (
+                getattr(intent, "selector_type", None) == "queue_index"
+                and intent.queue_index is not None
+            ):
+                selector = SimulationSelector(by_queue_index=int(intent.queue_index))
+            elif (
+                getattr(intent, "selector_type", None) == "search_query"
+                and intent.search_query
+            ):
+                selector = SimulationSelector(by_search_query=str(intent.search_query))
+            elif (
+                getattr(intent, "selector_type", None) == "name_regex"
+                and intent.name_regex
+            ):
+                selector = SimulationSelector(by_name_regex=str(intent.name_regex))
+            elif (
+                getattr(intent, "selector_type", None) == "scheduled_window"
+                and intent.window_start_iso
+                and intent.window_end_iso
+            ):
+                selector = SimulationSelector(
+                    by_scheduled_window_iso=(
+                        str(intent.window_start_iso),
+                        str(intent.window_end_iso),
+                    ),
+                )
+
+            params = SimulationParams(
+                steps=(
+                    int(intent.sim_steps)
+                    if getattr(intent, "sim_steps", None) is not None
+                    else None
+                ),
+                duration_seconds=(
+                    float(intent.sim_duration_seconds)
+                    if getattr(intent, "sim_duration_seconds", None) is not None
+                    else None
+                ),
+                guidance=(
+                    str(intent.sim_guidance)
+                    if getattr(intent, "sim_guidance", None)
+                    else None
+                ),
+                one_shot=(
+                    bool(intent.sim_one_shot)
+                    if getattr(intent, "sim_one_shot", None) is not None
+                    else True
+                ),
+            )
+
+            if selector is None:
+                print("⚠️  No selector extracted for sim_rule – ignoring")
+            else:
+                # Idempotency: avoid duplicate rules (same selector+params)
+                try:
+                    sel_dump = selector.model_dump()
+                except Exception:
+                    sel_dump = str(selector)
+                try:
+                    par_dump = params.model_dump()
+                except Exception:
+                    par_dump = str(params)
+                existing = False
+                try:
+                    for r in SIMULATION_PLANS.list_rules():
+                        try:
+                            if (
+                                r.selector.model_dump() == sel_dump
+                                and r.params.model_dump() == par_dump
+                            ):
+                                existing = True
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                if existing:
+                    print("ℹ️  Simulation rule already present; no change")
+                else:
+                    rid = SIMULATION_PLANS.add_rule(selector, params)
+                    # Single compact line; application happens in TaskScheduler sandbox when starting tasks
+                    print(f"✅ Simulation rule stored ({rid})")
+        except Exception as exc:
+            print(f"⚠️  Failed to add simulation rule: {exc}")
+        return False
+
     return await _apply_steering_action(
         handle,
         intent.action,
         text,
         enable_voice_steering,
         HELP_TEXT,
+        reason=reason_override if intent.action == "stop" else None,
+        cancel=(intent.cancel if intent.action == "stop" else None),
     )
 
 
@@ -1056,6 +1457,11 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
     poll: float = 0.05,
     *,
     enable_voice_steering: bool = False,
+    clarification_up_q: Optional[asyncio.Queue[str]] = None,
+    clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    clarifications_enabled: bool = True,
+    chat_context: Optional[list[dict]] = None,
+    persist_mode: bool = False,
 ) -> str:
     """
     **Common wrapper** used by all interactive sandboxes.
@@ -1076,29 +1482,168 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
 
     import asyncio  # local to avoid widening the public surface
 
-    HELP_TEXT = steering_controls_hint()
+    # State for handling a single pending clarification at a time
+    pending_clar_q: Optional[str] = None
+    has_clar_channels = bool(
+        clarifications_enabled and clarification_up_q and clarification_down_q,
+    )
 
     while not handle.done():
-        txt = input_now(poll * 2)  # same cadence as old versions
-        if txt:
-            stripped = txt.strip()
-            # Command mode with leading '/'
-            if stripped.startswith("/"):
-                parts = stripped[1:].split(maxsplit=1)
-                cmd = parts[0].lower()
-                arg = parts[1].strip() if len(parts) > 1 else ""
-
-                if cmd in {"stop", "cancel", "s", "c"}:
-                    print("stopping…")
-                    handle.stop()
-                    print("✅ Stop sent.")
+        # Non-blocking check for incoming clarification questions
+        if has_clar_channels and pending_clar_q is None:
+            try:
+                # get_nowait raises when empty
+                pending_clar_q = cast(Optional[str], clarification_up_q.get_nowait())  # type: ignore[arg-type]
+                if pending_clar_q:
+                    print()
+                    print(f"❓ Clarification requested: {pending_clar_q}")
+                    print(
+                        "Reply with: /c <your answer> or just type your answer and press ↵. "
+                        + (
+                            "Use /rc to record by voice."
+                            if enable_voice_steering
+                            else ""
+                        ),
+                    )
                     if enable_voice_steering:
-                        speak("Stop sent")
+                        speak(f"Clarification requested. {pending_clar_q}")
                         _wait_for_tts_end()
-                        print(HELP_TEXT)
+                    # After announcing the clarification, print dynamic controls with clar commands visible
+                    print(
+                        steering_controls_hint(
+                            pending_clarification=True,
+                            voice_enabled=enable_voice_steering,
+                        ),
+                    )
+            except Exception:
+                pass
+
+        txt = input_now(poll * 2)  # same cadence as old versions
+        if txt is not None and txt != "":
+            # Use a left-trimmed view only for recognizing commands, but keep the original text intact
+            working = txt.lstrip()
+            # Command mode with leading '/'
+            if working.startswith("/"):
+                # Parse command token while preserving the raw argument text
+                cmd_line = working[1:]
+                # Find first whitespace separating command and argument
+                space_idx = -1
+                for i, ch in enumerate(cmd_line):
+                    if ch.isspace():
+                        space_idx = i
+                        break
+                if space_idx == -1:
+                    cmd = cmd_line.lower()
+                    arg = ""
+                else:
+                    cmd = cmd_line[:space_idx].lower()
+                    # Preserve the argument exactly as typed (post-separator substring)
+                    arg = cmd_line[space_idx + 1 :]
+
+                if cmd in {"stop", "s"}:
+                    # Route via LLM so it sets cancel explicitly (no heuristics)
+                    text_for_router = arg if arg.strip() else "stop"
+                    should_break = await _route_freeform_and_apply(
+                        handle,
+                        text_for_router,
+                        enable_voice_steering,
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                        chat_context=chat_context,
+                        is_task_running=not handle.done(),
+                    )
+                    if should_break:
+                        break
+                    continue
+                # Clarification commands (handled irrespective of other state if channels exist)
+                if (
+                    has_clar_channels
+                    and (pending_clar_q is not None)
+                    and cmd in {"c", "clarify"}
+                ):
+                    arg_to_send = arg if arg != "" else ""
+                    if not arg_to_send.strip():
+                        print("Usage: /c <answer>")
                     else:
-                        print(HELP_TEXT)
-                    break
+                        try:
+                            await clarification_down_q.put(arg_to_send)  # type: ignore[union-attr]
+                            print("✅ Clarification sent.")
+                            pending_clar_q = None
+                            if enable_voice_steering:
+                                speak("Thanks for clarifying.")
+                                _wait_for_tts_end()
+                                print(
+                                    steering_controls_hint(
+                                        pending_clarification=False,
+                                        voice_enabled=enable_voice_steering,
+                                    ),
+                                )
+                            else:
+                                print(
+                                    steering_controls_hint(
+                                        pending_clarification=False,
+                                        voice_enabled=enable_voice_steering,
+                                    ),
+                                )
+                        except Exception as exc:
+                            print(f"⚠️  Failed to send clarification: {exc}")
+                    continue
+                if (
+                    has_clar_channels
+                    and (pending_clar_q is None)
+                    and cmd in {"c", "clarify"}
+                ):
+                    print(
+                        "(no clarification pending) These commands are only available when a tool has requested clarification.",
+                    )
+                    continue
+                if (
+                    has_clar_channels
+                    and (pending_clar_q is not None)
+                    and cmd in {"rc"}
+                    and enable_voice_steering
+                ):
+                    try:
+                        print(
+                            "🎙️  Clarification – press ↵ to start, ↵ again to send, 'c'+↵ to cancel",
+                        )
+                        audio = record_until_enter_interruptible(lambda: handle.done())
+                        if audio is None:
+                            continue
+                        transcript = transcribe_deepgram(audio)
+                        if not transcript or transcript.strip() == "":
+                            print("⚠️  Empty transcript – ignoring")
+                            continue
+                        # Echo the captured clarification transcript for visibility
+                        print(f"▶️  {transcript}")
+                        await clarification_down_q.put(transcript)  # type: ignore[union-attr]
+                        print("✅ Clarification sent.")
+                        pending_clar_q = None
+                        speak("Thanks for clarifying.")
+                        _wait_for_tts_end()
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=False,
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
+                    except Exception as exc:
+                        print(f"⚠️  Voice clarification failed: {exc}")
+                    continue
+                if (
+                    has_clar_channels
+                    and (pending_clar_q is None)
+                    and cmd in {"rc"}
+                    and enable_voice_steering
+                ):
+                    print(
+                        "(no clarification pending) These commands are only available when a tool has requested clarification.",
+                    )
+                    continue
+                # '/cs' (skip) removed – user can type a message if they wish not to clarify
+                # '/cs' (skip) removed – ignore when no clarification is pending
                 if cmd in {"pause", "p"}:
                     try:
                         print("pausing…")
@@ -1107,9 +1652,19 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         if enable_voice_steering:
                             speak("Paused")
                             _wait_for_tts_end()
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=(pending_clar_q is not None),
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                         else:
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=(pending_clar_q is not None),
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                     except Exception as exc:
                         print(f"⚠️  Pause failed: {exc}")
                     continue
@@ -1121,41 +1676,79 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         if enable_voice_steering:
                             speak("Resumed")
                             _wait_for_tts_end()
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=(pending_clar_q is not None),
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                         else:
-                            print(HELP_TEXT)
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=(pending_clar_q is not None),
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
                     except Exception as exc:
                         print(f"⚠️  Resume failed: {exc}")
                     continue
                 if cmd in {"i", "interject"}:
-                    if not arg:
+                    if not arg.strip():
                         print("Usage: /i <text>")
                     else:
                         print(f"interjecting: {arg}")
+                        # Forward the user's text exactly as provided
                         run_in_loop(handle.interject(arg))
                         print("✅ Interjection sent.")
+
                         if enable_voice_steering:
                             speak("Interjection sent")
-                            _wait_for_tts_end()
-                            print(HELP_TEXT)
-                        else:
-                            print(HELP_TEXT)
+                        # -----------------------------------------
+                        if persist_mode:
+                            print("⏳ Processing interjection...")
+                            if hasattr(handle, "awaiting_next_instruction"):
+                                try:
+                                    summary = await handle.awaiting_next_instruction()
+                                    print(f"✅ {summary}")
+                                    if enable_voice_steering:
+                                        speak(f"{summary}")
+                                except Exception as e:
+                                    print(f"❌ Error while awaiting summary: {e}")
+
+                        if enable_voice_steering:
+                            _wait_for_tts_end()  # Wait for any speaking to finish
+
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     continue
                 if cmd in {"ask", "?"}:
-                    if not arg:
-                        print("Usage: /ask <question>")
+                    if not arg.strip():
+                        print("Usage: /ask <question>", file=sys.__stdout__)
                     else:
                         try:
-                            print(f"asking question: {arg}")
+                            print(f"❓ Asking question: {arg}", file=sys.__stdout__)
+                            # Forward the question exactly as provided
                             nested = await handle.ask(arg)
                             ans = await nested.result()
-                            print(f"[ask] → {ans}")
+                            print(f"[ask] → {ans}", file=sys.__stdout__)
                             if enable_voice_steering:
                                 speak(str(ans))
                                 _wait_for_tts_end()
-                                print(HELP_TEXT)
+                                print(
+                                    steering_controls_hint(
+                                        pending_clarification=(
+                                            pending_clar_q is not None
+                                        ),
+                                        voice_enabled=enable_voice_steering,
+                                    ),
+                                    file=sys.__stdout__,
+                                )
                         except Exception as exc:
-                            print(f"⚠️  Ask failed: {exc}")
+                            print(f"⚠️  Ask failed: {exc}", file=sys.__stdout__)
                     continue
                 if enable_voice_steering and cmd in {"record", "rec", "r"}:
                     try:
@@ -1165,15 +1758,22 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         audio = record_until_enter_interruptible(lambda: handle.done())
                         if audio is None:
                             continue
-                        transcript = transcribe_deepgram(audio).strip()
-                        if not transcript:
+                        transcript = transcribe_deepgram(audio)
+                        if not transcript or transcript.strip() == "":
                             print("⚠️  Empty transcript – ignoring")
                             continue
+                        # Echo the captured freeform transcript for visibility
+                        print(f"▶️  {transcript}")
                         should_break = await _route_freeform_and_apply(
                             handle,
                             transcript,
                             enable_voice_steering,
-                            HELP_TEXT,
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                            chat_context=chat_context,
+                            is_task_running=not handle.done(),
                         )
                         if should_break:
                             break
@@ -1181,14 +1781,19 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         print(f"⚠️  Voice steering failed: {exc}")
                     continue
                 if cmd in {"freeform", "f"}:
-                    if not arg:
+                    if not arg.strip():
                         print("Usage: /freeform <text>")
                         continue
                     should_break = await _route_freeform_and_apply(
                         handle,
                         arg,
                         enable_voice_steering,
-                        HELP_TEXT,
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                        chat_context=chat_context,
+                        is_task_running=not handle.done(),
                     )
                     if should_break:
                         break
@@ -1200,34 +1805,89 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     if enable_voice_steering:
                         speak(f"Status: {state}")
                         _wait_for_tts_end()
-                        print(HELP_TEXT)
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     else:
-                        print(HELP_TEXT)
+                        print(
+                            steering_controls_hint(
+                                pending_clarification=(pending_clar_q is not None),
+                                voice_enabled=enable_voice_steering,
+                            ),
+                        )
                     continue
                 if cmd in {"help", "h"}:
-                    print(HELP_TEXT)
+                    print(
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                    )
                     continue
                 # Unknown command → treat as interjection without the '/'
-                print(f"interjecting: {stripped[1:]}")
-                run_in_loop(handle.interject(stripped[1:]))
+                unknown_text = working[1:]
+                print(f"interjecting: {unknown_text}")
+                run_in_loop(handle.interject(unknown_text))
                 print("✅ Interjection sent.")
                 if enable_voice_steering:
                     speak("Interjection sent")
                     _wait_for_tts_end()
-                    print(HELP_TEXT)
+                    print(
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                    )
                 else:
-                    print(HELP_TEXT)
+                    print(
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                    )
             else:
-                # Plain text → interject
-                print(f"interjecting: {stripped}")
-                run_in_loop(handle.interject(stripped))
-                print("✅ Interjection sent.")
-                if enable_voice_steering:
-                    speak("Interjection sent")
-                    _wait_for_tts_end()
-                    print(HELP_TEXT)
+                # Plain text: if a clarification is pending and channels exist, treat as clarification answer
+                if has_clar_channels and pending_clar_q is not None:
+                    try:
+                        await clarification_down_q.put(txt)  # type: ignore[union-attr]
+                        print("✅ Clarification sent.")
+                        pending_clar_q = None
+                        if enable_voice_steering:
+                            speak("Thanks for clarifying.")
+                            _wait_for_tts_end()
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=False,
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
+                        else:
+                            print(
+                                steering_controls_hint(
+                                    pending_clarification=False,
+                                    voice_enabled=enable_voice_steering,
+                                ),
+                            )
+                    except Exception as exc:
+                        print(f"⚠️  Failed to send clarification: {exc}")
                 else:
-                    print(HELP_TEXT)
+                    # Otherwise → route plain text via freeform (LLM router decides ask/interject/pause/resume/stop/status)
+                    should_break = await _route_freeform_and_apply(
+                        handle,
+                        txt,
+                        enable_voice_steering,
+                        steering_controls_hint(
+                            pending_clarification=(pending_clar_q is not None),
+                            voice_enabled=enable_voice_steering,
+                        ),
+                        chat_context=chat_context,
+                        is_task_running=not handle.done(),
+                    )
+                    if should_break:
+                        break
         await asyncio.sleep(poll)
 
     # Task completed: cancel any ongoing TTS immediately and return result
@@ -1281,6 +1941,58 @@ def run_in_loop(coro: Coroutine[Any, Any, Any]):
 
 
 # ===========================================================================
+# Helper to invoke manager methods with optional clarification channels
+# ===========================================================================
+
+
+async def call_manager_with_optional_clarifications(
+    fn: Any,
+    text: str,
+    *,
+    parent_chat_context: list[dict],
+    return_reasoning_steps: bool = False,
+    clarifications_enabled: bool = True,
+    **kwargs,
+):
+    """
+    Call a manager method (e.g., ask/update) with context and, when supported,
+    attach clarification queues automatically.
+
+    Returns a tuple: (handle, clarification_up_q, clarification_down_q).
+    """
+    import inspect as _inspect
+    import asyncio as _asyncio
+
+    clar_up_q: Optional[asyncio.Queue[str]] = None  # type: ignore[name-defined]
+    clar_down_q: Optional[asyncio.Queue[str]] = None  # type: ignore[name-defined]
+
+    fn_kwargs: Dict[str, Any] = {
+        "parent_chat_context": parent_chat_context,
+        "_return_reasoning_steps": return_reasoning_steps,
+        **kwargs,
+    }
+
+    try:
+        sig = _inspect.signature(fn)
+    except Exception:
+        sig = None
+
+    if (
+        clarifications_enabled
+        and sig is not None
+        and "clarification_up_q" in sig.parameters
+        and "clarification_down_q" in sig.parameters
+    ):
+        clar_up_q = _asyncio.Queue()
+        clar_down_q = _asyncio.Queue()
+        fn_kwargs["clarification_up_q"] = clar_up_q
+        fn_kwargs["clarification_down_q"] = clar_down_q
+
+    handle = await fn(text, **fn_kwargs)
+    return handle, clar_up_q, clar_down_q
+
+
+# ===========================================================================
 # Synthetic transcript generation helper
 # ===========================================================================
 
@@ -1310,7 +2022,7 @@ class TranscriptGenerator:
     def __init__(
         self,
         *,
-        endpoint: str = "o4-mini@openai",
+        endpoint: str = "gpt-5@openai",
         traced: bool = True,
         stateful: bool = True,
         in_conversation_manager: bool = False,
@@ -1343,9 +2055,10 @@ class TranscriptGenerator:
 
         from unity.contact_manager.types.contact import Contact  # local import
 
-        # Cache of *first_name → Contact* so repeated references to the same
-        # person (even if the LLM adds/changes a surname) always map to the
-        # same Contact instance.
+        # Cache of participant-label → Contact to ensure that two different
+        # people who share the same first name (e.g. "Fred Smith" and
+        # "Fred Taylor") are treated as distinct individuals during a single
+        # generation run. Labels are normalised to lower-case full strings.
         _name_to_contact: dict[str, Contact] = {}
         # Track the Contact object of the previous message to infer receiver
         last_sender_contact: Contact | None = None
@@ -1368,23 +2081,34 @@ class TranscriptGenerator:
               TranscriptManager will persist it on first use.
             """
 
-            # 1️⃣  Attempt to reuse an existing contact (sandbox rule: first names are unique)
+            # 1️⃣  Attempt to reuse an existing contact
             try:
                 cm = self._tm._contact_manager  # ContactManager instance
-                first_name = name.split(" ")[0].lower()
+                parts = name.strip().split()
+                first_name = (parts[0] if parts else "").lower()
+                surname = " ".join(parts[1:]).strip().lower() if len(parts) > 1 else ""
 
-                # Attempt 1: exact case-insensitive match
-                match = cm._filter_contacts(
-                    filter=f"first_name.lower() == '{first_name}'",
-                    limit=1,
-                )
-
-                # Attempt 2: prefix match (e.g. 'dan' → 'daniel') if nothing found
-                if not match:
+                match: list[Contact] = []
+                # Attempt 1: exact case-insensitive FULL-NAME match when a surname is present
+                if first_name and surname:
                     match = cm._filter_contacts(
-                        filter=f"first_name.lower().startswith('{first_name}')",
+                        filter=(
+                            "first_name is not None and surname is not None and "
+                            f"first_name.lower() == '{first_name}' and surname.lower() == '{surname}'"
+                        ),
                         limit=1,
                     )
+                # Attempt 2: only when NO surname provided – reuse a unique first-name match
+                if not match and first_name and not surname:
+                    match = cm._filter_contacts(
+                        filter=f"first_name.lower() == '{first_name}'",
+                        limit=1,
+                    )
+                    if not match:
+                        match = cm._filter_contacts(
+                            filter=f"first_name.lower().startswith('{first_name}')",
+                            limit=1,
+                        )
 
                 if match:
                     return match[0]
@@ -1434,52 +2158,133 @@ class TranscriptGenerator:
             medium: str,
             details: dict[str, Any] | None = None,
         ) -> Contact:  # type: ignore[valid-type]
-            key = name.split(" ")[0].lower()
+            def _norm_label(label: str) -> str:
+                # Normalise by collapsing whitespace and lower-casing the full label
+                return " ".join(label.split()).strip().lower()
+
+            key = _norm_label(name)
             if key not in _name_to_contact:
                 _name_to_contact[key] = _build_contact(name, medium, details)
             return _name_to_contact[key]
 
-        def submit_conversation(
-            payload: dict,
-        ) -> str:  # noqa: C901 – complex but self-contained
-            """Parse the high-level *conversation* JSON coming from the LLM.
+        class ConversationMessage(BaseModel):
+            """Single utterance in the conversation."""
 
-            Expected schema (keys are case-sensitive):
+            sender: str = Field(..., description="Speaker display name")
+            content: str = Field(..., description="Raw message text")
 
-            {
-                "medium": "phone_call" | "sms_message" | "email" | "whatsapp_message" | "whatsapp_call",
-                "participants": {
-                    "Alice": {"phone_number": "+1…"},
-                    "Bob":   {"email_address": "bob@example.com"}
-                },
-                "conversation": [
-                    {"sender": "Alice", "content": "Hi Bob!"},
-                    {"sender": "Bob",   "content": "Hi Alice, great to hear from you."}
+        class ConversationPayload(BaseModel):
+            """Structured payload expected by `submit_conversation`.
+
+            Fields:
+            - medium: communication channel used
+            - participants: map of participant display name → arbitrary details
+              (e.g., phone_number, email_address, bio). Values are open‑schema.
+            - conversation: ordered list of messages (sender/content pairs).
+            """
+
+            medium: (
+                Literal[
+                    "phone_call",
+                    "sms_message",
+                    "email",
+                    "whatsapp_message",
+                    "whatsapp_call",
                 ]
-            }
+                | str
+            ) = Field(
+                "sms_message",
+                description=(
+                    "Channel: phone_call | sms_message | email | whatsapp_message | whatsapp_call"
+                ),
+            )
+            participants: Dict[str, Dict[str, Any]] = Field(
+                default_factory=dict,
+                description="Participant details keyed by display name",
+            )
+            conversation: List[ConversationMessage] = Field(
+                ...,
+                description="Ordered list of messages",
+            )
+
+        def submit_conversation(
+            payload: ConversationPayload | dict | str | None = None,
+            **tool_kwargs,
+        ) -> str:  # noqa: C901 – complex but self-contained
+            """Submit a complete conversation transcript for logging.
+
+            Preferred call shape (validated):
+            - payload: ConversationPayload
+
+            Tolerated fallbacks (for robustness):
+            - payload as JSON-serialisable dict or JSON string
+            - flattened kwargs: medium=..., participants=..., conversation=[...]
+
+            Extra kwargs (e.g. internal tool-loop params like parent_chat_context)
+            are accepted and ignored.
             """
 
             nonlocal transcript, last_sender_contact
 
-            # Accept either a dict *object* or a JSON *string*
-            if isinstance(payload, str):
-                import json as _json
+            # Normalise inputs → ConversationPayload
+            model_payload: ConversationPayload
+            if payload is None:
+                # Check common LLM shapes
+                if "payload" in tool_kwargs:
+                    candidate = tool_kwargs["payload"]
+                elif any(
+                    k in tool_kwargs for k in ("medium", "participants", "conversation")
+                ):
+                    candidate = {
+                        "medium": tool_kwargs.get("medium", "sms_message"),
+                        "participants": tool_kwargs.get("participants", {}),
+                        "conversation": tool_kwargs.get("conversation", []),
+                    }
+                else:
+                    raise ValueError("submit_conversation requires a payload")
 
-                try:
-                    payload = _json.loads(payload)
-                except Exception as exc:
-                    raise ValueError(
-                        "submit_conversation: string payload must be valid JSON",
-                    ) from exc
+                if isinstance(candidate, str):
+                    import json as _json
 
-            if not isinstance(payload, dict):
-                raise ValueError(
-                    "submit_conversation expects a dict or JSON string argument",
-                )
+                    try:
+                        model_payload = ConversationPayload.model_validate(
+                            _json.loads(candidate),
+                        )
+                    except Exception as exc:
+                        raise ValueError(
+                            "submit_conversation: string payload must be valid JSON matching schema",
+                        ) from exc
+                elif isinstance(candidate, dict):
+                    model_payload = ConversationPayload.model_validate(candidate)
+                elif isinstance(candidate, ConversationPayload):
+                    model_payload = candidate
+                else:
+                    raise ValueError("Unsupported payload type")
+            else:
+                if isinstance(payload, str):
+                    import json as _json
 
-            medium = str(payload.get("medium", "sms_message"))
-            participants: dict[str, Any] = payload.get("participants", {}) or {}
-            convo_raw = payload.get("conversation", [])
+                    try:
+                        model_payload = ConversationPayload.model_validate(
+                            _json.loads(payload),
+                        )
+                    except Exception as exc:
+                        raise ValueError(
+                            "submit_conversation: string payload must be valid JSON matching schema",
+                        ) from exc
+                elif isinstance(payload, dict):
+                    model_payload = ConversationPayload.model_validate(payload)
+                elif isinstance(payload, ConversationPayload):
+                    model_payload = payload
+                else:
+                    raise ValueError("Unsupported payload type")
+
+            medium = str(model_payload.medium)
+            participants: dict[str, Any] = model_payload.participants or {}
+            convo_raw = [
+                {"sender": m.sender, "content": m.content}
+                for m in model_payload.conversation
+            ]
 
             # Support dict-format conversation {sender: message, ...} or list
             if isinstance(convo_raw, dict):
@@ -1532,7 +2337,9 @@ class TranscriptGenerator:
                     if _others:
                         receiver_c = _others[0]
                     else:
-                        receiver_c = _contact_for("Assistant", medium, {})
+                        # Use the existing assistant contact (id == 0) instead of
+                        # fabricating a new "Assistant" record.
+                        receiver_c = 0
 
                 last_sender_contact = sender_c
 
@@ -1634,8 +2441,12 @@ class TranscriptGenerator:
         # ------------------------------------------------------------------ #
 
         prompt = (
-            "You are a **Conversation Synthesis Assistant**. Your task is to invent a realistic conversation that fulfils the scenario description provided by the user. "
-            "When you are ready, call the `submit_conversation` tool *exactly once* with a single JSON argument following this structure:\n\n"
+            "You are a **Conversation Synthesis Assistant**. Your task is to fulfil the scenario description provided by the user.\n\n"
+            "Tool usage policy:\n"
+            "- If (and only if) the user explicitly asks to generate a conversation/transcript/messages/exchanges, then call the `submit_conversation` tool **exactly once** with a single JSON argument following the structure shown below.\n"
+            "- If the user only asks to create or update contacts (and does not ask for a transcript), then use `update_contacts` as needed and finish without calling `submit_conversation`.\n"
+            "- You may also use `update_contacts` before `submit_conversation` to ensure participants exist.\n\n"
+            "`submit_conversation` payload shape:\n\n"
             "{\n"
             '  "medium": "phone_call|sms_message|email|whatsapp_message|whatsapp_call",\n'
             '  "participants": {\n'
@@ -1647,8 +2458,8 @@ class TranscriptGenerator:
             '      { "sender": "Bob",   "content": "Hi Alice, great to hear from you." }\n'
             "  ]\n"
             "}\n\n"
-            f"If the scenario doesn't specify how long the chat should be, aim for roughly {min_messages}-{max_messages} messages. "
-            "Be concise – avoid unnecessary filler text. After you have called the tool, do **not** output anything else."
+            f"When a transcript is requested and length is unspecified, aim for roughly {min_messages}-{max_messages} messages. "
+            "Be concise – avoid unnecessary filler text. After you finish calling tools, do **not** output anything else."
         )
 
         # ------------------------------------------------------------------ #
@@ -1677,9 +2488,16 @@ class TranscriptGenerator:
 
         prompt += f"The description is as follows:\n\n{description}."
 
+        # Local import to avoid circular dependency: utils → scenario_builder → utils
+        from sandboxes.scenario_builder import ScenarioBuilder  # noqa: WPS433
+
         builder = ScenarioBuilder(
             description=prompt,
-            tools={"submit_conversation": submit_conversation},
+            tools={
+                "submit_conversation": submit_conversation,
+                # Expose ContactManager.update so scenarios can explicitly create/update contacts
+                "update_contacts": self._tm._contact_manager.update,
+            },
             endpoint=self._endpoint,
             traced=self._traced,
             stateful=self._stateful,
@@ -1687,9 +2505,7 @@ class TranscriptGenerator:
 
         await builder.create()
 
-        if not transcript:
-            raise RuntimeError("TranscriptGenerator produced an empty transcript.")
-
+        # Allow empty transcripts when the user's request only involved contact creation/updates.
         return transcript
 
 
@@ -1703,6 +2519,12 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     import unity
     from unity.events.event_bus import EVENT_BUS
 
+    # Force verbose Unify Request logging in sandbox runs
+    try:
+        os.environ["UNIFY_REQUESTS_DEBUG"] = "true"
+    except Exception:
+        pass
+
     unity.init(
         project_name,
         overwrite=("contexts" if overwrite else False),
@@ -1714,3 +2536,726 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     import unify as _unify
 
     _unify.set_trace_context("Traces")
+
+
+# ===========================================================================
+#  Simulation planning (sandbox-only; does not touch TaskScheduler)
+# ===========================================================================
+
+
+class SimulationParams(BaseModel):
+    """Simulation parameters applied to a specific task execution.
+
+    All fields are optional; unset values mean "no override".
+
+    Notes
+    -----
+    - steps: maximum simulated tool steps before auto-completion
+    - duration_seconds: wall-clock limit; pauses do not count towards this
+    - guidance: free-form text that influences simulated behaviour only
+    - one_shot: whether to consume the rule after first successful application
+    """
+
+    steps: int | None = None
+    duration_seconds: float | None = None
+    guidance: str | None = None
+    one_shot: bool = True
+
+
+class SimulationSelector(BaseModel):
+    """Flexible, id-free ways to target tasks for simulation overrides.
+
+    Only one field needs to be set; multiple may be set to narrow down.
+    Resolution happens in the sandbox by consulting the current task list.
+    """
+
+    by_task_id: int | None = None
+    # 0-based index with negative support (Python-style): 0 is first, -1 is last
+    position: int | None = None
+
+
+class _SimulationRule(BaseModel):
+    selector: SimulationSelector
+    params: SimulationParams
+    label: str | None = None
+    created_at: float = Field(default_factory=lambda: time.time())
+
+
+class SimulationPlanStore:
+    """In-memory registry of simulation rules for sandbox runs.
+
+    This lives entirely in the sandbox layer. It provides helper methods to
+    attach rules without knowing task ids (e.g., queue index), and resolve them
+    just-in-time before starting a task. The TaskScheduler itself remains
+    unaware of these parameters.
+    """
+
+    def __init__(self) -> None:
+        self._rules: list[_SimulationRule] = []
+        self._lock = threading.Lock()
+
+    # --------------- authoring --------------- #
+    def add_rule(
+        self,
+        selector: SimulationSelector,
+        params: SimulationParams,
+        *,
+        label: str | None = None,
+    ) -> str:
+        """Add a rule and return a short identifier string."""
+        rule = _SimulationRule(selector=selector, params=params, label=label)
+        with self._lock:
+            self._rules.append(rule)
+        rid = f"r{int(rule.created_at)}_{len(self._rules)}"
+        return rid
+
+    def list_rules(self) -> list[_SimulationRule]:
+        with self._lock:
+            return list(self._rules)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._rules.clear()
+
+    # --------------- resolution helpers --------------- #
+    def resolve_for_task_id(self, task_id: int) -> SimulationParams | None:
+        """Return the most recent params that target this task_id, if any."""
+        with self._lock:
+            matches = [r for r in self._rules if r.selector.by_task_id == task_id]
+        if not matches:
+            return None
+        # Newest wins
+        return matches[-1].params
+
+    def resolve_for_queue_index(
+        self,
+        ts: "Any",
+        index_1_based: int,
+    ) -> tuple[int | None, SimulationParams | None]:
+        """Return (task_id, params) for the Nth runnable task if a rule exists.
+
+        Safe to call against both real and simulated schedulers. Uses
+        ``_get_task_queue`` which is available on the concrete class.
+        """
+        try:
+            q = []  # type: ignore[attr-defined]
+        except Exception:
+            return None, None
+        if not q or index_1_based < 1 or index_1_based > len(q):
+            return None, None
+        task_id = int(getattr(q[index_1_based - 1], "task_id", -1))
+        if task_id < 0:
+            return None, None
+        # Find most recent queue-index rule that matches exactly
+        with self._lock:
+            matches = [
+                r for r in self._rules if r.selector.by_queue_index == index_1_based
+            ]
+        if not matches:
+            return task_id, None
+        return task_id, matches[-1].params
+
+    def consume_one_shot_for(
+        self,
+        selector: SimulationSelector,
+        *,
+        task_id: int | None = None,
+    ) -> None:
+        """Remove matching one-shot rules after they have been applied."""
+
+        def _match(r: _SimulationRule) -> bool:
+            sel = r.selector
+            if selector.by_task_id is not None:
+                return sel.by_task_id == selector.by_task_id and bool(r.params.one_shot)
+            if selector.by_queue_index is not None:
+                return sel.by_queue_index == selector.by_queue_index and bool(
+                    r.params.one_shot,
+                )
+            # When we resolved a selector to a concrete task_id, allow consuming by that id
+            if (
+                task_id is not None
+                and sel.by_task_id == task_id
+                and bool(r.params.one_shot)
+            ):
+                return True
+            return False
+
+        with self._lock:
+            self._rules = [r for r in self._rules if not _match(r)]
+
+
+# Global, sandbox-wide plan store instance
+SIMULATION_PLANS = SimulationPlanStore()
+
+
+def parse_simulation_params_kv(arg_str: str) -> SimulationParams:
+    """Parse a simple "k=v" string into SimulationParams.
+
+    Accepted keys: steps, timeout, duration, duration_seconds, guidance, one_shot
+    """
+    steps: int | None = None
+    duration_seconds: float | None = None
+    guidance: str | None = None
+    one_shot: bool = True
+
+    def _to_bool(v: str) -> bool:
+        return v.strip().lower() in {"1", "true", "yes", "on"}
+
+    for token in [t for t in arg_str.split() if "=" in t]:
+        k, v = token.split("=", 1)
+        k = k.strip().lower()
+        v = v.strip()
+        if k == "steps":
+            try:
+                steps = int(v)
+            except Exception:
+                pass
+        elif k in {"timeout", "duration", "duration_seconds"}:
+            try:
+                # allow shorthand like 90s / 1.5m
+                if v.endswith("s"):
+                    duration_seconds = float(v[:-1])
+                elif v.endswith("m"):
+                    duration_seconds = float(v[:-1]) * 60.0
+                else:
+                    duration_seconds = float(v)
+            except Exception:
+                pass
+        elif k == "guidance":
+            # Allow quoted or unquoted; strip surrounding quotes if present
+            if (v.startswith('"') and v.endswith('"')) or (
+                v.startswith("'") and v.endswith("'")
+            ):
+                guidance = v[1:-1]
+            else:
+                guidance = v
+        elif k == "one_shot":
+            try:
+                one_shot = _to_bool(v)
+            except Exception:
+                pass
+
+    return SimulationParams(
+        steps=steps,
+        duration_seconds=duration_seconds,
+        guidance=guidance,
+        one_shot=one_shot,
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  Parsing helper: extract per-task durations from free-form text             #
+# --------------------------------------------------------------------------- #
+
+
+def parse_per_task_durations(text: str) -> dict[int, float]:
+    """Return a mapping of 1-based queue indexes → durations (seconds).
+
+    Recognises common ordinal forms and time units, e.g.:
+    - "first ... 20 seconds", "second ... 1.5 minutes", "final ... 45s"
+    - "1st ... 30s", "3rd ... 2 min"
+
+    Ambiguous 'final' is mapped to the next index after the highest explicit
+    ordinal found (e.g., if 1..3 were given, 'final' → 4). If no prior index
+    exists, 'final' is ignored.
+    """
+    import re
+
+    if not text:
+        return {}
+
+    # Normalise whitespace for better regex matching
+    hay = " ".join(str(text).split())
+
+    # Ordinal tokens → index
+    word_ord = {
+        "first": 1,
+        "second": 2,
+        "third": 3,
+        "fourth": 4,
+        "fifth": 5,
+        "sixth": 6,
+        "seventh": 7,
+        "eighth": 8,
+        "ninth": 9,
+        "tenth": 10,
+    }
+
+    # Regex to capture sequences like: "second ... 40 seconds" or "2nd ... 40s"
+    # We keep this intentionally permissive between ordinal and value.
+    ord_word_pat = (
+        r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|final)\b"
+    )
+    ord_num_pat = r"\b(\d+)(?:st|nd|rd|th)\b"
+    val_pat = (
+        r"(\d+(?:\.\d+)?)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes)\b"
+    )
+
+    compiled_patterns = [
+        re.compile(ord_word_pat + r"[^\.;,:]*?" + val_pat, re.IGNORECASE),
+        re.compile(ord_num_pat + r"[^\.;,:]*?" + val_pat, re.IGNORECASE),
+    ]
+
+    mapping: dict[int, float] = {}
+    final_seconds: float | None = None
+
+    def _to_seconds(num_str: str, unit: str) -> float:
+        try:
+            val = float(num_str)
+        except Exception:
+            return 0.0
+        u = unit.lower()
+        if u.startswith("m"):
+            return val * 60.0
+        return val
+
+    for rx in compiled_patterns:
+        for m in rx.finditer(hay):
+            groups = m.groups()
+            if rx is compiled_patterns[0]:
+                # word ordinal
+                ord_token, num, unit = groups[0], groups[1], groups[2]
+                if ord_token.lower() == "final":
+                    final_seconds = _to_seconds(num, unit)
+                    continue
+                idx = word_ord.get(ord_token.lower())
+                if idx is None:
+                    continue
+                mapping[idx] = _to_seconds(num, unit)
+            else:
+                # numeric ordinal
+                idx_str, num, unit = groups[0], groups[1], groups[2]
+                try:
+                    idx = int(idx_str)
+                except Exception:
+                    continue
+                if idx <= 0:
+                    continue
+                mapping[idx] = _to_seconds(num, unit)
+
+    if final_seconds is not None:
+        if mapping:
+            target = max(mapping.keys()) + 1
+            # Only add if not already provided
+            if target not in mapping:
+                mapping[target] = final_seconds
+        # If no prior explicit index, we cannot safely infer 'final' → ignore
+
+    # Drop zero/invalid durations defensively
+    mapping = {k: v for k, v in mapping.items() if v and v > 0}
+    return mapping
+
+
+# --------------------------------------------------------------------------- #
+#  LLM-driven parsing: extract per-task guidance from free-form text          #
+# --------------------------------------------------------------------------- #
+
+
+class _PerTaskGuidanceItem(BaseModel):
+    index: Optional[int] = Field(
+        default=None,
+        description="1-based position in the chain if explicitly stated",
+        ge=1,
+    )
+    final: Optional[bool] = Field(
+        default=None,
+        description="True when guidance is intended for the final task only",
+    )
+    guidance: str = Field(..., description="Free-form guidance text for the task")
+
+
+class _PerTaskGuidancePayload(BaseModel):
+    items: List[_PerTaskGuidanceItem] = Field(
+        default_factory=list,
+        description="List of task-specific guidance directives",
+    )
+
+
+def parse_per_task_guidance(text: str) -> dict[int, str]:
+    """Return mapping of 1-based queue indexes → guidance strings via LLM.
+
+    The LLM receives clear instructions to:
+    - Use 1-based indices (1 = first task) when explicit ordinals/positions
+      are present, else set final=true for guidance intended for the last task.
+    - Extract concise guidance strings (no rephrasing of unrelated text).
+    - Ignore non-guidance content.
+    """
+    import unify as _unify
+
+    if not text:
+        return {}
+
+    sys_msg = (
+        "Extract task-specific guidance from the user's instruction.\n"
+        "Return ONLY JSON matching the response schema with fields: items -> [{index (1-based int or null), final (boolean or null), guidance (string)}].\n"
+        "Rules:\n"
+        "- Prefer numeric 1-based 'index' when the task position is explicit (e.g., first=1, second=2, 1st=1).\n"
+        "- When the instruction targets the last task only, set final=true and index=null.\n"
+        "- Do NOT invent positions; include only statements that clearly instruct how a specific task should respond or behave.\n"
+        "- Keep 'guidance' concise (one short sentence or phrase)."
+    )
+
+    try:
+        judge = _unify.Unify(
+            "gpt-5@openai",
+            response_format=_PerTaskGuidancePayload,
+            reasoning_effort="high",
+            service_tier="priority",
+        )
+        payload = _PerTaskGuidancePayload.model_validate_json(
+            judge.set_system_message(sys_msg).generate(text),
+        )
+    except Exception:
+        return {}
+
+    explicit: dict[int, str] = {}
+    finals: list[str] = []
+    for it in payload.items:
+        try:
+            g = (it.guidance or "").strip()
+        except Exception:
+            g = ""
+        if not g:
+            continue
+        if it.index is not None and int(it.index) >= 1:
+            explicit[int(it.index)] = g
+        elif bool(getattr(it, "final", False)):
+            finals.append(g)
+
+    # Assign any 'final' guidance to the next index after the highest explicit one
+    if finals:
+        if explicit:
+            target = max(explicit.keys()) + 1
+            # if multiple finals, keep last occurrence
+            explicit[target] = finals[-1]
+        else:
+            # Without an explicit baseline, we cannot place 'final' deterministically
+            # Defer by returning empty (caller may choose to ignore or handle separately)
+            pass
+
+    return explicit
+
+
+# --------------------------------------------------------------------------- #
+#  Unified LLM extraction: defaults + per-task rules (selector + params)       #
+# --------------------------------------------------------------------------- #
+
+
+class _SimOverrideParams(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Extractor notes")
+    steps: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    guidance: Optional[str] = None
+    one_shot: Optional[bool] = None
+
+
+class _SimOverrideSelector(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Selector notes")
+    by_task_id: Optional[int] = None
+    position: Optional[int] = None
+
+
+class _SimOverrideRule(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Rule notes")
+    selector: _SimOverrideSelector
+    params: _SimOverrideParams
+
+
+class _SimOverrides(BaseModel):
+    reasoning: Optional[str] = Field(default=None, description="Global notes")
+    # core_text: original request with any simulation instructions removed
+    core_text: str
+    defaults: Optional[_SimOverrideParams] = None
+    rules: List[_SimOverrideRule] = Field(default_factory=list)
+
+
+def parse_simulation_overrides(text: str) -> _SimOverrides:
+    """LLM-only unified parser for defaults and per-task overrides.
+
+    Returns a structured payload that captures both defaults and a set of
+    per-task rules (selector + params). The LLM must:
+    - Map 'first/second/third/…/final' to 1-based by_queue_index (final → next
+      index after the last explicit ordinal); numeric ordinals (1st/2nd/…)
+      are also 1-based.
+    - Place timing/limits in duration_seconds/steps; place behavioral text in
+      guidance; do not duplicate the same instruction across both fields.
+    - Exclude non-instructions; do not paraphrase unrelated content.
+    - Produce core_text by removing sentences/clauses that describe simulation
+      controls (timeouts, steps, ordered timing for tasks), keeping only the
+      task request itself.
+    """
+    import unify as _unify
+
+    sys_msg = (
+        "You extract simulation overrides for starting a task/chain.\n"
+        "Return ONLY JSON matching the schema with fields in this object order: reasoning, core_text, defaults, rules.\n"
+        "Field guidance:\n"
+        "- Use selector.position (0-based; negatives allowed: 0=first, -1=last) for ordinal/relative references; or by_task_id when explicitly provided.\n"
+        "- Use duration_seconds for timing; steps for step limits; guidance for behavioral text (e.g., what to say on progress).\n"
+        "- Exclude numeric timing directives from guidance.\n"
+        "- 'core_text' must be the original user request with simulation control sentences/clauses REMOVED (timeouts, steps, task timing).\n"
+        "- defaults params (when present) apply to all tasks unless overridden by a rule's params.\n"
+    )
+
+    judge = _unify.Unify(
+        "gpt-5@openai",
+        response_format=_SimOverrides,
+        reasoning_effort="high",
+        service_tier="priority",
+    )
+    payload = _SimOverrides.model_validate_json(
+        judge.set_system_message(sys_msg).generate(text),
+    )
+    return payload
+
+
+# --------------------------------------------------------------------------- #
+#  Sandbox-only monkey patch for per-task simulation (TaskScheduler only)     #
+# --------------------------------------------------------------------------- #
+
+
+def _merge_sim_params_for_task(
+    scheduler: Any,
+    task_id: Optional[int],
+    per_call: Optional[SimulationParams],
+) -> tuple[Optional[int], Optional[float], Optional[str]]:
+    """Compute effective (steps, duration_seconds, guidance) for a task.
+
+    Merge priority:
+        1) Per-call overrides (from the current 'start' request)
+        2) Rule targeting this task_id
+        3) Rule targeting this queue index (resolved from the runnable queue)
+        4) Fallback default (duration=20.0 if neither steps nor duration set)
+    """
+
+    steps: Optional[int] = getattr(per_call, "steps", None) if per_call else None
+    duration: Optional[float] = (
+        getattr(per_call, "duration_seconds", None) if per_call else None
+    )
+    guidance: Optional[str] = getattr(per_call, "guidance", None) if per_call else None
+
+    # Merge params by concrete task id
+    try:
+        if task_id is not None:
+            rule = SIMULATION_PLANS.resolve_for_task_id(int(task_id))
+            if rule is not None:
+                if steps is None and rule.steps is not None:
+                    steps = rule.steps
+                if duration is None and rule.duration_seconds is not None:
+                    duration = rule.duration_seconds
+                if not guidance and rule.guidance:
+                    guidance = rule.guidance
+    except Exception:
+        pass
+
+    # Merge params by queue index (Nth runnable task)
+    try:
+        if scheduler is not None and task_id is not None:
+            # Use the chain containing this task for queue-index resolution
+            try:
+                q = scheduler._get_queue_for_task(task_id=task_id)  # type: ignore[attr-defined]
+            except TypeError:
+                # Backwards compatibility: older schedulers may not accept task_id
+                q = []  # type: ignore[attr-defined]
+            idx = None
+            try:
+                for i, t in enumerate(q, 1):
+                    if getattr(t, "task_id", None) == task_id:
+                        idx = i
+                        break
+            except Exception:
+                idx = None
+            if idx is not None:
+                _tid, qparams = SIMULATION_PLANS.resolve_for_queue_index(scheduler, idx)
+                if qparams is not None:
+                    if steps is None and qparams.steps is not None:
+                        steps = qparams.steps
+                    if duration is None and qparams.duration_seconds is not None:
+                        duration = qparams.duration_seconds
+                    if not guidance and qparams.guidance:
+                        guidance = qparams.guidance
+    except Exception:
+        pass
+
+    if steps is None and duration is None:
+        duration = 20.0
+
+    return steps, duration, guidance
+
+
+def apply_per_task_simulation_patch(
+    *,
+    per_call_overrides: Optional[SimulationParams],
+    log_mode: "str | None" = "print",
+):
+    """Monkey-patch ActiveTask.create so each task starts with its own SimulatedActor.
+
+    Scope this patch to a single execute flow by calling the returned restore()
+    function once the outer handle completes.
+    """
+
+    # NOTE:
+    # To avoid cross-call races, we install a single, process-wide wrapper once
+    # and keep it installed for the sandbox lifetime. Per-call overrides are
+    # stored behind a token so earlier calls cannot clobber newer ones.
+
+    # Lazy, idempotent installation
+    global _SANDBOX_SIM_PATCH_INSTALLED
+    global _SANDBOX_SIM_PATCH_LOCK
+    global _SANDBOX_SIM_ORIG_CREATE
+    global _SANDBOX_SIM_TOKEN
+    global _SANDBOX_SIM_PER_CALL
+    global _SANDBOX_SIM_LOG_MODE
+    global _SANDBOX_SIM_GEN
+
+    try:
+        _SANDBOX_SIM_PATCH_INSTALLED
+    except NameError:
+        _SANDBOX_SIM_PATCH_INSTALLED = False  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_PATCH_LOCK
+    except NameError:
+        import threading as _th  # local, keep module surface small
+
+        _SANDBOX_SIM_PATCH_LOCK = _th.Lock()  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_ORIG_CREATE
+    except NameError:
+        _SANDBOX_SIM_ORIG_CREATE = None  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_TOKEN
+    except NameError:
+        _SANDBOX_SIM_TOKEN = 0  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_PER_CALL
+    except NameError:
+        _SANDBOX_SIM_PER_CALL = None  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_LOG_MODE
+    except NameError:
+        _SANDBOX_SIM_LOG_MODE = "print"  # type: ignore[assignment]
+    try:
+        _SANDBOX_SIM_GEN
+    except NameError:
+        _SANDBOX_SIM_GEN = 0  # type: ignore[assignment]
+
+    with _SANDBOX_SIM_PATCH_LOCK:  # type: ignore[arg-type]
+        if not _SANDBOX_SIM_PATCH_INSTALLED:  # type: ignore[arg-type]
+            # Imports kept local to avoid pulling these modules for other sandboxes
+            from unity.task_scheduler.active_task import ActiveTask  # noqa: WPS433
+            from unity.actor.simulated import SimulatedActor  # noqa: WPS433
+
+            _orig_create_cm = ActiveTask.create  # classmethod descriptor
+            _SANDBOX_SIM_ORIG_CREATE = _orig_create_cm  # type: ignore[assignment]
+            _orig_create_fn = (
+                _orig_create_cm.__func__
+                if hasattr(_orig_create_cm, "__func__")
+                else _orig_create_cm
+            )
+
+            async def _wrapped_create(
+                cls,  # type: ignore[no-redef]
+                actor,  # ignored during simulation
+                *,
+                task_description: str,
+                parent_chat_context: Optional[list[dict]] = None,
+                clarification_up_q: Optional[asyncio.Queue[str]] = None,
+                clarification_down_q: Optional[asyncio.Queue[str]] = None,
+                task_id: Optional[int] = None,
+                instance_id: Optional[int] = None,
+                scheduler: Optional["TaskScheduler"] = None,  # type: ignore[name-defined]
+            ):
+                # Snapshot current per-call state without holding the lock for long
+                try:
+                    per_call = _SANDBOX_SIM_PER_CALL  # type: ignore[name-defined]
+                except Exception:
+                    per_call = None
+                try:
+                    _log_mode = _SANDBOX_SIM_LOG_MODE  # type: ignore[name-defined]
+                except Exception:
+                    _log_mode = "print"
+
+                s, d, g = _merge_sim_params_for_task(scheduler, task_id, per_call)
+                sim_actor = SimulatedActor(
+                    steps=s,
+                    duration=d,
+                    simulation_guidance=g,
+                    log_mode=_log_mode,
+                )
+                # Best-effort: consume one-shot rules that apply to this task
+                try:
+                    if task_id is not None:
+                        tid_int = int(task_id)
+                        _tid_params = SIMULATION_PLANS.resolve_for_task_id(tid_int)
+                        if _tid_params is not None and bool(
+                            getattr(_tid_params, "one_shot", False),
+                        ):
+                            SIMULATION_PLANS.consume_one_shot_for(
+                                SimulationSelector(by_task_id=tid_int),
+                                task_id=tid_int,
+                            )
+                    if scheduler is not None and task_id is not None:
+                        # Resolve queue index and consume if a queue-index rule applied
+                        try:
+                            q = []  # type: ignore[attr-defined]
+                            idx = None
+                            for i, t in enumerate(q, 1):
+                                if getattr(t, "task_id", None) == task_id:
+                                    idx = i
+                                    break
+                            if idx is not None:
+                                _resolved_tid, qparams = (
+                                    SIMULATION_PLANS.resolve_for_queue_index(
+                                        scheduler,
+                                        idx,
+                                    )
+                                )
+                                if qparams is not None and bool(
+                                    getattr(qparams, "one_shot", False),
+                                ):
+                                    SIMULATION_PLANS.consume_one_shot_for(
+                                        SimulationSelector(by_queue_index=idx),
+                                    )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+                return await _orig_create_fn(
+                    cls,
+                    sim_actor,
+                    task_description=task_description,
+                    parent_chat_context=parent_chat_context,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
+                    task_id=task_id,
+                    instance_id=instance_id,
+                    scheduler=scheduler,
+                )
+
+            ActiveTask.create = classmethod(_wrapped_create)  # type: ignore[assignment]
+            _SANDBOX_SIM_PATCH_INSTALLED = True  # type: ignore[assignment]
+
+        # Update per-call state guarded by a token; newest wins.
+        _SANDBOX_SIM_GEN = int(_SANDBOX_SIM_GEN) + 1  # type: ignore[assignment]
+        token = int(_SANDBOX_SIM_GEN)
+        _SANDBOX_SIM_TOKEN = token  # type: ignore[assignment]
+        _SANDBOX_SIM_PER_CALL = per_call_overrides  # type: ignore[assignment]
+        _SANDBOX_SIM_LOG_MODE = log_mode  # type: ignore[assignment]
+
+    def restore() -> None:
+        # Only clear the per-call overrides if we are still the latest token.
+        try:
+            with _SANDBOX_SIM_PATCH_LOCK:  # type: ignore[arg-type]
+                if _SANDBOX_SIM_TOKEN == token:  # type: ignore[name-defined]
+                    # Clear state; keep the wrapper installed to avoid races.
+                    try:
+                        # Preserve log_mode for future calls; just drop per-call overrides.
+                        pass
+                    finally:
+                        # Reset only the per-call overrides
+                        globals()["_SANDBOX_SIM_PER_CALL"] = None
+        except Exception:
+            pass
+
+    return restore

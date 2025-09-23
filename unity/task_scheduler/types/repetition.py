@@ -1,7 +1,6 @@
 """
-A strongly-typed, validation-first schema for describing how a task
-repeats over time.  The model serialises cleanly to / from JSON so it can
-be stored in `unify` logs without ambiguity.
+Schema describing how a task repeats over time. The model serializes to and
+from JSON for storage and transport.
 """
 
 from __future__ import annotations

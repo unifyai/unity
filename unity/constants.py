@@ -36,7 +36,7 @@ if ASYNCIO_VERBOSE_DEBUG:
     import sys
 
     class _TaskFilter(logging.Filter):
-        """Add current asyncio task & thread names to every log record."""
+        """Attach asyncio task/thread names to log records."""
 
         def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
             task = asyncio.current_task()
@@ -62,3 +62,5 @@ if ASYNCIO_VERBOSE_DEBUG:
         _root.addFilter(_TaskFilter())
         _handler._asyncio_debug = True  # Mark to detect duplication
         _root.addHandler(_handler)
+
+        # (Removed) global LogRecordFactory override to keep logging minimal

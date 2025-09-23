@@ -22,9 +22,9 @@ def test_update_task_name():
     assert task_list[0]["name"] == "Promote Jeff Smith"
 
     # rename
-    task_scheduler._update_task_name(
+    task_scheduler._update_task(
         task_id=0,
-        new_name="Give Jeff Smith a promotion",
+        name="Give Jeff Smith a promotion",
     )
     task_list = task_scheduler._filter_tasks()
     assert task_list[0]["name"] == "Give Jeff Smith a promotion"
@@ -47,9 +47,9 @@ def test_update_task_description():
     )
 
     # rename
-    task_scheduler._update_task_description(
+    task_scheduler._update_task(
         task_id=0,
-        new_description="Call Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
+        description="Call Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
     task_list = task_scheduler._filter_tasks()
     assert (
@@ -75,9 +75,9 @@ def test_update_task_status():
     )
 
     # update status
-    task_scheduler._update_task_status(
-        task_ids=0,
-        new_status=Status.cancelled,
+    task_scheduler._update_task(
+        task_id=0,
+        status=Status.cancelled,
     )
     task_list = task_scheduler._filter_tasks()
     assert task_list[0]["status"] == "cancelled"
@@ -107,7 +107,7 @@ def test_head_of_queue_scheduled_cannot_be_queued():
 
     # Attempting to mark it as 'queued' must fail
     with pytest.raises(ValueError):
-        ts._update_task_status(task_ids=tid, new_status="queued")
+        ts._update_task(task_id=tid, status="queued")
 
 
 @_handle_project
@@ -121,7 +121,7 @@ def test_update_task_start_at():
     )
 
     start = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
-    ts._update_task_start_at(task_id=0, new_start_at=start)
+    ts._update_task(task_id=0, start_at=start)
 
     task_list = ts._filter_tasks()
     assert task_list[0]["schedule"]["start_at"] == start
@@ -138,7 +138,7 @@ def test_update_task_deadline():
     )
 
     deadline = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
-    ts._update_task_deadline(task_id=0, new_deadline=deadline)
+    ts._update_task(task_id=0, deadline=deadline)
 
     task_list = ts._filter_tasks()
     assert task_list[0]["deadline"] == deadline
@@ -155,7 +155,7 @@ def test_update_task_repetition():
     )
 
     rule = RepeatPattern(frequency=Frequency.WEEKLY, interval=1, weekdays=[Weekday.MO])
-    ts._update_task_repetition(task_id=0, new_repeat=[rule])
+    ts._update_task(task_id=0, repeat=[rule])
 
     task_list = ts._filter_tasks()
     # The manager stores *.model_dump()* (a plain dict) so compare like-for-like
@@ -172,7 +172,7 @@ def test_update_task_priority():
         description="Apply CVE-2025-1234 hot-fix to production.",
     )
 
-    ts._update_task_priority(task_id=0, new_priority=Priority.high)
+    ts._update_task(task_id=0, priority=Priority.high)
 
     task_list = ts._filter_tasks()
     assert task_list[0]["priority"] == Priority.high

@@ -16,6 +16,7 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
     start_async_tool_use_loop,
     ToolSpec,
+    TOOL_LOOP_LINEAGE,
 )
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
@@ -23,8 +24,8 @@ from ..transcript_manager.base import BaseTranscriptManager
 from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.base import BaseKnowledgeManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
-from ..planner.base import BasePlanner
-from ..planner.tool_loop_planner import ToolLoopPlanner
+from ..actor.base import BaseActor
+from ..actor.tool_loop_actor import ToolLoopActor
 from ..task_scheduler.base import BaseTaskScheduler
 from .base import BaseConductor
 from ..task_scheduler.task_scheduler import TaskScheduler
@@ -57,7 +58,7 @@ class Conductor(BaseConductor):
         transcript_manager: Optional[BaseTranscriptManager] = None,
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
-        planner: Optional[BasePlanner] = None,
+        actor: Optional[BaseActor] = None,
         rolling_summary_in_prompts: bool = True,
     ) -> None:
         """
@@ -74,7 +75,7 @@ class Conductor(BaseConductor):
                              If None, will create default based on simulated flag.
             task_scheduler: Optional custom task scheduler implementation.
                           If None, will create default based on simulated flag.
-            planner: Optional custom planner implementation.
+            actor: Optional custom actor implementation.
                     If None, will create default based on simulated flag.
         """
 
@@ -99,9 +100,9 @@ class Conductor(BaseConductor):
         if task_scheduler is not None:
             self._task_scheduler = task_scheduler
         else:
-            if planner is None:
-                planner = ToolLoopPlanner()
-            self._task_scheduler = TaskScheduler(planner=planner)
+            if actor is None:
+                actor = ToolLoopActor()
+            self._task_scheduler = TaskScheduler(actor=actor)
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None
@@ -111,8 +112,6 @@ class Conductor(BaseConductor):
         passive = methods_to_tool_dict(
             self._contact_manager.ask,
             self._transcript_manager.ask,
-            # technically not passive, but likely useful for question answering
-            self._transcript_manager.summarize,
             #
             self._knowledge_manager.ask,
             self._task_scheduler.ask,
@@ -124,10 +123,10 @@ class Conductor(BaseConductor):
         active = {
             **passive,  # read-only tools are also valid here
             **methods_to_tool_dict(
-                self._transcript_manager.summarize,
+                self._contact_manager.update,
                 self._knowledge_manager.update,
                 self._task_scheduler.update,
-                ToolSpec(self._task_scheduler.execute_task, max_concurrent=1),
+                ToolSpec(self._task_scheduler.execute, max_concurrent=1),
                 include_class_name=True,
             ),
         }
@@ -173,9 +172,11 @@ class Conductor(BaseConductor):
             tools["request_clarification"] = request_clarification
 
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         include_activity = (
             self._rolling_summary_in_prompts
@@ -191,6 +192,7 @@ class Conductor(BaseConductor):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
             preprocess_msgs=self._inject_broader_context,
@@ -255,9 +257,11 @@ class Conductor(BaseConductor):
             tools["request_clarification"] = request_clarification
 
         client = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         include_activity = (
             self._rolling_summary_in_prompts
@@ -273,6 +277,7 @@ class Conductor(BaseConductor):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
             preprocess_msgs=self._inject_broader_context,

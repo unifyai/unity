@@ -29,6 +29,14 @@ class Person(BaseModel):
     age: int
 
 
+# Helper function defined at module scope to stabilise type-hint resolution
+def _tool_with_optional_mapping(
+    references: dict[str, str] | None = None,
+    k: int = 10,
+) -> None:  # pragma: no cover - schema only
+    return None
+
+
 # --------------------------------------------------------------------------- #
 #  annotation_to_schema                                                       #
 # --------------------------------------------------------------------------- #
@@ -190,3 +198,23 @@ def test_parent_chat_context_parameter_is_always_hidden() -> None:
         assert "parent_chat_context" not in required
         # docstring has been scrubbed
         assert "parent_chat_context" not in desc
+
+
+# --------------------------------------------------------------------------- #
+#  OPTIONAL[Dict[str, str]] COLLAPSES TO OBJECT (NO STRING ALTERNATIVE)       #
+# --------------------------------------------------------------------------- #
+def test_optional_dict_parameter_collapses_without_string() -> None:
+    """
+    Optional[Dict[str, str]] should collapse to a plain object schema.
+    Prior to the fix, NoneType was treated as "string", producing
+    anyOf [object, string]. This test ensures only the object form remains.
+    """
+
+    schema = llmh.method_to_schema(_tool_with_optional_mapping)
+    params = schema["function"]["parameters"]["properties"]
+    refs_schema = params["references"]
+
+    # Must be a plain object with string values
+    assert "anyOf" not in refs_schema
+    assert refs_schema["type"] == "object"
+    assert refs_schema["additionalProperties"]["type"] == "string"

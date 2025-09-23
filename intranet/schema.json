@@ -1,0 +1,393 @@
+{
+    "schema_id": "midland-heart-rag-v1.0",
+    "version": "1.0.0",
+    "description": "Optimized schema for Midland Heart RAG system based on FLARE methodology and modern retrieval best practices. NOTE: Embedding columns are handled automatically by the _nearest tool via _vectorize_column - no manual embedding management needed.",
+    "created_at": "2024-12-28",
+    "optimizations": [
+      "Multi-level semantic indexing (document/section/chunk)",
+      "Topic modeling and entity extraction",
+      "Cross-reference mapping for contextual queries",
+      "Hierarchical content organization",
+      "Query-type specific retrieval paths",
+      "Confidence-based active retrieval support"
+    ],
+    "tables": {
+      "documents": {
+        "purpose": "Top-level document metadata with semantic enrichment",
+        "columns": {
+          "document_id": {
+            "type": "string",
+            "description": "Primary key - unique document identifier",
+            "example": "doc_motability_scooter_policy_2024"
+          },
+          "title": {
+            "type": "string",
+            "description": "Official document title",
+            "example": "Motability Scooter Policy (Oct 2024)"
+          },
+          "document_type": {
+            "type": "string",
+            "description": "Document classification",
+            "values": ["policy", "procedure", "guideline", "handbook", "form", "template"],
+            "example": "policy"
+          },
+          "category": {
+            "type": "string",
+            "description": "Functional area classification",
+            "values": ["hr", "safety", "finance", "operations", "maintenance", "legal", "general"],
+            "example": "safety"
+          },
+          "summary": {
+            "type": "text",
+            "description": "LLM-generated document summary (2-3 sentences)",
+            "example": "Policy governing the use and storage of mobility scooters in Midland Heart properties..."
+          },
+          "key_topics": {
+            "type": "json_array",
+            "description": "Main topics/themes covered in document",
+            "example": ["mobility_scooters", "accessibility", "fire_safety", "storage_rules", "class_2_vehicles", "class_3_vehicles"]
+          },
+          "named_entities": {
+            "type": "json_object",
+            "description": "Extracted entities by type",
+            "example": {
+              "organizations": ["Midland Heart", "DVLA"],
+              "policies": ["Fire Safety Policy", "ASB Policy"],
+              "numbers": ["4 mph", "8 mph", "150 kg"],
+              "dates": ["October 2024"]
+            }
+          },
+          "content_tags": {
+            "type": "json_array",
+            "description": "Searchable content tags for query matching",
+            "example": ["speed_limits", "weight_restrictions", "storage_requirements", "communal_areas"]
+          },
+          "source_path": {
+            "type": "string",
+            "description": "Original file path",
+            "example": "intranet/policies/Motability Scooter Policy Oct 2024.pdf"
+          },
+          "file_size": {
+            "type": "integer",
+            "description": "File size in bytes"
+          },
+          "created_at": {
+            "type": "datetime",
+            "description": "Document creation timestamp"
+          },
+          "modified_at": {
+            "type": "datetime",
+            "description": "Last modification timestamp"
+          },
+          "confidence_score": {
+            "type": "float",
+            "description": "Processing confidence score (0-1)"
+          },
+          "schema_id": {
+            "type": "string",
+            "description": "Reference to the schema version used for this document",
+            "example": "midland-heart-rag-v1.0"
+          }
+        }
+      },
+      "sections": {
+        "purpose": "Document sections with hierarchical organization and semantic metadata",
+        "columns": {
+          "section_id": {
+            "type": "string",
+            "description": "Primary key - unique section identifier",
+            "example": "sec_motability_class2_speed_limits"
+          },
+          "document_id": {
+            "type": "string",
+            "description": "Foreign key to parent document"
+          },
+          "title": {
+            "type": "string",
+            "description": "Section title/header",
+            "example": "Class 2 Scooter Speed Limits"
+          },
+          "content": {
+            "type": "text",
+            "description": "Full section content"
+          },
+          "section_type": {
+            "type": "string",
+            "description": "Type of section content",
+            "values": ["introduction", "definitions", "procedures", "requirements", "restrictions", "examples", "appendix"],
+            "example": "requirements"
+          },
+          "hierarchy_level": {
+            "type": "integer",
+            "description": "Nesting level (1=top, 2=subsection, etc)",
+            "example": 2
+          },
+          "parent_section_id": {
+            "type": "string",
+            "description": "ID of parent section (for nested content)"
+          },
+          "section_order": {
+            "type": "integer",
+            "description": "Order within parent section"
+          },
+          "key_phrases": {
+            "type": "json_array",
+            "description": "Important phrases extracted from content",
+            "example": ["maximum speed limit", "4 mph", "pavement use only", "road restrictions"]
+          },
+          "topics": {
+            "type": "json_array",
+            "description": "Topics covered in this section",
+            "example": ["speed_regulations", "class_2_specifications", "usage_restrictions"]
+          },
+          "entities": {
+            "type": "json_object",
+            "description": "Named entities mentioned in section",
+            "example": {
+              "speeds": ["4 mph"],
+              "vehicle_types": ["Class 2 scooter"],
+              "locations": ["pavement", "public areas"]
+            }
+          },
+          "numerical_data": {
+            "type": "json_object",
+            "description": "Structured numerical information",
+            "example": {
+              "speed_limits": {"class_2": "4 mph", "class_3_road": "8 mph"},
+              "weight_limits": {"class_3_unladen": "150 kg"}
+            }
+          },
+          "question_types": {
+            "type": "json_array",
+            "description": "Types of questions this section can answer",
+            "example": ["speed_limit_queries", "restriction_questions", "vehicle_classification"]
+          },
+          "embedding_title": {
+            "type": "vector",
+            "description": "Semantic embedding of section title"
+          },
+          "embedding_content": {
+            "type": "vector",
+            "description": "Semantic embedding of section content"
+          }
+        }
+      },
+      "chunks": {
+        "purpose": "Overlapping content chunks for fine-grained retrieval",
+        "columns": {
+          "chunk_id": {
+            "type": "string",
+            "description": "Primary key - unique chunk identifier"
+          },
+          "section_id": {
+            "type": "string",
+            "description": "Foreign key to parent section"
+          },
+          "content": {
+            "type": "text",
+            "description": "Chunk content with context overlap"
+          },
+          "chunk_index": {
+            "type": "integer",
+            "description": "Position within section"
+          },
+          "chunk_size": {
+            "type": "integer",
+            "description": "Number of tokens in chunk"
+          },
+          "overlap_prev": {
+            "type": "integer",
+            "description": "Tokens overlapping with previous chunk"
+          },
+          "overlap_next": {
+            "type": "integer",
+            "description": "Tokens overlapping with next chunk"
+          },
+          "topics": {
+            "type": "json_array",
+            "description": "Topics covered in this chunk"
+          },
+          "entities": {
+            "type": "json_object",
+            "description": "Entities mentioned in chunk"
+          },
+          "context_window": {
+            "type": "text",
+            "description": "Extended context for FLARE-style forward-looking retrieval"
+          },
+          "sparse_keywords": {
+            "type": "json_array",
+            "description": "Keyword features for hybrid retrieval"
+          }
+        }
+      },
+      "topics": {
+        "purpose": "Normalized topic taxonomy for consistent categorization",
+        "columns": {
+          "topic_id": {
+            "type": "string",
+            "description": "Primary key - normalized topic identifier",
+            "example": "topic_mobility_scooter_speed_limits"
+          },
+          "topic_name": {
+            "type": "string",
+            "description": "Canonical topic name",
+            "example": "Mobility Scooter Speed Limits"
+          },
+          "aliases": {
+            "type": "json_array",
+            "description": "Alternative names and synonyms",
+            "example": ["speed restrictions", "velocity limits", "maximum speeds", "mph limits"]
+          },
+          "category": {
+            "type": "string",
+            "description": "High-level topic category",
+            "example": "vehicle_regulations"
+          },
+          "description": {
+            "type": "text",
+            "description": "Topic description for context"
+          },
+          "related_topics": {
+            "type": "json_array",
+            "description": "Related topic IDs for query expansion"
+          },
+          "typical_questions": {
+            "type": "json_array",
+            "description": "Common question patterns for this topic",
+            "example": ["What is the speed limit for X?", "How fast can X go?", "What are the speed restrictions?"]
+          }
+        }
+      },
+      "entities": {
+        "purpose": "Named entity registry for precise information retrieval",
+        "columns": {
+          "entity_id": {
+            "type": "string",
+            "description": "Primary key - unique entity identifier"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Canonical entity name",
+            "example": "Class 2 Mobility Scooter"
+          },
+          "entity_type": {
+            "type": "string",
+            "description": "Entity classification",
+            "values": ["person", "organization", "location", "policy", "procedure", "number", "date", "vehicle_type", "measurement"],
+            "example": "vehicle_type"
+          },
+          "aliases": {
+            "type": "json_array",
+            "description": "Alternative names and variations",
+            "example": ["Class 2 scooter", "pavement scooter", "4mph scooter"]
+          },
+          "description": {
+            "type": "text",
+            "description": "Entity description and context"
+          },
+          "attributes": {
+            "type": "json_object",
+            "description": "Structured attributes",
+            "example": {
+              "max_speed": "4 mph",
+              "usage_area": "pavement only",
+              "weight_limit": "varies"
+            }
+          }
+        }
+      },
+      "cross_references": {
+        "purpose": "Relationship mapping for contextual query resolution",
+        "columns": {
+          "reference_id": {
+            "type": "string",
+            "description": "Primary key - unique reference identifier"
+          },
+          "source_section_id": {
+            "type": "string",
+            "description": "Section making the reference"
+          },
+          "target_section_id": {
+            "type": "string",
+            "description": "Section being referenced"
+          },
+          "reference_type": {
+            "type": "string",
+            "description": "Type of relationship",
+            "values": ["explicit_reference", "implicit_relation", "complementary", "contradictory", "prerequisite"],
+            "example": "explicit_reference"
+          },
+          "context": {
+            "type": "text",
+            "description": "Context of the relationship"
+          },
+          "strength": {
+            "type": "float",
+            "description": "Relationship strength (0-1)"
+          }
+        }
+      },
+      "query_patterns": {
+        "purpose": "Query pattern analysis for optimization",
+        "columns": {
+          "pattern_id": {
+            "type": "string",
+            "description": "Primary key - pattern identifier"
+          },
+          "pattern_type": {
+            "type": "string",
+            "description": "Type of query pattern",
+            "values": ["direct_fact", "comparison", "procedure", "definition", "follow_up", "multi_part"],
+            "example": "direct_fact"
+          },
+          "template": {
+            "type": "string",
+            "description": "Query template pattern",
+            "example": "What is the [ATTRIBUTE] for [ENTITY]?"
+          },
+          "typical_sections": {
+            "type": "json_array",
+            "description": "Section types that typically answer this pattern"
+          },
+          "retrieval_strategy": {
+            "type": "string",
+            "description": "Optimal retrieval approach for this pattern"
+          },
+          "confidence_threshold": {
+            "type": "float",
+            "description": "Confidence threshold for active retrieval"
+          }
+        }
+      }
+    },
+    "retrieval_strategies": {
+      "direct_fact_queries": {
+        "description": "Single fact lookup (e.g., speed limits, numbers)",
+        "approach": "Entity + attribute matching with section-level retrieval",
+        "confidence_threshold": 0.7
+      },
+      "comparison_queries": {
+        "description": "Comparing multiple entities/policies",
+        "approach": "Multi-entity retrieval with cross-reference analysis",
+        "confidence_threshold": 0.6
+      },
+      "follow_up_queries": {
+        "description": "Context-dependent questions",
+        "approach": "Conversation history + forward-looking FLARE retrieval",
+        "confidence_threshold": 0.5
+      },
+      "procedural_queries": {
+        "description": "How-to and process questions",
+        "approach": "Section-type filtering + hierarchical retrieval",
+        "confidence_threshold": 0.6
+      }
+    },
+    "indexing_strategy": {
+      "semantic_embeddings": "Multi-level embeddings (title, summary, content, chunks)",
+      "keyword_indexing": "TF-IDF + BM25 for exact term matching",
+      "entity_linking": "Named entity resolution and attribute mapping",
+      "topic_modeling": "Hierarchical topic classification",
+      "cross_references": "Relationship graph for contextual expansion"
+    }
+}

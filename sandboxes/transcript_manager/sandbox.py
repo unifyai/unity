@@ -23,9 +23,11 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 from datetime import datetime
 
-import unify
-
 from dotenv import load_dotenv
+
+load_dotenv()
+
+import unify
 from sandboxes.utils import TranscriptGenerator
 
 # Ensure repository root resolves for local execution
@@ -33,7 +35,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-load_dotenv()
 
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -42,12 +43,14 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
+    speak_and_wait as _speak_wait,
     await_with_interrupt as _await_with_interrupt,
     steering_controls_hint as _steer_hint,
     build_cli_parser,
     activate_project,
     _wait_for_tts_end as _wait_tts_end,
     configure_sandbox_logging,
+    call_manager_with_optional_clarifications,
 )
 
 LG = logging.getLogger("transcript_sandbox")
@@ -97,15 +100,34 @@ async def _dispatch_with_context(
     *,
     show_steps: bool,
     parent_chat_context: List[Dict[str, str]],
-) -> Tuple[str, SteerableToolHandle]:
-    """Always route *raw* to `ask`, forwarding parent chat context."""
+    clarifications_enabled: bool,
+    enable_voice: bool,
+) -> Tuple[
+    str,
+    SteerableToolHandle,
+    Optional[asyncio.Queue[str]],
+    Optional[asyncio.Queue[str]],
+]:
+    """Route *raw* to `ask`, optionally enabling clarification channels.
 
-    handle = await tm.ask(
+    Returns (kind, handle, clar_up_q, clar_down_q).
+    """
+
+    handle, clar_up_q, clar_down_q = await call_manager_with_optional_clarifications(
+        tm.ask,
         raw,
         parent_chat_context=parent_chat_context,
-        _return_reasoning_steps=show_steps,
+        return_reasoning_steps=show_steps,
+        clarifications_enabled=clarifications_enabled,
     )
-    return "ask", handle
+
+    if enable_voice:
+        try:
+            _speak("Working on it.")
+        except Exception:
+            pass
+
+    return "ask", handle, clar_up_q, clar_down_q
 
 
 # ══════════════════════════════════  CLI  ═══════════════════════════════════
@@ -134,7 +156,13 @@ async def _main_async() -> None:
                 )
 
     # logging via shared helper
-    configure_sandbox_logging(args.log_in_terminal, None, args.log_tcp_port)
+    configure_sandbox_logging(
+        args.log_in_terminal,
+        None,
+        args.log_tcp_port,
+        http_tcp_port=args.http_log_tcp_port,
+        unify_requests_log_file=".logs_unify_requests.txt",
+    )
     LG.setLevel(logging.INFO)
 
     tm: TranscriptManager = TranscriptManager()
@@ -184,24 +212,24 @@ async def _main_async() -> None:
                 _wait_tts_end()
             if args.voice:
                 # Voice mode prompt with 'r' option
-                raw = input("command ('r' to record)> ").strip()
-                if raw.lower() == "r":
+                raw = input("command ('r' to record)> ")
+                if raw.strip().lower() == "r":
                     audio = _record_until_enter()
-                    raw = _transcribe_deepgram(audio).strip()
-                    if not raw:
+                    raw = _transcribe_deepgram(audio)
+                    if not raw or raw.strip() == "":
                         continue
                     print(f"▶️  {raw}")
             else:
-                raw = input("command> ").strip()
+                raw = input("command> ")
 
             # Show help table
-            if raw.lower() in {"help", "h", "?"}:
+            if raw.strip().lower() in {"help", "h", "?"}:
                 _explain_commands()
                 continue
 
-            if raw.lower() in {"quit", "exit"}:
+            if raw.strip().lower() in {"quit", "exit"}:
                 break
-            if not raw:
+            if raw.strip() == "":
                 continue
 
             # ─────────────── save project snapshot ────────────────
@@ -216,7 +244,8 @@ async def _main_async() -> None:
                 continue
 
             # ─────────────── scenario (re)seeding commands ────────────────
-            parts = raw.split(maxsplit=1)
+            working = raw.strip()
+            parts = working.split(maxsplit=1)
             cmd_lower = parts[0].lower()
 
             if cmd_lower in {"us", "update_scenario"}:
@@ -230,20 +259,29 @@ async def _main_async() -> None:
                         print("⚠️  No description provided – cancelled.")
                         continue
 
-                print(
-                    "[generate] Building synthetic transcripts – this can take a moment…",
-                )
                 if args.voice:
-                    _speak("Sure thing, building your custom scenario now.")
-                try:
-                    await _build_scenario(description)
-                    if args.voice:
-                        _speak(
+                    task = asyncio.create_task(_build_scenario(description))
+                    _speak_wait("Got it, working on your custom scenario now.")
+                    print(
+                        "[generate] Building synthetic transcripts – this can take a moment…",
+                    )
+                    try:
+                        await task
+                        _speak_wait(
                             "All done, your custom scenario is built and ready to go.",
                         )
-                except Exception as exc:
-                    LG.error("Scenario generation failed: %s", exc, exc_info=True)
-                    print(f"❌  Failed to generate scenario: {exc}")
+                    except Exception as exc:
+                        LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                        print(f"❌  Failed to generate scenario: {exc}")
+                else:
+                    print(
+                        "[generate] Building synthetic transcripts – this can take a moment…",
+                    )
+                    try:
+                        await _build_scenario(description)
+                    except Exception as exc:
+                        LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                        print(f"❌  Failed to generate scenario: {exc}")
                 continue  # back to REPL
 
             if cmd_lower in {"usv", "update_scenario_vocally"}:
@@ -260,50 +298,54 @@ async def _main_async() -> None:
                     continue
                 print(f"▶️  {description}")
 
+                task = asyncio.create_task(_build_scenario(description))
+                _speak_wait("Got it, working on your custom scenario now.")
                 print(
                     "[generate] Building synthetic transcripts – this can take a moment…",
                 )
                 try:
-                    await _build_scenario(description)
-                    if args.voice:
-                        _speak(
-                            "All done, your custom scenario is built and ready to go.",
-                        )
+                    await task
+                    _speak_wait(
+                        "All done, your custom scenario is built and ready to go.",
+                    )
                 except Exception as exc:
                     LG.error("Scenario generation failed: %s", exc, exc_info=True)
                     print(f"❌  Failed to generate scenario: {exc}")
                 continue  # back to REPL
 
             # Ignore steering commands when no request is running
-            if raw.startswith("/"):
+            if raw.lstrip().startswith("/"):
                 print(
                     "(no active request) Steering commands are only available while a call is running.",
                 )
                 continue
 
             # ───────────── remember the user's utterance before dispatch ──────
-            _kind, result = await _dispatch_with_context(
+            _kind, _handle, _clar_up, _clar_down = await _dispatch_with_context(
                 tm,
                 raw,
                 show_steps=args.debug,
                 parent_chat_context=list(chat_history),
+                clarifications_enabled=not args.no_clarifications,
+                enable_voice=bool(args.voice),
             )
             chat_history.append({"role": "user", "content": raw})
             if args.voice:
                 _speak("Let me take a look, give me a moment")
                 _wait_tts_end()
 
-            # ───────────── process result (handle or immediate string) ─────────
-            if isinstance(result, SteerableToolHandle):
-                print(_steer_hint())
-                answer = await _await_with_interrupt(
-                    result,
-                    enable_voice_steering=bool(args.voice),
-                )
-                if isinstance(answer, tuple):  # reasoning steps requested
-                    answer, _steps = answer
-            else:  # already a string (unlikely path)
-                answer = result
+            # ───────────── process result with interactive steering ─────────
+            print(_steer_hint(voice_enabled=bool(args.voice)))
+            answer = await _await_with_interrupt(
+                _handle,
+                enable_voice_steering=bool(args.voice),
+                clarification_up_q=_clar_up,
+                clarification_down_q=_clar_down,
+                clarifications_enabled=not args.no_clarifications,
+                chat_context=list(chat_history),
+            )
+            if isinstance(answer, tuple):  # reasoning steps requested
+                answer, _steps = answer
 
             if args.voice:
                 _speak("Okay, that's all done")

@@ -20,9 +20,14 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 from datetime import datetime
 
-import unify
+# Always enable detailed request logging for sandbox runs BEFORE importing unify
+os.environ["UNIFY_REQUESTS_DEBUG"] = "true"
 
 from dotenv import load_dotenv
+
+load_dotenv()
+
+import unify
 from pydantic import BaseModel, Field
 from sandboxes.scenario_builder import ScenarioBuilder
 
@@ -31,8 +36,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-load_dotenv()
-
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.contact_manager.contact_manager import ContactManager
 from unity.common.llm_helpers import SteerableToolHandle
@@ -40,12 +43,14 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
+    speak_and_wait as _speak_wait,
     await_with_interrupt as _await_with_interrupt,
     steering_controls_hint as _steer_hint,
     build_cli_parser,
     activate_project,
     _wait_for_tts_end as _wait_tts_end,
     configure_sandbox_logging,
+    call_manager_with_optional_clarifications,
 )
 
 LG = logging.getLogger("contact_sandbox")
@@ -55,6 +60,9 @@ LG = logging.getLogger("contact_sandbox")
 
 async def _build_scenario(
     custom: Optional[str] = None,
+    *,
+    clarifications_enabled: bool = True,
+    enable_voice: bool = False,
 ) -> Optional[str]:
     """
     Populate the contact store **through the official tools** using
@@ -81,6 +89,8 @@ async def _build_scenario(
             "update": cm.update,
             "ask": cm.ask,  # allows the LLM to check for duplicates if it wishes
         },
+        enable_voice=enable_voice,
+        clarifications_enabled=clarifications_enabled,
     )
 
     try:
@@ -121,23 +131,38 @@ async def _dispatch_with_context(
     *,
     show_steps: bool,
     parent_chat_context: List[Dict[str, str]],
-) -> Tuple[str, SteerableToolHandle]:
+    clarifications_enabled: bool,
+    enable_voice: bool,
+) -> Tuple[
+    str,
+    SteerableToolHandle,
+    Optional[asyncio.Queue[str]],
+    Optional[asyncio.Queue[str]],
+]:
     """
     Same as :pyfunc:`_dispatch` but forwards *parent_chat_context* to the CM
     methods.  This indirection keeps the diff minimal.
     """
 
-    judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
+    judge = unify.Unify("gpt-5@openai", response_format=_Intent)
     intent = _Intent.model_validate_json(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
     fn = cm.update if intent.action == "update" else cm.ask
-    handle = await fn(
-        raw,  # pass the original text unchanged
+    handle, clar_up_q, clar_down_q = await call_manager_with_optional_clarifications(
+        fn,
+        raw,
         parent_chat_context=parent_chat_context,
-        _return_reasoning_steps=show_steps,
+        return_reasoning_steps=show_steps,
+        clarifications_enabled=clarifications_enabled,
     )
-    return intent.action, handle
+    # Speak an acknowledgement if voice mode is on so users know work began
+    if enable_voice:
+        try:
+            _speak("Working on it.")
+        except Exception:
+            pass
+    return intent.action, handle, clar_up_q, clar_down_q
 
 
 # ══════════════════════════════════  CLI  ═══════════════════════════════════
@@ -171,7 +196,13 @@ async def _main_async() -> None:
                 )
 
     # logging via shared helper
-    configure_sandbox_logging(args.log_in_terminal, None, args.log_tcp_port)
+    configure_sandbox_logging(
+        log_in_terminal=args.log_in_terminal,
+        log_file=".logs_main.txt",
+        tcp_port=args.log_tcp_port,
+        http_tcp_port=args.http_log_tcp_port,
+        unify_requests_log_file=".logs_unify_requests.txt",
+    )
     LG.setLevel(logging.INFO)
 
     # manager
@@ -269,20 +300,39 @@ async def _main_async() -> None:
                         print("⚠️  No description provided – cancelled.")
                         continue
 
-                print(
-                    "[generate] Building synthetic contacts – this can take a moment…",
-                )
                 if args.voice:
-                    _speak("Sure thing, building your custom scenario now.")
-                try:
-                    await _build_scenario(description)
-                    if args.voice:
-                        _speak(
+                    task = asyncio.create_task(
+                        _build_scenario(
+                            description,
+                            clarifications_enabled=not args.no_clarifications,
+                            enable_voice=bool(args.voice),
+                        ),
+                    )
+                    _speak_wait("Got it, working on your custom scenario now.")
+                    print(
+                        "[generate] Building synthetic contacts – this can take a moment…",
+                    )
+                    try:
+                        await task
+                        _speak_wait(
                             "All done, your custom scenario is built and ready to go.",
                         )
-                except Exception as exc:
-                    LG.error("Scenario generation failed: %s", exc, exc_info=True)
-                    print(f"❌  Failed to generate scenario: {exc}")
+                    except Exception as exc:
+                        LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                        print(f"❌  Failed to generate scenario: {exc}")
+                else:
+                    print(
+                        "[generate] Building synthetic contacts – this can take a moment…",
+                    )
+                    try:
+                        await _build_scenario(
+                            description,
+                            clarifications_enabled=not args.no_clarifications,
+                            enable_voice=False,
+                        )
+                    except Exception as exc:
+                        LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                        print(f"❌  Failed to generate scenario: {exc}")
                 continue  # back to REPL
 
             if cmd_lower in {"usv", "update_scenario_vocally"}:
@@ -299,15 +349,22 @@ async def _main_async() -> None:
                     continue
                 print(f"▶️  {description}")
 
+                task = asyncio.create_task(
+                    _build_scenario(
+                        description,
+                        clarifications_enabled=not args.no_clarifications,
+                        enable_voice=bool(args.voice),
+                    ),
+                )
+                _speak_wait("Got it, working on your custom scenario now.")
                 print(
                     "[generate] Building synthetic contacts – this can take a moment…",
                 )
                 try:
-                    await _build_scenario(description)
-                    if args.voice:
-                        _speak(
-                            "All done, your custom scenario is built and ready to go.",
-                        )
+                    await task
+                    _speak_wait(
+                        "All done, your custom scenario is built and ready to go.",
+                    )
                 except Exception as exc:
                     LG.error("Scenario generation failed: %s", exc, exc_info=True)
                     print(f"❌  Failed to generate scenario: {exc}")
@@ -321,21 +378,27 @@ async def _main_async() -> None:
                 continue
 
             # ──────────────── remember the user's utterance ────────────────
-            _kind, _handle = await _dispatch_with_context(
+            _kind, _handle, _clar_up, _clar_down = await _dispatch_with_context(
                 cm,
                 raw,
                 show_steps=args.debug,
                 parent_chat_context=list(chat_history),
+                clarifications_enabled=not args.no_clarifications,
+                enable_voice=bool(args.voice),
             )
             chat_history.append({"role": "user", "content": raw})
             if args.voice:
                 _speak("Let me take a look, give me a moment")
                 _wait_tts_end()
 
-            print(_steer_hint())
+            print(_steer_hint(voice_enabled=bool(args.voice)))
             answer = await _await_with_interrupt(
                 _handle,
                 enable_voice_steering=bool(args.voice),
+                clarification_up_q=_clar_up,
+                clarification_down_q=_clar_down,
+                clarifications_enabled=not args.no_clarifications,
+                chat_context=list(chat_history),
             )
             if args.voice:
                 _speak("Okay that's all done")

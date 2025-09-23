@@ -1,3 +1,5 @@
+"""Schedule relationships and start-time constraints for tasks in a queue."""
+
 from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, Field, model_validator

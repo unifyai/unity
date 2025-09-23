@@ -38,7 +38,7 @@ class EventManager:
 
     async def serve(self):
         self.servers["call"] = await asyncio.start_server(
-            self.handle_call_client,
+            self.handle_client,
             "127.0.0.1",
             8090,
         )
@@ -50,48 +50,110 @@ class EventManager:
         async with self.servers["call"]:
             await self.servers["call"].serve_forever()
 
+    def update_topics_to_subs(
+        self,
+        user_number: str,
+        user_whatsapp_number: str,
+        user_email: str,
+    ):
+        self.topic_to_subs[user_number] = self.topic_to_subs["tool_use"]
+        self.topic_to_subs[user_whatsapp_number] = self.topic_to_subs["tool_use"]
+        self.topic_to_subs[user_email] = self.topic_to_subs["tool_use"]
+
     async def collect_events(self):
         print("collecting...")
         while True:
-            if self.is_shutting_down:
-                break
+            try:
+                if self.is_shutting_down:
+                    break
 
-            # print(self.topic_to_subs)
-            event = await self.events_queue.get()
-            print("EVENT MANAGER:", event)
+                # print(self.topic_to_subs)
+                event = await self.events_queue.get()
+                print("EVENT MANAGER:", event)
 
-            # Update activity time on any event
-            self.last_activity_time = asyncio.get_event_loop().time()
+                # Update activity time on any event
+                self.last_activity_time = asyncio.get_event_loop().time()
 
-            if event["topic"] == "ping":
-                print("ping received - keeping event manager alive")
-                continue
-            elif event["topic"] == "call_process":
-                print("recieved call event")
-                # handle messages going to the call process
-                # like gen
-                self.writers["call"].write((json.dumps(event) + "\n").encode("utf-8"))
-                await self.writers["call"].drain()
-            else:
-                if event["topic"] == "startup":
-                    self.topic_to_subs[event["event"]["payload"]["user_number"]] = (
-                        self.topic_to_subs["tool_use"]
+                if event["topic"] == "ping":
+                    print("ping received - keeping event manager alive")
+                    continue
+                elif event["topic"] == "call_process":
+                    print("waiting for call process to be ready...")
+                    while "call" not in self.writers:
+                        await asyncio.sleep(0.1)
+                    print("recieved call event")
+                    # handle messages going to the call process
+                    # like gen
+                    self.writers["call"].write(
+                        (json.dumps(event) + "\n").encode("utf-8"),
                     )
-                    self.topic_to_subs[
-                        event["event"]["payload"]["user_phone_number"]
-                    ] = self.topic_to_subs["tool_use"]
-                for client in self.topic_to_subs[event["topic"]]:
-                    client.handle_event(event)
+                    await self.writers["call"].drain()
+                else:
+                    if event["event"]["event_name"] == "PhoneCallInitiatedEvent":
+                        self.update_topics_to_subs(
+                            event["event"]["payload"]["target_number"],
+                            event["event"]["payload"]["target_number"],
+                            event["event"]["payload"]["target_number"],
+                        )
+                    if event["topic"] == "startup":
+                        self.update_topics_to_subs(
+                            event["event"]["payload"]["user_number"],
+                            event["event"]["payload"]["user_whatsapp_number"],
+                            event["event"]["payload"]["user_email"],
+                        )
+                    if (
+                        event["topic"] not in self.topic_to_subs
+                        and "contact_details" in event["event"]["payload"]
+                        and event["event"]["payload"]["contact_details"] is not None
+                    ):
+                        contact_details = event["event"]["payload"]["contact_details"]
+                        self.update_topics_to_subs(
+                            contact_details["phone_number"],
+                            contact_details["whatsapp_number"],
+                            contact_details["email_address"],
+                        )
+                    for client in self.topic_to_subs[event["topic"]]:
+                        client.handle_event(event)
+                if "event" in event and event["event"]["event_name"] in [
+                    "PhoneCallEndedEvent",
+                    "PhoneCallStopEvent",
+                ]:
+                    self.writers["call"].close()
+                    await self.writers["call"].wait_closed()
+                    self.writers.pop("call")
+                    self.readers.pop("call")
+                    print("call stream closed")
+            except Exception as e:
+                print("Event Manager Error:")
+                traceback.print_exc()
+                print(str(e))
 
-    async def handle_call_client(
+    async def handle_client(
         self,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ):
-        self.readers["call"] = reader
-        self.writers["call"] = writer
+        """Generic client connection handler that identifies connection type"""
+        # Wait for connection type identification
+        raw = await reader.readline()
+        if not raw:
+            return
 
-        print("Call connected")
+        # Set read and write streams for the connection type
+        init_msg = json.loads(raw.decode())
+        print(f"Received connection init message: {init_msg}")
+        if not init_msg.get("topic") == "init":
+            print("Unknown connection type, closing connection")
+            writer.close()
+            await writer.wait_closed()
+            return
+
+        # Set read and write streams for the connection type
+        connection_type = init_msg.get("type", "unknown")
+        self.readers[connection_type] = reader
+        self.writers[connection_type] = writer
+
+        print(f"{connection_type} connected")
         while True:
             if self.is_shutting_down:
                 break
@@ -101,13 +163,13 @@ class EventManager:
                 if not raw:
                     break
                 msg = json.loads(raw.decode())
-                # Update activity time on any message from call client
+                # Update activity time on any message from client
                 self.last_activity_time = asyncio.get_event_loop().time()
                 self.events_queue.put_nowait(msg)
             except Exception as e:
                 traceback.print_exc()
                 print(str(e))
-                print("CALL CLOSED")
+                print(f"{connection_type.upper()} CLOSED")
                 writer.close()
                 await writer.wait_closed()
                 break
@@ -148,13 +210,13 @@ class EventManager:
                 print(f"Error during user agent cleanup: {e}")
 
         # Close all connections
-        for writer in self.writers.values():
+        for connection_type, writer in self.writers.items():
             if writer and not writer.is_closing():
                 try:
                     writer.close()
                     await writer.wait_closed()
                 except Exception as e:
-                    print(f"Error closing writer: {e}")
+                    print(f"Error closing {connection_type} writer: {e}")
 
         # Close servers
         for server in self.servers.values():
@@ -215,9 +277,9 @@ async def main(
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("ASSISTANT_EMAIL", ""),
         os.getenv("USER_NUMBER", ""),
-        os.getenv("USER_PHONE_NUMBER", ""),
+        os.getenv("USER_WHATSAPP_NUMBER", ""),
         os.getenv("USER_EMAIL", ""),
-        os.getenv("TTS_PROVIDER", "cartesia"),
+        os.getenv("VOICE_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
         conv_context_length=conv_context_length,
         start_local=start_local,
@@ -228,10 +290,11 @@ async def main(
     user_agent.subscribe(
         [
             os.getenv("USER_NUMBER", ""),
-            os.getenv("USER_PHONE_NUMBER", ""),
+            os.getenv("USER_WHATSAPP_NUMBER", ""),
+            os.getenv("USER_EMAIL", ""),
             "tool_use",
             "startup",
-        ]
+        ],
     )
 
     # Initialize Redis connection (waits for Redis to be ready)

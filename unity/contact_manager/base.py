@@ -34,13 +34,35 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Query the contact book in natural language and receive an **LLM
-        reasoning handle** (`SteerableToolHandle`) that can be awaited,
-        paused/resumed, interjected, or cancelled.
+        Interrogate the **existing contact list** (read‑only) and obtain a live
+        :class:`SteerableToolHandle`.
 
-        Do *not* request *how* the question should be answered, just ask a
-        question in natural language and allow the `ask` method to determine
-        the best method to best answer the question.
+        Purpose
+        -------
+        Use this method to locate and inspect contacts that already exist in the
+        table: find ``contact_id`` values, check emails/phone numbers, look up
+        attributes or summarise/compare existing entries. This call must never
+        create, modify or delete contacts.
+
+        Clarifications
+        --------------
+        Do not use this method to ask the human questions. If the caller needs
+        clarification about a prospective/new contact (e.g., correct spelling,
+        missing fields, preferred channel), route the question via a dedicated
+        ``request_clarification`` tool when available. If no clarification
+        channel exists, proceed with sensible defaults/best‑guess values and
+        state those assumptions in the outer loop's final reply.
+
+        Do *not* request *how* the question should be answered; just ask the
+        question in natural language and allow this `ask` method to determine
+        the best method to answer it.
+
+        Examples
+        --------
+        • Good: "Who is the contact living in Berlin working as a product designer?"
+          → identify the ``contact_id`` so an update tool can be applied next.
+        • Bad:  "What surname should I use for the new contact I'm about to create?"
+          → this is a human clarification; use ``request_clarification`` instead.
 
         Parameters
         ----------
@@ -77,13 +99,22 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Execute a natural-language **mutation** request on the contact book
-        (create, update, delete, rename, …) and obtain a steerable handle to
-        the LLM conversation.
+        Apply a **mutation** request – create, edit, delete or merge contacts –
+        expressed in plain English and receive a steerable LLM handle.
 
-        Do *not* request *how* the change should be implemented; just
-        describe the desired end-state in natural language and allow the
-        `update` method to determine the best method to apply it.
+        Do *not* request *how* the change should be implemented; describe the
+        desired end‑state in natural language and allow the `update` method to
+        determine the best method to apply it.
+
+        Ask vs Clarification
+        --------------------
+        • `ask` is ONLY for inspecting/locating contacts that ALREADY EXIST (e.g.,
+          to find ``contact_id`` or verify stored fields).
+        • Do NOT use `ask` to ask the human for details about NEW contacts being
+          created/changed in this update request; call ``request_clarification``
+          when a clarification channel is available.
+        • When no clarification tool exists, proceed with sensible defaults or
+          best‑guess values and state those assumptions in the final reply.
 
         Parameters
         ----------

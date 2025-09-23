@@ -1,0 +1,260 @@
+"""
+Queue linkage helpers for `TaskScheduler`.
+
+Provides utilities to read neighbour pointers, synchronize adjacent links, and
+attach a task between neighbours while enforcing queue invariants (head-only
+`start_at`, symmetric pointers, consistent `queue_id`).
+"""
+
+from __future__ import annotations
+
+from typing import Optional, Dict, Any, Union, TYPE_CHECKING
+
+import unify
+
+from .types.schedule import Schedule
+
+if TYPE_CHECKING:
+    from .task_scheduler import TaskScheduler
+
+
+def sched_prev(sched: Union[Schedule, dict, None]) -> Optional[int]:
+    """Return `prev_task` from a `Schedule` or dict."""
+    if sched is None:
+        return None
+    if isinstance(sched, dict):
+        return sched.get("prev_task")
+    # Read attribute from Schedule model
+    return getattr(sched, "prev_task", None)
+
+
+def sched_next(sched: Union[Schedule, dict, None]) -> Optional[int]:
+    """Return `next_task` from a `Schedule` or dict."""
+    if sched is None:
+        return None
+    if isinstance(sched, dict):
+        return sched.get("next_task")
+    return getattr(sched, "next_task", None)
+
+
+def sync_adjacent_links(
+    scheduler: "TaskScheduler",
+    *,
+    task_id: int,
+    schedule: Optional[Union[Schedule, dict]],
+    prefetched_rows: Optional[Dict[int, Any]] = None,
+) -> None:
+    """
+    Guarantee link symmetry when (re)linking a task in the runnable queue.
+
+    When ``prefetched_rows`` is provided, neighbour lookups will reuse these
+    rows to avoid extra backend reads. The values may be either plain row
+    dicts (as returned by ``_filter_tasks``) or ``unify.Log`` objects.
+    """
+    if schedule is None:
+        return
+
+    if isinstance(schedule, Schedule):
+        schedule = schedule.model_dump()
+
+    neighbours: list[tuple[str, str, int]] = []
+    if schedule.get("prev_task") is not None:
+        neighbours.append(("next_task", "prev_task", schedule["prev_task"]))
+    if schedule.get("next_task") is not None:
+        neighbours.append(("prev_task", "next_task", schedule["next_task"]))
+
+    for field_to_set, _, neighbour_id in neighbours:
+        # Prefer prefetched row (unify.Log or dict) to avoid a backend read
+        row_obj = None
+        if prefetched_rows is not None:
+            row_obj = prefetched_rows.get(int(neighbour_id))
+
+        if row_obj is None:
+            rows = scheduler._filter_tasks(filter=f"task_id == {neighbour_id}", limit=1)
+            if not rows:
+                # Neighbour went missing – skip symmetric update instead of failing
+                continue
+            row_entries = rows[0]
+            n_sched = {**(row_entries.get("schedule") or {})}
+            if n_sched.get(field_to_set) == task_id:
+                continue  # already correct
+            # Strip start_at if the neighbour ceases to be queue head
+            if field_to_set == "prev_task":
+                n_sched.pop("start_at", None)
+            n_sched[field_to_set] = task_id
+            try:
+                log_id = scheduler._get_logs_by_task_ids(
+                    task_ids=row_entries["task_id"],
+                )
+            except ValueError:
+                # Neighbour was deleted after we fetched rows – skip
+                continue
+            scheduler._view.write_entries(  # type: ignore[attr-defined]
+                logs=log_id,
+                entries={"schedule": n_sched},
+                overwrite=True,
+            )
+        else:
+            # Handle both unify.Log and plain dict
+            if hasattr(row_obj, "entries"):
+                # unify.Log
+                entries = getattr(row_obj, "entries", {}) or {}
+                n_sched = {**(entries.get("schedule") or {})}
+                if n_sched.get(field_to_set) == task_id:
+                    continue
+                if field_to_set == "prev_task":
+                    n_sched.pop("start_at", None)
+                n_sched[field_to_set] = task_id
+                scheduler._view.write_entries(  # type: ignore[attr-defined]
+                    logs=row_obj.id if hasattr(row_obj, "id") else row_obj,
+                    entries={"schedule": n_sched},
+                    overwrite=True,
+                )
+            else:
+                # dict row fallback
+                row_entries = row_obj  # type: ignore[assignment]
+                n_sched = {**(row_entries.get("schedule") or {})}
+                if n_sched.get(field_to_set) == task_id:
+                    continue
+                if field_to_set == "prev_task":
+                    n_sched.pop("start_at", None)
+                n_sched[field_to_set] = task_id
+                try:
+                    log_id = scheduler._get_logs_by_task_ids(
+                        task_ids=row_entries["task_id"],
+                    )
+                except ValueError:
+                    continue
+                scheduler._view.write_entries(  # type: ignore[attr-defined]
+                    logs=log_id,
+                    entries={"schedule": n_sched},
+                    overwrite=True,
+                )
+
+        # Was the neighbour the *primed* task?  Keep cache in lock-step.
+        if (
+            scheduler._primed_task is not None
+            and scheduler._primed_task["task_id"] == neighbour_id
+        ):
+            scheduler._refresh_primed_cache(neighbour_id)
+
+
+def attach_with_links(
+    scheduler: "TaskScheduler",
+    *,
+    task_id: int,
+    prev_task: Optional[int],
+    next_task: Optional[int],
+    head_start_at: Optional[str],
+    err_prefix: str,
+) -> None:
+    """
+    Attach a task into the runnable queue between prev_task and next_task and
+    enforce start_at placement on the head only. Updates neighbour pointers
+    symmetrically and validates invariants for the resulting schedule.
+    """
+
+    # Prefetch neighbour + current logs in a single backend call to avoid repeats
+    all_ids: list[int] = []
+    if isinstance(prev_task, int):
+        all_ids.append(int(prev_task))
+    if isinstance(next_task, int):
+        all_ids.append(int(next_task))
+    all_ids.append(int(task_id))
+
+    logs_by_tid: Dict[int, unify.Log] = {}
+    if all_ids:
+        try:
+            log_objs = scheduler._get_logs_by_task_ids(
+                task_ids=all_ids,
+                return_ids_only=False,
+            )
+        except Exception:
+            log_objs = []  # Best-effort: continue with any we did fetch
+        for lg in log_objs or []:
+            try:
+                tid_val = (getattr(lg, "entries", {}) or {}).get("task_id")
+                if tid_val is not None:
+                    logs_by_tid[int(tid_val)] = lg
+            except Exception:
+                continue
+
+    def _entries(log_obj: Optional[unify.Log]) -> Dict[str, Any]:
+        if log_obj is None:
+            return {}
+        try:
+            return {**(getattr(log_obj, "entries", {}) or {})}
+        except Exception:
+            return {}
+
+    prev_log = logs_by_tid.get(int(prev_task)) if isinstance(prev_task, int) else None
+    next_log = logs_by_tid.get(int(next_task)) if isinstance(next_task, int) else None
+    cur_log = logs_by_tid.get(int(task_id))
+
+    # Determine target queue_id from neighbours (prefer prev, else next)
+    target_qid: Optional[int] = None
+    try:
+        qid = _entries(prev_log).get("queue_id") if prev_log is not None else None
+        if qid is None and next_log is not None:
+            qid = _entries(next_log).get("queue_id")
+        # Some clients expose fields as attributes; fall back to attribute lookup
+        if qid is None and prev_log is not None:
+            qid = getattr(prev_log, "queue_id", None)
+        if qid is None and next_log is not None:
+            qid = getattr(next_log, "queue_id", None)
+        target_qid = int(qid) if isinstance(qid, int) else None
+    except Exception:
+        target_qid = None
+
+    # Update neighbours conditionally (only when an actual change is needed)
+    if prev_log is not None:
+        prev_sched = {**((_entries(prev_log).get("schedule") or {}))}
+        if prev_sched.get("next_task") != task_id:
+            prev_sched["next_task"] = task_id
+            scheduler._view.write_entries(  # type: ignore[attr-defined]
+                logs=prev_log.id if hasattr(prev_log, "id") else prev_log,
+                entries={"schedule": prev_sched},
+                overwrite=True,
+            )
+
+    if next_log is not None:
+        next_sched = {**((_entries(next_log).get("schedule") or {}))}
+        need_strip = head_start_at is not None and "start_at" in next_sched
+        if next_sched.get("prev_task") != task_id or need_strip:
+            next_sched["prev_task"] = task_id
+            if head_start_at is not None:
+                next_sched.pop("start_at", None)
+            scheduler._view.write_entries(  # type: ignore[attr-defined]
+                logs=next_log.id if hasattr(next_log, "id") else next_log,
+                entries={"schedule": next_sched},
+                overwrite=True,
+            )
+
+    # Build current task schedule and write via validated funnel.
+    # Include queue_id to ensure the task becomes a member of the same queue.
+    cur_sched: Dict[str, Any] = {"prev_task": prev_task, "next_task": next_task}
+    cur_entries: Dict[str, Any] = {"schedule": cur_sched}
+    if prev_task is None and head_start_at is not None:
+        cur_sched["start_at"] = head_start_at
+        # Head with start_at must be scheduled
+        cur_entries["status"] = "scheduled"
+    if target_qid is not None:
+        cur_entries["queue_id"] = target_qid
+
+    # Provide current_row to avoid an extra read, and skip neighbour sync/cross-queue guard
+    current_row = None
+    if cur_log is not None:
+        try:
+            current_row = {**_entries(cur_log)}
+            current_row["task_id"] = int(task_id)
+        except Exception:
+            current_row = None
+
+    scheduler._validated_write(
+        task_id=task_id,
+        entries=cur_entries,
+        err_prefix=err_prefix,
+        current_row=current_row,
+        skip_sync=True,
+        skip_cross_queue_guard=True,
+    )

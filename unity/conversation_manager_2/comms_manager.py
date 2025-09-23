@@ -1,8 +1,13 @@
+import time
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import asyncio
 from google.cloud import pubsub_v1
 import json
 import os
-from unity.conversation_manager.events import *
+from unity.conversation_manager_2.new_events import *
 from unity.constants import ASYNCIO_DEBUG
 import redis.asyncio as redis
 
@@ -27,9 +32,9 @@ subscription_id = (
 
 # Map subscription IDs to their corresponding event types
 events_map: dict[str, Event] = {
-    "whatsapp": WhatsappMessageRecievedEvent,
-    "msg": SMSMessageRecievedEvent,
-    "email": EmailRecievedEvent,
+    # "whatsapp": WhatsappMessageRecievedEvent,
+    "msg": SMSRecieved,
+    "email": EmailRecieved,
 }
 
 
@@ -39,7 +44,7 @@ class CommsManager:
         self.call_proc = None
         self.credentials = None
         self.loop = asyncio.get_event_loop()
-        self.message_queue: redis.Redis  = event_broker
+        self.message_queue: redis.Redis = event_broker
 
     def handle_message(
         self,
@@ -56,6 +61,8 @@ class CommsManager:
 
                 # acknowledge message and cancel startup subscription
                 message.ack()
+                while startup_subscription_id not in self.subscribers:
+                    time.sleep(0.1)
                 self.subscribers[startup_subscription_id].cancel()
                 self.subscribers.pop(startup_subscription_id)
 
@@ -75,33 +82,33 @@ class CommsManager:
                 # publish
                 task = asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
-
-                    "app:comms:start_up",
-                    json.dumps({
-                        "topic": "startup",
-                        "to": "past",
-                        "event": StartupEvent(
-                            api_key=event["api_key"],
-                            medium=event["medium"],
-                            assistant_id=event["assistant_id"],
-                            user_id=event["user_id"],
-                            assistant_name=event["assistant_name"],
-                            assistant_age=event["assistant_age"],
-                            assistant_region=event["assistant_region"],
-                            assistant_about=event["assistant_about"],
-                            assistant_number=event["assistant_number"],
-                            assistant_email=event["assistant_email"],
-                            user_name=event["user_name"],
-                            user_number=event["user_number"],
-                            user_whatsapp_number=event["user_whatsapp_number"],
-                            user_email=event["user_email"],
-                            tts_provider=event["tts_provider"],
-                            voice_id=event["voice_id"],
-                        ).to_dict(),
-                    }),
-                ),
-                self.loop
-
+                        "app:comms:start_up",
+                        json.dumps(
+                            {
+                                "topic": "startup",
+                                "to": "past",
+                                "event": StartupEvent(
+                                    api_key=event["api_key"],
+                                    medium=event["medium"],
+                                    assistant_id=event["assistant_id"],
+                                    user_id=event["user_id"],
+                                    assistant_name=event["assistant_name"],
+                                    assistant_age=event["assistant_age"],
+                                    assistant_region=event["assistant_region"],
+                                    assistant_about=event["assistant_about"],
+                                    assistant_number=event["assistant_number"],
+                                    assistant_email=event["assistant_email"],
+                                    user_name=event["user_name"],
+                                    user_number=event["user_number"],
+                                    user_whatsapp_number=event["user_whatsapp_number"],
+                                    user_email=event["user_email"],
+                                    voice_provider=event["voice_provider"],
+                                    voice_id=event["voice_id"],
+                                ).to_dict(),
+                            }
+                        ),
+                    ),
+                    self.loop,
                 )
             elif thread in events_map:
                 content = event["body"]
@@ -114,18 +121,14 @@ class CommsManager:
                 # Put the message in the queue instead of creating a task
                 task = asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
-                        "app:comms:whatsapp_message",
-                    json.dumps({
-                        "topic": topic,
-                        "event": events_map[thread](
+                        f"app:comms:{thread}_message",
+                        events_map[thread](
                             content=content,
-                            role="User",
-                        ).to_dict(),
-                    }),
+                            contact=topic,
+                        ).to_json(),
                     ),
-                self.loop
-
-                 )
+                    self.loop,
+                )
                 message.ack()
             elif thread == "call":
                 try:
@@ -138,15 +141,13 @@ class CommsManager:
                     task = asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             "app:comms:call_initiated",
-                            json.dumps({
-                                "topic": event["caller_number"],
-                                "event": PhoneCallInitiatedEvent(
-                                    voice_id=event.get("voice_id", None),
-                                    tts_provider=event.get("tts_provider", None),
-                                ).to_dict(),
-                            }
-                        )),
-                        self.loop
+                            PhoneCallInitiated(
+                                contact=event["caller_number"],
+                                # voice_id=event.get("voice_id", None),
+                                # voice_provider=event.get("voice_provider", None),
+                            ).to_json(),
+                        ),
+                        self.loop,
                     )
                     # this should be handled through the comms agents i think
                     # self.call_proc = run_script(

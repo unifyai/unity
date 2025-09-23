@@ -11,7 +11,7 @@ What is the `TaskScheduler`?
 
 * **`ask(text)`**      – read-only questions such as *"Which tasks are due this week?"*
 * **`update(text)`**    – mutations such as *"Move task 7 behind task 3 and set its priority to high."*
-* **`execute_task(text)`** – begin **working** on a task inferred from free‑form text (e.g., *"Start task 12"* or *"Start researching ACME now"*). If the text is a numeric id, it is started directly; otherwise the scheduler identifies (or creates) the task before launching it.
+* **`execute(text)`** – begin **working** on a task inferred from free‑form text (e.g., *"Start task 12"* or *"Start researching ACME now"*). If the text is a numeric id, it is started directly; otherwise the scheduler identifies (or creates) the task before launching it.
 
 Under the hood all three methods launch a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_create_task`, `_update_task_status`, `_get_task_queue`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/test_task_scheduler/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, vector search, event logging, etc.
 
@@ -55,11 +55,11 @@ Once the sandbox starts you will see a prompt and a small help table.  The most 
 ### Steering controls (during a running request)
 While an `ask`, `update` or `start` (execute) call is running, you can steer it in-flight. Type these commands (they only work while a request is active):
 
-- **/i <text> | /interject <text> | plain text**: Interject guidance that the tool-loop should incorporate immediately. If you don’t prefix with `/`, any plain text you type during a run is treated as an interjection.
+- **plain text | /freeform <text> | /i <text>**: Route free-form text via the steering router. The router decides whether it's an ask, interject, pause, resume, stop, or status.
 - **/pause | /p**: Pause the running call.
 - **/resume**: Resume a paused call.
 - **/ask <question> | /? <question>**: Ask a read-only side question about the currently running call; the answer prints inline without changing the main call’s state.
-- **/freeform <text>**: Route free-form text to the best steering command (ask/interject/pause/resume/stop/status).
+  - Plain text is now equivalent to typing `/freeform <text>`.
 - **/r | /record** (voice mode only): Record a voice utterance and route it via freeform. Recording auto-cancels if the task finishes mid-capture.
 - **/stop | /cancel | /s | /c**: Abort the running call.
 - **/status | /st**: Print whether the call is still running or already done.

@@ -1,3 +1,5 @@
+"""Trigger definition for inbound communication events that activate a task."""
+
 from __future__ import annotations
 
 from ...transcript_manager.types.message import Medium

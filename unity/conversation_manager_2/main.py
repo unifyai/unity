@@ -1,14 +1,12 @@
+from dotenv import load_dotenv
+
+load_dotenv()
 import os
 import asyncio
 
 from unity.conversation_manager_2.conversation_manager import ConversationManager
 from unity.conversation_manager_2.comms_manager import CommsManager
 from unity.conversation_manager_2.event_broker import get_event_broker
-
-from dotenv import load_dotenv
-
-load_dotenv()
-
 
 
 async def main(local: bool = False, project_name: str = "Assistants"):
@@ -33,18 +31,20 @@ async def main(local: bool = False, project_name: str = "Assistants"):
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_WHATSAPP_NUMBER", ""),
         os.getenv("USER_EMAIL", ""),
-        os.getenv("TTS_PROVIDER", "cartesia"),
+        os.getenv("VOICE_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
-        project_name=project_name
-        )
+        project_name=project_name,
+    )
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
 
     asyncio.create_task(conversation_manager.wait_for_events())
     asyncio.create_task(comms_manager.start())
+
     print("Server is Running...")
     await stop.wait()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

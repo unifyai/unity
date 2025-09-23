@@ -40,6 +40,7 @@ class Event(metaclass=_EventRegistry):
         self,
         *,
         timestamp: datetime | str | None = None,
+        contact_details: dict[str, str] = None,
         is_urgent: bool = False,
         transient: bool = False,
         content: str | None = None,
@@ -47,6 +48,7 @@ class Event(metaclass=_EventRegistry):
     ):
         self.timestamp = self._parse_timestamp(timestamp)
         self.fmt_timestamp = self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        self.contact_details = contact_details
         self.is_urgent = is_urgent
         self.transient = transient
         self.content = content
@@ -55,6 +57,7 @@ class Event(metaclass=_EventRegistry):
     def to_dict(self) -> dict[str, Any]:
         payload = {
             "timestamp": self.timestamp.isoformat(),
+            "contact_details": self.contact_details,
             "is_urgent": self.is_urgent,
             "transient": self.transient,
             "content": self.content,
@@ -139,10 +142,12 @@ class StartupEvent(Event):
         self.assistant_email = kwargs.pop("assistant_email", None)
         self.user_name = kwargs.pop("user_name", None)
         self.user_number = kwargs.pop("user_number", None)
-        self.user_phone_number = kwargs.pop("user_phone_number", None)
+        self.user_whatsapp_number = kwargs.pop("user_whatsapp_number", None)
         self.user_email = kwargs.pop("user_email", None)
-        self.tts_provider = kwargs.pop("tts_provider", None)
+        self.voice_provider = kwargs.pop("voice_provider", None)
         self.voice_id = kwargs.pop("voice_id", None)
+        kwargs.pop("user_phone_number", None)  # legacy field
+        kwargs.pop("tts_provider", None)  # legacy field
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -161,9 +166,9 @@ class StartupEvent(Event):
                 "assistant_email": self.assistant_email,
                 "user_name": self.user_name,
                 "user_number": self.user_number,
-                "user_phone_number": self.user_phone_number,
+                "user_whatsapp_number": self.user_whatsapp_number,
                 "user_email": self.user_email,
-                "tts_provider": self.tts_provider,
+                "voice_provider": self.voice_provider,
                 "voice_id": self.voice_id,
             },
         )
@@ -196,6 +201,22 @@ class EmailSentEvent(_Message):
     platform = "Email"
     direction = "Sent"
 
+    def __init__(self, **kwargs):
+        self.message_id = kwargs.pop("message_id", None)
+        self.subject = kwargs.pop("subject", None)
+        super().__init__(**kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update(
+            {"message_id": self.message_id, "subject": self.subject}
+        )
+        return base_dict
+
+    def __str__(self):
+        message_str = super().__str__()
+        return f"{message_str} (message_id: {self.message_id}, subject: {self.subject})"
+
 
 class WhatsappMessageRecievedEvent(_Message):
     platform = "Whatsapp"
@@ -210,6 +231,22 @@ class SMSMessageRecievedEvent(_Message):
 class EmailRecievedEvent(_Message):
     platform = "Email"
     direction = "Recieved"
+
+    def __init__(self, **kwargs):
+        self.message_id = kwargs.pop("message_id", None)
+        self.subject = kwargs.pop("subject", None)
+        super().__init__(**kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update(
+            {"message_id": self.message_id, "subject": self.subject}
+        )
+        return base_dict
+
+    def __str__(self):
+        message_str = super().__str__()
+        return f"{message_str} (message_id: {self.message_id}, subject: {self.subject})"
 
 
 # this should be either done by user or assistant, should
@@ -233,7 +270,8 @@ class PhoneCallInitiatedEvent(Event):
         target_number: str = None,
         meet_id: str = None,
         voice_id: str = None,
-        tts_provider: str = None,
+        voice_provider: str = None,
+        outbound: bool = False,
         **kwargs,
     ):
         kwargs.pop("content", None)
@@ -242,14 +280,17 @@ class PhoneCallInitiatedEvent(Event):
         kwargs.pop("target_number", None)
         kwargs.pop("meet_id", None)
         kwargs.pop("voice_id", None)
-        kwargs.pop("tts_provider", None)
+        kwargs.pop("voice_provider", None)
+        kwargs.pop("outbound", None)
 
         self.purpose = purpose if purpose else "general"
         self.task_context = task_context
         self.target_number = target_number
         self.meet_id = meet_id
         self.voice_id = voice_id
-        self.tts_provider = tts_provider
+        self.voice_provider = voice_provider
+        self.outbound = outbound
+        kwargs.pop("tts_provider", None)  # legacy field
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -261,7 +302,8 @@ class PhoneCallInitiatedEvent(Event):
                 "target_number": self.target_number,
                 "meet_id": self.meet_id,
                 "voice_id": self.voice_id,
-                "tts_provider": self.tts_provider,
+                "voice_provider": self.voice_provider,
+                "outbound": self.outbound,
             },
         )
         return base_dict
@@ -305,6 +347,7 @@ class ToolUseStartedEvent(Event):
         query: str,
         handle_id: int,
         *,
+        call_mode: bool = False,
         is_urgent: bool = True,
         role: str = "tool_use start",
         stage: str = "",
@@ -316,10 +359,12 @@ class ToolUseStartedEvent(Event):
         kwargs.pop("role", None)
         kwargs.pop("is_urgent", None)
         kwargs.pop("stage", None)
+        kwargs.pop("call_mode", None)
 
         self.chat_history = chat_history
         self.query = query
         self.handle_id = handle_id
+        self.call_mode = call_mode
         super().__init__(is_urgent=is_urgent, role=role, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -329,6 +374,7 @@ class ToolUseStartedEvent(Event):
                 "chat_history": self.chat_history,
                 "query": self.query,
                 "handle_id": self.handle_id,
+                "call_mode": self.call_mode,
             },
         )
         return base_dict
@@ -344,6 +390,7 @@ class ToolUseEndedEvent(Event):
         query: str,
         handle_id: int,
         *,
+        call_mode: bool = False,
         is_urgent: bool = True,
         role: str = "tool_use end",
         stage: str = "",
@@ -354,15 +401,21 @@ class ToolUseEndedEvent(Event):
         kwargs.pop("role", None)
         kwargs.pop("is_urgent", None)
         kwargs.pop("stage", None)
+        kwargs.pop("call_mode", None)
 
         self.query = query
         self.handle_id = handle_id
+        self.call_mode = call_mode
         super().__init__(is_urgent=is_urgent, role=role, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {"query": self.query, "handle_id": self.handle_id},
+            {
+                "query": self.query,
+                "handle_id": self.handle_id,
+                "call_mode": self.call_mode,
+            },
         )
         return base_dict
 
@@ -377,21 +430,28 @@ class ToolUseHandleSuccessEvent(Event):
         query: str,
         handle_type: str,
         *,
+        call_mode: bool = False,
         is_urgent: bool = True,
         **kwargs,
     ):
         kwargs.pop("query", None)
         kwargs.pop("handle_type", None)
+        kwargs.pop("call_mode", None)
         kwargs.pop("is_urgent", None)
 
         self.query = query
         self.handle_type = handle_type
+        self.call_mode = call_mode
         super().__init__(is_urgent=is_urgent, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {"query": self.query, "handle_type": self.handle_type},
+            {
+                "query": self.query,
+                "handle_type": self.handle_type,
+                "call_mode": self.call_mode,
+            },
         )
         return base_dict
 
@@ -401,18 +461,31 @@ class ToolUseHandleSuccessEvent(Event):
 
 
 class ToolUseHandleFailedEvent(Event):
-    def __init__(self, query: str, handle_type: str, **kwargs):
+    def __init__(
+        self,
+        query: str,
+        handle_type: str,
+        *,
+        call_mode: bool = False,
+        **kwargs,
+    ):
         kwargs.pop("query", None)
         kwargs.pop("handle_type", None)
+        kwargs.pop("call_mode", None)
 
         self.query = query
         self.handle_type = handle_type
+        self.call_mode = call_mode
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {"query": self.query, "handle_type": self.handle_type},
+            {
+                "query": self.query,
+                "handle_type": self.handle_type,
+                "call_mode": self.call_mode,
+            },
         )
         return base_dict
 

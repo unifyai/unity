@@ -24,7 +24,7 @@ from unity.task_scheduler.types.priority import Priority
 from unity.task_scheduler.types.schedule import Schedule
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
-from tests.helpers import _get_unity_test_env_var
+from tests.helpers import SETTINGS
 
 
 class ScenarioBuilder:
@@ -34,16 +34,39 @@ class ScenarioBuilder:
         self.ts = TaskScheduler()
         self._seed_tasks()
 
+    def _create_if_missing(
+        self,
+        *,
+        name: str,
+        description: str,
+        status: str,
+        schedule: Schedule | None = None,
+        priority: Priority | None = None,
+    ) -> None:
+        """Idempotent create: only add when a task with the same name is absent."""
+        try:
+            existing = self.ts._filter_tasks(filter=f"name == {name!r}", limit=1)
+        except Exception:
+            existing = []
+        if existing:
+            return
+        kwargs = {"name": name, "description": description, "status": status}
+        if schedule is not None:
+            kwargs["schedule"] = schedule
+        if priority is not None:
+            kwargs["priority"] = priority
+        self.ts._create_task(**kwargs)
+
     def _seed_tasks(self) -> None:
         """Create five tasks with various states for robust querying."""
 
-        self.ts._create_task(  # Active
+        self._create_if_missing(  # Active
             name="Write quarterly report",
             description="Compile and draft the Q2 report for management.",
             status="primed",
         )
 
-        self.ts._create_task(  # Queued
+        self._create_if_missing(  # Queued
             name="Prepare slide deck",
             description="Create slides for the upcoming board meeting.",
             status="queued",
@@ -54,20 +77,20 @@ class ScenarioBuilder:
             next_task=None,
             start_at=datetime(2050, 6, 1, 9, 0, tzinfo=timezone.utc).isoformat(),
         )
-        self.ts._create_task(
+        self._create_if_missing(
             name="Client meeting",
             description="Meet with ABC Corp for contract renewal.",
             status="scheduled",
             schedule=sched,
         )
 
-        self.ts._create_task(  # Paused
+        self._create_if_missing(  # Paused
             name="Deploy new release",
             description="Roll out version 2.0 to production servers.",
             status="paused",
         )
 
-        self.ts._create_task(  # High-priority queued
+        self._create_if_missing(  # High-priority queued
             name="Hotfix security vulnerability",
             description="Apply CVE-2025-1234 patch to all services.",
             status="queued",
@@ -121,8 +144,8 @@ def _llm_assert_correct(
 
     judge = unify.Unify(
         "o4-mini@openai",
-        cache=_get_unity_test_env_var("UNIFY_CACHE"),
-        traced=_get_unity_test_env_var("UNIFY_TRACED"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
     )
     judge.set_system_message(
         "You are a strict unit-test judge. "
@@ -249,7 +272,7 @@ async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
 
         # Give the LLM a moment to start processing, then stop it
         await asyncio.sleep(0.05)
-        handle.stop()
+        handle.stop(cancel=True)
 
         with pytest.raises(asyncio.CancelledError):
             await handle.result()

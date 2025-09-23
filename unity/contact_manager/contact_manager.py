@@ -1,15 +1,15 @@
 from typing import List, Dict, Optional, Callable, Any, Tuple
 import asyncio
-import requests
 import json
 import functools
 import os
+import re
 from .prompt_builders import build_ask_prompt, build_update_prompt
-from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
+from ..common.embed_utils import ensure_vector_column
 from ..knowledge_manager.types import ColumnType
-from ..helpers import _handle_exceptions
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
+from ..common.context_store import TableStore
 
 import unify
 from .types.contact import Contact
@@ -18,14 +18,130 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
     methods_to_tool_dict,
+    inject_broader_context,
+    make_request_clarification_tool,
+    TOOL_LOOP_LINEAGE,
 )
 from ..events.event_bus import EVENT_BUS, Event
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
-)
+from ..events.manager_event_logging import log_manager_call
 import asyncio
+from ..common.semantic_search import (
+    fetch_top_k_by_references,
+    backfill_rows,
+)
+from ..constants import LOGGER
+
+# ------------------------------------------------------------------ #
+#  Optional per-tool runtime logging                                  #
+# ------------------------------------------------------------------ #
+import time
+
+
+def _env_truthy(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    raw_l = str(raw).strip().lower()
+    return raw_l in {"1", "true", "yes", "on"}
+
+
+def _timing_enabled() -> bool:
+    # Per-manager override → global fallback
+    return _env_truthy(
+        "CONTACT_MANAGER_TOOL_TIMING",
+        _env_truthy("TOOL_TIMING", False),
+    )
+
+
+def _timing_print_enabled() -> bool:
+    return _env_truthy(
+        "CONTACT_MANAGER_TOOL_TIMING_PRINT",
+        _env_truthy("TOOL_TIMING_PRINT", False),
+    )
+
+
+def _log_tool_runtime(func):
+    """Decorator to measure and optionally publish per-tool runtimes.
+
+    When CONTACT_MANAGER_TOOL_TIMING is truthy, publishes a ManagerTool event via
+    EVENT_BUS containing the tool name, category (ask/update/direct) and duration_ms.
+    Printing can be enabled with CONTACT_MANAGER_TOOL_TIMING_PRINT.
+    """
+
+    @functools.wraps(func, updated=())
+    def _wrapper(self: "ContactManager", *args, **kwargs):
+        start = time.perf_counter()
+        res = None
+        try:
+            # Any explicit returns from the finally block override the
+            # return from the try block so we store it here and
+            # return it in the finally block if needed
+            res = func(self, *args, **kwargs)
+            return res
+        finally:
+            try:
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+            except Exception:
+                elapsed_ms = -1.0
+
+            if _timing_print_enabled():
+                try:
+                    print(f"ContactManager.{func.__name__} took {elapsed_ms:.2f} ms")
+                except Exception:
+                    pass
+
+            # Emit to central logger so timing lines reach the broadcast port
+            if _timing_enabled():
+                try:
+                    LOGGER.info(
+                        f"[tool-timing] ContactManager.{func.__name__} took {elapsed_ms:.2f} ms",
+                    )
+                except Exception:
+                    pass
+
+            if not _timing_enabled():
+                return res
+
+            # Determine category best-effort at runtime
+            try:
+                if (
+                    isinstance(getattr(self, "_ask_tools", None), dict)
+                    and func.__name__ in self._ask_tools
+                ):
+                    category = "ask"
+                elif (
+                    isinstance(getattr(self, "_update_tools", None), dict)
+                    and func.__name__ in self._update_tools
+                ):
+                    category = "update"
+                else:
+                    category = "direct"
+            except Exception:
+                category = "direct"
+
+            # Publish as a lightweight event if the bus is ready and a loop is running
+            try:
+                evt = Event(
+                    type="ManagerTool",
+                    payload={
+                        "manager": "ContactManager",
+                        "tool": func.__name__,
+                        "category": category,
+                        "duration_ms": float(elapsed_ms),
+                    },
+                )
+                # Only publish when EVENT_BUS is initialised and an event loop exists
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None and EVENT_BUS:
+                    asyncio.create_task(EVENT_BUS.publish(evt))
+            except Exception:
+                # Swallow any timing/logging issues – never affect tool behaviour
+                pass
+
+    return _wrapper
 
 
 class ContactManager(BaseContactManager):
@@ -74,17 +190,15 @@ class ContactManager(BaseContactManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
         self._ctx = f"{read_ctx}/Contacts"
-        if self._ctx not in unify.get_contexts():
-            unify.create_context(
-                self._ctx,
-                unique_column_ids="contact_id",
-                description="List of contacts, with all contact details stored.",
-            )
-            fields = model_to_fields(Contact)
-            unify.create_fields(
-                fields,
-                context=self._ctx,
-            )
+        # Ensure context/fields exist deterministically (idempotent)
+        self._store = TableStore(
+            self._ctx,
+            unique_keys={"contact_id": "int"},
+            auto_counting={"contact_id": None},
+            description="List of contacts, with all contact details stored.",
+            fields=model_to_fields(Contact),
+        )
+        self._store.ensure_context()
 
         # ── immutable built-in columns ───────────────────────────────────
         # Derive the required/built-in columns directly from the Contact model so
@@ -122,6 +236,23 @@ class ContactManager(BaseContactManager):
         # rolling activity inclusion flag
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
+        # Track custom columns observed/created during this manager's lifetime so we can
+        # whitelist fields in a single read without a separate fields-introspection call.
+        # This avoids redundant backend calls inside tools like `_filter_contacts` while
+        # still returning custom fields commonly used right after creation/update.
+        self._known_custom_fields: set[str] = set()
+
+        # Prefill known custom fields once at construction to include any preexisting
+        # non-private columns without an extra lookup per tool call.
+        try:
+            existing_cols = self._get_columns()
+            for col in existing_cols:
+                if col not in self._REQUIRED_COLUMNS and not str(col).startswith("_"):
+                    self._known_custom_fields.add(col)
+        except Exception:
+            # Best-effort only; tools fall back safely
+            pass
+
         # ── ensure an assistant contact with id 0 exists and is up-to-date ──
         self._sync_assistant_contact()
         # ── ensure a default *user* contact with id 1 exists and is up-to-date ──
@@ -138,19 +269,24 @@ class ContactManager(BaseContactManager):
         containing the assistant records.  If the request fails, an
         exception is raised via ``_handle_exceptions`` so callers do not
         silently proceed with incomplete data.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            The list of assistants for the current account.
         """
-        url = f"{os.environ['UNIFY_BASE_URL']}/assistant?"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = requests.request("GET", url, headers=headers)
-        _handle_exceptions(response)
-        data = response.json()
-        return data.get("info", []) if isinstance(data, dict) else []
+        return unify.list_assistants()
 
     def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
         """Create custom columns for *extra_fields* that are not yet present.
 
         Only simple string columns are created for now – if richer typing is
         required in future we can extend the heuristics.
+
+        Parameters
+        ----------
+        extra_fields : Dict[str, Any]
+            Extra fields that are not yet present.
         """
         existing_cols = self._get_columns()
         for col in extra_fields:
@@ -169,6 +305,8 @@ class ContactManager(BaseContactManager):
     def _sync_assistant_contact(self) -> None:
         """Ensure the *current* assistant (id == 0 in this context) exists and is correct.
 
+        Notes
+        -----
         The assistant record is selected using the following precedence:
 
         1. The globally initialised ``unity.ASSISTANT`` object – this is set
@@ -297,29 +435,26 @@ class ContactManager(BaseContactManager):
         unexpected payload, etc.) the function falls back to a dummy
         placeholder user so that offline test-suites continue to operate
         unchanged.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Basic user information mapping.
         """
 
         user_info: Dict[str, Any] = {}
 
-        url = f"{os.environ['UNIFY_BASE_URL']}/user/basic-info"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = requests.request("GET", url, headers=headers)
+        data: Any = unify.get_user_basic_info()
+        # Map API payload → expected field names
+        mapped: Dict[str, Any] = {
+            "first_name": data.get("first"),
+            "last_name": data.get("last"),
+            "email": data.get("email"),
+        }
 
-        # Raise for HTTP errors so the except-block handles them uniformly
-        _handle_exceptions(response)
-
-        data: Any = response.json()
-        if isinstance(data, dict):
-            # Map API payload → expected field names
-            mapped: Dict[str, Any] = {
-                "first_name": data.get("first"),
-                "last_name": data.get("last"),
-                "email": data.get("email"),
-            }
-
-            # Filter out *None* values so downstream logic does not
-            # inadvertently overwrite existing data with nulls.
-            user_info.update({k: v for k, v in mapped.items() if v is not None})
+        # Filter out *None* values so downstream logic does not
+        # inadvertently overwrite existing data with nulls.
+        user_info.update({k: v for k, v in mapped.items() if v is not None})
 
         from .. import ASSISTANT
 
@@ -422,39 +557,48 @@ class ContactManager(BaseContactManager):
     # ──────────────────────────────────────────────────────────────────────
 
     def _get_columns(self) -> Dict[str, str]:
-        """
-        Return {column_name: column_type} for the contacts table.
+        """Return {column_name: column_type} for the contacts table."""
+        return self._store.get_columns()
 
-        Returns
-        -------
-        Dict[str, str]
-            Dictionary mapping column names to their types.
+    # Apply timing to tool methods
+    @_log_tool_runtime
+    def _list_columns(
+        self,
+        *,
+        include_types: bool = True,
+    ) -> Dict[str, Any] | List[str]:
         """
-        proj = unify.active_project()
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={self._ctx}"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = requests.request("GET", url, headers=headers)
-        _handle_exceptions(response)
-        ret = response.json()
-        return {k: v["data_type"] for k, v in ret.items()}
-
-    def _list_columns(self, *, include_types: bool = True) -> Dict[str, Any]:
-        """
-        List current columns; with types if include_types.
+        Return the list of available columns in the contacts table, optionally with types.
 
         Parameters
         ----------
         include_types : bool, default True
-            Whether to include column types in output.
+            Controls the shape of the returned value:
+            - When True: returns a mapping ``{column_name: column_type}`` where
+              ``column_type`` is a string label used by Unify (e.g. ``"str"``,
+              ``"int"``, ``"bool"``, ``"list"``, ``"dict"``, ``"datetime"``).
+            - When False: returns a ``set`` of column names (types omitted). This is
+              useful to check for presence/absence without caring about data types.
 
         Returns
         -------
-        Dict[str, Any]
-            Dictionary of columns, with types if requested.
+        Dict[str, Any] | List[str]
+            - If ``include_types=True``: ``dict`` mapping column names to their types.
+            - If ``include_types=False``: ``list`` of column names.
+
+        Notes
+        -----
+        - Columns that store embeddings (those whose names end with ``"_emb"``)
+          may exist in the backend but are not filtered out here; consumers that
+          don't want to see private vector columns should filter them out
+          themselves (other tools in this class exclude them where appropriate).
+        - Column names follow snake_case. Built‑in columns are derived directly from
+          the Pydantic ``Contact`` model and are immutable.
         """
         cols = self._get_columns()
-        return cols if include_types else set(cols)
+        return cols if include_types else list(cols)
 
+    @_log_tool_runtime
     def _create_custom_column(
         self,
         *,
@@ -463,117 +607,191 @@ class ContactManager(BaseContactManager):
         column_description: Optional[str] = None,
     ) -> Dict[str, str]:
         """
-        Add a new optional column to the contacts table.
+        Create a new optional (mutable) column on the contacts table.
 
         Parameters
         ----------
         column_name : str
-            The name of the column to create (which MUST be snake case).
+            The exact column key to create. Requirements:
+            - Must be snake_case (letters, digits, and underscores; starts with a letter).
+            - Must not collide with any built‑in (required) columns of the ``Contact`` schema.
+            - Must not already exist in the table.
         column_type : ColumnType | str
-            The type of the column to create.
+            Logical type for the column. Accepts either the enum ``ColumnType`` or one of
+            its string values. Common values include: ``"str"``, ``"int"``, ``"float"``,
+            ``"bool"``, ``"list"``, ``"dict"``, ``"datetime"``, ``"date"``, ``"time"``.
+            Choose the type that best matches the data you intend to store.
         column_description : Optional[str], default None
-            Optional description of the column's purpose.
+            Optional human‑readable description to help other users understand the column.
 
         Returns
         -------
         Dict[str, str]
-            Dictionary containing the response from the Unify API.
+            The Unify API response payload acknowledging column creation.
 
         Raises
         ------
         AssertionError
-            If column_name is a required column.
+            If ``column_name`` is one of the built‑in/required columns and therefore
+            cannot be (re)created.
         ValueError
-            If column already exists.
+            If a column with the same name already exists.
+
+        Usage Guidance
+        --------------
+        - Prefer concise names that describe the field's purpose (e.g. ``"linkedin_url"``).
+        - If you need to store vectors/embeddings, use the dedicated vector helpers instead;
+          this method creates standard mutable columns.
+        - After creating the column you can write values via ``_create_contact`` or
+          ``_update_contact`` using the same key.
         """
         assert (
             column_name not in self._REQUIRED_COLUMNS
         ), f"'{column_name}' is a required column and cannot be recreated."
 
-        if column_name in self._get_columns():
+        # Fast local validation to avoid unnecessary network round-trips
+        # Enforce simple snake_case starting with a letter
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", column_name):
+            raise ValueError(
+                "column_name must be snake_case: start with a letter, then letters/digits/underscores",
+            )
+
+        # Avoid a pre-flight GET to check for existence; rely on our singleton's
+        # private state which is kept in sync at construction and on create/delete.
+        # This prevents an extra blocking backend read on every create call.
+        if (
+            getattr(self, "_known_custom_fields", None)
+            and column_name in self._known_custom_fields
+        ):
             raise ValueError(f"Column '{column_name}' already exists.")
 
-        proj = unify.active_project()
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
         column_info = {
             "type": str(column_type),
             "mutable": True,
         }
         if column_description is not None:
             column_info["description"] = column_description
-        json_input = {
-            "project": proj,
-            "context": self._ctx,
-            "fields": {
-                column_name: column_info,
-            },
-        }
-        response = requests.request("POST", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        response = unify.create_fields(
+            fields={column_name: column_info},
+            context=self._ctx,
+        )
+        # Remember the new column for subsequent reads within this manager instance
+        try:
+            self._known_custom_fields.add(column_name)
+        except Exception:
+            pass
+        return response
 
+    @_log_tool_runtime
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
         """
-        Remove a custom column. Built-in columns are protected.
+        Delete a previously created custom column from the contacts table.
 
         Parameters
         ----------
         column_name : str
-            The name of the column to delete (which MUST be snake case).
+            The exact name of the column to remove. Must be a non‑required (custom)
+            column that currently exists. Snake_case is expected.
 
         Returns
         -------
         Dict[str, str]
-            Dictionary containing the response from the Unify API.
+            The Unify API response payload acknowledging deletion.
 
         Raises
         ------
         ValueError
-            If column_name is a required column or does not exist.
+            - If ``column_name`` is a built‑in/required column (protected against deletion).
+            - If the column does not exist.
+
+        Notes
+        -----
+        - Deletion is performed with ``delete_empty_logs=True`` to clean up empty records
+          if applicable.
+        - Removing a column permanently drops its values from all contacts. This action
+          cannot be undone.
         """
         if column_name in self._REQUIRED_COLUMNS:
             raise ValueError(f"Cannot delete required column '{column_name}'.")
 
-        if column_name not in self._get_columns():
-            raise ValueError(f"Column '{column_name}' does not exist.")
+        response = unify.delete_fields(
+            fields=[column_name],
+            context=self._ctx,
+        )
 
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        json_input = {
-            "project": unify.active_project(),
-            "context": self._ctx,
-            "ids_and_fields": [[None, column_name]],
-            "source_type": "all",
-        }
-        response = requests.request("DELETE", url, json=json_input, headers=headers)
-        _handle_exceptions(response)
-        return response.json()
+        # Update local view of known custom columns on success
+        try:
+            if column_name in getattr(self, "_known_custom_fields", set()):
+                self._known_custom_fields.discard(column_name)
+        except Exception:
+            pass
+
+        return response
 
     # ------------------------------------------------------------------ #
     #  Vector-search helpers                                             #
     # ------------------------------------------------------------------ #
 
-    def _ensure_table_vector(self, *, column: str, source: str) -> None:
+    def _ensure_table_vector(
+        self,
+        *,
+        column: str,
+        source_expr: str,
+    ) -> None:
         """
-        Ensure that column exists as a vector-embedding derived from source.
+        Ensure that an embedding column exists for the provided source expression.
 
         Parameters
         ----------
         column : str
-            The (private) vector column name (e.g. "_notes_emb").
-        source : str
-            The source column name (e.g. "notes").
+            The (private) vector column name (e.g. "_notes_emb"). Must end with
+            the suffix "_emb". The corresponding source column name will be
+            derived by stripping the suffix.
+        source_expr : str
+            A Unify expression string that produces the source text to embed.
+            This may be either:
+            - a plain column name like "bio" (treated as an existing column), or
+            - a full expression using Unify's expression language, e.g.
+              "str({first_name}) + ' ' + str({surname})".
+
+        Notes
+        -----
+        When a plain column name is provided, the function will reference that
+        column directly. When a full expression is provided, a derived source
+        column will be created (if needed) using the name obtained by removing
+        the trailing "_emb" from the provided embedding column key.
         """
-        ensure_vector_column(
-            self._ctx,  # contacts live in a single context
-            embed_column=column,
-            source_column=source,
+        # Derive a stable source column key from the embedding column name.
+        source_column_name = column[:-4] if column.endswith("_emb") else f"{column}_src"
+
+        # Heuristic: treat simple identifiers (no braces or ops) as direct columns
+        is_plain_identifier = (
+            "{" not in source_expr
+            and "}" not in source_expr
+            and any(c.isalpha() for c in source_expr)
         )
+
+        if is_plain_identifier:
+            # Use the provided identifier as the source column directly
+            ensure_vector_column(
+                self._ctx,
+                embed_column=column,
+                source_column=source_expr,
+                derived_expr=None,
+            )
+        else:
+            # Treat the input as a full expression that defines/derives the source
+            ensure_vector_column(
+                self._ctx,
+                embed_column=column,
+                source_column=source_column_name,
+                derived_expr=source_expr,
+            )
 
     # Public #
     # -------#
     @functools.wraps(BaseContactManager.ask, updated=())
+    @log_manager_call("ContactManager", "ask", payload_key="question")
     async def ask(
         self,
         text: str,
@@ -583,65 +801,49 @@ class ContactManager(BaseContactManager):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        # ── generate 1 call-id & log *incoming* request ─────────────────
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "ContactManager",
-            "ask",
-            phase="incoming",
-            question=text,
-        )
-
-        client = unify.AsyncUnify(
-            "o4-mini@openai",  # Consider making model configurable
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
+        client = self._new_llm_client("gpt-5@openai")
 
         # Build a *live* tools-dict so the prompt never hard-codes
         # either the number of tools or their names/argspecs.
         tools = dict(self._ask_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "Clarification queues not properly initialized for ask.",
-                    )
-                # 🔔 clarification requested
+            async def _on_request(q: str):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=call_id,
+                        calling_id=_call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "ask",
                             "action": "clarification_request",
-                            "question": question,
+                            "question": q,
                         },
                     ),
                 )
-                await clarification_up_q.put(question)
-                answer = await clarification_down_q.get()
 
-                # 🔔 clarification answered
+            async def _on_answer(ans: str):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=call_id,
+                        calling_id=_call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "ask",
                             "action": "clarification_answer",
-                            "answer": answer,
+                            "answer": ans,
                         },
                     ),
                 )
-                return answer
 
-            tools["request_clarification"] = request_clarification
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         include_activity = (
             self._rolling_summary_in_prompts
@@ -662,17 +864,10 @@ class ContactManager(BaseContactManager):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
-            preprocess_msgs=self._inject_broader_context,
-        )
-
-        # wrap the raw handle so *every* public method logs an event
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "ContactManager",
-            "ask",
+            tool_policy=self._default_ask_tool_policy,
+            preprocess_msgs=inject_broader_context,
         )
 
         if _return_reasoning_steps:
@@ -687,6 +882,7 @@ class ContactManager(BaseContactManager):
         return handle
 
     @functools.wraps(BaseContactManager.update, updated=())
+    @log_manager_call("ContactManager", "update", payload_key="request")
     async def update(
         self,
         text: str,
@@ -696,60 +892,47 @@ class ContactManager(BaseContactManager):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        # ── event: incoming update request ──────────────────────────────
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "ContactManager",
-            "update",
-            phase="incoming",
-            request=text,
-        )
-
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
+        client = self._new_llm_client("gpt-5@openai")
 
         tools = dict(self._update_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
 
-            async def request_clarification(question: str) -> str:
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "Clarification queues not properly initialized for update.",
-                    )
+            async def _on_request(q: str):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=call_id,
+                        calling_id=_call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "update",
                             "action": "clarification_request",
-                            "question": question,
+                            "question": q,
                         },
                     ),
                 )
-                await clarification_up_q.put(question)
-                answer = await clarification_down_q.get()
+
+            async def _on_answer(ans: str):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
-                        calling_id=call_id,
+                        calling_id=_call_id,
                         payload={
                             "manager": "ContactManager",
                             "method": "update",
                             "action": "clarification_answer",
-                            "answer": answer,
+                            "answer": ans,
                         },
                     ),
                 )
-                return answer
 
-            tools["request_clarification"] = request_clarification
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         include_activity = (
             self._rolling_summary_in_prompts
@@ -758,23 +941,22 @@ class ContactManager(BaseContactManager):
         )
 
         client.set_system_message(
-            build_update_prompt(tools, include_activity=include_activity),
+            build_update_prompt(
+                tools,
+                num_contacts=self._num_contacts(),
+                columns=self._list_columns(),
+                include_activity=include_activity,
+            ),
         )
         handle = start_async_tool_use_loop(
             client,
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
-            preprocess_msgs=self._inject_broader_context,
-        )
-
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "ContactManager",
-            "update",
+            tool_policy=self._default_update_tool_policy,
+            preprocess_msgs=inject_broader_context,
         )
 
         if _return_reasoning_steps:
@@ -796,6 +978,11 @@ class ContactManager(BaseContactManager):
     ) -> int:
         """
         Get the total number of contacts stored in the contacts table.
+
+        Returns
+        -------
+        int
+            The total number of contacts.
         """
         ret = unify.get_logs_metric(
             metric="count",
@@ -804,11 +991,43 @@ class ContactManager(BaseContactManager):
         )
         if ret is None:
             return 0
-        return ret
+        return int(ret)
 
     # Private #
     # --------#
 
+    def _sanitize_custom_columns(
+        self,
+        custom_columns: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Return a filtered copy of custom columns safe for JSON logging.
+
+        - Drops internal control keys injected by the async tool loop
+          (pause/interject/clarification/context channels).
+        - Drops any values that are not JSON-serialisable.
+        """
+        internal_keys = {
+            "parent_chat_context",
+            "interject_queue",
+            "pause_event",
+            "clarification_up_q",
+            "clarification_down_q",
+            "kwargs",
+            "_log_id",
+        }
+        safe: Dict[str, Any] = {}
+        for key, value in (custom_columns or {}).items():
+            if key in internal_keys:
+                continue
+            try:
+                json.dumps(value)
+            except Exception:
+                # Skip non-serialisable values (e.g. asyncio.Event, queues, etc.)
+                continue
+            safe[key] = value
+        return safe
+
+    @_log_tool_runtime
     def _create_contact(
         self,
         *,
@@ -821,47 +1040,75 @@ class ContactManager(BaseContactManager):
         rolling_summary: Optional[str] = None,
         respond_to: bool = False,
         response_policy: Optional[str] = None,
-        custom_fields: Optional[Dict[str, ColumnType]] = None,
+        **kwargs: Any,
     ) -> ToolOutcome:
         """
-        Persist a new contact record.
+        Create and persist a new contact.
 
         Parameters
         ----------
         first_name : str | None
-            Contact's first name. Must start with a capital letter and can only contain
-            letters, spaces, periods and hyphens. May be None.
+            Given name. Validation guidance: should start with a capital letter; allowed
+            characters are letters, spaces, periods, and hyphens. Optional.
         surname : str | None
-            Contact's surname/family name. Must start with a capital letter and can only
-            contain letters, spaces, periods and hyphens. May be None.
+            Family name (stored in the ``surname`` column). Same validation guidance as
+            ``first_name``. Optional.
         email_address : str | None
-            Contact's email address. Must contain exactly one @ symbol with characters
-            on either side. Must not clash with an existing record.
+            Email address. Must contain exactly one ``@`` with characters on both sides
+            (basic validation). Must be unique across all contacts.
         phone_number : str | None
-            Contact's phone number. Can optionally start with '+' (only if explicitly
-            mentioned by the user), but must otherwise contain only digits. Must be unique.
+            Phone number. May start with ``+`` (only if explicitly provided by the user),
+            otherwise digits only. Must be unique.
         whatsapp_number : str | None
-            Contact's WhatsApp number. Can optionally start with '+' (only if explicitly
-            mentioned by the user), but must otherwise contain only digits. Must be unique.
+            WhatsApp number. Same formatting guidance as ``phone_number``. Must be unique.
         bio : str | None
-            A free-form text description of the contact. Can contain any additional notes
-            or information about the contact. May be None.
-        custom_fields : Dict[str, ColumnType] | None
-            Additional contact information as key-value pairs, where keys are string column
-            names and values are of type ColumnType. Can include any other relevant
-            information about the contact. May be None.
+            Free‑form notes or description about the contact. Optional.
+        rolling_summary : str | None
+            Internal running summary of recent activity for this contact. Optional.
+        respond_to : bool, default False
+            Whether the assistant should reply to this contact by default when
+            communicating in user‑facing experiences.
+        response_policy : str | None
+            Optional policy text that qualifies how the assistant should respond to this
+            contact. When omitted, a safe default policy is automatically applied.
+        Additional keyword arguments
+        ----------------------------
+        Any additional top‑level keyword arguments are treated as values for existing
+        custom columns.
+        - Keys must be existing column names (snake_case) that are not part of the
+          built‑in ``Contact`` schema. Create new columns first via
+          ``_create_custom_column``.
+        - Values are stored as‑is. Choose appropriate types when creating the column
+          (e.g. ``str``, ``int``, ``bool``, ``list``, ``dict``).
+        - Do not include a key literally named ``"kwargs"``. Pass custom fields
+          as top‑level keys instead.
 
         Returns
         -------
         ToolOutcome
-            Tool outcome with any extra relevant details.
+            A standard outcome dict: ``{"outcome": "contact created successfully", "details": {"contact_id": <int>}}``.
 
         Raises
         ------
         AssertionError
-            If all fields are None or if any uniqueness constraint
-            (email / phone / WhatsApp) is violated.
+            - If all provided fields are ``None`` (at least one field is required).
+            - If any uniqueness constraint is violated (duplicate ``email_address``,
+              ``phone_number``, or ``whatsapp_number``).
+
+        Behaviour and Edge Cases
+        ------------------------
+        - If this is the very first contact in the table, the record is inserted immediately
+          and Unify will assign ``contact_id == 0`` (reserved for the assistant account).
+          Subsequent creations will receive the next available id.
+        - ``response_policy`` defaults to a conservative policy that avoids sharing sensitive
+          information when not explicitly provided.
+        - Unspecified fields remain ``None`` and can be populated later via ``_update_contact``.
+        - For custom columns, ensure the column exists beforehand via ``_create_custom_column``;
+          otherwise the request will fail server‑side.
         """
+        # remove and unpack kwargs from kwargs, if passed by mistaken LLM
+        if "kwargs" in kwargs:
+            kwargs = {**kwargs, **kwargs.pop("kwargs")}
 
         # Build the contact dictionary directly from the arguments
         contact_details = {
@@ -880,26 +1127,21 @@ class ContactManager(BaseContactManager):
         if contact_details["response_policy"] is None:
             contact_details["response_policy"] = self.DEFAULT_RESPONSE_POLICY
 
-        # Merge any custom fields provided by the caller
-        if custom_fields:
-            contact_details.update(custom_fields)
+        # Merge any custom columns provided by the caller (sanitised first).
+        if kwargs:
+            safe_custom = self._sanitize_custom_columns(kwargs)
+            contact_details.update(safe_custom)
+            # Track keys so subsequent reads in this instance can whitelist them
+            try:
+                for k in safe_custom.keys():
+                    if k not in self._BUILTIN_FIELDS:
+                        self._known_custom_fields.add(k)
+            except Exception:
+                pass
 
         assert any(
             v is not None for v in contact_details.values()
         ), "At least one contact detail must be provided."
-
-        # If it's the first contact, create immediately
-        if not unify.get_logs(context=self._ctx):
-            unify.log(
-                context=self._ctx,
-                **contact_details,
-                new=True,
-                mutable=True,
-            )
-            return {
-                "outcome": "contact created successfully",
-                "details": {"contact_id": 0},
-            }
 
         # Verify uniqueness for contact fields that should be unique (emails,
         # phone numbers, etc.).  We use a simple heuristic to consider any
@@ -910,16 +1152,24 @@ class ContactManager(BaseContactManager):
             if f.endswith("_address") or f.endswith("_number")
         }
 
-        for key, value in contact_details.items():
-            if key not in unique_fields or value is None:
-                continue
-            logs = unify.get_logs(
+        # Perform a single existence check across all provided unique fields
+        provided_unique_constraints = [
+            f"{key} == {value!r}"
+            for key, value in contact_details.items()
+            if key in unique_fields and value is not None
+        ]
+
+        if provided_unique_constraints:
+            or_expr = " or ".join(provided_unique_constraints)
+            dupes = unify.get_logs(
                 context=self._ctx,
-                filter=f"{key} == {value!r}",
+                filter=or_expr,
+                limit=1,
+                return_ids_only=True,
             )
             assert (
-                len(logs) == 0
-            ), f"Invalid, contact with {key} {value} already exists."
+                len(dupes) == 0
+            ), "Invalid, contact with a provided unique field already exists."
 
         # Create the new contact
         log = unify.log(
@@ -933,6 +1183,7 @@ class ContactManager(BaseContactManager):
             "details": {"contact_id": log.entries["contact_id"]},
         }
 
+    @_log_tool_runtime
     def _update_contact(
         self,
         *,
@@ -946,48 +1197,71 @@ class ContactManager(BaseContactManager):
         rolling_summary: Optional[str] = None,
         respond_to: Optional[bool] = None,
         response_policy: Optional[str] = None,
-        custom_fields: Optional[Dict[str, ColumnType]] = None,
+        _log_id: Optional[int] = None,
+        **kwargs: Any,
     ) -> ToolOutcome:
         """
-        Modify selected (not None) fields of an existing contact.
+        Update one or more fields of an existing contact.
 
         Parameters
         ----------
         contact_id : int
-            Target record's unique identifier.
+            The numeric identifier of the contact to modify. Must refer to exactly one
+            existing contact.
         first_name : str | None
-            Contact's first name - must start with a capital letter and can only contain
-            letters, spaces, periods and hyphens.
+            New given name. Same validation guidance as in ``_create_contact``. Omit (leave
+            as ``None``) to keep unchanged.
         surname : str | None
-            Contact's surname/family name - must start with a capital letter and can only
-            contain letters, spaces, periods and hyphens.
+            New family name (stored as ``surname``). Same guidance as ``first_name``. Omit
+            to keep unchanged.
         email_address : str | None
-            Contact's email address - must contain exactly one @ symbol with characters
-            on either side.
+            New email address. Must be unique across all contacts and contain one ``@``.
         phone_number : str | None
-            Contact's phone number - can optionally start with '+' (only if explicitly
-            mentioned by the user), but must otherwise contain only digits.
+            New phone number. Digits only unless explicitly provided with leading ``+``.
+            Must be unique.
         whatsapp_number : str | None
-            Contact's WhatsApp number - can optionally start with '+' (only if explicitly
-            mentioned by the user), but must otherwise contain only digits.
+            New WhatsApp number. Same formatting and uniqueness rules as ``phone_number``.
         bio : str | None
-            A free-form text description or notes about the contact.
-        custom_fields : Dict[str, ColumnType] | None
-            Additional contact information as key-value pairs, where keys are string column
-            names (which MUST be snake case) and values are of type ColumnType.
-            Can include any other relevant information about the contact. May be None.
+            Free‑form notes/description.
+        rolling_summary : str | None
+            Updated rolling activity summary (internal).
+        respond_to : bool | None
+            Whether the assistant should reply to this contact by default. Omit to leave
+            unchanged.
+        response_policy : str | None
+            Override the contact‑specific response policy. Omit to leave unchanged.
+        Additional keyword arguments
+        ----------------------------
+        Any additional top‑level keyword arguments are treated as updates for existing
+        custom columns. Keys must be existing column names (snake_case) that are not part of
+        the built‑in ``Contact`` schema. Any key with a ``None`` value is ignored.
+        Do not include a key literally named ``"kwargs"``; pass custom fields directly at
+        the top level.
 
         Returns
         -------
         ToolOutcome
-            Tool outcome with any extra relevant details.
+            A standard outcome dict: ``{"outcome": "contact updated", "details": {"contact_id": <int>}}``.
 
         Raises
         ------
         ValueError
-            When no updatable field is provided, when contact_id does not exist,
-            or when the new email/phone/WhatsApp value duplicates another record.
+            - If no updatable field is provided (all parameters ``None`` except ``contact_id``).
+            - If ``contact_id`` does not exist or resolves to multiple records (data integrity issue).
+            - If updating to a value that violates uniqueness constraints (duplicate email/phone/WhatsApp).
+
+        Notes
+        -----
+        - Fields not supplied remain unchanged.
+        - This operation overwrites the stored values for the selected fields.
+        - ``contact_id`` itself cannot be changed here; use ``_merge_contacts`` if you need
+          to consolidate records and choose which id to keep.
         """
+
+        # remove and unpack kwargs from kwargs, if passed by mistaken LLM
+        if "kwargs" in kwargs:
+            kwargs = {**kwargs, **kwargs.pop("kwargs")}
+
         contact_details = {
             "first_name": first_name,
             "surname": surname,
@@ -999,12 +1273,20 @@ class ContactManager(BaseContactManager):
             "respond_to": respond_to,
             "response_policy": response_policy,
         }
+        # Merge any additional custom columns (sanitised first)
+        if kwargs:
+            safe_custom = self._sanitize_custom_columns(kwargs)
+            contact_details.update(safe_custom)
+            try:
+                for k in safe_custom.keys():
+                    if k not in self._BUILTIN_FIELDS:
+                        self._known_custom_fields.add(k)
+            except Exception:
+                pass
 
-        if custom_fields:
-            contact_details.update(custom_fields)
-
-        updates_to_apply = [{k: v} for k, v in contact_details.items() if v is not None]
-        if not updates_to_apply:
+        # Collapse updates into a single dict so we only perform one write op
+        updates_dict = {k: v for k, v in contact_details.items() if v is not None}
+        if not updates_dict:
             raise ValueError(
                 "At least one contact detail must be provided for an update.",
             )
@@ -1015,37 +1297,48 @@ class ContactManager(BaseContactManager):
             if f.endswith("_address") or f.endswith("_number")
         }
 
-        for key, value in contact_details.items():
-            if key in unique_fields and value is not None:
-                logs = unify.get_logs(
-                    context=self._ctx,
-                    filter=f"{key} == {value!r} and contact_id != {contact_id}",
+        # Perform a single existence check across all provided unique fields
+        provided_unique_constraints = [
+            f"{key} == {value!r}"
+            for key, value in contact_details.items()
+            if key in unique_fields and value is not None
+        ]
+        if provided_unique_constraints:
+            or_expr = " or ".join(provided_unique_constraints)
+            dupes = unify.get_logs(
+                context=self._ctx,
+                filter=f"({or_expr}) and contact_id != {contact_id}",
+                limit=1,
+                return_ids_only=True,
+            )
+            if dupes:
+                raise ValueError(
+                    "Another contact already exists with one of the provided unique fields.",
                 )
-                if logs:
-                    raise ValueError(
-                        f"Another contact with {key} '{value}' already exists.",
-                    )
 
-        # Find the specific log entry to update
-        target_logs = unify.get_logs(
-            context=self._ctx,
-            filter=f"contact_id == {contact_id}",
-        )
-        if not target_logs:
-            raise ValueError(
-                f"No contact found with contact_id {contact_id} to update.",
+        # Find the specific log entry to update (or use provided id)
+        if _log_id is None:
+            target_ids = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {contact_id}",
+                return_ids_only=True,
             )
-        if len(target_logs) > 1:
-            raise ValueError(
-                f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
-            )
-
-        log_to_update_id = target_logs[0].id  # Get the actual Unify log ID
+            if not target_ids:
+                raise ValueError(
+                    f"No contact found with contact_id {contact_id} to update.",
+                )
+            if len(target_ids) > 1:
+                raise ValueError(
+                    f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
+                )
+            log_to_update_id = target_ids[0]
+        else:
+            log_to_update_id = _log_id
 
         unify.update_logs(
-            logs=[log_to_update_id] * len(updates_to_apply),
+            logs=[log_to_update_id],
             context=self._ctx,
-            entries=updates_to_apply,
+            entries=updates_dict,
             overwrite=True,
         )
         return {
@@ -1053,109 +1346,167 @@ class ContactManager(BaseContactManager):
             "details": {"contact_id": contact_id},
         }
 
+    @_log_tool_runtime
     def _delete_contact(
         self,
         *,
         contact_id: int,
+        _log_id: Optional[int] = None,
     ) -> ToolOutcome:
         """
-        Permanently **remove** a contact from storage.
+        Permanently delete a contact.
 
         Parameters
         ----------
         contact_id : int
-            Identifier of the contact to delete.
+            The identifier of the contact to remove. Must refer to a non‑system contact.
 
         Returns
         -------
         ToolOutcome
-            Confirmation of deletion with the contact_id.
+            ``{"outcome": "contact deleted", "details": {"contact_id": <int>}}``.
+
+        Raises
+        ------
+        RuntimeError
+            If attempting to delete reserved system contacts: ``0`` (assistant) or ``1`` (default user).
+        ValueError
+            If the contact does not exist, or if multiple records share the same ``contact_id``
+            (indicates data integrity issues).
+
+        Notes
+        -----
+        - This operation cannot be undone. Consider ``_merge_contacts`` to consolidate records
+          without losing history.
         """
         # Protect special contacts (assistant/user) from accidental deletion
         if contact_id in (0, 1):
             raise RuntimeError("Cannot delete system contacts with id 0 or 1.")
 
-        log_ids = unify.get_logs(
-            context=self._ctx,
-            filter=f"contact_id == {contact_id}",
-            return_ids_only=True,
-        )
-        if not log_ids:
-            raise ValueError(
-                f"No contact found with contact_id {contact_id} to delete.",
+        # Resolve the log id (or use the provided one)
+        if _log_id is None:
+            # Minimise backend scan work while preserving duplicate detection by
+            # capping the lookup to at most two rows.
+            log_ids = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {contact_id}",
+                limit=2,
+                return_ids_only=True,
             )
-        if len(log_ids) > 1:
-            raise RuntimeError(
-                f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
-            )
+            if not log_ids:
+                raise ValueError(
+                    f"No contact found with contact_id {contact_id} to delete.",
+                )
+            if len(log_ids) > 1:
+                raise RuntimeError(
+                    f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
+                )
+            resolved_id = log_ids[0]
+        else:
+            resolved_id = _log_id
 
+        # Pass a single integer id to avoid wrapping in a list
         unify.delete_logs(
             context=self._ctx,
-            logs=log_ids,
+            logs=resolved_id,
         )
         return {
             "outcome": "contact deleted",
             "details": {"contact_id": contact_id},
         }
 
+    @_log_tool_runtime
     def _merge_contacts(
         self,
         *,
         contact_id_1: int,
         contact_id_2: int,
-        overrides: Dict[str, int],
+        overrides: Optional[Dict[str, int]] = None,
     ) -> ToolOutcome:
         """
-        Merge exactly two existing contacts into **one** consolidated record.
+        Merge two contacts into a single consolidated record.
 
-        The caller must provide a per-column *overrides* map indicating which of
-        the two source contacts wins for that column.  The map values **must**
-        be either ``1`` (take the value from *contact_id_1*) or ``2`` (take the
-        value from *contact_id_2*).  Any column absent from *overrides* keeps
-        the first non-``None`` value when scanned in the order
-        ``contact_id_1`` → ``contact_id_2``.
-
-        The *contact_id* itself can be overridden.  The resulting record keeps
-        whichever id is chosen while the *other* contact is permanently
-        deleted.  System contacts with ids 0 and 1 are **protected** and cannot
-        be deleted.
+        Overview
+        --------
+        This operation reads both source contacts, computes a per‑column winner, updates
+        the kept record with the consolidated values, deletes the other record, and then
+        rewrites transcript references so message histories remain consistent.
 
         Parameters
         ----------
         contact_id_1 : int
-            Identifier of the **first** source contact.
+            Identifier of the first source contact.
         contact_id_2 : int
-            Identifier of the **second** source contact.
-        overrides : Dict[str, int]
-            Mapping ``column_name → 1 | 2`` picking the winner for that field.
+            Identifier of the second source contact. Must be different from ``contact_id_1``.
+        overrides : Dict[str, int], optional
+            A map indicating which source wins for each column. Keys are column names
+            (built‑in or custom). Values must be either ``1`` or ``2`` where:
+            - ``1`` → take the value from ``contact_id_1``
+            - ``2`` → take the value from ``contact_id_2``
+
+            If not provided, the first non‑``None`` value in the order ``contact_id_1`` → ``contact_id_2`` is used for each column.
+            The special key ``"contact_id"`` can be provided to explicitly choose which id to keep; the other contact will be deleted.
 
         Returns
         -------
         ToolOutcome
-            Confirmation payload indicating the kept/deleted contact ids.
+            ``{"outcome": "contacts merged successfully", "details": {"kept_contact_id": <int>, "deleted_contact_id": <int>}}``.
+
+        Raises
+        ------
+        ValueError
+            - If the two ids are identical.
+            - If either contact cannot be found.
+            - If any value in ``overrides`` is not ``1`` or ``2``.
+        RuntimeError
+            If the merge would delete a protected system contact (ids ``0`` or ``1``).
+
+        Notes
+        -----
+        - Private vector columns (names ending with ``"_emb"``) are ignored during merge.
+        - After the merge, transcript messages that referenced the deleted contact will have
+          their ``contact_id`` updated to the kept id for consistency.
+        - Custom fields are applied via ``_update_contact``; built‑in fields are applied
+          directly as arguments.
         """
 
         if contact_id_1 == contact_id_2:
             raise ValueError("contact_id_1 and contact_id_2 must be distinct.")
 
-        if any(v not in (1, 2) for v in overrides.values()):
-            raise ValueError(
-                "Override values must be 1 or 2, referring to the corresponding contact id argument.",
-            )
+        if overrides is not None:
+            if any(v not in (1, 2) for v in overrides.values()):
+                raise ValueError(
+                    "Override values must be 1 or 2, referring to the corresponding contact id argument.",
+                )
+        else:
+            overrides = {}
 
-        # Retrieve both contacts
-        def _fetch(cid: int):
-            logs = unify.get_logs(
-                context=self._ctx,
-                filter=f"contact_id == {cid}",
-                limit=1,
-            )
-            if not logs:
-                raise ValueError(f"No contact found with contact_id {cid}.")
-            return logs[0]
+        # Retrieve both contacts with a single backend call
+        rows = unify.get_logs(
+            context=self._ctx,
+            filter=f"contact_id in [{contact_id_1}, {contact_id_2}]",
+            limit=2,
+        )
+        if not rows or len(rows) < 2:
+            # Disambiguate which id is missing
+            present_ids: set[int] = set()
+            for lg in rows or []:
+                try:
+                    present_ids.add(int(lg.entries.get("contact_id")))
+                except Exception:
+                    pass
+            missing = contact_id_1 if contact_id_1 not in present_ids else contact_id_2
+            raise ValueError(f"No contact found with contact_id {missing}.")
 
-        log1 = _fetch(contact_id_1)
-        log2 = _fetch(contact_id_2)
+        # Map by contact_id to avoid ordering assumptions
+        by_id: Dict[int, Any] = {}
+        for lg in rows:
+            try:
+                by_id[int(lg.entries.get("contact_id"))] = lg
+            except Exception:
+                continue
+        log1 = by_id[contact_id_1]
+        log2 = by_id[contact_id_2]
 
         entries1 = log1.entries
         entries2 = log2.entries
@@ -1173,7 +1524,10 @@ class ContactManager(BaseContactManager):
         # Build the consolidated field map (skip contact_id – handled separately)
         consolidated: Dict[str, Any] = {}
 
-        all_cols = set(self._get_columns())
+        # Restrict to columns present on either side; skip private vector columns
+        entries1 = log1.entries
+        entries2 = log2.entries
+        all_cols = set(entries1.keys()) | set(entries2.keys())
         all_cols.discard("contact_id")
 
         for col in all_cols:
@@ -1200,41 +1554,53 @@ class ContactManager(BaseContactManager):
             k: v for k, v in consolidated.items() if k not in self._BUILTIN_FIELDS
         }
 
-        # Apply updates to the kept contact
+        # Apply updates to the kept contact (avoid an extra id lookup by passing _log_id)
         if builtin_updates or custom_updates:
+            kept_log_id = getattr(by_id[keep_id], "id", None)
             self._update_contact(
                 contact_id=keep_id,
+                _log_id=kept_log_id,
                 **{
                     k: builtin_updates.get(k)
                     for k in self._BUILTIN_FIELDS
                     if k in builtin_updates
                 },
-                custom_fields=custom_updates or None,
+                **(custom_updates or {}),
             )
 
-        # Delete the other contact
-        self._delete_contact(contact_id=delete_id)
+        # Delete the other contact (avoid an extra id lookup by passing _log_id)
+        delete_log_id = getattr(by_id[delete_id], "id", None)
+        self._delete_contact(contact_id=delete_id, _log_id=delete_log_id)
 
-        # ──────────────────────────────────────────────────────────────
         # Keep transcript history consistent by rewriting old ids
-        # ──────────────────────────────────────────────────────────────
-        # Local import to prevent heavy top-level dependency and possible
-        # circular-import issues at module load time.
-        from unity.transcript_manager.transcript_manager import (
-            TranscriptManager,
-        )  # noqa: WPS433
+        # Only rewrite transcripts if any message references the deleted id
+        try:
+            ctxs = unify.get_active_context()
+            read_ctx = ctxs.get("read")
+        except Exception:
+            read_ctx = None
+        transcripts_ctx = f"{read_ctx}/Transcripts" if read_ctx else "Transcripts"
 
-        # Re-use *this* ContactManager instance to avoid creating a second
-        # one inside TranscriptManager which would trigger another round of
-        # context/column checks.
-        tm = TranscriptManager(contact_manager=self)
-        # Update all sender/receiver occurrences of the deleted id so that
-        # future transcript queries remain consistent with the merged
-        # contact record.
-        tm._update_contact_id(
-            original_contact_id=delete_id,
-            new_contact_id=keep_id,
-        )
+        try:
+            referenced = unify.get_logs(
+                context=transcripts_ctx,
+                filter=f"(sender_id == {delete_id}) or ({delete_id} in receiver_ids)",
+                limit=1,
+                return_ids_only=True,
+            )
+        except Exception:
+            referenced = []
+
+        if referenced:
+            from unity.transcript_manager.transcript_manager import (
+                TranscriptManager,
+            )  # noqa: WPS433
+
+            tm = TranscriptManager(contact_manager=self)
+            tm._update_contact_id(
+                original_contact_id=delete_id,
+                new_contact_id=keep_id,
+            )
 
         return {
             "outcome": "contacts merged successfully",
@@ -1244,53 +1610,78 @@ class ContactManager(BaseContactManager):
             },
         }
 
+    @_log_tool_runtime
     def _search_contacts(
         self,
         *,
-        column: str,
-        text: str,
-        k: int = 5,
-    ) -> List[Dict[str, Any]]:
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+    ) -> List[Contact]:
         """
-        Search the contacts based on a general text description for the column contents.
-        Specifically, return the **k** tasks whose text embeddings are *closest*
-        (cosine distance) to the supplied *text*
-
-        It's always best to use *this tool* when searching for a contact with a similar
-        description, role, or any other text-based column. Semantic similarity based
-        on embeddings are *much* more robust and accurate than trying to get an exact
-        match on multi-word substrings for any text-based columns.
+        Semantic search over contacts using one or more reference texts.
 
         Parameters
         ----------
-        column : str
-            Name of the text column to embed (any default or custom column).
-        text : str
-            Query text.
-        k : int, default 5
-            Number of closest rows to return.
+        references : Dict[str, str] | None, default None
+            Mapping of ``source_expr → reference_text`` terms that define the search space.
+            - ``source_expr`` can be either a simple column name (e.g. ``"bio"``,
+              ``"first_name"``) or a full Unify derived‑expression (e.g.
+              ``"str({first_name}) + ' ' + str({surname})"``). For expressions, a stable
+              derived source column is created automatically if needed.
+            - ``reference_text`` is free‑form text which will be embedded using the
+              configured embedding model.
+            When ``None`` or an empty dict, semantic search is skipped and the most recent
+            contacts are returned using backfill-only logic.
+        k : int, default 10
+            Maximum number of contacts to return. Must be a positive integer.
 
         Returns
         -------
-        List[Dict[str, Any]]
-            Rows sorted by ascending cosine distance.
-        """
-        vec_col = f"_{column}_emb"
-        self._ensure_table_vector(column=vec_col, source=column)
-        logs = unify.get_logs(
-            context=self._ctx,
-            sorting={
-                f"cosine({vec_col}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
-            },
-            limit=k,
-            exclude_fields=[
-                k
-                for k in unify.get_fields(context=self._ctx).keys()
-                if k.endswith("_emb")
-            ],
-        )
-        return [Contact(**lg.entries) for lg in logs]
+        List[Contact]
+            Up to ``k`` Pydantic ``Contact`` models. When semantic references are provided,
+            results are sorted by similarity (ascending cosine distance). When references
+            are omitted/empty, returns the most recent contacts. System contacts (ids ``0``
+            and ``1``) are excluded.
 
+        Notes
+        -----
+        - When a single term is provided, results are ranked by ``cosine(column_emb, ref)``.
+        - When multiple terms are provided, results are ranked by the sum of cosines across
+          all terms to favour contacts similar across several fields.
+        - Embedding columns (``*_emb``) are excluded from the returned models to keep payloads
+          compact.
+        """
+        # Restrict payloads to built‑in + known custom columns to avoid an
+        # upfront fields lookup and reduce transfer size. Semantic sorting uses
+        # private columns server‑side and does not require them in the payload.
+        allowed_fields = list(self._BUILTIN_FIELDS)
+        if getattr(self, "_known_custom_fields", None):
+            allowed_fields.extend(sorted(self._known_custom_fields))
+
+        # Exclude system contacts (assistant/user) from search results
+        system_filter = "contact_id != 0 and contact_id != 1"
+
+        # Persisted embedding flow: ensure vector/derived columns exist (first use),
+        # then sort by cosine/mean-cosine using server-side columns.
+        rows = fetch_top_k_by_references(
+            self._ctx,
+            references,
+            k=k,
+            allowed_fields=allowed_fields,
+            row_filter=system_filter,
+        )
+
+        filled = backfill_rows(
+            self._ctx,
+            rows,
+            k,
+            row_filter=system_filter,
+            unique_id_field="contact_id",
+            allowed_fields=allowed_fields,
+        )
+        return [Contact(**r) for r in filled]
+
+    @_log_tool_runtime
     def _filter_contacts(
         self,
         *,
@@ -1299,42 +1690,128 @@ class ContactManager(BaseContactManager):
         limit: int = 100,
     ) -> List[Contact]:
         """
-        Run a **column-wise Python expression** (`filter`) against every contact
-        and return the matching rows.
+        Filter contacts using a boolean Python expression evaluated per row.
 
-        Do *not* use this tool when searching for a contact with a similar description.
-        Trying to get an exact match on substrings (especially with multiple words)
-        is very brittle, and likely to return no matches. The `search_contacts` tool is
-        *much* more robust and accurate when searching over any text-based columns.
+        Prefer this for exact, column‑wise filtering (e.g. id or equality checks). For
+        fuzzy or semantic matches across free‑text columns, use ``_search_contacts``.
 
         Parameters
         ----------
         filter : str | None, default None
-            A boolean Python expression evaluated against each contact
-            (e.g. "first_name == 'John' and surname == 'Doe'"). None
-            returns all records.
+            A Python boolean expression evaluated with column names in scope. Examples:
+            - ``"first_name == 'John' and surname == 'Doe'"``
+            - ``"contact_id != 0 and contact_id != 1"``
+            - ``"email_address.endswith('@company.com')"``
+            When ``None``, returns all contacts. String comparisons are case‑sensitive unless
+            your expression applies a case‑normalisation.
         offset : int, default 0
-            Index of the first result to return (0-based).
+            Zero‑based index of the first result to include.
         limit : int, default 100
             Maximum number of records to return.
 
         Returns
         -------
         List[Contact]
-            A list of Pydantic Contact models in creation order.
+            Matching contacts as Pydantic ``Contact`` models in creation order. Embedding
+            columns (``*_emb``) are excluded from the payload to keep responses small.
+
+        Notes
+        -----
+        - Be careful with quoting inside the expression. Use single quotes to delimit string
+          literals inside the filter string.
+        - This tool is brittle for substring searches across text; prefer ``_search_contacts``
+          for that purpose.
         """
-        logs = unify.get_logs(
-            context=self._ctx,
-            filter=filter,
-            offset=offset,
-            limit=limit,
-            exclude_fields=[
-                k
-                for k in unify.get_fields(context=self._ctx).keys()
-                if k.endswith("_emb")
-            ],
-        )
+        # Prefer a single backend call that whitelists the built‑in columns to
+        # keep payloads small without a prior fields introspection request.
+        # If the client does not support `from_fields`, fall back to excluding
+        # private fields using a lightweight introspection.
+        # Fast-path: tighten the requested limit when the filter guarantees
+        # at most a single match (unique equality) or a bounded small list.
+        eff_limit = limit
+        if isinstance(filter, str):
+            # contact_id == <int>
+            if re.fullmatch(r"\s*contact_id\s*==\s*\d+\s*", filter):
+                eff_limit = min(eff_limit, 1)
+            else:
+                # Equality on unique fields → at most one row
+                unique_eq_patterns = (
+                    r"\s*email_address\s*==\s*(['\"])\S.*?\1\s*",
+                    r"\s*phone_number\s*==\s*(['\"])\S.*?\1\s*",
+                    r"\s*whatsapp_number\s*==\s*(['\"])\S.*?\1\s*",
+                )
+                if any(re.fullmatch(p, filter) for p in unique_eq_patterns):
+                    eff_limit = min(eff_limit, 1)
+                else:
+                    # contact_id in [a, b, c] → cap at list length
+                    m = re.fullmatch(
+                        r"\s*contact_id\s*in\s*\[\s*([0-9,\s]+)\s*\]\s*",
+                        filter,
+                    )
+                    if m:
+                        count_ids = len(re.findall(r"\d+", m.group(1)))
+                        if count_ids > 0:
+                            eff_limit = min(eff_limit, count_ids)
+
+        try:
+            # Read built‑ins plus any custom columns we observed in this instance
+            from_fields = list(self._BUILTIN_FIELDS)
+            if getattr(self, "_known_custom_fields", None):
+                from_fields.extend(sorted(self._known_custom_fields))
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter=filter,
+                offset=offset,
+                limit=eff_limit,
+                from_fields=from_fields,
+            )
+        except TypeError:
+            # Older client without from_fields support → avoid an extra
+            # get_fields call and fetch once with the tightened limit.
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter=filter,
+                offset=offset,
+                limit=eff_limit,
+            )
         return [Contact(**lg.entries) for lg in logs]
+
+    # ------------------------------------------------------------------ #
+    #  Small internal helpers (LLM client + tool policies)               #
+    # ------------------------------------------------------------------ #
+
+    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
+        """Construct a configured AsyncUnify client for the given model."""
+        return unify.AsyncUnify(
+            model,
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
+        )
+
+    @staticmethod
+    def _default_ask_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require search_contacts on the first step; auto thereafter."""
+        if step_index < 1 and "search_contacts" in current_tools:
+            return (
+                "required",
+                {"search_contacts": current_tools["search_contacts"]},
+            )
+        return ("auto", current_tools)
+
+    @staticmethod
+    def _default_update_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require ask on the first step; auto thereafter."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
+        return ("auto", current_tools)
 
     @staticmethod
     def _inject_broader_context(msgs: list[dict]) -> list[dict]:
@@ -1344,6 +1821,16 @@ class ContactManager(BaseContactManager):
         ``preprocess_msgs`` parameter so that **every** LLM invocation sees a
         *fresh* broader-context snippet pulled from ``MemoryManager`` just
         before the request is dispatched.
+
+        Parameters
+        ----------
+        msgs : list[dict]
+            Messages to preprocess.
+
+        Returns
+        -------
+        list[dict]
+            Messages with the broader context injected into system prompts.
         """
 
         import copy

@@ -1,3 +1,5 @@
+"""Enumerated states for a task lifecycle."""
+
 from enum import StrEnum
 
 
