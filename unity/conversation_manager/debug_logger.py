@@ -17,8 +17,10 @@ def log_job_startup(
     user_name: str,
     assistant_name: str,
     user_number: str,
-    user_phone_call_number: str,
+    user_whatsapp_number: str,
     assistant_number: str,
+    user_email: str,
+    assistant_email: str,
 ):
     try:
         unify.create_logs(
@@ -34,8 +36,10 @@ def log_job_startup(
                 "user_name": user_name,
                 "assistant_name": assistant_name,
                 "user_number": user_number,
-                "user_phone_call_number": user_phone_call_number,
+                "user_whatsapp_number": user_whatsapp_number,
                 "assistant_number": assistant_number,
+                "user_email": user_email,
+                "assistant_email": assistant_email,
                 "running": True,
             },
             api_key=api_key,

@@ -2,6 +2,7 @@ import sys
 import json
 import os
 
+
 sys.path.append("..")
 import asyncio
 
@@ -22,7 +23,7 @@ from livekit.plugins import (
 
 if sys.platform == "darwin":
     from livekit.plugins import noise_cancellation
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
 
 from livekit.agents import ModelSettings, llm, FunctionTool, Agent
@@ -33,12 +34,10 @@ from unity.conversation_manager_2.event_broker import get_event_broker
 
 load_dotenv()
 
-from unity.conversation_manager.events import *
+from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager.utils import (
     dispatch_agent,
     publish_event,
-    close_connection,
-    create_connection,
 )
 
 event_broker = get_event_broker()
@@ -72,17 +71,15 @@ class Assistant(Agent):
     ) -> None:
         # events_queue.put_nowait(PhoneUtteranceEvent(role="User", content=new_message.text_content))
         # we will handle this through the events manager
-        msg = {
-                "topic": self.from_number,
-                "to": "pending",
-                "event": PhoneUtteranceEvent(
-                    role="User",
-                    content=new_message.text_content,
-                ).to_dict(),
-            }
-        await event_broker.publish("app:comms:phone_utterance", json.dumps(msg))
+        print("sending user message...")
+        await event_broker.publish(
+            "app:comms:phone_utterance",
+            PhoneUtterance(
+                contact=os.environ["CALL_FROM_NUMBER"],
+                content=new_message.text_content,
+            ).to_json(),
+        )
         raise llm.StopResponse()
-
 
     async def llm_node(
         self,
@@ -99,7 +96,6 @@ class Assistant(Agent):
         #     async for msg in pubsub.listen():
         #         ...
 
-
         while True:
             chunk = await chunk_queue.get()
             if chunk["type"] == "end_gen":
@@ -113,41 +109,39 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Get phone numbers from environment variables
     from_number = os.environ.get("CALL_FROM_NUMBER", "")
-    tts_provider = os.environ.get("TTS_PROVIDER", "cartesia")
+    voice_provider = os.environ.get("VOICE_PROVIDER", "cartesia")
     voice_id = os.environ.get("VOICE_ID", "")
     # to_number = os.environ.get("CALL_TO_NUMBER", "")
     outbound = os.environ.get("OUTBOUND", "False") == "True"
 
-    print("tts_provider", tts_provider)
+    print("voice_provider", voice_provider)
     print("voice_id", voice_id)
 
     session = AgentSession(
-        stt=deepgram.STT(model="nova-3", language="multi"),
+        stt=deepgram.STT(model="nova-3", language="en-GB"),
         llm=openai.LLM(model="gpt-4o"),
         tts=(
             elevenlabs.TTS(
                 voice_id=voice_id if voice_id != "" else elevenlabs.DEFAULT_VOICE_ID,
                 model="eleven_multilingual_v2",
             )
-            if tts_provider == "elevenlabs"
+            if voice_provider == "elevenlabs"
             else cartesia.TTS(
                 voice=voice_id if voice_id != "" else cartesia.tts.TTSDefaultVoiceId,
             )
         ),
-        vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
+        vad=silero.VAD.load(min_speech_duration=0.15),
+        turn_detection=EnglishModel(),
     )
 
     async def end_call():
         print("Initiating graceful shutdown...")
 
         # Send end call event before cleaning tasks and closing connection
-        msg = {
-                "topic": from_number,
-                "to": "past",
-                "event": PhoneCallEndedEvent().to_dict(),
-            }
-        await event_broker.publish("app:comms:phone_call_ended", json.dumps(msg))
+        await event_broker.publish(
+            "app:comms:phone_call_ended",
+            PhoneCallEnded(contact=os.environ["CALL_FROM_NUMBER"]).to_json(),
+        )
         print("End call event sent")
 
         # Get all running tasks except current task
@@ -163,6 +157,8 @@ async def entrypoint(ctx: agents.JobContext):
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
                 print("All tasks cancelled successfully")
+            except asyncio.CancelledError:
+                pass
             except Exception as e:
                 print(f"Error during task cancellation: {e}")
 
@@ -198,7 +194,6 @@ async def entrypoint(ctx: agents.JobContext):
 
     ctx.room.on("participant_disconnected", on_participant_disconnected)
 
-
     assistant = Assistant(
         from_number=from_number,
         # meet_id=meet_id if meet_id else None,
@@ -219,15 +214,10 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Initialize connection using utility function
     # reader, writer = await create_connection("call")
-    user_number = os.environ.get("USER_NUMBER", "")
-    msg = {
-            "topic": user_number,
-            "to": "pending",
-            "event": PhoneCallStartedEvent().to_dict(),
-        }
+
     await event_broker.publish(
         "app:comms:phone_call_started",
-        json.dumps(msg)
+        PhoneCallStarted(contact=os.environ["CALL_FROM_NUMBER"]).to_json(),
     )
 
     async def response_task():
@@ -247,28 +237,28 @@ async def entrypoint(ctx: agents.JobContext):
                     phone_utterance = result[0]
                 except:
                     phone_utterance = ""
-                if phone_utterance:
-                    # send assistant response as an event to be added in past events
-                    msg = {
-                                "to": "past",
-                                "topic": from_number,
-                                "event": PhoneUtteranceEvent(
-                                    role="Assistant",
-                                    content=phone_utterance,
-                                ).to_dict(),
-                            }
-                    asyncio.create_task(
-                        event_broker.publish("app:comms:phone_utterance",
-                            {
-                                "to": "past",
-                                "topic": from_number,
-                                "event": PhoneUtteranceEvent(
-                                    role="Assistant",
-                                    content=phone_utterance,
-                                ).to_dict(),
-                            },
-                        ),
-                    )
+                    # if phone_utterance:
+                    #     # send assistant response as an event to be added in past events
+                    #     msg = {
+                    #                 "to": "past",
+                    #                 "topic": from_number,
+                    #                 "event": PhoneUtterance(
+                    #                     role="Assistant",
+                    #                     content=phone_utterance,
+                    #                 ).to_dict(),
+                    #             }
+                    #     asyncio.create_task(
+                    #         event_broker.publish("app:comms:phone_utterance",
+                    #             json.dumps({
+                    #                 "to": "past",
+                    #                 "topic": from_number,
+                    #                 "event": PhoneUtterance(
+                    #                     role="Assistant",
+                    #                     content=phone_utterance,
+                    #                 ).to_dict(),
+                    #             }),
+                    #         ),
+                    #     )
                     # Update activity time on assistant response
                     last_activity_time = asyncio.get_event_loop().time()
                     # send interupt as an event to be added to pending events (?)
@@ -277,15 +267,12 @@ async def entrypoint(ctx: agents.JobContext):
                     # another way would be to signal the event manager that the user is talking now and prevent any
                     # agent response until the user finishes talking
                     if result[1]:
-                        msg = {
-                                    "to": "past",
-                                    "topic": from_number,
-                                    "event": InterruptEvent().to_dict(),
-                            }
                         asyncio.create_task(
                             event_broker.publish(
                                 "app:comms:interrupt",
-                                msg
+                                Interrupt(
+                                    contact=os.environ["CALL_FROM_NUMBER"]
+                                ).to_json(),
                             ),
                         )
         except asyncio.CancelledError:
@@ -296,10 +283,16 @@ async def entrypoint(ctx: agents.JobContext):
         global chunk_queue
 
         async with event_broker.pubsub() as pubsub:
+            await pubsub.subscribe("app:call:response_gen")
+            print("waiting for events...")
             while True:
                 try:
-                    await pubsub.subscribe("app:call:response_gen")
-                    msg = await pubsub.get_message(ignore_subscribe_messages=True)
+                    msg = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=None
+                    )
+                    if msg is None:
+                        continue
+                    print("done", msg)
                     msg = json.loads(msg["data"])
                     print("GOT", msg)
                     # Update activity time on any event
@@ -330,7 +323,7 @@ if __name__ == "__main__":
     from_number = ""
     assistant_number = ""
     to_number = ""
-    tts_provider = "cartesia"
+    voice_provider = "cartesia"
     voice_id = ""
     meet_id = ""
     outbound = "False"
@@ -340,25 +333,23 @@ if __name__ == "__main__":
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
-        tts_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
+        voice_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
         voice_id = sys.argv[5]
-        meet_id = sys.argv[6] if sys.argv[6] != "None" else ""
         outbound = sys.argv[7]
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint
     os.environ["CALL_FROM_NUMBER"] = from_number
-    os.environ["TTS_PROVIDER"] = tts_provider
-    os.environ["MEET_ID"] = meet_id
+    os.environ["VOICE_PROVIDER"] = voice_provider
     if voice_id != "None":
         os.environ["VOICE_ID"] = voice_id
     # os.environ["CALL_TO_NUMBER"] = assistant_number
     os.environ["OUTBOUND"] = outbound
 
-    agent_name = f"unity_{assistant_number}" if meet_id == "" else meet_id
+    agent_name = f"unity_{assistant_number}"
 
     # dispatch agent
-    if sys.argv[1] == "dev" and not meet_id:
+    if sys.argv[1] == "dev":
         dispatch_agent(agent_name)
 
     agents.cli.run_app(

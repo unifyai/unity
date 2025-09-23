@@ -1,3 +1,5 @@
+"""Priority levels for tasks."""
+
 from enum import StrEnum
 
 

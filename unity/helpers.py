@@ -107,7 +107,7 @@ def run_script(
     elif sys.platform == "darwin":
         # ───────────────────────── macOS ───────────────────────────
         if not terminal:
-            return subprocess.Popen(py_cmd)
+            return subprocess.Popen(py_cmd, start_new_session=True)
 
         # Create a unique PID-file so we can discover the real python PID
         process_id = f"{script_path.stem}_{int(time.time())}"

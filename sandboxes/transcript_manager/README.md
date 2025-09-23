@@ -1,9 +1,12 @@
 Transcript Manager Sandbox
 ==========================
 
-This folder contains an **interactive playground** for the `TranscriptManager` component that lives in `unity/transcript_manager/`.  The goal of the sandbox is to let you experiment with the manager in isolation – seed imaginary multi-channel conversations, query them in natural-language, and observe how the underlying tool-loop behaves before you integrate the manager into a larger system.
+This folder contains an **interactive playground** for the `TranscriptManager` component that lives in `unity/transcript_manager/`.  The goal of the sandbox is to let you experiment with the manager in isolation – seed imaginary multi-channel conversations, query them in natural-language, and observe how the underlying tool-loop behaves (including steerable tools and clarification requests) before you integrate the manager into a larger system.
 
-Prefer a quick demo? Watch this [video walkthrough](https://www.loom.com/share/d600aa86f59a41a3ba2f4f1cbc3089d1?sid=88f1518e-de7a-4778-9c6e-d1ae8920cf1c)
+### Video walkthroughs
+- General overview (comprehensive, but older sandbox version): [Loom video](https://www.loom.com/share/d600aa86f59a41a3ba2f4f1cbc3089d1?sid=70e250ec-3e82-48b0-aa17-2da9024a2fff)
+- In-flight steerable tools: [Loom video](https://www.loom.com/share/94af912090f2411ea95c5775c2281452?sid=246def2f-53d7-497e-98e4-4542f4c3c13c)
+- Clarification requests flow: [Loom video](https://www.loom.com/share/0865f7cf33ca4cae8305000766ca45db?sid=82be14d6-64ce-4061-9a14-2c2f79c773ec)
 
 What is the `TranscriptManager`?
 --------------------------------
@@ -26,20 +29,24 @@ python -m sandboxes.transcript_manager.sandbox --voice
 ```
 
 CLI flags
-~~~~~~~~~
+---------
 `sandbox.py` re-uses the common helper in `sandboxes/utils.py`, so it shares a standard set of options:
 
 ```
---voice / -v        Enable voice capture (Deepgram) + TTS playback (Cartesia)
---debug / -d        Show full reasoning steps of every tool-loop
---traced / -t       Wrap manager calls with unify.traced for detailed logs
---project_name / -p Name of the Unify **project/context** (default: "Sandbox")
---overwrite / -o    Delete any existing data for the chosen project before start
---project_version   Roll back to a specific project commit (int index)
+--voice / -v         Enable voice capture (Deepgram) + TTS playback (Cartesia)
+--debug / -d         Show full reasoning steps of every tool-loop
+--traced / -t        Wrap manager calls with unify.traced for detailed logs
+--project_name / -p  Name of the Unify **project/context** (default: "Sandbox")
+--overwrite / -o     Delete any existing data for the chosen project before start
+--project_version    Roll back to a specific project commit (int index)
+--log_in_terminal    Stream logs to the terminal in addition to writing file logs
+--no_clarifications  Disable interactive clarification requests (text and voice)
+--log_tcp_port       Serve main logs over TCP on localhost:PORT (-1 auto; 0 off)
+--http_log_tcp_port  Serve Unify Request logs over TCP on localhost:PORT (-1 auto when UNIFY_REQUESTS_DEBUG)
 ```
 
 Interactive commands inside the REPL
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+------------------------------------
 Once the sandbox starts you will see a prompt and a small help table.  The most important commands are:
 
 * `us {description}`    Build **synthetic transcripts** through the official public tools using `ScenarioBuilder` + `TranscriptGenerator`.
@@ -53,24 +60,24 @@ Once the sandbox starts you will see a prompt and a small help table.  The most 
 ### Steering controls (during a running request)
 While an `ask` call is running, you can steer it in-flight. Type these commands (they only work while a request is active):
 
-- **/i <text> | /interject <text> | plain text**: Interject guidance that the tool-loop should incorporate immediately. If you don’t prefix with `/`, any plain text you type during a run is treated as an interjection.
+- **plain text | /freeform <text> | /i <text>**: Route free-form text via the steering router. The router decides whether it's an ask, interject, pause, resume, stop, or status.
 - **/pause | /p**: Pause the running call.
 - **/resume**: Resume a paused call.
 - **/ask <question> | /? <question>**: Ask a read-only side question about the currently running call; the answer prints inline without changing the main call’s state.
-- **/freeform <text>**: Route free-form text to the best steering command (ask/interject/pause/resume/stop/status).
+- Plain text is now equivalent to typing `/freeform <text>`.
 - **/r | /record** (voice mode only): Record a voice utterance and route it via freeform. Recording auto-cancels if the task finishes mid-capture.
-- **/stop | /cancel | /s | /c**: Abort the running call.
+- **/stop | /cancel | /s**: Abort the running call.
 - **/status | /st**: Print whether the call is still running or already done.
 - **/help | /h**: Show the one-line controls hint.
 
 Notes:
 - Steering commands are ignored when no call is running; you’ll see a small hint if you try.
-- In voice mode, during TTS playback you can press Enter to skip. Steering commands (including `/r`) are entered after playback finishes.
+- In voice mode, during TTS playback you can press Enter to skip. Steering commands (including `/r`) are entered after playback finishes; `/r` auto‑cancels if the run finishes while recording.
 
 Example:
 ```text
 command> When did Dan last speak with Julia on the phone?
-Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /r, /stop, /help
+Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text> (or plain text), /r, /stop, /help
 /i include messages from the last 60 days only
 /ask which channels are being searched right now?
 /pause
@@ -78,8 +85,35 @@ Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /r, /stop, /he
 /status
 ```
 
+Clarification requests
+----------------------
+During a run, the assistant may ask for missing details (for example, "Which Julia did you mean?"). When a clarification is pending you can:
+
+- Type your answer directly (plain text), or
+- Use `/c <answer>` to send a text clarification, or
+- In voice mode, use `/rc` to record and send a spoken clarification.
+
+Example:
+```text
+❓ Clarification requested: Which Julia did you mean?
+/c Julia Smith
+✅ Clarification sent.
+```
+
+Scenario generation via ScenarioBuilder
+--------------------------------------
+`us` and `usv` build or update synthetic transcripts through public tools using `ScenarioBuilder` + `TranscriptGenerator`. The LLM is constrained to the exposed tools (no back‑doors) and finishes when the requested scenario is fully represented. Clarifications are supported during generation as well.
+
+Logging and debugging
+---------------------
+- The main session log is written to `.logs_main.txt` (overwritten each run). Pass `--log_in_terminal` to also stream logs to the terminal.
+- Optional TCP streams:
+  - Main logs: `--log_tcp_port -1` auto-picks a port (or specify one). Connect with `nc 127.0.0.1 <PORT>`.
+  - Unify Request logs only: `--http_log_tcp_port -1` auto-enables when `UNIFY_REQUESTS_DEBUG` is set; connect with `nc 127.0.0.1 <PORT>`.
+- A dedicated Unify Request log file is also written to `.logs_unify_requests.txt`.
+
 Example session (text mode)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+---------------------------
 ```text
 $ python -m sandboxes.transcript_manager.sandbox -d
 TranscriptManager sandbox – type commands below …

@@ -270,9 +270,11 @@ def tm_scenario(request: pytest.FixtureRequest):
     """
     os.environ["TQDM_DISABLE"] = "1"
 
-    unify.set_context("test_transcript_manager")
+    ctx = "tests/test_transcript_manager/Scenario"
+    unify.set_context(ctx, relative=False)
     sb = ScenarioBuilder()
-    existing_contexts = unify.get_contexts(prefix="test_transcript_manager")
+    existing_contexts = unify.get_contexts(prefix=ctx)
+    existing_context_names = list(existing_contexts.keys())
     no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
 
     # If --no-reuse-scenario is explicitly set, override reuse_scenario
@@ -286,11 +288,12 @@ def tm_scenario(request: pytest.FixtureRequest):
         def delete_all_contexts(ctx):
             unify.delete_context(ctx)
 
-        unify.map(
-            delete_all_contexts,
-            list(existing_contexts.keys()),
-            mode="asyncio",
-        )
+        if existing_context_names:
+            unify.map(
+                delete_all_contexts,
+                existing_context_names,
+                mode="asyncio",
+            )
 
     if reuse_scenario and not SCENARIO_COMMIT_HASHES:
 
@@ -303,11 +306,12 @@ def tm_scenario(request: pytest.FixtureRequest):
                 )
                 SCENARIO_COMMIT_HASHES[ctx] = history[0]["commit_hash"]
 
-        unify.map(
-            get_and_rollback_context,
-            list(existing_contexts.keys()),
-            mode="asyncio",
-        )
+        if existing_context_names:
+            unify.map(
+                get_and_rollback_context,
+                existing_context_names,
+                mode="asyncio",
+            )
 
     # --- One-time setup (per session) ---
     if not SCENARIO_COMMIT_HASHES:
@@ -321,11 +325,47 @@ def tm_scenario(request: pytest.FixtureRequest):
             )
             SCENARIO_COMMIT_HASHES[ctx] = commit_info["commit_hash"]
 
-        unify.map(
-            commit_context_and_store,
-            list(existing_contexts.keys()),
-            mode="asyncio",
-        )
+        # After seeding, re-fetch contexts created under the test prefix
+        created_contexts = unify.get_contexts(prefix=ctx)
+        created_context_names = list(created_contexts.keys())
+
+        if created_context_names:
+            unify.map(
+                commit_context_and_store,
+                created_context_names,
+                mode="asyncio",
+            )
+        else:
+            # Fallback: try committing known child contexts if present
+            all_ctxs = unify.get_contexts()
+            for _ctx in [
+                f"{ctx}/Contacts",
+                f"{ctx}/Transcripts",
+            ]:
+                if _ctx in all_ctxs:
+                    commit_context_and_store(_ctx)
+
+    # If we reused an existing scenario (no fresh seeding in this process), the
+    # in-memory name→id map may still be empty. Rebuild it from the Contacts table
+    # so downstream tests (that rely on _ID_BY_NAME) do not fail.
+    if not _ID_BY_NAME:
+        try:
+            # Attempt to read all contacts in the active scenario and populate the map.
+            # We prefer the ContactManager tool to keep logic consistent.
+            contacts = sb.cm._filter_contacts(limit=1000)
+            rebuilt: dict[str, int] = {}
+            for c in contacts or []:
+                try:
+                    first = getattr(c, "first_name", None)
+                    cid = getattr(c, "contact_id", None)
+                    if first is not None and cid is not None:
+                        rebuilt[str(first).lower()] = int(cid)
+                except Exception:
+                    continue
+            if rebuilt:
+                _ID_BY_NAME.update(rebuilt)
+        except Exception as _exc:
+            pass
 
     unify.unset_context()
     yield sb.tm, _ID_BY_NAME
@@ -342,6 +382,8 @@ def tm_manager_scenario(tm_scenario):
         )
 
     # Rollback to clean state before test
-    unify.map(rollback_context, list(SCENARIO_COMMIT_HASHES.keys()), mode="asyncio")
+    scenario_names = list(SCENARIO_COMMIT_HASHES.keys())
+    if scenario_names:
+        unify.map(rollback_context, scenario_names, mode="asyncio")
 
     yield tm, _ID_BY_NAME

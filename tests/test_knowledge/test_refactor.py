@@ -56,10 +56,8 @@ async def test_refactor_removes_duplicate_opening_hours():
     cm._create_contact(
         first_name="Alice",
         surname="Smith",
-        custom_fields={
-            "opening_hours": "Mon-Fri 09:00-17:00",
-            "employer_name": "Acme",
-        },
+        opening_hours="Mon-Fri 09:00-17:00",
+        employer_name="Acme",
     )
 
     # Companies table with the same opening_hours column

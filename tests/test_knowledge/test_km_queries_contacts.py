@@ -37,7 +37,7 @@ async def test_km_ask_joins_contact_and_company():
     cm._create_contact(
         first_name="Steve",
         surname="Taylor",
-        custom_fields={"employer": "BigCorp"},
+        employer="BigCorp",
     )
 
     # ➋ Set up companies knowledge

@@ -77,6 +77,7 @@ def test_update_trigger_on_scheduled_task_raises():
     ts = TaskScheduler()
 
     future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    qid = ts._allocate_new_queue_id()
     tid = ts._create_task(
         name="Morning maintenance window",
         description="Auto-patch servers tomorrow.",
@@ -84,9 +85,9 @@ def test_update_trigger_on_scheduled_task_raises():
     )["details"]["task_id"]
 
     with pytest.raises(ValueError):
-        ts._update_task_trigger(
+        ts._update_task(
             task_id=tid,
-            new_trigger=Trigger(medium=Medium.WHATSAPP_MSG),
+            trigger=Trigger(medium=Medium.WHATSAPP_MSG),
         )
 
 
@@ -107,7 +108,7 @@ def test_clear_trigger_transitions_status():
         trigger=trig,
     )["details"]["task_id"]
 
-    ts._update_task_trigger(task_id=tid, new_trigger=None)
+    ts._update_task(task_id=tid, trigger=None)
 
     row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
     assert row["trigger"] is None
@@ -132,9 +133,9 @@ def test_start_at_on_trigger_task_raises():
     )["details"]["task_id"]
 
     with pytest.raises(ValueError):
-        ts._update_task_start_at(
+        ts._update_task(
             task_id=tid,
-            new_start_at=datetime.now(timezone.utc) + timedelta(hours=2),
+            start_at=datetime.now(timezone.utc) + timedelta(hours=2),
         )
 
 
@@ -149,9 +150,11 @@ def test_update_queue_rejects_trigger_tasks():
     ts = TaskScheduler()
 
     # Normal queued task
+    qid = ts._allocate_new_queue_id()
     ts._create_task(
         name="Prep deck",
         description="Slides.",
+        schedule=Schedule(),
     )
 
     # Trigger-based task
@@ -162,7 +165,7 @@ def test_update_queue_rejects_trigger_tasks():
     )["details"]["task_id"]
 
     with pytest.raises(ValueError):
-        ts._update_task_queue(original=[0], new=[trig_tid, 0])
+        ts._set_queue(queue_id=qid, order=[trig_tid, 0])
 
 
 # --------------------------------------------------------------------------- #
@@ -194,7 +197,7 @@ async def test_triggerable_start_clones_instance():
     assert len(rows_before) == 1 and rows_before[0]["instance_id"] == 0
 
     # Activate
-    handle = await ts.execute_task(text=str(tid))
+    handle = await ts.execute(text=str(tid))
 
     # Two rows should now exist: 0 (active) and 1 (still triggerable)
     rows_after = ts._filter_tasks(filter=f"task_id == {tid}")
@@ -205,5 +208,5 @@ async def test_triggerable_start_clones_instance():
     assert status_by_inst[1] == "triggerable"
 
     # Clean-up (avoid background thread leaks)
-    handle.stop()
+    handle.stop(cancel=True)
     await handle.result()

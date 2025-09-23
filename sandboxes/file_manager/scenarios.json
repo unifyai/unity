@@ -1,0 +1,17 @@
+{
+    "semantic_search_demo": [
+        "us Demonstrate FileManager's powerful semantic search capabilities using the sample files. Show how to find documents by content similarity, search across multiple files for related topics, and discover connections between documents using natural language queries."
+    ],
+    "content_filtering": [
+        "us Showcase the filtering capabilities to find files by exact criteria like file types, processing status, or metadata properties. Demonstrate how to combine search and filter operations to precisely locate specific documents in large collections."
+    ],
+    "cross_document_analysis": [
+        "us Load the sample documents and demonstrate advanced cross-document analysis: comparing content between technical documentation and policy documents, finding common themes, extracting structured information, and performing comparative analysis across file types."
+    ],
+    "document_intelligence": [
+        "us Show intelligent document processing using both individual file queries and collection-wide analysis. Demonstrate how to extract key information from policy documents, technical manuals, and other file types using the comprehensive FileManager toolset."
+    ],
+    "business_workflow": [
+        "us Create a business scenario using the IT policy and technical documentation samples. Show how to search for compliance information, extract technical specifications, and answer business questions by combining information from multiple document sources."
+    ]
+}

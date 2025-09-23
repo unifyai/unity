@@ -52,17 +52,17 @@ on:
         description: "Per-test timeout in seconds"
         required: false
         type: number
-        default: 120
+        default: 240
       test_session_timeout:
         description: "Test session timeout in minutes (for all tests)"
         required: false
         type: number
-        default: 120
+        default: 60
       runner_timeout:
         description: "Runner timeout in minutes"
         required: false
         type: number
-        default: 130
+        default: 70
 
 jobs:
   black:
@@ -81,12 +81,44 @@ jobs:
     - name: Run black check
       run: black --diff --color --check .
 
-  pytest:
+  discover:
     runs-on: ubuntu-latest
-    environment: unity-testing
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 130 }}
+    outputs:
+      test_dirs: ${{ steps.set-matrix.outputs.test_dirs }}
     steps:
     - uses: actions/checkout@v2
+
+    - id: set-matrix
+      shell: bash
+      run: |
+        # If a specific test_path is provided and not '.', use it; otherwise discover subdirectories one level under tests/
+        if [[ -n "${{ inputs.test_path }}" && "${{ inputs.test_path }}" != "." ]]; then
+          dirs="${{ inputs.test_path }}"
+        else
+          dirs=$(find tests -mindepth 1 -maxdepth 1 -type d -printf '%p\n' | sort)
+        fi
+        echo "Found test dirs:" >&2
+        echo "$dirs" >&2
+        json=$(printf '%s\n' "$dirs" | python3 -c 'import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
+        echo "test_dirs=$json" >> "$GITHUB_OUTPUT"
+
+  pytest:
+    name: pytest (${{ matrix.test_path }})
+    runs-on: ubuntu-latest
+    environment: unity-testing
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 70 }}
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix:
+        test_path: ${{ fromJSON(needs.discover.outputs.test_dirs) }}
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Normalize test path
+      id: normalize-path
+      run: |
+        echo "test_path_normalized=$(echo '${{ matrix.test_path }}' | tr '/' '_')" >> $GITHUB_OUTPUT
 
     - name: Set up Python
       uses: actions/setup-python@v2
@@ -123,13 +155,25 @@ jobs:
         # 5) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 6) cleanup
+        # 6) Install docling package
+        uv pip install "docling>=2.49.0"
+
+        # 7) cleanup
         rm temp_requirements.txt
+
+    - name: Restore .cache.ndjson
+      id: cache-read
+      uses: actions/cache/restore@v4
+      with:
+        path: .cache.ndjson
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+        restore-keys: |
+          cache-ndjson-${{ runner.os }}-
 
     - name: Run unit tests
       run: |
         xvfb-run .unity/bin/python -m pytest \
-          --timeout=${{ inputs.test_timeout || 120 }} \
+          --timeout=${{ inputs.test_timeout || 240 }} \
           -p no:warnings \
           -vv \
           --durations=${{ inputs.test_show_slowest || 20 }} \
@@ -140,9 +184,9 @@ jobs:
           --self-contained-html \
           --junitxml=report.xml \
           --session-timeout=$((UNITY_TESTS_SESSION_TIMEOUT * 60)) \
-          --test-log-file="tests.log" ${{ inputs.test_path || '.' }}
+          --test-log-file="tests.log" ${{ matrix.test_path }}
       env:
-        UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 120 }}
+        UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 60 }}
         UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
         UNIFY_TESTS_RAND_PROJ: true
         UNIFY_TESTS_DELETE_PROJ_ON_EXIT: true
@@ -150,8 +194,10 @@ jobs:
         UNIFY_BASE_URL: https://api.unify.ai/v0
         UNIFY_CACHE: true
         UNIFY_TRACED: false
-        UNIFY_DELETE_CONTEXT_ON_EXIT: true
+        UNIFY_DELETE_CONTEXT_ON_EXIT: false
         UNIFY_OVERWRITE_PROJECT: true
+        UNIFY_CACHE_BENCHMARK: true
+        UNIFY_PRETEST_CONTEXT_CREATE: true
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         FIRST_NAME: Rick
         AGENT_FIRST: Rick
@@ -162,13 +208,57 @@ jobs:
         REGISTER_SUMMARY_CALLBACKS: false
         REGISTER_UPDATE_CALLBACKS: false
 
-    - name: Upload test results
+    - name: Upload cache artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results
+        name: cache-diff-${{ github.run_id }}-${{ steps.normalize-path.outputs.test_path_normalized }}
+        path: .cache_write.ndjson
+        if-no-files-found: ignore
+        include-hidden-files: true
+        retention-days: 1
+
+    - name: Upload test artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ format('test-results-{0}', steps.normalize-path.outputs.test_path_normalized) }}
         path: |
           tests.log
           report.xml
           report.html
         retention-days: 7
+
+  cache-consolidation:
+    name: Consolidate and store cache
+    runs-on: ubuntu-latest
+    needs: pytest
+    if: always()
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Restore existing consolidated cache
+      id: cache-restore
+      uses: actions/cache/restore@v4
+      with:
+        path: .cache.ndjson
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+        restore-keys: |
+          cache-ndjson-${{ runner.os }}-
+
+    - name: Download cache artifacts from current run
+      uses: actions/download-artifact@v4
+      with:
+        pattern: cache-diff-*
+        path: cache-artifacts
+
+    - name: Consolidate .cache.ndjson files
+      run: |
+        python3 .github/scripts/consolidate_cache.py \
+          --artifacts-dir cache-artifacts
+
+    - name: Store consolidated cache
+      uses: actions/cache/save@v4
+      with:
+        path: .cache.ndjson
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
