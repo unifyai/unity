@@ -45,3 +45,6 @@ opencv-python
 # Document parsing
 langchain>=0.3.27
 docling
+
+# Web search SDKs
+tavily-python
