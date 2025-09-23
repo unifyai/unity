@@ -1,5 +1,5 @@
 from typing import Union, Dict, List
-from .loop import LoopConfig
+from .loop_config import LoopConfig
 from ...events.event_bus import Event, EVENT_BUS
 
 

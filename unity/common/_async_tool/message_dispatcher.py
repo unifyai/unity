@@ -1,4 +1,5 @@
-from .loop import LoopConfig, TimeoutTimer
+from .loop_config import LoopConfig
+from .timeout_timer import TimeoutTimer
 from .event_bus_util import to_event_bus
 import unify
 
