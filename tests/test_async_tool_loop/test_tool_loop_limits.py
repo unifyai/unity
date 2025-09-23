@@ -4,8 +4,8 @@ import pytest
 import unify
 from typing import Dict, Callable
 
-from unity.common.llm_helpers import start_async_tool_use_loop
-from unity.common.llm_helpers import ToolSpec
+from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.tool_spec import ToolSpec
 from tests.helpers import SETTINGS
 
 

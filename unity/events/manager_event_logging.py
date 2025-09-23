@@ -6,7 +6,7 @@ import functools
 from uuid import uuid4
 
 from ..events.event_bus import EVENT_BUS, Event
-from ..common.llm_helpers import SteerableToolHandle
+from ..common.async_tool_loop import SteerableToolHandle
 
 __all__ = [
     "new_call_id",

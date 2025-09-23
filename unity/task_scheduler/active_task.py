@@ -15,7 +15,7 @@ from typing import Optional, Dict, Callable, TYPE_CHECKING, List, Any
 
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
-from unity.common.llm_helpers import SteerableToolHandle
+from unity.common.async_tool_loop import SteerableToolHandle
 from .llm import new_llm_client
 
 

@@ -4,7 +4,7 @@ import unify
 from typing import Any, Dict
 from pydantic import BaseModel
 import inspect
-from unity.common.llm_helpers import (
+from unity.common.async_tool_loop import (
     SteerableToolHandle,
 )
 

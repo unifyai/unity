@@ -4,7 +4,10 @@ import types
 import pytest
 import unify
 
-from unity.common.llm_helpers import start_async_tool_use_loop, AsyncToolUseLoopHandle
+from unity.common.async_tool_loop import (
+    start_async_tool_use_loop,
+    AsyncToolUseLoopHandle,
+)
 from tests.helpers import _handle_project, SETTINGS
 
 

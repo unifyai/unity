@@ -14,10 +14,10 @@ import asyncio
 
 import pytest
 
-from unity.common.llm_helpers import (
-    _async_tool_use_loop_inner,
+from unity.common.async_tool_loop import (
     start_async_tool_use_loop,
 )
+from unity.common._async_tool.loop import async_tool_use_loop_inner
 from unity.events.event_bus import EVENT_BUS
 from tests.helpers import _handle_project, SETTINGS
 
@@ -51,7 +51,7 @@ async def test_basic_event_flow() -> None:
     pause_event = asyncio.Event()
     pause_event.set()  # start un-paused
 
-    await _async_tool_use_loop_inner(
+    await async_tool_use_loop_inner(
         client=client,
         message="world",
         tools={"echo": echo},
