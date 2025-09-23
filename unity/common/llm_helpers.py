@@ -647,43 +647,6 @@ def _build_helper_ack_content(name: str, args_json: Any) -> str:
     return ack_content
 
 
-# ── small helper: add completion tool message pair ──────────────
-async def _emit_completion_pair(
-    result: str,
-    call_id: str,
-    msg_dispatcher: LoopMessageDispatcher,
-) -> dict:
-    """
-    Append a synthetic assistant→tool pair that carries the *final*
-    outcome for `call_id`.  Returns the tool-message so callers can
-    reuse it for logging / event-bus.
-    """
-    dummy_id = f"{call_id}_status"
-
-    assistant_stub = {
-        "role": "assistant",
-        "tool_calls": [
-            {
-                "id": dummy_id,
-                "type": "function",
-                "function": {
-                    "name": f"check_status_{call_id}",
-                    "arguments": "{}",
-                },
-            },
-        ],
-        "content": "",
-    }
-    tool_msg = create_tool_call_message(
-        name=f"check_status_{call_id}",
-        call_id=dummy_id,
-        content=result,
-    )
-
-    await msg_dispatcher.append_msgs([assistant_stub, tool_msg])
-    return tool_msg
-
-
 # ── small helper: keep assistant→tool chronology DRY ────────────────────
 async def _insert_tool_message_after_assistant(
     assistant_meta: dict,
@@ -926,6 +889,43 @@ class _ToolsData:
     def _can_offer_tool(self, task_name: str) -> bool:
         limit = self.normalized[task_name].max_concurrent
         return limit is None or self.active_count(task_name) < limit
+
+    # ── small helper: add completion tool message pair ──────────────
+    @staticmethod
+    async def _emit_completion_pair(
+        result: str,
+        call_id: str,
+        msg_dispatcher: LoopMessageDispatcher,
+    ) -> dict:
+        """
+        Append a synthetic assistant→tool pair that carries the *final*
+        outcome for `call_id`.  Returns the tool-message so callers can
+        reuse it for logging / event-bus.
+        """
+        dummy_id = f"{call_id}_status"
+
+        assistant_stub = {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": dummy_id,
+                    "type": "function",
+                    "function": {
+                        "name": f"check_status_{call_id}",
+                        "arguments": "{}",
+                    },
+                },
+            ],
+            "content": "",
+        }
+        tool_msg = create_tool_call_message(
+            name=f"check_status_{call_id}",
+            call_id=dummy_id,
+            content=result,
+        )
+
+        await msg_dispatcher.append_msgs([assistant_stub, tool_msg])
+        return tool_msg
 
     def has_exceeded_quota_for_tool(self, task_name: str) -> bool:
         if task_name not in self.normalized:
@@ -1325,21 +1325,33 @@ class _ToolsData:
                 )
                 tool_msg = continue_msg
             else:  # 🆕 keep history stable
-                tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+                tool_msg = await self._emit_completion_pair(
+                    result,
+                    call_id,
+                    msg_dispatcher,
+                )
 
         elif clarify_ph is not None:
             if _at_tail(clarify_ph):
                 clarify_ph["content"] = result
                 tool_msg = clarify_ph
             else:
-                tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+                tool_msg = await self._emit_completion_pair(
+                    result,
+                    call_id,
+                    msg_dispatcher,
+                )
 
         elif tool_reply_msg is not None:
             if _at_tail(tool_reply_msg):
                 tool_reply_msg["content"] = result
                 tool_msg = tool_reply_msg
             else:
-                tool_msg = await _emit_completion_pair(result, call_id, msg_dispatcher)
+                tool_msg = await self._emit_completion_pair(
+                    result,
+                    call_id,
+                    msg_dispatcher,
+                )
 
         else:
             tool_msg = create_tool_call_message(name, call_id, result)
