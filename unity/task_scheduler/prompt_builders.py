@@ -121,6 +121,19 @@ def build_ask_prompt(
             "• Avoid re‑querying the same tables or managers just to reconfirm what a prior tool call has already established with clear, specific evidence; reuse the earlier result and proceed.",
             "• Do not immediately queue a filter call after a successful semantic search unless you genuinely need an exact, structured constraint that the search did not capture.",
             f"• Avoid calling `{contact_ask_fname}` repeatedly in the same reasoning queue when earlier calls have already identified the relevant contacts and no new ambiguity or information has been introduced.",
+            (
+                f"• Never infer queue order from numeric task_id values; inspect the chain using `{get_queue_fname}(queue_id=<id>)` or `{get_queue_for_task_fname}(task_id=<id>)`."
+                if (get_queue_fname and get_queue_for_task_fname)
+                else (
+                    f"• Never infer queue order from numeric task_id values; inspect the chain using `{get_queue_for_task_fname}(task_id=<id>)`."
+                    if get_queue_for_task_fname
+                    else (
+                        f"• Never infer queue order from numeric task_id values; inspect the chain using `{get_queue_fname}(queue_id=<id>)`."
+                        if get_queue_fname
+                        else "• Never infer queue order from numeric task_id values; inspect the chain using the available queue tools."
+                    )
+                )
+            ),
         ],
     )
 
@@ -256,7 +269,7 @@ def build_update_prompt(
                 "",
                 "Multi-task creation (preferred)",
                 "-------------------------------",
-                f"• When creating several new tasks at once and you know their order/time, prefer `{create_tasks_fname}` over issuing multiple `{create_task_fname}` calls.",
+                f"• When creating several new tasks at once and you know their order/time, prefer `{create_tasks_fname}` over issuing multiple `{create_task_fname}` calls; fall back to incremental creation only when clarifications are needed or when mixing new tasks with existing tasks in a queue.",
             ],
         )
 
@@ -370,6 +383,19 @@ def build_update_prompt(
             '• Repeating the exact same update tool with identical arguments to "make sure" – instead, call ask to verify.',
             "• Using substring filters to locate tasks by description/name – prefer semantic ask/search first.",
             "• Chaining a filter right after a conclusive semantic search when the filter does not add new, structured constraints.",
+            (
+                f"• Never infer queue order from numeric task_id values; inspect the chain using `{get_queue_fname}(queue_id=<id>)` or `{get_queue_for_task_fname}(task_id=<id>)`."
+                if (get_queue_fname and get_queue_for_task_fname)
+                else (
+                    f"• Never infer queue order from numeric task_id values; inspect the chain using `{get_queue_for_task_fname}(task_id=<id>)`."
+                    if get_queue_for_task_fname
+                    else (
+                        f"• Never infer queue order from numeric task_id values; inspect the chain using `{get_queue_fname}(queue_id=<id>)`."
+                        if get_queue_fname
+                        else "• Never infer queue order from numeric task_id values; inspect the chain using the available queue tools."
+                    )
+                )
+            ),
         ],
     )
 
