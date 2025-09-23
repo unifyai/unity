@@ -318,6 +318,7 @@ class ConversationManager:
             await self.scheduele_llm_run(0, cancel_running=True)
 
         elif isinstance(event, PhoneCallEnded):
+            self.mode = "text"
             terminate_process(self.call_proc)
 
         elif isinstance(event, PhoneUtterance):
