@@ -26,7 +26,7 @@ from typing import List
 
 import pytest
 import unify
-from unity.common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
+from unity.common.async_tool_loop import start_async_tool_use_loop, SteerableToolHandle
 
 # Shared helpers
 from tests.helpers import _handle_project, SETTINGS

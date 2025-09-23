@@ -9,9 +9,11 @@ import copy
 import uuid
 
 from unity.common.llm_helpers import (
+    _strip_image_keys,
+)
+from unity.common.async_tool_loop import (
     start_async_tool_use_loop,
     SteerableToolHandle,
-    _strip_image_keys,
 )
 from ..task_scheduler.base import BaseActiveTask
 from .base import BaseActor

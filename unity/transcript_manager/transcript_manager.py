@@ -17,11 +17,13 @@ from .types.message import Message
 from ..contact_manager.types.contact import Contact
 from ..common.model_to_fields import model_to_fields
 from ..common.llm_helpers import (
-    start_async_tool_use_loop,
-    SteerableToolHandle,
     methods_to_tool_dict,
     make_request_clarification_tool,
     inject_broader_context,
+)
+from ..common.async_tool_loop import (
+    start_async_tool_use_loop,
+    SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
 from ..events.manager_event_logging import (

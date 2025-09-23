@@ -16,7 +16,7 @@ from .prompt_builders import (
     build_update_prompt,
     build_simulated_method_prompt,
 )
-from ..common.llm_helpers import SteerableToolHandle
+from ..common.async_tool_loop import SteerableToolHandle
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,

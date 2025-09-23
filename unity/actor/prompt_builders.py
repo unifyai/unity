@@ -7,8 +7,8 @@ from typing import Callable, Dict, Any, Optional
 from unity.common.llm_helpers import (
     class_api_overview,
     get_type_hints,
-    SteerableToolHandle,
 )
+from unity.common.async_tool_loop import SteerableToolHandle
 
 
 def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:

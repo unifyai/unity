@@ -26,7 +26,7 @@ import importlib.machinery
 import uuid
 from pathlib import Path
 import contextvars
-from unity.common.llm_helpers import (
+from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_use_loop,
 )

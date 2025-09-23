@@ -36,7 +36,8 @@ import unify
 # --------------------------------------------------------------------------- #
 #  MODULE UNDER TEST                                                          #
 # --------------------------------------------------------------------------- #
-import unity.common.llm_helpers as llmh  # noqa: E402 – after site-imports
+from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.tool_spec import ToolSpec
 
 
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")  # override if you like
@@ -103,7 +104,7 @@ def count_tool_messages(client: unify.AsyncUnify) -> int:
 async def test_happy_path_single_sync_tool():
     client = new_client()
 
-    answer = await llmh.start_async_tool_use_loop(
+    answer = await start_async_tool_use_loop(
         client,
         message="Add 2 and 3 using the `add` tool and answer with the result only.",
         tools={"add": add},
@@ -154,7 +155,7 @@ async def test_concurrent_tools_waits_for_all_results():
     client = InstrumentedClient(MODEL_NAME)
     client.set_traced(True)
 
-    _ = await llmh.start_async_tool_use_loop(
+    _ = await start_async_tool_use_loop(
         client,
         message=(
             "Call *both* tools `fast` and `slow` in parallel, wait for the "
@@ -192,7 +193,7 @@ async def test_concurrent_tools_waits_for_all_results():
 async def test_recovers_after_failure():
     client = new_client()
 
-    answer = await llmh.start_async_tool_use_loop(
+    answer = await start_async_tool_use_loop(
         client,
         message=(
             "First divide 4 by 0 using the `divide` tool – that will fail.   "
@@ -217,7 +218,7 @@ async def test_aborts_after_too_many_failures():
     client = new_client()
 
     with pytest.raises(RuntimeError):
-        await llmh.start_async_tool_use_loop(
+        await start_async_tool_use_loop(
             client,
             message=("Please run the launch tool."),
             tools={"launch": launch},
@@ -234,7 +235,7 @@ async def test_aborts_after_too_many_failures():
 async def test_mixed_sync_async_tools():
     client = new_client()
 
-    answer = await llmh.start_async_tool_use_loop(
+    answer = await start_async_tool_use_loop(
         client,
         message=(
             "Call the async tool `fast_tool` (which just returns a token),   "
@@ -275,7 +276,7 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
     # ------------------------------------------------------------------ #
     log.clear()
     client = new_client()
-    await llmh.start_async_tool_use_loop(
+    await start_async_tool_use_loop(
         client=client,
         message=prompt,
         tools={"echo": echo},
@@ -317,7 +318,7 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
     # ------------------------------------------------------------------ #
     log.clear()
     client = new_client()
-    await llmh.start_async_tool_use_loop(
+    await start_async_tool_use_loop(
         client=client,
         message=prompt,
         tools={"echo": echo},
@@ -372,7 +373,7 @@ async def test_no_tools_with_system_message() -> None:
     """
     client = new_client()  # ← already includes the system message
 
-    answer = await llmh.start_async_tool_use_loop(
+    answer = await start_async_tool_use_loop(
         client,
         message="Just reply with a friendly greeting – no tools are available.",
         tools={},  # ← empty tool-kit
@@ -399,7 +400,7 @@ async def test_no_tools_without_system_message() -> None:
     client = unify.AsyncUnify(MODEL_NAME)
     client.set_traced(True)
 
-    answer = await llmh.start_async_tool_use_loop(
+    answer = await start_async_tool_use_loop(
         client,
         message="Say hello back to me – there are no tools at all.",
         tools={},  # ← still an empty tool-kit
@@ -441,7 +442,7 @@ async def test_max_concurrent_limit_is_obeyed() -> None:  # noqa: D401
     limited.__name__ = "limited"
     limited.__qualname__ = "limited"
 
-    tools = {"limited": llmh.ToolSpec(fn=limited, max_concurrent=1)}
+    tools = {"limited": ToolSpec(fn=limited, max_concurrent=1)}
 
     client = new_client()
 
@@ -449,7 +450,7 @@ async def test_max_concurrent_limit_is_obeyed() -> None:  # noqa: D401
     # that we can synchronise on the **first** tool request and ensure all
     # timing events are captured in the correct order.
 
-    handle = llmh.start_async_tool_use_loop(
+    handle = start_async_tool_use_loop(
         client=client,
         message=(
             "Invoke `limited` twice *concurrently* – once with 'one', once "

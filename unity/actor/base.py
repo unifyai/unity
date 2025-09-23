@@ -5,7 +5,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from unity.common.llm_helpers import SteerableToolHandle
+from unity.common.async_tool_loop import SteerableToolHandle
 
 logger = logging.getLogger(__name__)
 
