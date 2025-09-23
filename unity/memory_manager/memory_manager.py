@@ -13,7 +13,7 @@ from ..contact_manager.contact_manager import ContactManager
 from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
 from ..task_scheduler.task_scheduler import TaskScheduler
-from ..common.async_tool_loop import methods_to_tool_dict
+from ..common.llm_helpers import methods_to_tool_dict
 from ..common.async_tool_loop import start_async_tool_use_loop
 from .prompt_builders import (
     build_contact_update_prompt,
@@ -396,7 +396,7 @@ class MemoryManager(BaseMemoryManager):
         #   cleaned-up schema that hides now-forbidden parameters.
         # ----------------------------------------------------------------
         from inspect import Signature, Parameter, signature as _sig  # type: ignore
-        from unity.common.async_tool_loop import _strip_hidden_params_from_doc
+        from unity.common.llm_helpers import _strip_hidden_params_from_doc
 
         _FORBIDDEN = {"bio", "rolling_summary", "custom_fields"}
 

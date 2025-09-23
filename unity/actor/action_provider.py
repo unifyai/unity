@@ -13,7 +13,7 @@ from unity.controller.browser import Browser
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-from unity.common.async_tool_loop import methods_to_tool_dict
+from unity.common.llm_helpers import methods_to_tool_dict
 
 
 class ActionProvider:

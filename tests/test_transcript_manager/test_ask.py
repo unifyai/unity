@@ -25,7 +25,7 @@ import asyncio
 import unify
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
-from unity.common.async_tool_loop import _dumps
+from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project, SETTINGS
 

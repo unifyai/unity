@@ -11,7 +11,7 @@ from pydantic_core import from_json
 import unify
 from collections import deque
 from unity.helpers import run_script, terminate_process
-from unity.common.async_tool_loop import methods_to_tool_dict
+from unity.common.llm_helpers import methods_to_tool_dict
 from unity.common.async_tool_loop import start_async_tool_use_loop
 from unity.memory_manager.broader_context import get_broader_context
 from unity.conversation_manager.debug_logger import log_job_startup, mark_job_done

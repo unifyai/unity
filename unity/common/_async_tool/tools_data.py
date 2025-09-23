@@ -18,12 +18,7 @@ from .tools_utils import ToolCallMetadata, create_tool_call_message
 from .messages import insert_tool_message_after_assistant, chat_context_repr
 from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
-from ..async_tool_loop import (
-    method_to_schema,
-    _collect_images,
-    _strip_image_keys,
-    _dumps,
-)
+from ..llm_helpers import method_to_schema, _collect_images, _strip_image_keys, _dumps
 from contextlib import suppress
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed

@@ -103,7 +103,7 @@ def _build_tool_dict(
     pairs: List[Tuple[Any, str]],
     include_class_name_for: set[Any] | None = None,
 ) -> Dict[str, Any]:
-    from unity.common.async_tool_loop import methods_to_tool_dict
+    from unity.common.llm_helpers import methods_to_tool_dict
 
     include_class_name_for = include_class_name_for or set()
     by_owner: Dict[Any, List[Any]] = {}
@@ -155,7 +155,7 @@ def mirror_contact_manager_tools(kind: str) -> Dict[str, Any]:
     kind: "ask" or "update". Uses AST reflection with a static fallback.
     """
     from unity.contact_manager.contact_manager import ContactManager
-    from unity.common.async_tool_loop import methods_to_tool_dict
+    from unity.common.llm_helpers import methods_to_tool_dict
 
     target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
 
@@ -205,7 +205,7 @@ def mirror_transcript_manager_tools() -> Dict[str, Any]:
 
     Uses AST reflection of TranscriptManager.__init__ with a static fallback.
     """
-    from unity.common.async_tool_loop import methods_to_tool_dict
+    from unity.common.llm_helpers import methods_to_tool_dict
     from unity.transcript_manager.transcript_manager import TranscriptManager
     from unity.contact_manager.contact_manager import ContactManager
 
@@ -243,7 +243,7 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
     that external tools like ContactManager.ask retain their class-qualified naming
     by applying include_class_name=True for those only.
     """
-    from unity.common.async_tool_loop import methods_to_tool_dict
+    from unity.common.llm_helpers import methods_to_tool_dict
     from unity.task_scheduler.task_scheduler import TaskScheduler
     from unity.contact_manager.contact_manager import ContactManager
 
@@ -320,7 +320,7 @@ def mirror_knowledge_manager_tools(kind: str) -> Dict[str, Any]:
     merge tools referenced by "_refactor_tools" because the real implementation
     unions those into "_update_tools".
     """
-    from unity.common.async_tool_loop import methods_to_tool_dict
+    from unity.common.llm_helpers import methods_to_tool_dict
     from unity.knowledge_manager.knowledge_manager import KnowledgeManager as KM
 
     target_map = {
@@ -398,7 +398,7 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
 
     kind: "ask" or "update". Uses AST reflection with a static fallback.
     """
-    from unity.common.async_tool_loop import methods_to_tool_dict
+    from unity.common.llm_helpers import methods_to_tool_dict
     from unity.file_manager.file_manager import FileManager
 
     target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
