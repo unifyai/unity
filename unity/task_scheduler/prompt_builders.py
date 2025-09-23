@@ -217,6 +217,7 @@ def build_update_prompt(
     # Multi-queue helpers (optional if not present)
     list_queues_fname = tool_name(tools, "list_queues")
     get_queue_fname = tool_name(tools, "get_queue")
+    get_queue_for_task_fname = tool_name(tools, "get_queue_for_task")
     reorder_queue_fname = tool_name(tools, "reorder_queue")
     move_tasks_to_queue_fname = tool_name(tools, "move_tasks_to_queue")
     partition_queue_fname = tool_name(tools, "partition_queue")
