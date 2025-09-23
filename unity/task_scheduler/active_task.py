@@ -4,7 +4,7 @@ from typing import Optional, Dict, Callable, TYPE_CHECKING
 
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
-from unity.common.llm_helpers import SteerableToolHandle
+from unity.common.async_tool_loop import SteerableToolHandle
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler

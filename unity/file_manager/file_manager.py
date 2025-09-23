@@ -17,10 +17,12 @@ import unify
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    start_async_tool_use_loop,
-    SteerableToolHandle,
     inject_broader_context,
     make_request_clarification_tool,
+)
+from ..common.async_tool_loop import (
+    start_async_tool_use_loop,
+    SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
 from ..events.manager_event_logging import (

@@ -16,11 +16,13 @@ import unify
 from .types.contact import Contact
 from .base import BaseContactManager
 from ..common.llm_helpers import (
-    start_async_tool_use_loop,
-    SteerableToolHandle,
     methods_to_tool_dict,
     inject_broader_context,
     make_request_clarification_tool,
+)
+from ..common.async_tool_loop import (
+    start_async_tool_use_loop,
+    SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
 from ..events.event_bus import EVENT_BUS, Event

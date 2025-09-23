@@ -1,5 +1,5 @@
 from typing import Any, Type
-from unity.common.llm_helpers import (
+from unity.common.async_tool_loop import (
     SteerableToolHandle,
 )
 from unity.actor.tool_loop_actor import ToolLoopActor

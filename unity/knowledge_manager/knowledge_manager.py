@@ -13,11 +13,13 @@ from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..helpers import _handle_exceptions
 from .types import ColumnType
 from ..common.llm_helpers import (
-    start_async_tool_use_loop,
-    SteerableToolHandle,
     methods_to_tool_dict,
     inject_broader_context,
     make_request_clarification_tool,
+)
+from ..common.async_tool_loop import (
+    start_async_tool_use_loop,
+    SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
 from .base import BaseKnowledgeManager

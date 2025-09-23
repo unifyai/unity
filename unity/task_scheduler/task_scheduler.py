@@ -13,10 +13,12 @@ from pydantic import BaseModel, Field
 
 
 from ..common.llm_helpers import (
-    start_async_tool_use_loop,
-    SteerableToolHandle,
     methods_to_tool_dict,
     inject_broader_context,
+)
+from ..common.async_tool_loop import (
+    start_async_tool_use_loop,
+    SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
 from ..common.tool_outcome import ToolOutcome
