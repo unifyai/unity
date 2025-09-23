@@ -18,6 +18,7 @@ from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
 from dataclasses import dataclass
 from pydantic import BaseModel, Field
+from ..constants import LOGGER
 
 
 from ..common.llm_helpers import (
@@ -141,6 +142,15 @@ def _ts_log_tool_runtime(func):
             if _ts_timing_print_enabled():
                 try:
                     print(f"TaskScheduler.{func.__name__} took {elapsed_ms:.2f} ms")
+                except Exception:
+                    pass
+
+            # Always emit timing to the central logger when timing is enabled so it reaches the broadcast port
+            if _ts_timing_enabled():
+                try:
+                    LOGGER.info(
+                        f"[tool-timing] TaskScheduler.{func.__name__} took {elapsed_ms:.2f} ms",
+                    )
                 except Exception:
                     pass
 
@@ -974,23 +984,9 @@ class TaskScheduler(BaseTaskScheduler):
         tools = methods_to_tool_dict(
             # Read-only helpers
             self.ask,
-            # Multi-queue helpers (coarse, invariant-preserving)
+            # Queue inspection only (no mutation in execute)
             self._list_queues,
             self._get_queue,
-            self._reorder_queue,
-            self._move_tasks_to_queue,
-            self._partition_queue,
-            # Atomic queue materialization
-            self._set_queue,
-            self._set_schedules_atomic,
-            # Plan helpers
-            self.validate_queue_plan,
-            self.apply_queue_plan,
-            # Reintegration and safety
-            self._reinstate_task_to_previous_queue,
-            self.checkpoint_queue_state,
-            self.revert_to_checkpoint,
-            self.get_latest_checkpoint,
             # Start execution
             _execute_by_id,
             _execute_isolated_by_id,

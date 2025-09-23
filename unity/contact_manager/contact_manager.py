@@ -29,6 +29,7 @@ from ..common.semantic_search import (
     fetch_top_k_by_references,
     backfill_rows,
 )
+from ..constants import LOGGER
 
 # ------------------------------------------------------------------ #
 #  Optional per-tool runtime logging                                  #
@@ -86,6 +87,15 @@ def _log_tool_runtime(func):
             if _timing_print_enabled():
                 try:
                     print(f"ContactManager.{func.__name__} took {elapsed_ms:.2f} ms")
+                except Exception:
+                    pass
+
+            # Emit to central logger so timing lines reach the broadcast port
+            if _timing_enabled():
+                try:
+                    LOGGER.info(
+                        f"[tool-timing] ContactManager.{func.__name__} took {elapsed_ms:.2f} ms",
+                    )
                 except Exception:
                     pass
 
