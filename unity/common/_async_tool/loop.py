@@ -27,18 +27,6 @@ from .loop_config import LoopConfig, TOOL_LOOP_LINEAGE
 from .tools_utils import ToolCallMessage, ToolCallMetadata, create_tool_call_message
 from .timeout_timer import TimeoutTimer
 
-# Dynamic-handle helpers ––––––––––––––––––––––––––––––––––––––––––––––––––––––
-#  Public methods we *do not* expose again (already wrapped by dedicated helpers
-#  or meaningless to the LLM).
-_MANAGEMENT_METHOD_NAMES: set[str] = {
-    "interject",
-    "pause",
-    "resume",
-    "stop",
-    "done",
-    "result",
-}
-
 
 class LoopLogger:
     def __init__(self, cfg: LoopConfig, log_steps: bool | str) -> None:
@@ -611,6 +599,15 @@ class _ToolsData:
 
 
 class DynamicToolFactory:
+    _MANAGEMENT_METHOD_NAMES: set[str] = {
+        "interject",
+        "pause",
+        "resume",
+        "stop",
+        "done",
+        "result",
+    }
+
     @dataclass
     class _ToolContext:
         fn_name: str
@@ -648,7 +645,7 @@ class DynamicToolFactory:
         for name, attr in inspect.getmembers(handle):
             if (
                 name.startswith("_")
-                or name in _MANAGEMENT_METHOD_NAMES
+                or name in DynamicToolFactory._MANAGEMENT_METHOD_NAMES
                 or not callable(attr)
             ):
                 continue
