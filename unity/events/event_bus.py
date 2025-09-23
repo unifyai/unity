@@ -1256,6 +1256,8 @@ class EventBus:
         )
         cls_path = entries.pop("payload_cls", "")
         etype = entries.pop("type", default_type)
+        # Prefer non-flattened payload when available (newer schema)
+        payload_json_str = entries.pop("payload_json", None)
 
         # Attempt to rehydrate structured payloads
         Model: type[BaseModel] | None = None
@@ -1266,13 +1268,22 @@ class EventBus:
             except (ModuleNotFoundError, AttributeError, ValueError):
                 Model = None
 
+        # Determine the payload dict to validate/use: prefer JSON blob when present
+        if payload_json_str is not None:
+            try:
+                parsed_payload = json.loads(payload_json_str)
+            except Exception:
+                parsed_payload = entries
+        else:
+            parsed_payload = entries
+
         if Model is not None:
             try:
-                payload_obj = Model.model_validate(entries)
+                payload_obj = Model.model_validate(parsed_payload)
             except ValidationError:
-                payload_obj = entries
+                payload_obj = parsed_payload
         else:
-            payload_obj = entries
+            payload_obj = parsed_payload
 
         return Event(
             event_id=event_id,
