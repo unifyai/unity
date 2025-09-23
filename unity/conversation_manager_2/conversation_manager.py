@@ -97,7 +97,7 @@ class ConversationManager:
         self.mode: Literal["call", "gmeet", "text"] = "text"
         # self.current_llm_run = None
         self.current_response: asyncio.Task | None = None
-        self.schedueled_response: asyncio.Task | None = None
+        self.scheduled_response: asyncio.Task | None = None
 
         # switches to "True" when in a call
 
@@ -235,10 +235,10 @@ class ConversationManager:
         self.chat_history.append({"role": "assistant", "content": out})
         print(self.chat_history)
 
-    async def scheduele_llm_run(self, delay=1, cancel_running=False):
-        if self.schedueled_response and not self.schedueled_response.done():
+    async def schedule_llm_run(self, delay=1, cancel_running=False):
+        if self.scheduled_response and not self.scheduled_response.done():
             with contextlib.suppress(asyncio.CancelledError):
-                await self.schedueled_response
+                await self.scheduled_response
 
         if cancel_running:
             if self.current_response and not self.current_response.done():
@@ -254,7 +254,7 @@ class ConversationManager:
             self.current_response = asyncio.create_task(self.run_llm())
 
         if delay > 0:
-            self.schedueled_response = asyncio.create_task(run_llm_delayed(delay))
+            self.scheduled_response = asyncio.create_task(run_llm_delayed(delay))
         else:
             if not cancel_running:
                 with contextlib.suppress(asyncio.CancelledError):
@@ -276,10 +276,10 @@ class ConversationManager:
                 # TODO: fix this branch
                 if msg is None:
                     # if (
-                    #     self.pending_events and (not self.schedueled_response or self.schedueled_response.done())
+                    #     self.pending_events and (not self.scheduled_response or self.scheduled_response.done())
                     #     and (not self.current_response or self.current_response.done())
                     # ):
-                    # await self.scheduele_llm_run(0)
+                    # await self.schedule_llm_run(0)
                     ...
                 else:
                     event = Event.from_json(msg["data"])
@@ -290,16 +290,16 @@ class ConversationManager:
         self.state.push_event(event)
         if isinstance(event, PhoneCallInitiated):
             # start phone call process and wait untils its done, we should probably make sure
-            # first that any running llm calls are awaited, and any schedueled llm calls are canceled
+            # first that any running llm calls are awaited, and any scheduled llm calls are canceled
             # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
             if self.mode in ["call", "gmeet"]:
                 # can't make the call
                 ...
             else:
-                if self.schedueled_response and not self.schedueled_response.done():
-                    self.schedueled_response.cancel()
+                if self.scheduled_response and not self.scheduled_response.done():
+                    self.scheduled_response.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
-                        await self.schedueled_response
+                        await self.scheduled_response
                 if self.current_response and not self.current_response.done():
                     await self.current_response
 
@@ -320,21 +320,21 @@ class ConversationManager:
 
         elif isinstance(event, PhoneCallStarted):
             self.mode = "call"
-            await self.scheduele_llm_run(0, cancel_running=True)
+            await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, PhoneCallEnded):
             self.mode = "text"
             terminate_process(self.call_proc)
 
         elif isinstance(event, PhoneUtterance):
-            await self.scheduele_llm_run(0, cancel_running=True)
+            await self.schedule_llm_run(0, cancel_running=True)
 
         else:
-            # otherwise (whatsapp, sms, email) just scheduele another llm run after 2 seconds
+            # otherwise (whatsapp, sms, email) just schedule another llm run after 2 seconds
             # if there is no response at the moment, if there is a response, cancel it, and scheduel
-            # check if there is a schedueled response, rescheduele
+            # check if there is a scheduled response, reschedule
             if self.mode == "text":
-                await self.scheduele_llm_run(2, cancel_running=True)
+                await self.schedule_llm_run(2, cancel_running=True)
 
 
 # think about the end behaviour (how the events should look like in the end)
