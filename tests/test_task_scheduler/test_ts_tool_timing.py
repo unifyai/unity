@@ -26,7 +26,8 @@ def test_tool_list_columns_timing():
     cols = ts._list_columns()
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(cols, dict) and cols
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 0.1
+    print(f"elapsed: {elapsed_ms} < 0.1")
 
 
 @pytest.mark.unit
@@ -38,7 +39,8 @@ def test_tool_num_tasks_timing():
     n = ts._num_tasks()
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(n, int) and n >= 1
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 1000
+    print(f"elapsed: {elapsed_ms} < 1000")
 
 
 @pytest.mark.unit
@@ -49,7 +51,8 @@ def test_tool_create_task_timing():
     out = ts._create_task(name="TT Create " + _uniq(), description="timing create")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"]
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 2700
+    print(f"elapsed: {elapsed_ms} < 2700")
 
 
 @pytest.mark.unit
@@ -66,7 +69,8 @@ def test_tool_create_tasks_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert resp["outcome"]
     assert len(resp["details"]["task_ids"]) == 2
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 7300
+    print(f"elapsed: {elapsed_ms} < 7300")
 
 
 @pytest.mark.unit
@@ -80,7 +84,8 @@ def test_tool_filter_tasks_timing():
     rows = ts._filter_tasks(filter=f"task_id == {tid}")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert rows and rows[0]["task_id"] == tid
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 1200
+    print(f"elapsed: {elapsed_ms} < 1200")
 
 
 @pytest.mark.unit
@@ -93,7 +98,8 @@ def test_tool_search_tasks_timing():
     results = ts._search_tasks(references={"description": "banking"}, k=1)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(results, list)
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 5100
+    print(f"elapsed: {elapsed_ms} < 5100")
 
 
 @pytest.mark.unit
@@ -107,7 +113,8 @@ def test_tool_delete_task_timing():
     out = ts._delete_task(task_id=tid)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["details"]["task_id"] == tid
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 1300
+    print(f"elapsed: {elapsed_ms} < 1300")
 
 
 @pytest.mark.unit
@@ -121,7 +128,8 @@ def test_tool_cancel_tasks_timing():
     out = ts._cancel_tasks([tid])
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert tid in out["details"]["task_ids"]
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 2500
+    print(f"elapsed: {elapsed_ms} < 2500")
 
 
 @pytest.mark.unit
@@ -141,7 +149,8 @@ def test_tool_list_queues_timing():
     queues = ts._list_queues()
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert any(q.get("queue_id") == qid for q in queues)
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 0.1
+    print(f"elapsed: {elapsed_ms} < 0.1")
 
 
 @pytest.mark.unit
@@ -160,7 +169,8 @@ def test_tool_get_queue_timing():
     chain = ts._get_queue(queue_id=qid)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert [t.task_id for t in chain] == [a, b]
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 1200
+    print(f"elapsed: {elapsed_ms} < 1200")
 
 
 @pytest.mark.unit
@@ -178,7 +188,8 @@ def test_tool_get_queue_for_task_timing():
     q = ts._get_queue_for_task(task_id=a)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert [t.task_id for t in q][:2] == [a, b]
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 1100
+    print(f"elapsed: {elapsed_ms} < 1100")
 
 
 @pytest.mark.unit
@@ -195,7 +206,8 @@ def test_tool_set_queue_timing():
     out = ts._set_queue(queue_id=None, order=[a, b])
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["details"].get("queue_id") is not None
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 4700
+    print(f"elapsed: {elapsed_ms} < 4700")
 
 
 @pytest.mark.unit
@@ -215,7 +227,8 @@ def test_tool_reorder_queue_timing():
     out = ts._reorder_queue(queue_id=qid, new_order=new_order)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["details"]["new_order"] == new_order
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 4100
+    print(f"elapsed: {elapsed_ms} < 4100")
 
 
 @pytest.mark.unit
@@ -234,7 +247,8 @@ def test_tool_move_tasks_to_queue_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["details"].get("queue_id") is not None
     assert a in out["details"]["task_ids"]
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 12600
+    print(f"elapsed: {elapsed_ms} < 12600")
 
 
 @pytest.mark.unit
@@ -264,7 +278,8 @@ def test_tool_set_schedules_atomic_timing():
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["details"]["count"] == 2
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 6700
+    print(f"elapsed: {elapsed_ms} < 6700")
 
 
 @pytest.mark.unit
@@ -285,7 +300,8 @@ def test_tool_partition_queue_timing():
     out = ts._partition_queue(parts=[{"task_ids": [a]}, {"task_ids": [b, c]}])
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"] == "queue partitioned"
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 11200
+    print(f"elapsed: {elapsed_ms} < 11200")
 
 
 # Atomic field update timing: combined single-call update
@@ -329,7 +345,8 @@ def test_tool_update_task_timing():
     assert row.get("priority") == "high"
     assert row.get("status") == "scheduled"
     assert row.get("trigger") is None
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 3000
+    print(f"elapsed: {elapsed_ms} < 3000")
 
 
 # Queue linkage helpers
@@ -350,7 +367,8 @@ def test_tool_detach_from_queue_for_activation_timing():
     ts._detach_from_queue_for_activation(task_id=a, detach=True)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     # Head should be detached now; just sanity check no exception and measure time
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 5000
+    print(f"elapsed: {elapsed_ms} < 5000")
 
 
 @pytest.mark.unit
@@ -384,7 +402,8 @@ def test_tool_attach_with_links_timing():
     chain = ts._get_queue_for_task(task_id=a)
     ids = [t.task_id for t in chain]
     assert ids[:3] == [a, b, c]
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 5300
+    print(f"elapsed: {elapsed_ms} < 5300")
 
 
 @pytest.mark.unit
@@ -402,4 +421,5 @@ def test_tool_validated_write_timing():
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out
-    print(f"elapsed: {elapsed_ms} < X")
+    assert elapsed_ms < 1200
+    print(f"elapsed: {elapsed_ms} < 1200")
