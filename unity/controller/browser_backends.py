@@ -382,7 +382,6 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 logger.error(f"Command processor crashed: {e}", exc_info=True)
                 await asyncio.sleep(1)
 
-    
     @property
     def current_seq(self) -> int:
         """Returns the current command sequence number."""

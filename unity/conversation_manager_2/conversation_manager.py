@@ -2,6 +2,7 @@ import os
 import asyncio
 
 # import threading
+from jinja2 import Template
 import json
 from typing import Literal
 import contextlib
@@ -163,7 +164,9 @@ class ConversationManager:
             out = ""
             async with self.openai_client.responses.stream(
                 model="gpt-4.1",
-                instructions=SYS,
+                instructions=Template(SYS).render(
+                    name=self.user_name, number=self.user_number
+                ),
                 input=self.chat_history + input_message,
                 text_format=RESPONSES_MODEL[self.mode],
             ) as stream:
@@ -203,7 +206,9 @@ class ConversationManager:
         else:
             out = await self.openai_client.responses.parse(
                 model="gpt-4.1",
-                instructions=SYS,
+                instructions=Template(SYS).render(
+                    name=self.user_name, number=self.user_number
+                ),
                 input=self.chat_history + input_message,
                 text_format=RESPONSES_MODEL[self.mode],
             )
