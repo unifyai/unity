@@ -4,7 +4,10 @@ import time
 import pytest
 import unify
 
-from unity.common.llm_helpers import start_async_tool_use_loop, AsyncToolUseLoopHandle
+from unity.common.async_tool_loop import (
+    start_async_tool_use_loop,
+    AsyncToolUseLoopHandle,
+)
 from unity.events.event_bus import EVENT_BUS
 from tests.helpers import SETTINGS
 

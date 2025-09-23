@@ -4,7 +4,7 @@ from pathlib import Path
 import base64
 import unify
 
-import unity.common.llm_helpers as llmh
+from unity.common.async_tool_loop import start_async_tool_use_loop
 from tests.helpers import _handle_project, SETTINGS
 from unity.controller.controller import Controller
 from unity.controller.playwright_utils.worker import BrowserWorker
@@ -41,7 +41,7 @@ async def test_controller_act_tool_loop():
     )
 
     # Run the loop with only the 'act' tool
-    result = await llmh.start_async_tool_use_loop(
+    result = await start_async_tool_use_loop(
         client,
         message=f"Call `act` with request 'type hello in dutch', and return the executed action.",
         tools={"act": controller.act},
@@ -72,7 +72,7 @@ async def test_controller_observe_tool_loop():
     controller._last_shot = b""
 
     # Start the async tool-use loop with only the 'observe' tool
-    answer = await llmh.start_async_tool_use_loop(
+    answer = await start_async_tool_use_loop(
         client,
         message="Use the `observe` tool to determine if 2+2 equals 4, then return the result.",
         tools={"observe": controller.observe},
@@ -117,7 +117,7 @@ async def test_controller_complex_tool_loop():
     controller._last_shot = b64
 
     # Start the async tool-use loop with only the 'observe' tool
-    answer = await llmh.start_async_tool_use_loop(
+    answer = await start_async_tool_use_loop(
         client,
         message="""
         Call `observe` to determine if the page is on Google.

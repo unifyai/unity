@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 
 import unify
 from .base import BaseFileManager
-from ..common.llm_helpers import SteerableToolHandle
+from ..common.async_tool_loop import SteerableToolHandle
 from .prompt_builders import (
     build_ask_prompt,
     build_simulated_method_prompt,
