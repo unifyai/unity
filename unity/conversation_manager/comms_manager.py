@@ -92,7 +92,7 @@ class CommsManager:
                             user_number=event["user_number"],
                             user_whatsapp_number=event["user_whatsapp_number"],
                             user_email=event["user_email"],
-                            tts_provider=event["tts_provider"],
+                            voice_provider=event["voice_provider"],
                             voice_id=event["voice_id"],
                         ).to_dict(),
                     },
@@ -105,7 +105,10 @@ class CommsManager:
                 if thread == "email":
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     topic = event["from"].split("<")[1][:-1]
-                    extras = {"message_id": event["message_id"]}
+                    extras = {
+                        "message_id": event["message_id"],
+                        "subject": event["subject"],
+                    }
                 else:
                     topic = event["from_number"].replace("whatsapp:", "").strip()
                 # Put the message in the queue instead of creating a task
@@ -131,7 +134,7 @@ class CommsManager:
                             "event": PhoneCallInitiatedEvent(
                                 contact_details=contact_details,
                                 voice_id=event.get("voice_id", None),
-                                tts_provider=event.get("tts_provider", None),
+                                voice_provider=event.get("voice_provider", None),
                             ).to_dict(),
                         }
                     else:

@@ -393,8 +393,12 @@ def test_tool_attach_with_links_timing():
         "task_id"
     ]
     ts._set_queue(queue_id=None, order=[a, c])
+    # Call the queue utility directly now that the scheduler wrapper was removed
+    from unity.task_scheduler.queue_utils import attach_with_links as _attach_with_links
+
     t0 = time.perf_counter()
-    ts._attach_with_links(
+    _attach_with_links(
+        ts,
         task_id=b,
         prev_task=a,
         next_task=c,
@@ -406,27 +410,6 @@ def test_tool_attach_with_links_timing():
     chain = ts._get_queue_for_task(task_id=a)
     ids = [t.task_id for t in chain]
     assert ids[:3] == [a, b, c]
-    print(f"elapsed: {elapsed_ms} < X")
-
-
-@pytest.mark.unit
-@_handle_project
-def test_tool_get_linkage_barrier_timing():
-    _enable_timing()
-    ts = TaskScheduler()
-    a = ts._create_task(name="TT GLB A " + _uniq(), description="a")["details"][
-        "task_id"
-    ]
-    b = ts._create_task(name="TT GLB B " + _uniq(), description="b")["details"][
-        "task_id"
-    ]
-    ts._set_queue(queue_id=None, order=[a, b])
-    ts._detach_from_queue_for_activation(task_id=a, detach=True)
-    t0 = time.perf_counter()
-    ev = ts._get_linkage_barrier(task_id=a)
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    # Event may or may not be present depending on environment; only check call succeeded
-    assert ev is None or hasattr(ev, "is_set")
     print(f"elapsed: {elapsed_ms} < X")
 
 

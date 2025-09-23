@@ -300,17 +300,17 @@ async def _send_sms_message_via_number(
             response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
-            await _publish_event(
-                {
-                    "topic": to_number,
-                    "to": "past",
-                    "event": SMSMessageSentEvent(
-                        content=message,
-                        role="Assistant",
-                        timestamp=datetime.now().isoformat(),
-                    ).to_dict(),
-                },
-            )
+            # await _publish_event(
+            #     {
+            #         "topic": to_number,
+            #         "to": "past",
+            #         "event": SMSMessageSentEvent(
+            #             content=message,
+            #             role="Assistant",
+            #             timestamp=datetime.now().isoformat(),
+            #         ).to_dict(),
+            #     },
+            # )
             return response_text
 
 
@@ -334,7 +334,9 @@ async def _send_email_via_address(
     """
     from_email = os.getenv("ASSISTANT_EMAIL")
 
-    print(f"Sending email from {from_email} to {to_email}: {content}")
+    print(
+        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}"
+    )
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{os.getenv('UNITY_COMMS_URL')}/email/send",
@@ -359,6 +361,7 @@ async def _send_email_via_address(
                         role="Assistant",
                         timestamp=datetime.now().isoformat(),
                         message_id=message_id,
+                        subject=subject,
                     ).to_dict(),
                 },
             )
@@ -397,7 +400,7 @@ async def _start_call(
                     task_context=task_context,
                     target_number=to_number,
                     voice_id=os.getenv("VOICE_ID", None),
-                    tts_provider=os.getenv("TTS_PROVIDER", "cartesia"),
+                    voice_provider=os.getenv("VOICE_PROVIDER", "cartesia"),
                     outbound=True,
                 ).to_dict(),
             },
@@ -445,7 +448,7 @@ async def _join_meet_call(
                     target_number=os.getenv("USER_NUMBER"),
                     meet_id=meet_id,
                     voice_id=os.getenv("VOICE_ID", None),
-                    tts_provider=os.getenv("TTS_PROVIDER", "cartesia"),
+                    voice_provider=os.getenv("VOICE_PROVIDER", "cartesia"),
                 ).to_dict(),
             },
         },

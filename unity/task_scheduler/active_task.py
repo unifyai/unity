@@ -1,10 +1,93 @@
+"""
+ActiveTask provides a handle for a single running task backed by an actor.
+
+It wraps a SteerableToolHandle returned by a BaseActor and, when a scheduler
+is provided, mirrors lifecycle status to the task row and clears the scheduler's
+active pointer on completion or stop. It supports read-only ask, steering via
+interject (cancel/defer), pausing/resuming, stopping, and result retrieval. On
+defer, it attempts to reinstate the task to its previous queue position using
+the scheduler.
+"""
+
 import functools
 import asyncio
-from typing import Optional, Dict, Callable, TYPE_CHECKING
+from typing import Optional, Dict, Callable, TYPE_CHECKING, List, Any
 
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
+from .llm import new_llm_client
+
+
+async def classify_steering_intent(
+    message: str,
+    parent_chat_context: Optional[List[Dict[str, Any]]] = None,  # type: ignore[name-defined]
+) -> tuple[str, str]:
+    """Classify steering into: cancel | defer | pause | resume | continue | none."""
+    try:
+        client = new_llm_client("gpt-5@openai")
+        system = (
+            "You are a router that classifies an in-flight steering message.\n"
+            "Labels: cancel | defer | pause | resume | continue | none.\n"
+            "Definitions:\n"
+            "- cancel: abandon/kill/drop the task (terminal).\n"
+            "- defer: stop for now but resume later / return to prior queue/schedule.\n"
+            "- pause: temporarily pause, expecting explicit resume soon.\n"
+            "- resume: continue after a pause.\n"
+            "- continue: keep going (no change).\n"
+            "- none: message is not a steering instruction.\n"
+            'Output ONLY JSON with rationale first: {"rationale": <short string>, "action": <label>, "reason": <short substring or null>}'
+        )
+        client.set_system_message(system)
+
+        def _format_ctx(ctx: Optional[List[Dict[str, Any]]], limit_chars: int = 2000) -> str:  # type: ignore[name-defined]
+            try:
+                if not ctx:
+                    return "(no prior context)"
+                lines: List[str] = []
+                total = 0
+                for msg in reversed(ctx[-20:]):
+                    role = str(msg.get("role", "")).strip() or "user"
+                    content = str(msg.get("content", "")).strip()
+                    line = f"{role}: {content}"
+                    if total + len(line) > limit_chars:
+                        break
+                    lines.append(line)
+                    total += len(line)
+                return "\n".join(reversed(lines)) if lines else "(no prior context)"
+            except Exception:
+                return "(no prior context)"
+
+        ctx_block = _format_ctx(parent_chat_context)
+        user = (
+            "Recent conversation (most recent last):\n"
+            f"{ctx_block}\n\n"
+            "Steering message:\n"
+            f"{(message or '').strip()}"
+        )
+        raw = await client.generate(user)
+        import json as _json  # local import
+
+        try:
+            data = _json.loads(raw)
+            action = str(data.get("action", "none")).strip().lower()
+            reason = data.get("reason")
+            if action not in {"cancel", "defer", "pause", "resume", "continue", "none"}:
+                action = "none"
+            if reason is not None:
+                reason = str(reason)
+            else:
+                reason = message
+            return action, str(reason)
+        except Exception:
+            low = (raw or "").lower()
+            for tok in ["cancel", "defer", "pause", "resume", "continue"]:
+                if tok in low:
+                    return tok, message
+            return "none", message
+    except Exception:
+        return "none", message
+
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
@@ -108,8 +191,16 @@ class ActiveTask(BaseActiveTask):
         reason: Optional[str] = None
 
         try:
-            if self._scheduler is not None:
+            if self._scheduler is not None and hasattr(
+                self._scheduler,
+                "_classify_steering_intent",
+            ):
                 intent, reason = await self._scheduler._classify_steering_intent(  # type: ignore[attr-defined]
+                    message,
+                    parent_chat_context=None,
+                )
+            else:
+                intent, reason = await classify_steering_intent(
                     message,
                     parent_chat_context=None,
                 )
@@ -216,20 +307,24 @@ class ActiveTask(BaseActiveTask):
 
     @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
-        ret = self._actor_handle.done()
-        self._mirror_status("active")
-        return ret
+        return self._actor_handle.done()
 
     @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
         ret = await self._actor_handle.result()
         # If the task wasn't explicitly cancelled/failed, mark as completed.
         if self._scheduler and self._task_id is not None and not self._was_stopped:
-            row = self._scheduler._filter_tasks(  # type: ignore[attr-defined]
+            rows = self._scheduler._filter_tasks(  # type: ignore[attr-defined]
                 filter=f"task_id == {self._task_id} and instance_id == {self._instance_id}",
                 limit=1,
-            )[0]
-            if row["status"] not in ("cancelled", "failed"):
+            )
+            cur_status = None
+            try:
+                if rows:
+                    cur_status = rows[0].get("status")
+            except Exception:
+                cur_status = None
+            if rows and cur_status not in ("cancelled", "failed"):
                 self._mirror_status("completed")
         self._clear_active_pointer()
         return ret
@@ -261,7 +356,7 @@ class ActiveTask(BaseActiveTask):
             ):
                 self._scheduler._active_task = None  # type: ignore[attr-defined]
 
-    # Centralised reinstate caller to avoid duplication and tolerate older signatures
+    # Centralized reinstate caller to avoid duplication and select an available scheduler API
     def _call_reinstate_public(self, *, task_id: int) -> None:
         sched = self._scheduler
         if sched is None:
@@ -279,7 +374,7 @@ class ActiveTask(BaseActiveTask):
         except Exception:
             pass
 
-        # Backwards compatibility: private method, with graceful arg fallback
+        # Fallback to private method if the public API is unavailable; handle optional arguments
         try:
             sched._reinstate_task_to_previous_queue(task_id=task_id, _allow_active=True)  # type: ignore[attr-defined]
         except TypeError:

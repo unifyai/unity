@@ -10,6 +10,7 @@ import aiohttp
 import requests
 from pydantic import BaseModel, PydanticUserError
 import asyncio
+import functools
 import websockets
 from .controller import Controller
 
@@ -181,6 +182,16 @@ class MagnitudeBrowserBackend(BrowserBackend):
         self._log_consumer_task: Optional[asyncio.Task] = None
         self._async_initialized: bool = False
 
+        # Command queue infrastructure
+        self._command_queue = asyncio.Queue()
+        self._command_processor_task = None
+        self._active_commands = {}  # Tracks commands for cancellation
+        self._seq: int = 0  # Add sequence number counter
+        self._processed_seq: int = -1  # Track the last completed sequence number
+        self._barrier_events: dict[int, asyncio.Event] = (
+            {}
+        )  # For barrier synchronization
+
         # Keep the simpler initialization from HEAD but add logging support
         MagnitudeBrowserBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
@@ -240,8 +251,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 )
                 self._log_consumer_task = asyncio.create_task(self._log_consumer())
 
+                # Start the command processor task
+                if not self._command_processor_task:
+                    self._command_processor_task = asyncio.create_task(
+                        self._process_commands(),
+                    )
+
                 self._async_initialized = True
-                logger.info("⚙️ Initialized async log streaming components")
+                logger.info("⚙️ Initialized async components")
             except Exception as e:
                 logger.warning(f"⚠️ Failed to initialize async components: {e}")
         elif websockets is None and not self._async_initialized:
@@ -316,6 +333,75 @@ class MagnitudeBrowserBackend(BrowserBackend):
             except Exception as e:
                 logger.error(f"[MagnitudeLogConsumerError] {e}")
                 await asyncio.sleep(1)  # Prevent rapid-fire error loops
+
+    async def _process_commands(self):
+        """A background worker that pulls commands, executes them in order, and handles barriers."""
+        while True:
+            try:
+                seq, command_id, func, args, kwargs, future = (
+                    await self._command_queue.get()
+                )
+
+                # Handle barrier commands
+                if command_id.startswith("barrier_"):
+                    self._processed_seq = seq
+                    # Notify any waiting barriers
+                    for barrier_seq, event in list(self._barrier_events.items()):
+                        if self._processed_seq >= barrier_seq:
+                            event.set()
+                            del self._barrier_events[barrier_seq]
+                    if future:
+                        future.set_result("ok")
+                    self._command_queue.task_done()
+                    continue
+
+                # Normal command execution
+                if command_id not in self._active_commands:
+                    self._command_queue.task_done()
+                    continue
+                try:
+                    result = await func(*args, **kwargs)
+                    if future:
+                        future.set_result(result)
+                except Exception as e:
+                    if future:
+                        future.set_exception(e)
+                finally:
+                    self._processed_seq = seq
+                    # Notify any waiting barriers after a normal command completes
+                    for barrier_seq, event in list(self._barrier_events.items()):
+                        if self._processed_seq >= barrier_seq:
+                            event.set()
+                            del self._barrier_events[barrier_seq]
+                    self._active_commands.pop(command_id, None)
+                    self._command_queue.task_done()
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Command processor crashed: {e}", exc_info=True)
+                await asyncio.sleep(1)
+
+    
+    @property
+    def current_seq(self) -> int:
+        """Returns the current command sequence number."""
+        return self._seq
+
+    async def barrier(self, *, up_to_seq: Optional[int] = None) -> None:
+        """
+        Waits until all commands up to a specific sequence number have been processed.
+        """
+        target_seq = up_to_seq if up_to_seq is not None else self._seq
+
+        if self._processed_seq >= target_seq:
+            return  # All relevant commands are already done
+
+        # Check if an event for this sequence already exists or create one
+        if target_seq not in self._barrier_events:
+            self._barrier_events[target_seq] = asyncio.Event()
+
+        await self._barrier_events[target_seq].wait()
 
     async def _request(
         self,
@@ -616,14 +702,43 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 f"Warning: Could not enumerate /tmp/unify/assistant/install for persistence: {e}",
             )
 
-    async def act(self, instruction: str) -> str:
+    async def act(
+        self,
+        instruction: str,
+        wait: bool = False,
+        context: dict = None,
+    ) -> Any:
         """
         Executes a high-level browser task using the Magnitude BrowserAgent.
 
-        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the page. The agent will return successfully only if it believes the task is complete.
+        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the page.
 
         Args:
             instruction (str): A high-level, natural-language command describing the desired outcome.
+            wait (bool): If True, the function will block and wait for the action to
+                        complete in the browser before returning. If False (default),
+                        the command is added to a queue for background execution, and
+                        the function returns immediately.
+            context (dict): Internal metadata for command tracking.
+
+        ### Non-Blocking Example (`wait=False`, Default)
+        This is ideal for sequences of actions where the plan doesn't need immediate feedback.
+        ```python
+        # The plan queues up all actions and continues its own execution
+        # without waiting for the browser to finish each one.
+        await action_provider.act("Type 'testuser' into the username field", wait=False)
+        await action_provider.act("Type 'password123' into the password field", wait=False)
+        await action_provider.act("Click the 'Login' button", wait=False)
+        ```
+
+        ### Blocking Example (`wait=True`)
+        Use this when the outcome of an action is required for a subsequent decision in the plan.
+        ```python
+        # The plan pauses until the button click is complete and the new page has loaded.
+        await action_provider.act("Click the 'Proceed to Checkout' button", wait=True)
+        # Now that we've waited, we can safely observe the new page state.
+        cart_total = await action_provider.observe("What is the final total?")
+        ```
 
         Examples:
             # ✅ Good Example (Multi-Step Task)
@@ -642,8 +757,27 @@ class MagnitudeBrowserBackend(BrowserBackend):
             - instruction: "Move the mouse to coordinate 250, 400, then click."
         """
         await self._ensure_async_initialized()
-        response = await self._request("POST", "/act", {"task": instruction})
-        return response.get("status", "success")
+        context = context or {}
+        self._seq += 1
+        seq = self._seq
+        command_id = f"{context.get('function_name', 'unknown')}_{seq}"
+
+        bound_func = functools.partial(
+            self._request,
+            "POST",
+            "/act",
+            {"task": instruction},
+        )
+
+        future = asyncio.get_event_loop().create_future() if wait else None
+        self._active_commands[command_id] = (instruction, context)
+        await self._command_queue.put((seq, command_id, bound_func, [], {}, future))
+
+        if wait:
+            response = await future
+            return response.get("status", "success")
+        else:
+            return "Command queued."
 
     async def interrupt_current_action(self):
         """Sends a non-destructive request to interrupt the agent's current action loop."""
@@ -654,7 +788,13 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 f"⚠️ Warning: Failed to send interrupt request. The browser action may continue in the background. Error: {e}",
             )
 
-    async def observe(self, query: str, response_format: Any = str) -> Any:
+    async def observe(
+        self,
+        query: str,
+        response_format: Any = str,
+        wait: bool = True,
+        context: dict = None,
+    ) -> Any:
         """
         Extracts structured information from the current page using the Magnitude BrowserAgent.
 
@@ -719,6 +859,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """
         await self._ensure_async_initialized()
 
+        await self.barrier()
+
         def _safe_model_json_schema(model: type[BaseModel]):
             try:
                 return model.model_json_schema()
@@ -736,6 +878,28 @@ class MagnitudeBrowserBackend(BrowserBackend):
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             return response_format.model_validate(data)
         return data
+
+    def clear_commands_from_failed_function(self, function_name: str):
+        """
+        Removes all queued and active commands that were issued by a specific function.
+        """
+        new_queue = asyncio.Queue()
+        while not self._command_queue.empty():
+            seq, command_id, func, args, kwargs, future = (
+                self._command_queue.get_nowait()
+            )
+            context = self._active_commands.get(command_id, [None, {}])[1]
+            if context.get("function_name") != function_name:
+                new_queue.put_nowait((seq, command_id, func, args, kwargs, future))
+            else:
+                logger.warning(
+                    f"Cancelling queued command from failed function '{function_name}': {self._active_commands.get(command_id, ['unknown'])[0]}",
+                )
+                if future:
+                    future.cancel()
+                self._active_commands.pop(command_id, None)
+
+        self._command_queue = new_queue
 
     async def query(self, query: str, response_format: Any = str) -> Any:
         """
@@ -802,7 +966,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         except Exception as e:
             return ""
 
-    async def navigate(self, url: str) -> str:
+    async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
         """Navigates the browser using the dedicated /nav endpoint."""
         await self._ensure_async_initialized()
         print(f"🐍 PYTHON: Navigating to URL: {url}")
@@ -840,6 +1004,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
             self._log_stream_task.cancel()
         if self._log_consumer_task and not self._log_consumer_task.done():
             self._log_consumer_task.cancel()
+        if self._command_processor_task and not self._command_processor_task.done():
+            self._command_processor_task.cancel()
 
         try:
             self._sync_request("POST", "/stop")

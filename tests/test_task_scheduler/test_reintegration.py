@@ -410,8 +410,7 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
 
     ts = TaskScheduler()
 
-    # Force "chain" execution for this test
-    monkeypatch.setenv("UNITY_TS_EXEC_CHAIN", "true")
+    # Chain execution is the default; no environment variable required.
 
     # Create a chain of three tasks scheduled for next week
     future = datetime.now(timezone.utc) + timedelta(days=7)
@@ -437,14 +436,17 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
     original_start = (row_h.get("schedule") or {}).get("start_at")
     assert original_start
 
-    # Start the head in chain mode and let it complete
-    handle_head = await ts.execute(text=str(head_id))
-    await handle_head.result()
+    # Start the head in chain mode but only allow the head to complete
+    handle = await ts.execute(text=str(head_id))
+    # Wait for just the head to finish
+    await handle.active_task_done()
 
     # Start the second task (mid) and then request deferral "as originally scheduled"
-    handle_mid = await ts.execute(text=str(mid_id))
-    handle_mid.stop(cancel=False, reason="as per our original schedule")
-    await handle_mid.result()
+    handle.stop(
+        cancel=False,
+        reason="let's do the remaining tasks as per our original schedule",
+    )
+    await handle.result()
 
     # The middle task should now be reinstated as the head with the original start_at and scheduled status
     row_mid = ts._filter_tasks(filter=f"task_id == {mid_id}")[0]

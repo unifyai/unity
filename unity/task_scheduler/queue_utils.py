@@ -1,3 +1,11 @@
+"""
+Queue linkage helpers for `TaskScheduler`.
+
+Provides utilities to read neighbour pointers, synchronize adjacent links, and
+attach a task between neighbours while enforcing queue invariants (head-only
+`start_at`, symmetric pointers, consistent `queue_id`).
+"""
+
 from __future__ import annotations
 
 from typing import Optional, Dict, Any, Union, TYPE_CHECKING
@@ -10,23 +18,18 @@ if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 
 
-# ---------------------------------------------------------------------------- #
-#  Queue/linkage helpers (private module)                                      #
-# ---------------------------------------------------------------------------- #
-
-
 def sched_prev(sched: Union[Schedule, dict, None]) -> Optional[int]:
-    """Return prev_task from a Schedule-like value."""
+    """Return `prev_task` from a `Schedule` or dict."""
     if sched is None:
         return None
     if isinstance(sched, dict):
         return sched.get("prev_task")
-    # assume pydantic Schedule
+    # Read attribute from Schedule model
     return getattr(sched, "prev_task", None)
 
 
 def sched_next(sched: Union[Schedule, dict, None]) -> Optional[int]:
-    """Return next_task from a Schedule-like value."""
+    """Return `next_task` from a `Schedule` or dict."""
     if sched is None:
         return None
     if isinstance(sched, dict):
@@ -86,7 +89,7 @@ def sync_adjacent_links(
             except ValueError:
                 # Neighbour was deleted after we fetched rows – skip
                 continue
-            scheduler._store.update(
+            scheduler._view.write_entries(  # type: ignore[attr-defined]
                 logs=log_id,
                 entries={"schedule": n_sched},
                 overwrite=True,
@@ -102,7 +105,7 @@ def sync_adjacent_links(
                 if field_to_set == "prev_task":
                     n_sched.pop("start_at", None)
                 n_sched[field_to_set] = task_id
-                scheduler._store.update(
+                scheduler._view.write_entries(  # type: ignore[attr-defined]
                     logs=row_obj.id if hasattr(row_obj, "id") else row_obj,
                     entries={"schedule": n_sched},
                     overwrite=True,
@@ -122,7 +125,7 @@ def sync_adjacent_links(
                     )
                 except ValueError:
                     continue
-                scheduler._store.update(
+                scheduler._view.write_entries(  # type: ignore[attr-defined]
                     logs=log_id,
                     entries={"schedule": n_sched},
                     overwrite=True,
@@ -208,7 +211,7 @@ def attach_with_links(
         prev_sched = {**((_entries(prev_log).get("schedule") or {}))}
         if prev_sched.get("next_task") != task_id:
             prev_sched["next_task"] = task_id
-            scheduler._store.update(
+            scheduler._view.write_entries(  # type: ignore[attr-defined]
                 logs=prev_log.id if hasattr(prev_log, "id") else prev_log,
                 entries={"schedule": prev_sched},
                 overwrite=True,
@@ -221,7 +224,7 @@ def attach_with_links(
             next_sched["prev_task"] = task_id
             if head_start_at is not None:
                 next_sched.pop("start_at", None)
-            scheduler._store.update(
+            scheduler._view.write_entries(  # type: ignore[attr-defined]
                 logs=next_log.id if hasattr(next_log, "id") else next_log,
                 entries={"schedule": next_sched},
                 overwrite=True,

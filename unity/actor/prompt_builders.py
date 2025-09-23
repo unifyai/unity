@@ -49,6 +49,57 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
     return "\n\n".join(handle_docs)
 
 
+def _format_cache_summary(idempotency_cache: Dict[tuple, Any], last_n: int = 20) -> str:
+    """
+    Formats the last N cache entries, including tool call arguments, into a
+    readable summary for the LLM.
+    """
+    if not idempotency_cache:
+        return "### Cache Status\n- The cache is currently empty."
+
+    summary_lines = [
+        "### Cache Status (for Invalidation Planning)",
+        "- The following functions have at least one cached action and are eligible for invalidation:",
+    ]
+
+    cacheable_functions = sorted(
+        list(
+            set(
+                entry["meta"]["function"]
+                for entry in idempotency_cache.values()
+                if entry.get("meta") and entry["meta"].get("function")
+            ),
+        ),
+    )
+    summary_lines.append(f"  `{cacheable_functions}`")
+    summary_lines.append(
+        "- **Rule**: Only list functions from this list in `invalidate_functions`.",
+    )
+    summary_lines.append("\n### Recent Cached Actions:")
+
+    recent_items = list(idempotency_cache.values())[-last_n:]
+
+    for entry in recent_items:
+        meta = entry.get("meta")
+        interaction = entry.get("interaction_log")
+        if not meta or not interaction:
+            continue
+
+        func = meta.get("function", "N/A")
+        step = meta.get("step", "N/A")
+
+        call_repr = interaction[1] if len(interaction) > 1 else "N/A"
+
+        if len(call_repr) > 100:
+            call_repr = call_repr[:97] + "..."
+
+        summary_lines.append(
+            f"- Func: `{func}`, Step: `{step}`, Call: `{call_repr}`",
+        )
+
+    return "\n".join(summary_lines)
+
+
 def _build_shared_strategy_principles() -> str:
     """
     Builds the reusable block of strategic principles for automation prompts.
@@ -2404,6 +2455,7 @@ def build_interjection_prompt(
     call_stack: list[str],
     action_log: list[str],
     goal: str,
+    idempotency_cache: Dict[tuple, Any],
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -2411,6 +2463,8 @@ def build_interjection_prompt(
     tool_reference = _build_tool_signatures(tools)
     handle_apis = _build_handle_apis(tools)
     strategy_principles = _build_shared_strategy_principles()
+
+    cache_summary = _format_cache_summary(idempotency_cache)
 
     call_stack_str = (
         " -> ".join(call_stack) if call_stack else "Not inside any function."
@@ -2437,10 +2491,17 @@ def build_interjection_prompt(
     - **Current Execution Point (Call Stack):** `{call_stack_str}`
     - **Most Recent Plan Actions:**
       {recent_actions}
+
+    {cache_summary}
+    ---
+    ### Cache Invalidation Rules (CRITICAL)
+    1.  **No Phantom Invalidations**: Only list functions in `invalidate_functions` if they appear in the `Cache Status` list above.
+    2.  **Surgical Invalidation**: Use `invalidate_functions` to clear the entire cache for a function, or `invalidate_steps` to clear only a portion of it. Be as minimal as possible to ensure an efficient replay.
+    3.  **You may omit `cache`** if nothing needs invalidation.
     ---
     {strategy_principles}
     ---
-    ### Your Task: Analyze, Decide, and Patch
+    ### Your Task: Analyze, Decide, Patch, and Propose Cache Strategy
 
     **1. Analyze Intent and Choose an Action:** First, analyze the user's intent to choose the single best action from the Decision Tree below.
 
@@ -2449,6 +2510,93 @@ def build_interjection_prompt(
         - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstrings.
         - **Generate Patches:** For every function that needs to be changed, create a `FunctionPatch` object containing its full, updated source code.
 
+    **3. Devise an Optimal Cache Strategy (CRITICAL for `modify_task`):**
+
+        **Golden Rule of Replay:** After you submit your patches, the plan **always restarts execution from the beginning of `main_plan`**. Your task is to craft a cache invalidation plan that makes this replay as fast as possible by preserving all valid caches.
+
+        **Scenario 1: Invalidating Downstream Dependencies (`invalidate_functions`)**
+        * **Situation:** The plan is `A_login() -> B_fetch_user_data("123") -> C_generate_report(...)`. The correctness of `C` depends on the data fetched in `B`. The user interjects: "Sorry, I meant user ID `'456'`."
+        * **Analysis:** Changing the `user_id` in `B` will cause it to navigate to a new page and fetch different data. Because `C` relies on this data, its previous cached result is now invalid and must also be cleared. `A_login`, however, is unaffected.
+        * **Correct `modify_task` Response:**
+            ```json
+            {{
+                "action": "modify_task",
+                "reason": "User changed the target user ID. This invalidates both the data fetching step (B) and the report generation step (C) which depends on it.",
+                "patches": [
+                    {{
+                        "function_name": "main_plan",
+                        "new_code": "async def main_plan():\\n    await A_login()\\n    user_data = await B_fetch_user_data(user_id='456')\\n    await C_generate_report(user_data)"
+                    }}
+                ],
+                "cache": {{
+                    "invalidate_functions": ["B_fetch_user_data", "C_generate_report"]
+                }}
+            }}
+            ```
+        * **Replay Analysis:**
+            1.  Execution starts at `main_plan`.
+            2.  `await A_login()` runs. **Result: CACHE HIT**.
+            3.  `await B_fetch_user_data(user_id='456')` runs. **Result: CACHE MISS**. It executes for real.
+            4.  `await C_generate_report(...)` runs. **Result: CACHE MISS**. It executes for real with the new data from `B`.
+
+        ---
+
+        **Scenario 2: Invalidating a Portion of a Function (`invalidate_steps`)**
+        * **Situation:** Function `B` has 5 internal steps. After step 2 completes, the user interjects: "In step B, after step 2, you need to add a new action before continuing."
+        * **Analysis:** Only the latter part of function `B` is affected. The initial steps (1 and 2) inside `B` are still valid and their caches should be preserved to save time.
+        * **Correct `modify_task` Response:**
+            ```json
+            {{
+                "action": "modify_task",
+                "reason": "User added a new step in the middle of function B. Invalidating from step 3 onwards.",
+                "patches": [
+                    {{
+                        "function_name": "B",
+                        "new_code": "async def B(parameter: str):\\n    # step 1\\n    await action_provider.act('Step B1')\\n    # step 2\\n    await action_provider.act('Step B2')\\n    # new step 2.5\\n    await action_provider.act('Newly added Step B2.5')\\n    # step 3\\n    await action_provider.act('Step B3')\\n    # ..."
+                    }}
+                ],
+                "cache": {{
+                    "invalidate_steps": [
+                        {{"function_name": "B", "from_step_inclusive": 3}}
+                    ]
+                }}
+            }}
+            ```
+        * **Replay Analysis:**
+            1.  Execution starts at `main_plan`.
+            2.  `await A()` runs. **Result: CACHE HIT**.
+            3.  `await B(...)` runs.
+                * Internal Step 1: **CACHE HIT**.
+                * Internal Step 2: **CACHE HIT**.
+                * Internal Step 2.5 (new): **CACHE MISS**.
+                * Internal Step 3 onwards: **CACHE MISS** (due to invalidation).
+            4.  `await C()` runs. **Result: CACHE HIT**.
+
+        ---
+
+        **Scenario 3: No Invalidation Needed (Structural Change)**
+        * **Situation:** The plan `A() -> B() -> C()` has fully completed `A` and `B`. The user interjects: "Actually, you don't need to do C. Just stop after B."
+        * **Analysis:** The user is only changing the sequence of calls in `main_plan`. The internal logic and inputs for functions `A` and `B` have not changed, so their caches are perfectly valid.
+        * **Correct `modify_task` Response:**
+            ```json
+            {{
+                "action": "modify_task",
+                "reason": "User requested to remove step C from the plan.",
+                "patches": [
+                    {{
+                        "function_name": "main_plan",
+                        "new_code": "async def main_plan():\\n    await A()\\n    await B()"
+                    }}
+                ]
+            }}
+            ```
+        * **Replay Analysis:**
+            1.  Execution starts at the *new* `main_plan`.
+            2.  `await A()` runs. **Result: CACHE HIT**.
+            3.  `await B()` runs. **Result: CACHE HIT**.
+            4.  The plan finishes. The replay is extremely fast.
+
+    ---
     #### 🧠 Distinguishing `modify_task` from `refactor_and_generalize`
     This is your most critical strategic decision.
     - **Choose `modify_task` to alter the BEHAVIOR of the current plan.** Use this when the user wants to add a step, correct a step, or change a parameter. The fundamental *structure* of the plan (which functions call which other functions) remains the same. Do not delete the existing steps and/or workflow unless the user specifically asks you to do so.

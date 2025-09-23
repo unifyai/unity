@@ -7,7 +7,6 @@ import functools
 from typing import List, Dict, Optional, Union, Any, Callable, Literal
 
 import unify
-from ..common.http import request as http_request
 from ..common.embed_utils import ensure_vector_column
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
@@ -31,7 +30,6 @@ from ..events.manager_event_logging import (
 )
 from .prompt_builders import build_ask_prompt
 from .base import BaseTranscriptManager
-from ..helpers import _handle_exceptions
 from ..common.context_store import TableStore
 from ..common.semantic_search import (
     is_plain_identifier,
@@ -1107,29 +1105,21 @@ class TranscriptManager(BaseTranscriptManager):
         for embed_col, _ in sender_contact_embed_columns:
             select[f"{right_ctx}.{embed_col}"] = embed_col
 
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
-            "Content-Type": "application/json",
-        }
-        payload: Dict[str, Any] = {
-            "project": unify.active_project(),
-            "pair_of_args": (
+        unify.join_logs(
+            pair_of_args=(
                 {"context": left_ctx},
                 {"context": right_ctx},
             ),
-            "join_expr": f"{left_ctx}.sender_id == {right_ctx}.contact_id",
-            "mode": "inner",
-            "new_context": sender_join_ctx,
+            join_expr=f"{left_ctx}.sender_id == {right_ctx}.contact_id",
+            mode="inner",
+            new_context=sender_join_ctx,
             # Use aliased column mapping so downstream sorting can reference
             # bare embedding column names.
-            "columns": select,
+            columns=select,
             # Aliases require a materialized copy in the backend; enable it so
             # the joined context exposes the expected bare column names.
-            "copy": True,
-        }
-        resp = http_request("POST", url, json=payload, headers=headers)
-        _handle_exceptions(resp)
+            copy=True,
+        )
 
         # Base terms for sender join ranking
         base_terms = list(msg_embed_columns) + list(sender_contact_embed_columns)

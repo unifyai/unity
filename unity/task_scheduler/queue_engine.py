@@ -1,3 +1,14 @@
+"""
+Queue planning helpers.
+
+Provides pure functions to:
+- Compute invariant-preserving schedule updates for a desired queue order.
+- Derive the correct task status after a reorder based on head position and
+  whether the head carries a start_at timestamp.
+
+All functions are side-effect free and operate on plain Python data structures.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -42,13 +53,12 @@ def derive_status_after_queue_edit(
     head_has_start_at: bool,
 ) -> Status:
     """
-    Determine the desired status after a queue reorder for a single task.
+    Determine the status for a single task after a queue reorder.
 
-    Behaviour mirrors the existing TaskScheduler implementation:
-    - Preserve "active" as-is.
-    - Head with a start_at timestamp becomes "scheduled".
-    - Otherwise, keep the existing status except that a previously "scheduled"
-      non-head is downgraded to "queued".
+    Rules:
+    - Keep "active" unchanged.
+    - If the task is the head and has a start_at timestamp, set "scheduled".
+    - Otherwise keep the current status, except a non-head "scheduled" becomes "queued".
     """
     current = _to_status(existing_status)
     if current == Status.active:
@@ -68,13 +78,11 @@ def plan_reorder_queue(
     queue_id: Optional[int],
 ) -> Dict[int, Dict[str, Any]]:
     """
-    Compute the set of invariant-preserving updates required to reorder a queue
-    to exactly match ``new_order``.
+    Compute the invariant-preserving updates required to reorder a queue to match
+    ``new_order``.
 
-    Inputs are read-only. The function returns a mapping of ``task_id → entries``
-    where each entries dict contains a ``schedule`` payload and (when required)
-    a ``status`` value. Callers should apply these via the scheduler's single
-    write funnel to guarantee validation and neighbour symmetry.
+    Inputs are read-only. Returns a mapping of ``task_id → payload`` where each
+    payload includes a ``schedule`` dict and, when needed, a ``status`` value.
     """
     # Determine the queue-level timestamp from the current head (if any)
     queue_start_ts: Optional[str] = None

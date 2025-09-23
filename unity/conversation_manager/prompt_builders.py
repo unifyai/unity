@@ -131,6 +131,7 @@ def _build_communication_rules_section(is_call: bool) -> str:
         "- For cross-channel communication, you need to also send an acknowledgement of the action to the user, for example in the above case, you also need to send an sms acknowledgement of having sent the email, include that in the ToolUseAction as well.",
         "- Similarly, if it was an email asking you to send an sms, then you should send an email acknowledgement of having sent the sms.",
         "- If the user mentions a new individual asking you to call them or send them a message (AND that person hasn't been mentioned before), you should create a contact with whatever information you have about them, such as name, phone number, email address, bio, etc.",
+        "- Whenever you send an email, you should include the message_id and subject of the email you're responding to in the ToolUseAction with like (MESSAGE_ID: <message_id>, SUBJECT: <subject>) in the suffix of the command.",
     ]
 
     return "\n".join([title, underline] + lines)

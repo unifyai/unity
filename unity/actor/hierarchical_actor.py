@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import base64
+import copy
 import datetime
 import enum
 import functools
@@ -12,7 +13,8 @@ import logging
 import sys
 import textwrap
 import traceback
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import typing
 import types
@@ -48,6 +50,30 @@ current_invocation_id_var = contextvars.ContextVar("hp_invocation_id", default="
 logger = logging.getLogger(__name__)
 
 DIAGNOSTIC_MODE = True
+
+
+@dataclass
+class VerificationWorkItem:
+    """A package of all necessary context to verify a single function's execution."""
+
+    ordinal: int
+    function_name: str
+    parent_stack: tuple
+    func_source: str
+    pre_state: dict
+    post_state: dict
+    interactions: list
+    return_value_repr: str
+    cache_miss_counter: int
+    exit_seq: int
+
+
+@dataclass
+class VerificationHandle:
+    """A handle to a single, in-flight verification task."""
+
+    item: VerificationWorkItem
+    task: asyncio.Task
 
 
 class PlanRuntime:
@@ -288,6 +314,32 @@ class FunctionPatch(BaseModel):
     )
 
 
+class CacheStepRange(BaseModel):
+    """Specifies a range of steps within a function to invalidate."""
+
+    function_name: str = Field(..., description="The name of the function to target.")
+    from_step_inclusive: int = Field(
+        ...,
+        description="The per-function action_counter step to start invalidating from (inclusive).",
+    )
+
+
+class CacheInvalidateSpec(BaseModel):
+    """
+    LLM's proposal for selective cache invalidation after a plan modification.
+    The runtime will apply these and still enforce safety guardrails (e.g., impure propagation).
+    """
+
+    invalidate_functions: List[str] = Field(
+        default_factory=list,
+        description="A list of function names whose entire cache should be cleared.",
+    )
+    invalidate_steps: List[CacheStepRange] = Field(
+        default_factory=list,
+        description="Invalidate only the tail of a function: from the specified step number onward (inclusive).",
+    )
+
+
 class InterjectionDecision(BaseModel):
     """A structured decision for how to proceed with a user interjection."""
 
@@ -303,6 +355,10 @@ class InterjectionDecision(BaseModel):
     patches: Optional[List[FunctionPatch]] = Field(
         None,
         description="A list of functions to be updated. Required for 'modify_task'.",
+    )
+    cache: Optional[CacheInvalidateSpec] = Field(
+        None,
+        description="An optional, surgical plan for invalidating the cache to enable a more efficient replay.",
     )
     new_goal: Optional[str] = Field(
         None,
@@ -771,7 +827,11 @@ class _SteerableToolHandleProxy:
                     f"CACHE HIT: Using cached result for {call_repr}",
                 )
                 logger.debug(f"HANDLE CACHE HIT for: {call_repr}")
-                self._plan.interaction_stack[-1].append(cached_interaction)
+                interactions_log = current_interaction_sink_var.get()
+                if interactions_log is not None:
+                    if len(cached_interaction) < 4:
+                        cached_interaction = (*cached_interaction, [])
+                    interactions_log.append(cached_interaction)
                 return cached_result
             return None
 
@@ -800,10 +860,28 @@ class _SteerableToolHandleProxy:
 
             output = await real_attr(*args, **kwargs)
             interaction_to_cache = ("handle_method_call", call_repr, str(output))
-            self._plan.interaction_stack[-1].append(interaction_to_cache)
+            interactions_log = current_interaction_sink_var.get()
+            if interactions_log is not None:
+                interactions_log.append(interaction_to_cache)
+            try:
+                url = await self._plan.actor.action_provider.browser.get_current_url()
+            except Exception:
+                url = None
+
+            meta = {
+                "call_stack": cache_key[0],
+                "path": cache_key[1],
+                "function": cache_key[0][-1] if cache_key[0] else None,
+                "step": self._plan.runtime.action_counter,
+                "tool": tool_name,
+                "url": url,
+                "impure": False,
+            }
+
             self._plan.idempotency_cache[cache_key] = {
                 "result": output,
                 "interaction_log": interaction_to_cache,
+                "meta": meta,
             }
             return output
 
@@ -832,10 +910,24 @@ class _SteerableToolHandleProxy:
 
             output = real_attr(*args, **kwargs)
             interaction_to_cache = ("handle_method_call", call_repr, str(output))
-            self._plan.interaction_stack[-1].append(interaction_to_cache)
+            interactions_log = current_interaction_sink_var.get()
+            if interactions_log is not None:
+                interactions_log.append(interaction_to_cache)
+
+            meta = {
+                "call_stack": cache_key[0],
+                "path": cache_key[1],
+                "function": cache_key[0][-1] if cache_key[0] else None,
+                "step": self._plan.runtime.action_counter,
+                "tool": tool_name,
+                "url": None,
+                "impure": False,
+            }
+
             self._plan.idempotency_cache[cache_key] = {
                 "result": output,
                 "interaction_log": interaction_to_cache,
+                "meta": meta,
             }
             return output
 
@@ -866,9 +958,16 @@ class _ActionProviderProxy:
             return real_attr
 
         async def async_wrapper(*args, **kwargs):
-            if current_run_id_var.get() != self._plan.run_id:
+            wait = kwargs.pop("wait", True)
+            ctx_run_id = current_run_id_var.get()
+            plan_run_id = self._plan.run_id
+            if ctx_run_id != plan_run_id:
                 logger.warning(
-                    f"Blocked stale tool call to '{name}' from a previous run.",
+                    f"Blocked stale tool call to '{name}' "
+                    f"(context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
+                )
+                self._plan.action_log.append(
+                    f"Blocked stale tool call to '{name}' (context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
                 )
                 raise asyncio.CancelledError("Stale tool call blocked by run_id gate.")
 
@@ -885,7 +984,12 @@ class _ActionProviderProxy:
 
             call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs)})"
             if diag_prefix:
-                logger.info(f"{diag_prefix} 🐍 PYTHON: Executing {call_repr}")
+                logger.info(
+                    f"{diag_prefix} 🐍 PYTHON: Executing {call_repr} (wait={wait})",
+                )
+
+            func_name = self._plan.call_stack[-1] if self._plan.call_stack else "global"
+            context = {"function_name": func_name}
 
             cache_key = self._plan.actor._generate_cache_key(
                 self._plan,
@@ -941,7 +1045,12 @@ class _ActionProviderProxy:
                 backend._current_capture_queue = capture_q
 
             try:
-                tool_output = await real_attr(*args, **kwargs)
+                tool_output = await real_attr(
+                    *args,
+                    wait=wait,
+                    context=context,
+                    **kwargs,
+                )
             finally:
                 if is_magnitude:
                     await asyncio.sleep(0.25)
@@ -974,18 +1083,41 @@ class _ActionProviderProxy:
                 magnitude_logs,
             )
             interactions_log.append(interaction_to_cache)
+
+            try:
+                url = await self._plan.actor.action_provider.browser.get_current_url()
+            except Exception:
+                url = None
+
+            meta = {
+                "call_stack": cache_key[0],
+                "path": cache_key[1],
+                "function": cache_key[0][-1] if cache_key[0] else None,
+                "step": self._plan.runtime.action_counter,
+                "tool": tool_name,
+                "url": url,
+                "impure": tool_name.endswith((".navigate", ".act")),
+            }
+
             self._plan.idempotency_cache[cache_key] = {
                 "result": result_to_cache,
                 "interaction_log": interaction_to_cache,
+                "meta": meta,
             }
 
             return return_value
 
         def sync_wrapper(*args, **kwargs):
             """Synchronous wrapper for logging and calling sync tools."""
-            if current_run_id_var.get() != self._plan.run_id:
+            ctx_run_id = current_run_id_var.get()
+            plan_run_id = self._plan.run_id
+            if ctx_run_id != plan_run_id:
                 logger.warning(
-                    f"Blocked stale tool call to '{name}' from a previous run.",
+                    f"Blocked stale tool call to '{name}' "
+                    f"(context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
+                )
+                self._plan.action_log.append(
+                    f"Blocked stale tool call to '{name}' (context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
                 )
                 raise asyncio.CancelledError("Stale tool call blocked by run_id gate.")
 
@@ -1066,9 +1198,21 @@ class _ActionProviderProxy:
 
             interaction_to_cache = ("tool_call", call_repr, interaction_str)
             interactions_log.append(interaction_to_cache)
+
+            meta = {
+                "call_stack": cache_key[0],
+                "path": cache_key[1],
+                "function": cache_key[0][-1] if cache_key[0] else None,
+                "step": self._plan.runtime.action_counter,
+                "tool": tool_name,
+                "url": None,
+                "impure": tool_name.endswith((".navigate", ".act")),
+            }
+
             self._plan.idempotency_cache[cache_key] = {
                 "result": result_to_cache,
                 "interaction_log": interaction_to_cache,
+                "meta": meta,
             }
 
             return return_value
@@ -1143,6 +1287,15 @@ class HierarchicalPlan(BaseActiveTask):
             self._last_summarized_interaction_count: int = 0
 
         self._child_tasks: set[asyncio.Task] = set()
+
+        self.verif_seq: int = 0
+        self.pending_verifications: "OrderedDict[int, VerificationHandle]" = (
+            OrderedDict()
+        )
+        self._verification_lock = asyncio.Lock()
+        self._recovery_task: Optional[asyncio.Task] = None
+        self._recovery_target_ordinal: Optional[int] = None
+        self.is_verifying_post_completion: bool = False
 
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations or 2
@@ -1285,22 +1438,23 @@ class HierarchicalPlan(BaseActiveTask):
 
             if self.persist:
                 self.action_log.append(
-                    f"Main plan execution concluded with result: {result}. Awaiting next instruction.",
+                    f"Main plan execution concluded with result: {result}. Verifying final steps in background...",
                 )
 
+                self.is_verifying_post_completion = True
+                self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
                 if hasattr(self, "_done_events") and not self._done_events.empty():
                     try:
                         event_to_signal = self._done_events.get_nowait()
                         event_to_signal.set()
                     except asyncio.QueueEmpty:
                         pass
-
-                self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
                 return
             else:
                 self.action_log.append(
                     f"Main plan execution finished with result: {result}.",
                 )
+                await self._cancel_all_background_tasks()
                 self._set_state(_HierarchicalPlanState.COMPLETED)
                 self._set_final_result(str(result))
                 return
@@ -1621,6 +1775,477 @@ class HierarchicalPlan(BaseActiveTask):
         self._last_summarized_interaction_count = len(self.cumulative_interactions)
         return summary
 
+    def _spawn_async_verification(self, item: VerificationWorkItem):
+        """
+        Creates and tracks a new background task that performs real verification.
+        """
+
+        async def verification_runner():
+            """
+            Performs the actual verification, including the cache-only fast path,
+            and routes the result to the appropriate handler.
+            """
+            try:
+                assessment = None
+                if item.cache_miss_counter == 0:
+                    assessment = VerificationAssessment(
+                        status="ok",
+                        reason="Skipped verification for fully cached replay step.",
+                    )
+                else:
+                    if isinstance(
+                        self.actor.action_provider.browser.backend,
+                        MagnitudeBrowserBackend,
+                    ):
+                        await self.actor.action_provider.browser.backend.barrier(
+                            up_to_seq=item.exit_seq,
+                        )
+                    post_state_screenshot = (
+                        await self.actor.action_provider.browser.get_screenshot()
+                    )
+
+                    assessment = await self.actor._check_state_against_goal(
+                        plan=self,
+                        function_name=item.function_name,
+                        function_docstring=inspect.getdoc(
+                            self.execution_namespace[item.function_name],
+                        ),
+                        function_source_code=item.func_source,
+                        interactions=item.interactions,
+                        screenshot=post_state_screenshot,
+                        function_return_value=item.return_value_repr,
+                    )
+
+                if assessment.status == "ok":
+                    await self._on_verification_success(item, assessment)
+                else:
+                    await self._on_verification_failure(item, assessment)
+
+            except asyncio.CancelledError:
+                logger.warning(
+                    f"[V-TASK-{item.ordinal}] Verification for '{item.function_name}' was cancelled.",
+                )
+                self.action_log.append(
+                    f"Verification for '{item.function_name}' was cancelled",
+                )
+            except Exception as e:
+                logger.error(
+                    f"[V-TASK-{item.ordinal}] Verification task for '{item.function_name}' crashed: {e}",
+                    exc_info=True,
+                )
+                assessment = VerificationAssessment(
+                    status="fatal_error",
+                    reason=f"Verification task crashed: {e}",
+                )
+                await self._on_verification_failure(item, assessment)
+            finally:
+                self.pending_verifications.pop(item.ordinal, None)
+                self._child_tasks.discard(asyncio.current_task())
+
+        task = asyncio.create_task(
+            verification_runner(),
+            name=f"Verify-{item.ordinal}-{item.function_name}",
+        )
+        self.pending_verifications[item.ordinal] = VerificationHandle(
+            item=item,
+            task=task,
+        )
+        self._child_tasks.add(task)
+
+    async def _on_verification_success(
+        self,
+        item: VerificationWorkItem,
+        assessment: VerificationAssessment,
+    ):
+        """Handles the side-effects of a successful verification."""
+        logger.info(
+            f"[V-TASK-{item.ordinal}] Verification SUCCEEDED for '{item.function_name}'. Reason: {assessment.reason}",
+        )
+        self.action_log.append(
+            f"Async Verification for {item.function_name}: ok - '{assessment.reason}'",
+        )
+
+        self.last_verified_function_name = item.function_name
+        self.last_verified_url = item.post_state["url"]
+        self.last_verified_screenshot = item.post_state["screenshot"]
+
+        if hasattr(self, "cumulative_interactions"):
+            self.cumulative_interactions.extend(item.interactions)
+
+        if (
+            item.func_source
+            and self.actor.function_manager
+            and item.function_name != "main_plan"
+        ):
+            try:
+                func_tree = ast.parse(
+                    self.clean_function_source_map[item.function_name],
+                )
+                func_node = func_tree.body[0]
+
+                if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    func_node.decorator_list = [
+                        d
+                        for d in func_node.decorator_list
+                        if not (isinstance(d, ast.Name) and d.id == "verify")
+                    ]
+
+                clean_func_source = ast.unparse(func_tree)
+                existing_funcs = self.actor.function_manager.list_functions(
+                    include_implementations=True,
+                )
+                is_duplicate = any(
+                    item.function_name == data.get("name")
+                    for data in existing_funcs.values()
+                )
+
+                precondition_prompt = prompt_builders.build_precondition_prompt(
+                    function_source_code=clean_func_source,
+                    interactions_log=json.dumps(
+                        item.interactions,
+                        indent=2,
+                    ),
+                    has_entry_screenshot=item.pre_state["screenshot"] is not None,
+                )
+
+                self.summarization_client.set_response_format(PreconditionDecision)
+                try:
+                    decision_str = await llm_call(
+                        self.summarization_client,
+                        precondition_prompt,
+                        screenshot=item.pre_state["screenshot"],
+                    )
+                    precondition_data = PreconditionDecision.model_validate_json(
+                        decision_str,
+                    )
+                finally:
+                    self.summarization_client.reset_response_format()
+
+                preconditions_for_fm = {}
+                if precondition_data.status == "ok" and (
+                    precondition_data.url or precondition_data.description
+                ):
+                    preconditions_for_fm[item.function_name] = {
+                        "url": precondition_data.url,
+                        "description": precondition_data.description,
+                    }
+
+                if not is_duplicate:
+                    self.action_log.append(
+                        f"Persisting verified function '{item.function_name}' as a new skill.",
+                    )
+                    logger.info(
+                        f"Adding function '{item.function_name}' to FunctionManager.",
+                    )
+                    self.actor.function_manager.add_functions(
+                        implementations=[clean_func_source],
+                        preconditions=preconditions_for_fm,
+                    )
+                else:
+                    self.action_log.append(
+                        f"Skipping persistence for '{item.function_name}'; identical skill already exists.",
+                    )
+                    logger.info(
+                        f"Skipping adding function '{item.function_name}' to FunctionManager; identical function already exists.",
+                    )
+            except Exception as e:
+                self.action_log.append(
+                    f"WARNING: Could not persist function '{item.function_name}': {e}",
+                )
+                logger.warning(
+                    f"Could not add function '{item.function_name}' to FunctionManager: {e}",
+                )
+
+    async def _on_verification_failure(
+        self,
+        item: VerificationWorkItem,
+        assessment: VerificationAssessment,
+    ):
+        """
+        Handles a failed verification, including preemption logic for cascading failures
+        and re-opening the plan if it has already completed.
+        """
+        if self.is_verifying_post_completion:
+            logger.info(
+                f"Verification failed for '{item.function_name}' after plan completion. Re-opening plan for recovery...",
+            )
+            self.action_log.append(
+                f"Post-completion verification failed for '{item.function_name}'. Re-opening plan to recover.",
+            )
+            self._set_state(_HierarchicalPlanState.RUNNING)
+            self.is_verifying_post_completion = False
+
+        async with self._verification_lock:
+            failing_ordinal = item.ordinal
+
+            if self._recovery_task:
+                if failing_ordinal < (self._recovery_target_ordinal or float("inf")):
+                    logger.warning(
+                        f"Preempting recovery for ordinal {self._recovery_target_ordinal} "
+                        f"with earlier failure from '{item.function_name}' (ord={failing_ordinal}).",
+                    )
+                    self.action_log.append(
+                        f"PREEMPTION: Earlier failure (ord={failing_ordinal}) for '{item.function_name}' "
+                        f"preempts recovery for ordinal {self._recovery_target_ordinal}.",
+                    )
+                    self._recovery_task.cancel()
+                    try:
+                        await self._recovery_task
+                    except asyncio.CancelledError:
+                        pass
+                else:
+                    logger.info(
+                        f"Ignoring failure of '{item.function_name}' (ord={failing_ordinal}) because recovery for earlier error (ord={self._recovery_target_ordinal}) is in progress.",
+                    )
+                    self.action_log.append(
+                        f"Ignoring failure of '{item.function_name}' (ord={failing_ordinal}) "
+                        f"because recovery for earlier error (ord={self._recovery_target_ordinal}) is in progress.",
+                    )
+                    self.action_log.append(
+                        f"Stale verification for '{item.function_name}' discarded.",
+                    )
+                    return
+
+            logger.critical(
+                f"[V-TASK-{item.ordinal}] VERIFICATION FAILED for '{item.function_name}'. "
+                f"Status: {assessment.status}, Reason: {assessment.reason}. "
+                f"Initiating recovery...",
+            )
+            self.action_log.append(
+                f"Async Verification for {item.function_name}: FAILED - Status: {assessment.status}, Reason: '{assessment.reason}'. Initiating recovery.",
+            )
+
+            await self._cancel_verifications_after(item.ordinal)
+
+            self._recovery_target_ordinal = item.ordinal
+            self._recovery_task = asyncio.create_task(
+                self._perform_verification_recovery(item, assessment),
+                name=f"Recovery-to-{item.ordinal}-{item.function_name}",
+            )
+
+    async def _perform_verification_recovery(
+        self,
+        item: VerificationWorkItem,
+        assessment: VerificationAssessment,
+    ):
+        """Orchestrates the full rollback, fix, rewind, and restart process."""
+        try:
+            if hasattr(
+                self.actor.action_provider.browser.backend,
+                "interrupt_current_action",
+            ):
+                await self.actor.action_provider.browser.backend.interrupt_current_action()
+            if isinstance(
+                self.actor.action_provider.browser.backend,
+                MagnitudeBrowserBackend,
+            ):
+                self.action_log.append(
+                    f"RECOVERY: Verification failed in '{item.function_name}'. "
+                    f"Clearing any queued commands from this function.",
+                )
+                self.actor.action_provider.browser.backend.clear_commands_from_failed_function(
+                    item.function_name,
+                )
+
+            old_run_id = self.run_id
+            self.run_id += 1
+
+            await self._handle_dynamic_implementation(
+                function_name=item.function_name,
+                replan_reason=assessment.reason,
+                status=assessment.status,
+                failed_interactions=item.interactions,
+                existing_code_for_modification=self.clean_function_source_map.get(
+                    item.function_name,
+                ),
+            )
+
+            await self.actor._verify_and_correct_state(
+                plan=self,
+                target_precondition=item.pre_state,
+                context_label=f"async verification recovery for '{item.function_name}'",
+            )
+
+            self._invalidate_cache_from_function(item.function_name, item.parent_stack)
+
+            self._restart_execution_loop(old_run_id)
+
+        except Exception as e:
+            logger.error(
+                f"Critical error during verification recovery for '{item.function_name}': {e}",
+                exc_info=True,
+            )
+            self._set_state(_HierarchicalPlanState.ERROR)
+            self._set_final_result(
+                f"ERROR: Unrecoverable error during verification recovery: {e}",
+            )
+        finally:
+
+            self._recovery_task = None
+            self._recovery_target_ordinal = None
+
+    async def _cancel_verifications_after(self, ord_: int):
+        """Cancels all pending verification tasks with an ordinal greater than the given one."""
+
+        to_cancel = [o for o in self.pending_verifications if o > ord_]
+        if to_cancel:
+            logger.info(f"Cancelling {len(to_cancel)} subsequent verification tasks.")
+            self.action_log.append(
+                f"Cancelling {len(to_cancel)} subsequent verification tasks.",
+            )
+
+        for ordinal in to_cancel:
+            handle = self.pending_verifications.pop(ordinal, None)
+            if handle and not handle.task.done():
+                handle.task.cancel()
+
+                try:
+                    await handle.task
+                except asyncio.CancelledError:
+
+                    self.action_log.append(
+                        f"Verification for '{handle.item.function_name}' was cancelled (ord={ordinal}).",
+                    )
+            if handle:
+                self._child_tasks.discard(handle.task)
+
+    def _invalidate_cache_from_function(self, function_name: str, parent_stack: tuple):
+        """
+        Reuses the selective cache invalidation logic from interjections.
+        Purges cache entries for the failed function and everything called after it.
+        """
+        try:
+            full_stack_list = list(parent_stack) + [function_name]
+
+            start_index = full_stack_list.index(function_name)
+
+            functions_to_invalidate = set(full_stack_list[start_index:])
+            self.action_log.append(
+                f"CACHE INVALIDATION: Verification failure invalidating cache for: {', '.join(functions_to_invalidate)}",
+            )
+
+            keys_to_delete = [
+                key
+                for key in self.idempotency_cache
+                if any(func_name in functions_to_invalidate for func_name in key[0])
+            ]
+
+            if keys_to_delete:
+                logger.info(
+                    f"Invalidating {len(keys_to_delete)} cache entries due to verification failure.",
+                )
+                for key in keys_to_delete:
+                    del self.idempotency_cache[key]
+        except Exception as e:
+            logger.warning(
+                f"Selective cache invalidation failed: {e}. Clearing entire cache as a fallback.",
+            )
+            self.idempotency_cache.clear()
+
+    def _resolve_invalidation_keys(
+        self,
+        decision: InterjectionDecision,
+    ) -> set[tuple]:
+        """
+        Resolve which cache keys to invalidate by combining:
+        (A) the LLM's proposal (functions + intra-function tails), and
+        (B) the impure guardrail for safety.
+        """
+        cache = self.idempotency_cache
+        all_keys = list(cache.keys())
+        spec = getattr(decision, "cache", None)
+
+        proposed = set()
+        if spec:
+            for k in all_keys:
+                meta = cache[k].get("meta", {})
+                if not meta:
+                    continue
+                if meta.get("function") in spec.invalidate_functions:
+                    proposed.add(k)
+                    continue
+                for r in spec.invalidate_steps:
+                    if (
+                        r.function_name == meta.get("function")
+                        and meta.get("step", 0) >= r.from_step_inclusive
+                    ):
+                        proposed.add(k)
+                        break
+
+        impure_guard = set()
+        invalidated_impure_indices = {
+            i
+            for i, k in enumerate(all_keys)
+            if k in proposed and cache[k].get("meta", {}).get("impure")
+        }
+        if invalidated_impure_indices:
+            latest_impure_index = max(invalidated_impure_indices)
+            for i, k in enumerate(all_keys):
+                if i > latest_impure_index:
+                    impure_guard.add(k)
+
+        final_keys = proposed | impure_guard
+        return final_keys
+
+    def _restart_execution_loop(self, old_run_id: int):
+        """Reuses the plan restart and state cleanup logic from interjections."""
+        logger.info(f"Restarting execution loop. New run_id: {self.run_id}")
+        self.action_log.append(
+            f"RESTART: Restarting execution loop (old_run_id={old_run_id} → new_run_id={self.run_id}).",
+        )
+
+        if self._execution_task and not self._execution_task.done():
+            self._execution_task.cancel()
+
+        if old_run_id in self.runtime.call_stacks:
+            del self.runtime.call_stacks[old_run_id]
+        self.interaction_stack.clear()
+        self.call_stack.clear()
+        self.runtime.path_context.clear()
+        self.interaction_stack.append([])
+
+        self._execution_task = asyncio.create_task(
+            self._initialize_and_run(mode="replay_after_verification_recovery"),
+        )
+
+    async def _cancel_all_background_tasks(self):
+        """Gracefully cancels all in-flight verification and recovery tasks."""
+        logger.debug("Cancelling all background verification and recovery tasks.")
+        self.action_log.append(
+            "Cancelling all background verification and recovery tasks.",
+        )
+
+        if self._recovery_task and not self._recovery_task.done():
+            self._recovery_task.cancel()
+
+        verifications_to_cancel = [
+            handle
+            for handle in self.pending_verifications.values()
+            if not handle.task.done()
+        ]
+
+        if not verifications_to_cancel and (
+            not self._recovery_task or self._recovery_task.done()
+        ):
+            return
+
+        for handle in verifications_to_cancel:
+            handle.task.cancel()
+            self.action_log.append(
+                f"Verification for '{handle.item.function_name}' was cancelled",
+            )
+
+        all_tasks = [handle.task for handle in verifications_to_cancel] + (
+            [self._recovery_task] if self._recovery_task else []
+        )
+        await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        if self._recovery_task:
+            self._child_tasks.discard(self._recovery_task)
+
+        self.pending_verifications.clear()
+        self._recovery_task = None
+
     async def _summarize_log_chunk(self, summaries: str) -> str:
         """Uses an LLM to summarize a list of action log entries."""
         if not summaries:
@@ -1669,6 +2294,9 @@ class HierarchicalPlan(BaseActiveTask):
         """
         Processes a user interjection by using an LLM to decide on the best course of action.
         """
+
+        await self._cancel_all_background_tasks()
+
         logger.debug(
             f"INTERJECT: Interjection received {message}. Current state: {self._state.name}",
         )
@@ -1700,6 +2328,7 @@ class HierarchicalPlan(BaseActiveTask):
                     call_stack=self.call_stack,
                     action_log=self.action_log[-10:],
                     goal=self.goal,
+                    idempotency_cache=self.idempotency_cache,
                     tools=self.actor.tools,
                 )
 
@@ -1742,53 +2371,60 @@ class HierarchicalPlan(BaseActiveTask):
         if decision.action == "modify_task" and decision.patches:
             self.action_log.append("Executing stateful decision: modify_task.")
 
+            original_call_stack = list(self.call_stack)
+            first_modified_function_index = -1
             first_modified_function_name = None
+            for i, func_name in enumerate(original_call_stack):
+                if any(p.function_name == func_name for p in decision.patches):
+                    first_modified_function_index = i
+                    first_modified_function_name = func_name
+                    break
+
             try:
-                original_call_stack = list(self.call_stack)
-                first_modified_function_index = -1
-
-                for i, func_name in enumerate(original_call_stack):
-                    if any(p.function_name == func_name for p in decision.patches):
-                        first_modified_function_index = i
-                        break
-
-                if first_modified_function_index != -1:
-                    functions_to_invalidate = set(
-                        original_call_stack[first_modified_function_index:],
-                    )
-                    first_modified_function_name = original_call_stack[
-                        first_modified_function_index
-                    ]
-                    self.action_log.append(
-                        f"CACHE INVALIDATION: Interjection modifies past actions. Invalidating cache for: {', '.join(functions_to_invalidate)}",
-                    )
-                    logger.debug(
-                        f"Invalidating {len(functions_to_invalidate)} functions' cache entries due to interjection.",
-                    )
-                    keys_to_delete = [
-                        key
-                        for key in self.idempotency_cache
-                        if any(
-                            func_name in functions_to_invalidate for func_name in key[0]
-                        )
-                    ]
-
-                    if keys_to_delete:
-                        logger.debug(
-                            f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
-                        )
-                        for key in keys_to_delete:
-                            del self.idempotency_cache[key]
-                else:
-                    self.action_log.append(
-                        "CACHE INVALIDATION: No past running functions were modified, cache remains intact.",
-                    )
-
+                keys_to_delete = self._resolve_invalidation_keys(
+                    decision,
+                )
             except Exception as e:
                 logger.warning(
                     f"Error during selective cache invalidation: {e}. For safety, clearing the entire cache.",
                 )
-                self.idempotency_cache.clear()
+                keys_to_delete = set(self.idempotency_cache.keys())
+
+            if keys_to_delete:
+                logger.info(
+                    f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
+                )
+                self.action_log.append(
+                    f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
+                )
+
+            invalidated_handles = set()
+            for key in keys_to_delete:
+                entry = self.idempotency_cache.pop(key, None)
+                if (
+                    entry
+                    and isinstance(entry.get("result"), str)
+                    and entry["interaction_log"][2].startswith("Returned handle")
+                ):
+                    hid = entry["result"]
+                    invalidated_handles.add(hid)
+                    self.live_handles.pop(hid, None)
+
+            if invalidated_handles:
+                logger.info(
+                    f"Cleaning up cached method calls for {len(invalidated_handles)} invalidated handles.",
+                )
+                self.action_log.append(
+                    f"Cleaning up cached method calls for {len(invalidated_handles)} invalidated handles.",
+                )
+                for k in list(self.idempotency_cache.keys()):
+                    meta_tool = (
+                        self.idempotency_cache.get(k, {})
+                        .get("meta", {})
+                        .get("tool", "")
+                    )
+                    if any(f":{hid}." in meta_tool for hid in invalidated_handles):
+                        self.idempotency_cache.pop(k, None)
 
             if first_modified_function_name:
                 self.action_log.append(
@@ -2069,6 +2705,7 @@ class HierarchicalPlan(BaseActiveTask):
                     parent_chat_context=self.parent_chat_context,
                     clarification_up_q=self.clarification_up_q,
                     clarification_down_q=self.clarification_down_q,
+                    persist=False,
                 )
 
                 sandbox_result = await sandbox_plan.result()
@@ -2178,35 +2815,81 @@ class HierarchicalPlan(BaseActiveTask):
 
         return "Error: Unknown or unsupported interjection action."
 
-    async def stop(self, final_result: str | None = None) -> str:
+    async def stop(
+        self,
+        final_result: str | None = None,
+        *,
+        reason: str | None = None,
+        cancel: bool | None = None,
+    ) -> str:
         """
         Stops the plan's execution permanently.
         In persist mode, this is a graceful shutdown. Otherwise, it is a hard cancel.
 
+        Parameters
+        ----------
+        final_result : str | None
+            Optional final message to record as the plan's result.
+        reason : str | None
+            Optional human-readable reason appended to the final result.
+        cancel : bool | None
+            If True, perform a hard cancel (STOPPED). If False, perform a
+            graceful stop (COMPLETED). If None, preserve legacy behaviour:
+            COMPLETED when `persist` is True, else STOPPED.
+
         Returns:
             A status message.
         """
+
+        await self._cancel_all_background_tasks()
         if self._is_complete:
             return f"Plan already in terminal state: {self._state.name}."
 
-        result_str = final_result or "Plan was stopped by user."
+        if final_result is not None:
+            base_msg = final_result
+        else:
+            base_msg = (
+                "Plan was cancelled by user."
+                if cancel is True
+                else "Plan was stopped by user."
+            )
+        result_str = base_msg if not reason else f"{base_msg} Reason: {reason}"
+
         self.action_log.append(f"stop() called. Final result: '{result_str}'")
         self._cleanup_temp_file()
 
-        if self.persist:
-            self._set_state(_HierarchicalPlanState.COMPLETED)
-            self._set_final_result(result_str)
-            try:
-                if hasattr(self, "_done_events") and not self._done_events.empty():
-                    event_to_signal = self._done_events.get_nowait()
-                    event_to_signal.set()
-            except Exception:
-                pass
+        if cancel is None:
+            if self.persist:
+                self._set_state(_HierarchicalPlanState.COMPLETED)
+                self._set_final_result(result_str)
+                try:
+                    if hasattr(self, "_done_events") and not self._done_events.empty():
+                        event_to_signal = self._done_events.get_nowait()
+                        event_to_signal.set()
+                except Exception:
+                    pass
+            else:
+                self._set_state(_HierarchicalPlanState.STOPPED)
+                if self._execution_task and not self._execution_task.done():
+                    self._execution_task.cancel()
+                self._set_final_result(result_str)
         else:
-            self._set_state(_HierarchicalPlanState.STOPPED)
-            if self._execution_task and not self._execution_task.done():
-                self._execution_task.cancel()
-            self._set_final_result(result_str)
+            if cancel is False:
+
+                self._set_state(_HierarchicalPlanState.COMPLETED)
+                self._set_final_result(result_str)
+                try:
+                    if hasattr(self, "_done_events") and not self._done_events.empty():
+                        event_to_signal = self._done_events.get_nowait()
+                        event_to_signal.set()
+                except Exception:
+                    pass
+            else:
+
+                self._set_state(_HierarchicalPlanState.STOPPED)
+                if self._execution_task and not self._execution_task.done():
+                    self._execution_task.cancel()
+                self._set_final_result(result_str)
 
         try:
             self.runtime._release_from_checkpoint()
@@ -2324,11 +3007,6 @@ class HierarchicalPlan(BaseActiveTask):
                 _HierarchicalPlanState.RUNNING,
                 _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
             )
-        if name == "modify_plan":
-            return self._state in (
-                _HierarchicalPlanState.PAUSED,
-                _HierarchicalPlanState.RUNNING,
-            )
         return False
 
     @property
@@ -2345,7 +3023,6 @@ class HierarchicalPlan(BaseActiveTask):
             "pause",
             "resume",
             "ask",
-            "modify_plan",
             "interject",
         ]
         for method_name in potential_tools:
@@ -2637,7 +3314,9 @@ class HierarchicalActor(BaseActor):
                 )
             plan.action_log.append(f"Received clarification: {answer}")
             interaction_to_log = ("tool_call", call_repr, answer)
-            plan.interaction_stack[-1].append(interaction_to_log)
+            interactions_log = current_interaction_sink_var.get()
+            if interactions_log is not None:
+                interactions_log.append(interaction_to_log)
             return answer
 
         plan.execution_namespace.clear()
@@ -2712,6 +3391,9 @@ class HierarchicalActor(BaseActor):
                 logger.info(
                     f"PRECONDITION MET for '{context_label}': {verification_decision.reason}",
                 )
+                plan.action_log.append(
+                    f"PRECONDITION MET for '{context_label}': {verification_decision.reason}",
+                )
                 return
 
             logger.warning(
@@ -2780,6 +3462,9 @@ class HierarchicalActor(BaseActor):
         if not precondition or precondition.get("status") == "not_applicable":
             return
 
+        if isinstance(self.action_provider.browser.backend, MagnitudeBrowserBackend):
+            await self.action_provider.browser.backend.barrier()
+
         await self._verify_and_correct_state(
             plan=plan,
             target_precondition=precondition,
@@ -2808,6 +3493,9 @@ class HierarchicalActor(BaseActor):
                         logger.warning(
                             f"Blocked stale function call to '{fn.__name__}'. "
                             f"Context run_id={context_rid} does not match plan run_id={plan_rid}.",
+                        )
+                        plan.action_log.append(
+                            f"Blocked stale function call to '{fn.__name__}'. Context run_id={context_rid} does not match plan run_id={plan_rid}.",
                         )
                         raise asyncio.CancelledError(
                             f"Stale function call to '{fn.__name__}' blocked by run_id gate.",
@@ -2845,16 +3533,6 @@ class HierarchicalActor(BaseActor):
                         f"{diag_prefix} -> Entering '{func_name}' with args: ({all_args})",
                     )
 
-                    entry_screenshot = None
-                    if "action_provider.browser" in plan.plan_source_code:
-                        try:
-                            entry_screenshot = (
-                                await self.action_provider.browser.get_screenshot()
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                f"Could not capture entry screenshot for '{func_name}': {e}",
-                            )
                     logger.info(f"{diag_prefix} VERIFY: Entering '{func_name}'")
                     parent_action_counter = plan.runtime.action_counter
                     plan.runtime.action_counter = 0
@@ -2863,30 +3541,28 @@ class HierarchicalActor(BaseActor):
                     if plan.runtime.execution_mode != "replay_after_modification":
                         await self._ensure_precondition(plan, func_name)
 
+                    pre_state = {
+                        "url": await self.action_provider.browser.get_current_url(),
+                        "screenshot": await self.action_provider.browser.get_screenshot(),
+                    }
+
                     last_error_reason = ""
+                    result = None
                     try:
                         for i in range(plan.MAX_LOCAL_RETRIES):
                             plan.runtime.action_counter = 0
                             if i > 0:
                                 local_interactions.clear()
                             try:
-                                captured_run_id = current_run_id_var.get()
 
                                 current_fn_for_execution = plan.execution_namespace[
                                     func_name
                                 ]
-                                func_source = plan.function_source_map.get(func_name)
-
-                                result = await self._execute_and_verify_step(
-                                    plan,
-                                    inspect.unwrap(current_fn_for_execution),
-                                    func_source,
-                                    args,
-                                    kwargs,
-                                    local_interactions,
-                                    entry_screenshot=entry_screenshot,
+                                captured_run_id = current_run_id_var.get()
+                                result = await inspect.unwrap(current_fn_for_execution)(
+                                    *args,
+                                    **kwargs,
                                 )
-
                                 if captured_run_id != plan.run_id:
                                     logger.warning(
                                         f"Discarding stale verification for '{func_name}' from a previous run (ID: {captured_run_id}).",
@@ -2898,7 +3574,7 @@ class HierarchicalActor(BaseActor):
                                         "Stale verification.",
                                     )
 
-                                return result
+                                break
 
                             except _ControlledInterruptionException:
                                 plan.action_log.append(
@@ -2972,42 +3648,78 @@ class HierarchicalActor(BaseActor):
                                 )
                                 local_interactions.clear()
                                 continue
-
-                        if plan.clarification_enabled:
-                            plan.action_log.append(
-                                f"Function '{func_name}' has failed all {plan.MAX_LOCAL_RETRIES} retries. Asking user for guidance.",
-                            )
-                            clarification_question = (
-                                f"I've been unable to complete the step '{func_name}'. "
-                                f"The last issue was: {last_error_reason}. How should I proceed?"
-                            )
-                            user_answer = await plan.execution_namespace[
-                                "request_clarification"
-                            ](clarification_question)
-                            plan.action_log.append(
-                                f"Received user guidance: {user_answer}",
-                            )
-
-                            existing_code = plan.clean_function_source_map.get(
-                                func_name,
-                            )
-                            await plan._handle_dynamic_implementation(
-                                func_name,
-                                replan_reason=f"Function failed all retries. User provided new guidance: {user_answer}",
-                                failed_interactions=local_interactions,
-                                existing_code_for_modification=existing_code,
-                                clarification_question=clarification_question,
-                                clarification_answer=user_answer,
-                            )
-                            plan.action_log.append(
-                                f"Restarting execution of '{func_name}' after user guidance.",
-                            )
-                            continue
                         else:
-                            raise ReplanFromParentException(
-                                f"Function '{func_name}' failed after {plan.MAX_LOCAL_RETRIES} retries.",
-                                reason=f"Final error:\n{last_error_reason}",
-                            )
+                            if plan.clarification_enabled:
+                                plan.action_log.append(
+                                    f"Function '{func_name}' has failed all {plan.MAX_LOCAL_RETRIES} retries. Asking user for guidance.",
+                                )
+                                clarification_question = (
+                                    f"I've been unable to complete the step '{func_name}'. "
+                                    f"The last issue was: {last_error_reason}. How should I proceed?"
+                                )
+                                user_answer = await plan.execution_namespace[
+                                    "request_clarification"
+                                ](clarification_question)
+                                plan.action_log.append(
+                                    f"Received user guidance: {user_answer}",
+                                )
+
+                                existing_code = plan.clean_function_source_map.get(
+                                    func_name,
+                                )
+                                await plan._handle_dynamic_implementation(
+                                    func_name,
+                                    replan_reason=f"Function failed all retries. User provided new guidance: {user_answer}",
+                                    failed_interactions=local_interactions,
+                                    existing_code_for_modification=existing_code,
+                                    clarification_question=clarification_question,
+                                    clarification_answer=user_answer,
+                                )
+                                plan.action_log.append(
+                                    f"Restarting execution of '{func_name}' after user guidance.",
+                                )
+                                continue
+                            else:
+                                raise ReplanFromParentException(
+                                    f"Function '{func_name}' failed after {plan.MAX_LOCAL_RETRIES} retries.",
+                                    reason=f"Final error:\n{last_error_reason}",
+                                )
+
+                        exit_seq = -1
+                        if isinstance(
+                            self.action_provider.browser.backend,
+                            MagnitudeBrowserBackend,
+                        ):
+                            exit_seq = self.action_provider.browser.backend.current_seq
+
+                        post_state = {
+                            "url": await self.action_provider.browser.get_current_url(),
+                            "screenshot": None,
+                        }
+
+                        step_cache_miss_counter = plan.runtime.cache_miss_counter
+
+                        plan.runtime.cache_miss_counter = 0
+
+                        plan.verif_seq += 1
+                        item = VerificationWorkItem(
+                            ordinal=plan.verif_seq,
+                            function_name=func_name,
+                            parent_stack=plan.runtime.get_current_stack_tuple(
+                                plan.run_id,
+                            )[:-1],
+                            func_source=plan.function_source_map.get(func_name, ""),
+                            pre_state=pre_state,
+                            post_state=post_state,
+                            interactions=copy.deepcopy(local_interactions),
+                            return_value_repr=repr(result),
+                            cache_miss_counter=step_cache_miss_counter,
+                            exit_seq=exit_seq,
+                        )
+
+                        plan._spawn_async_verification(item)
+
+                        return result
 
                     finally:
                         if parent_sink is not None:
@@ -3025,10 +3737,13 @@ class HierarchicalActor(BaseActor):
                         )
                         plan.runtime.action_counter = parent_action_counter
 
+                        plan.runtime.cache_miss_counter = 0
+
             return wrapper
 
         return verify
 
+    # TODO: DEPRECATED
     async def _execute_and_verify_step(
         self,
         plan: HierarchicalPlan,
@@ -3687,67 +4402,65 @@ class HierarchicalActor(BaseActor):
 
     async def _execute_course_correction(self, plan: HierarchicalPlan, code: str):
         """
-        Executes a dynamically generated script to correct the browser state and
-        invalidates the cache for the failed function's scope.
+        Executes a dynamically generated script to correct the browser state.
+        Runs under the current plan's run_id so tool calls are not blocked by the proxy.
         """
-
-        current_scope_tuple = tuple(plan.call_stack)
-        keys_to_invalidate = [
-            key for key in plan.idempotency_cache if key[0] == current_scope_tuple
-        ]
-
-        if keys_to_invalidate:
-            plan.action_log.append(
-                f"COURSE CORRECTION: Invalidating {len(keys_to_invalidate)} cache entries for scope: {plan.call_stack}",
-            )
-            logger.debug(f"Invalidating cache for scope {plan.call_stack}")
-            for key in keys_to_invalidate:
-                del plan.idempotency_cache[key]
-
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         failed_function_name = (
             plan.call_stack[-1] if plan.call_stack else "unknown_function"
         )
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
         correction_filename = f"correction_for_{failed_function_name}_{timestamp}.py"
         plans_dir = Path.cwd() / ".unity_plans"
         plans_dir.mkdir(exist_ok=True)
         correction_file_path = plans_dir / correction_filename
-
-        script_to_write = f"""
-# Auto-generated course correction script
-# Triggered by failure in: {failed_function_name}
-# Executed at: {timestamp}
-#
-# Goal: Restore browser state to the one left by '{plan.last_verified_function_name}'
-# Target URL: {plan.last_verified_url}
-
-import asyncio
-import textwrap
-
-# The 'action_provider' is injected into the execution namespace by the actor.
-
-async def course_correction_plan():
-    # This is a sequence of actions to restore the state.
-    {textwrap.indent(code, '    ')}
-
-"""
-        correction_file_path.write_text(textwrap.dedent(script_to_write).strip())
-
+        correction_file_path.write_text(code)
         logger.info(
             f"Executing course correction script. See '{correction_file_path}' for details.",
         )
-        plan.action_log.append(
-            f"Saved course correction script to '{correction_file_path}'.",
+
+        wrapped_code = "async def __hp_course_correction():\n" + textwrap.indent(
+            code,
+            "    ",
         )
+        local_namespace: dict = {}
+        exec(wrapped_code, plan.execution_namespace, local_namespace)
+        correction_func = local_namespace["__hp_course_correction"]
 
-        exec_namespace = plan.execution_namespace
+        run_id_token = current_run_id_var.set(plan.run_id)
+        invoc_id_token = current_invocation_id_var.set(
+            f"course_correction_{uuid.uuid4().hex[:8]}",
+        )
+        interaction_sink: list = []
+        sink_token = current_interaction_sink_var.set(interaction_sink)
 
-        script_content = correction_file_path.read_text()
-        exec(script_content, exec_namespace)
+        frame_token = plan.runtime.push_frame(plan.run_id, "__course_correction__")
+        plan.call_stack.append("__course_correction__")
 
-        correction_func = exec_namespace["course_correction_plan"]
-        await correction_func()
+        try:
+            await correction_func()
+            if hasattr(plan, "cumulative_interactions"):
+                plan.cumulative_interactions.extend(interaction_sink)
+
+        except asyncio.CancelledError:
+            logger.warning("Course correction was cancelled.")
+            raise
+        except Exception as e:
+            logger.error(
+                f"Course correction script failed to execute: {e}",
+                exc_info=True,
+            )
+            raise
+        finally:
+            try:
+                current_interaction_sink_var.reset(sink_token)
+                current_invocation_id_var.reset(invoc_id_token)
+                current_run_id_var.reset(run_id_token)
+            except Exception:
+                pass
+
+            plan.runtime.pop_frame(plan.run_id, frame_token)
+            if plan.call_stack and plan.call_stack[-1] == "__course_correction__":
+                plan.call_stack.pop()
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""

@@ -116,7 +116,7 @@ RUN install -m 0755 /app/scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 # Set memory-efficient environment variables for model loading
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
-RUN python unity/conversation_manager/call.py download-files
+RUN python unity/conversation_manager_2/medium_scripts/call.py download-files
 RUN playwright install
 
 # Set runtime environment variables for memory optimization

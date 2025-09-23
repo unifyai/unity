@@ -1,22 +1,8 @@
 from __future__ import annotations
 
-import os
-import time
 from typing import Any, Dict, Optional
 
-import requests
 import unify
-
-
-_HTTP_SESSION: Optional[requests.Session] = None
-
-
-def _get_http_session() -> requests.Session:
-    """Return a process-local requests.Session for connection reuse."""
-    global _HTTP_SESSION
-    if _HTTP_SESSION is None:
-        _HTTP_SESSION = requests.Session()
-    return _HTTP_SESSION
 
 
 class TableStore:
@@ -87,26 +73,5 @@ class TableStore:
         If the backend returns 404 (missing context), run ``ensure_context``
         once and retry with a tiny backoff.
         """
-        # Reuse a single session to avoid TCP/TLS handshake overhead
-        # across repeated calls within the same process.
-        # This does not cache responses or change semantics.
-        session = _get_http_session()
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={self._project}&context={self._ctx}"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        try:
-            resp = session.request("GET", url, headers=headers)
-            if resp.status_code == 404:
-                # Ensure then retry once (absorbs races)
-                self.ensure_context()
-                time.sleep(0.05)
-                resp = session.request("GET", url, headers=headers)
-            resp.raise_for_status()
-        except Exception:
-            # As a last resort, ensure and retry once more
-            self.ensure_context()
-            time.sleep(0.05)
-            resp = session.request("GET", url, headers=headers)
-            resp.raise_for_status()
-
-        data = resp.json()
+        data = unify.get_fields(project=self._project, context=self._ctx)
         return {k: v["data_type"] for k, v in data.items()}

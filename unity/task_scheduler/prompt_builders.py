@@ -1,3 +1,13 @@
+"""
+Prompt builders for the Task Scheduler.
+
+This module constructs system prompts for the scheduler's ask, update, and
+execute methods, plus a helper for the simulated scheduler. Each builder
+derives tool names dynamically from the provided tool dictionary, validates the
+required tools, and composes guidance and examples that reflect current
+behavior.
+"""
+
 from __future__ import annotations
 
 import json
@@ -8,33 +18,19 @@ from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
     now_utc_str,
-    tool_name as _shared_tool_name,
-    require_tools as _shared_require_tools,
+    tool_name,
+    require_tools,
 )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
-    """Return {name: '(<argspec>)', …} using shared helper."""
-    return sig_dict(tools)
-
-
 def _now() -> str:
     """Current UTC timestamp in a compact, human-readable form."""
     return now_utc_str()
-
-
-def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
-    """Delegate to shared tool name resolver."""
-    return _shared_tool_name(tools, needle)
-
-
-def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> None:
-    """Delegate validation to shared helper for consistent errors."""
-    _shared_require_tools(pairs, tools)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,21 +51,21 @@ def build_ask_prompt(
     *Never* hard-codes the number, names or argument-specs of tools – those are
     injected live from the supplied *tools* dict.
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    sig_json = json.dumps(sig_dict(tools), indent=4)
 
     # Resolve canonical tool names dynamically
-    filter_tasks_fname = _tool_name(tools, "filter_tasks")
-    search_tasks_fname = _tool_name(tools, "search_tasks")
-    list_queues_fname = _tool_name(tools, "list_queues")
-    get_queue_fname = _tool_name(tools, "get_queue")
-    get_queue_for_task_fname = _tool_name(tools, "get_queue_for_task")
-    contact_ask_fname = _tool_name(tools, "contactmanager")  # e.g. "ContactManager_ask"
+    filter_tasks_fname = tool_name(tools, "filter_tasks")
+    search_tasks_fname = tool_name(tools, "search_tasks")
+    list_queues_fname = tool_name(tools, "list_queues")
+    get_queue_fname = tool_name(tools, "get_queue")
+    get_queue_for_task_fname = tool_name(tools, "get_queue_for_task")
+    contact_ask_fname = tool_name(tools, "contactmanager")  # e.g. "ContactManager_ask"
 
     # Clarification helper (optional)
-    request_clar_fname = _tool_name(tools, "request_clarification")
+    request_clar_fname = tool_name(tools, "request_clarification")
 
     # Validate required tools (request_clar_fname is optional)
-    _require_tools(
+    require_tools(
         {
             "filter_tasks": filter_tasks_fname,
             "search_tasks": search_tasks_fname,
@@ -197,30 +193,27 @@ def build_update_prompt(
     """
     Build the **system** prompt for the `update` method.
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    sig_json = json.dumps(sig_dict(tools), indent=4)
 
     # Resolve canonical tool names dynamically (required)
-    ask_fname = _tool_name(tools, "ask")
-    create_task_fname = _tool_name(tools, "create_task")
-    create_tasks_fname = _tool_name(tools, "create_tasks")
-    delete_task_fname = _tool_name(tools, "delete_task")
-    cancel_tasks_fname = _tool_name(tools, "cancel_tasks")
-    # legacy: update_task_queue has been removed; keep lookup variable unused
+    ask_fname = tool_name(tools, "ask")
+    create_task_fname = tool_name(tools, "create_task")
+    create_tasks_fname = tool_name(tools, "create_tasks")
+    delete_task_fname = tool_name(tools, "delete_task")
+    cancel_tasks_fname = tool_name(tools, "cancel_tasks")
     # Multi-queue helpers (optional if not present)
-    list_queues_fname = _tool_name(tools, "list_queues")
-    get_queue_fname = _tool_name(tools, "get_queue")
-    reorder_queue_fname = _tool_name(tools, "reorder_queue")
-    move_tasks_to_queue_fname = _tool_name(tools, "move_tasks_to_queue")
-    partition_queue_fname = _tool_name(tools, "partition_queue")
-    update_task_fname = _tool_name(tools, "update_task")
-    # legacy: get_task_queue has been removed; use get_queue or get_queue_for_task instead
-    # legacy: get_task_queue has been removed; keep lookup variable unused
-    reinstate_task_fname = _tool_name(tools, "reinstate_task_to_previous_queue")
+    list_queues_fname = tool_name(tools, "list_queues")
+    get_queue_fname = tool_name(tools, "get_queue")
+    reorder_queue_fname = tool_name(tools, "reorder_queue")
+    move_tasks_to_queue_fname = tool_name(tools, "move_tasks_to_queue")
+    partition_queue_fname = tool_name(tools, "partition_queue")
+    update_task_fname = tool_name(tools, "update_task")
+    reinstate_task_fname = tool_name(tools, "reinstate_task_to_previous_queue")
 
     # Clarification helper (optional)
-    request_clar_fname = _tool_name(tools, "request_clarification")
+    request_clar_fname = tool_name(tools, "request_clarification")
 
-    _require_tools(
+    require_tools(
         {
             "ask": ask_fname,
             "create_task": create_task_fname,
@@ -291,8 +284,8 @@ def build_update_prompt(
         )
 
     # Atomic/edit helpers if present
-    set_queue_fname = _tool_name(tools, "set_queue")
-    set_schedules_atomic_fname = _tool_name(tools, "set_schedules_atomic")
+    set_queue_fname = tool_name(tools, "set_queue")
+    set_schedules_atomic_fname = tool_name(tools, "set_schedules_atomic")
 
     if set_queue_fname:
         usage_examples_lines.extend(
@@ -447,28 +440,28 @@ def build_execute_prompt(
     """
     Build the **system** prompt for the `execute` method.
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    sig_json = json.dumps(sig_dict(tools), indent=4)
 
     # Resolve names dynamically
-    ask_fname = _tool_name(tools, "ask")
-    execute_by_id_fname = _tool_name(tools, "execute_by_id")
-    execute_isolated_by_id_fname = _tool_name(tools, "execute_isolated_by_id")
-    create_task_fname = _tool_name(tools, "create_task")
-    request_clar_fname = _tool_name(tools, "request_clarification")
+    ask_fname = tool_name(tools, "ask")
+    execute_by_id_fname = tool_name(tools, "execute_by_id")
+    execute_isolated_by_id_fname = tool_name(tools, "execute_isolated_by_id")
+    create_task_fname = tool_name(tools, "create_task")
+    request_clar_fname = tool_name(tools, "request_clarification")
     # Multi-queue helpers
-    list_queues_fname = _tool_name(tools, "list_queues")
-    get_queue_fname = _tool_name(tools, "get_queue")
-    reorder_queue_fname = _tool_name(tools, "reorder_queue")
-    move_tasks_to_queue_fname = _tool_name(tools, "move_tasks_to_queue")
-    partition_queue_fname = _tool_name(tools, "partition_queue")
+    list_queues_fname = tool_name(tools, "list_queues")
+    get_queue_fname = tool_name(tools, "get_queue")
+    reorder_queue_fname = tool_name(tools, "reorder_queue")
+    move_tasks_to_queue_fname = tool_name(tools, "move_tasks_to_queue")
+    partition_queue_fname = tool_name(tools, "partition_queue")
     # Reintegration & safety
-    reinstate_task_fname = _tool_name(tools, "reinstate_task_to_previous_queue")
-    checkpoint_fname = _tool_name(tools, "checkpoint_queue_state")
-    revert_checkpoint_fname = _tool_name(tools, "revert_to_checkpoint")
-    latest_checkpoint_fname = _tool_name(tools, "get_latest_checkpoint")
+    reinstate_task_fname = tool_name(tools, "reinstate_task_to_previous_queue")
+    checkpoint_fname = tool_name(tools, "checkpoint_queue_state")
+    revert_checkpoint_fname = tool_name(tools, "revert_to_checkpoint")
+    latest_checkpoint_fname = tool_name(tools, "get_latest_checkpoint")
 
-    # For execute, legacy names may be absent; require only the stable set
-    _require_tools(
+    # Require the core tools needed for execution
+    require_tools(
         {
             "ask": ask_fname,
             "execute_by_id": execute_by_id_fname,
@@ -489,10 +482,9 @@ def build_execute_prompt(
         "Decision policy (isolation vs chain)",
         "------------------------------------",
         "• Consider the broader chat context and the user's exact phrasing to infer execution scope (single task now vs the whole sequence now).",
-        "• When intent is ambiguous or unspecified, prefer starting the task **in isolation** (single‑task‑now) rather than chaining the queue.",
         "• Isolation may require light queue maintenance: when the head is detached, the next task should inherit the queue's `start_at` and become `scheduled` (followers remain queued behind it).",
         "• Choose queue/chain execution when the context clearly indicates running the sequence now (e.g., the user agreed to process all items in a batch).",
-        "• Do not use brittle heuristics or regex for this decision – reason from the conversation and your plan.",
+        "• Do not use brittle heuristics or regex for this decision – use semantic reasoning and explicit tools.",
         "",
         "Tool semantics (for your decision)",
         "-----------------------------------",
@@ -516,8 +508,7 @@ def build_execute_prompt(
         f"   – After each successful edit, immediately call `{checkpoint_fname}(label='post-edit')` to allow reverting if the user changes their mind. If the user requests a revert, call `{revert_checkpoint_fname}(checkpoint_id=<latest id>)` or `{reinstate_task_fname}(task_id=<id>, allow_active=false)` depending on context.",
         f"   – If you did not capture the last checkpoint id, call `{latest_checkpoint_fname}()` to retrieve it.",
         (
-            f"3) EXECUTE by choosing `{execute_isolated_by_id_fname}` or `{execute_by_id_fname}` based on the decision policy above. "
-            "Do NOT modify `start_at` timestamps to force execution."
+            f"3) EXECUTE by choosing `{execute_isolated_by_id_fname}` or `{execute_by_id_fname}` based on the decision policy above. Do NOT modify `start_at` timestamps to force execution."
             if execute_isolated_by_id_fname
             else f"3) EXECUTE by calling `{execute_by_id_fname}(task_id=<head of the 'now' queue>)`. Do NOT modify `start_at` timestamps to force execution."
         ),
@@ -557,7 +548,7 @@ def build_execute_prompt(
         "",
         "Reporting",
         "---------",
-        "• Always include the executed task id(s) and a brief note about the resulting queue state in your final response.",
+        "• Execution always returns an ActiveQueue handle. Always include the executed task id(s) and a brief note about the resulting queue state in your final response.",
     ]
 
     return "\n".join(lines)

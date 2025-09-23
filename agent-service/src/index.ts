@@ -5,7 +5,7 @@ import expressWs from 'express-ws';
 import WebSocket from 'ws';
 import util from 'util';
 import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserOptions } from 'magnitude-core';
-import { z, ZodTypeAny, ZodAny } from 'zod';
+import { z, ZodTypeAny, ZodAny, ZodType } from 'zod';
 import dotenv from 'dotenv';
 dotenv.config();
 import os from 'os';
@@ -442,14 +442,16 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const zodSchema = schema ? jsonSchemaToZod(schema) : z.string();
-      const data = await browserAgent!.extract(instructions, zodSchema);
+      const data = await browserAgent!.extract(instructions, zodSchema as ZodTypeAny);
+
       // If successful, send the response and exit the loop
       return res.json({ data });
     } catch (err: unknown) {
       lastError = err;
-      // Check if the error is related to the LLM returning invalid JSON
-      if (err instanceof Error && err.message.includes('HTTP body is not JSON')) {
-        console.warn(`Attempt ${attempt} failed with a transient error. Retrying in ${attempt}s...`);
+      // Check if the error is related to the LLM returning invalid JSON.
+      // Added a check for "Unexpected token" which can also indicate a JSON parsing issue.
+      if (err instanceof Error && (err.message.includes('HTTP body is not JSON') || err.message.includes('Unexpected token'))) {
+        console.warn(`Attempt ${attempt} failed with a transient JSON parsing error. Retrying in ${attempt}s...`);
         await sleep(attempt * 1000); // Wait a bit longer each time
       } else {
         // If it's a different error, fail immediately
@@ -470,7 +472,9 @@ app.post('/query', isAgentReady, async (req: Request, res: Response) => {
   }
   try {
     const zodSchema = schema ? jsonSchemaToZod(schema) : z.any();
-    const data = await browserAgent!.query(query, zodSchema);
+    const queryFn = (browserAgent as unknown as { query: (q: unknown, s: ZodTypeAny) => Promise<unknown> }).query;
+    const dataUnknown: unknown = await queryFn(query, zodSchema as ZodTypeAny);
+    const data = dataUnknown as z.infer<typeof zodSchema>;
     res.json({ data });
   } catch (err) {
     handleAgentError(err, res);

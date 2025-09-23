@@ -5,6 +5,14 @@ This directory provides a Node-based runtime that launches:
 - Virtual audio devices (PipeWire/WirePlumber + PulseAudio modules)
 - The Magnitude BrowserAgent (`agent-service`)
 
+## CLI Tools
+
+Installations are available in the `unity-desktop-assistant` repo.
+
+1. [Ubuntu](https://github.com/unifyai/unify-desktop-assistant/tree/ubuntu)
+2. [Windows](https://github.com/unifyai/unify-desktop-assistant/tree/win)
+3. [MacOS](https://github.com/unifyai/unify-desktop-assistant/tree/macos)
+
 ## Setup
 
 Watch these videos for [setup](https://www.loom.com/share/ad1a9b9c4e6e4de1a9b5012523a34049?sid=974205eb-28ad-4f91-9752-dfe722fed214) and [controls](https://www.loom.com/share/654bcf321cd24a698032dab5e7e45059?sid=ea521290-cf86-425c-8308-6845864c86ee).

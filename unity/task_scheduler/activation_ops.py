@@ -1,27 +1,24 @@
+"""Queue detachment and reintegration planning for task activation.
+
+Detaches a task for activation in either isolation (followers remain linked to each
+other) or chained mode (followers remain attached to the activated task). Always
+records a ``ReintegrationPlan`` to restore deferred tasks to their exact positions.
+"""
+
 from __future__ import annotations
 
 from typing import Optional, Dict, Any, TYPE_CHECKING
 
 import unify
 
-from ._queue_utils import (
+from .queue_utils import (
     sched_prev as _q_prev,
     sched_next as _q_next,
-    attach_with_links as _q_attach_with_links,
 )
 from .types.reintegration_plan import ReintegrationPlan
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
-
-
-"""
-This module previously exposed a `get_task_queue` helper used by
-`TaskScheduler._get_task_queue`. The scheduler now provides explicit helpers:
-`_get_queue(queue_id=...)`, `_walk_queue_from_task(task_id=...)`, and
-`_get_queue_for_task(task_id=...)`. The generic traversal is kept within the
-scheduler to ensure a single invariant funnel for reads and writes.
-"""
 
 
 def detach_from_queue_for_activation(
@@ -30,30 +27,26 @@ def detach_from_queue_for_activation(
     task_id: int,
     detach: bool = True,
 ) -> None:
-    """Detach a task from the runnable queue ahead of activation.
+    """Detach a runnable task ahead of activation and record a reintegration plan.
 
-    Behavioural contract (from tests):
-    - General: Always record a ``ReintegrationPlan`` capturing ``prev_task``,
-      ``next_task``, whether the task was the head (``was_head``), the task's
-      original ``start_at`` (if any), the original status, and the queue head's
-      ``start_at`` at the time of detachment (``head_start_at``). This plan is
-      the only source used later by reinstatement.
-    - Isolated activation (default):
-      * If detaching the head: promote the next task to head, copy the head-level
+    Semantics:
+    - General: Record a ``ReintegrationPlan`` capturing ``prev_task``, ``next_task``,
+      whether the task was the head (``was_head``), the task's original ``start_at``
+      (if any), the original status, and the queue head's ``start_at`` at the moment
+      of detachment (``head_start_at``). Reinstatement uses only this plan.
+    - Isolated activation (``detach=True``, default):
+      * If detaching the head: promote the successor to head, copy the head-level
         ``start_at`` to it, and set its status to ``scheduled``. The detached task
         loses its schedule.
       * If detaching a middle task: unlink it from neighbours (``prev.next = next``
-        and ``next.prev = prev``) and ensure the successor does not carry a
-        ``start_at`` timestamp (only heads may carry it). The detached task loses
-        its schedule.
-    - Chained activation: keep the queue behind the
-      activated task attached to it. When promoting the activated task to head,
-      place any head-level ``start_at`` on it (use the previous head's timestamp
-      when the current task did not have one) and remove ``start_at`` from the
-      immediate successor.
+        and ``next.prev = prev``). Ensure the successor does not carry ``start_at``
+        (only heads may carry it). The detached task loses its schedule.
+    - Chained activation (``detach=False``): keep the queue behind the activated task
+      attached to it. When promoting the activated task to head, place the queue-level
+      ``start_at`` on it (prefer its own ``start_at``; otherwise use the head's), and
+      remove ``start_at`` from the immediate successor.
 
-    These semantics are intentionally minimal and exist solely to make
-    reinstatement deterministic and easy to reason about.
+    These rules make reinstatement deterministic and easy to reason about.
     """
 
     candidate_rows = scheduler._filter_tasks(
@@ -83,32 +76,18 @@ def detach_from_queue_for_activation(
     if prev_tid is None:
         head_start_at = start_at
     else:
-        # Prefer resolving via queue_id in a single filtered read.
+        # Prefer LocalTaskView for a single-step head start_at resolution.
         try:
             _qid = task_row.get("queue_id")
         except Exception:
             _qid = None
         if isinstance(_qid, int):
             try:
-                rows_in_queue = scheduler._filter_tasks(
-                    filter=(
-                        "schedule is not None and "
-                        "status not in ('completed','cancelled','failed') and "
-                        f"queue_id == {_qid}"
-                    ),
-                )
+                head_start_at = scheduler._view.get_head_start_at(int(_qid))  # type: ignore[attr-defined]
             except Exception:
-                rows_in_queue = []
-            # Identify head locally and read its start_at
-            for r in rows_in_queue:
-                try:
-                    _s = r.get("schedule") or {}
-                    if _s.get("prev_task") is None:
-                        head_start_at = _s.get("start_at")
-                        break
-                except Exception:
-                    continue
-        else:
+                head_start_at = None
+        # Fallbacks when queue_id is missing or the local view returned nothing
+        if head_start_at is None:
             # Fallback: walk prev pointers (rare case when queue_id is absent)
             cur_head = _get_row(task_id)
             while (
@@ -120,28 +99,7 @@ def detach_from_queue_for_activation(
                 if isinstance(_sched_head, dict):
                     head_start_at = _sched_head.get("start_at")
 
-    # Batch-fetch log objects for all relevant task_ids in one backend call
-    def _build_log_cache(ids: list[int]) -> Dict[int, unify.Log]:
-        cache: Dict[int, unify.Log] = {}
-        if not ids:
-            return cache
-        try:
-            logs = scheduler._get_logs_by_task_ids(
-                task_ids=ids,
-                return_ids_only=False,
-            )
-        except Exception:
-            logs = []
-        for lg in logs or []:
-            try:
-                entries = getattr(lg, "entries", {}) or {}
-                tid = entries.get("task_id")
-                if isinstance(tid, int):
-                    cache[int(tid)] = lg
-            except Exception:
-                continue
-        return cache
-
+    # Batch-fetch log objects for all relevant task_ids in one backend call (reuse scheduler helper)
     needed_ids: list[int] = []
     for _tid in (task_id, prev_tid, next_tid):
         try:
@@ -149,25 +107,29 @@ def detach_from_queue_for_activation(
                 needed_ids.append(int(_tid))
         except Exception:
             continue
-    _log_cache = _build_log_cache(needed_ids)
+    try:
+        log_objs = scheduler._get_logs_by_task_ids(  # type: ignore[attr-defined]
+            task_ids=needed_ids,
+            return_ids_only=False,
+        )
+    except Exception:
+        log_objs = []
+    _log_cache: Dict[int, unify.Log] = {}
+    for lg in log_objs or []:
+        try:
+            entries = getattr(lg, "entries", {}) or {}
+            tid = entries.get("task_id")
+            if isinstance(tid, int):
+                _log_cache[int(tid)] = lg
+        except Exception:
+            continue
 
     def _get_log_obj(tid: int) -> Optional[unify.Log]:
         if not isinstance(tid, int):
             return None
-        lg = _log_cache.get(int(tid))
-        if lg is not None:
-            return lg
-        # Defensive fallback (should be rare within this call)
-        try:
-            logs = scheduler._get_logs_by_task_ids(
-                task_ids=int(tid),
-                return_ids_only=False,
-            )
-        except Exception:
-            return None
-        return logs[0] if logs else None  # type: ignore[return-value]
+        return _log_cache.get(int(tid))
 
-    # Small local helpers to reduce repetition and keep behaviour identical
+    # Small local helpers to reduce repetition
     def _log_id(log_or_id: Any) -> Any:
         return log_or_id.id if hasattr(log_or_id, "id") else log_or_id
 
@@ -184,7 +146,7 @@ def detach_from_queue_for_activation(
         entries: Dict[str, Any] = {"schedule": new_sched}
         if extra:
             entries.update(extra)
-        scheduler._store.update(
+        scheduler._view.write_entries(  # type: ignore[attr-defined]
             logs=_log_id(log_or_id),
             entries=entries,
             overwrite=True,
@@ -244,9 +206,9 @@ def detach_from_queue_for_activation(
                             else None
                         ),
                     )
-            # Clear schedule on the detached task entirely (isolated)
+            # Clear schedule on the detached task entirely (isolated) and remove queue membership
             cur_log = _get_log_obj(task_id)
-            _update_schedule(cur_log, {}, extra={"schedule": None})
+            _update_schedule(cur_log, {}, extra={"schedule": None, "queue_id": None})
         else:
             # Middle task: unlink from neighbours
             if prev_tid is not None:
@@ -265,9 +227,9 @@ def detach_from_queue_for_activation(
                         # Non-head must not carry start_at
                         next_sched.pop("start_at", None)
                         _update_schedule(next_log, next_sched)
-            # Clear schedule on the detached task
+            # Clear schedule on the detached task and remove queue membership
             cur_log = _get_log_obj(task_id)
-            _update_schedule(cur_log, {}, extra={"schedule": None})
+            _update_schedule(cur_log, {}, extra={"schedule": None, "queue_id": None})
     else:
         # ----- Chained queue execution semantics -----
         # Disconnect previous neighbour's next pointer when promoting current task to head
@@ -297,44 +259,3 @@ def detach_from_queue_for_activation(
                     if next_sched.get("prev_task") == task_id:
                         next_sched.pop("start_at", None)
                         _update_schedule(next_log, next_sched)
-
-    # Signal linkage barrier: create or set an event for this task_id
-    try:
-        import asyncio as _aio  # local import to avoid global dependency
-
-        ev = getattr(scheduler, "_linkage_barriers", {}).get(task_id)
-        if ev is None:
-            # Create and store a new event
-            ev = _aio.Event()
-            try:
-                scheduler._linkage_barriers[task_id] = ev  # type: ignore[attr-defined]
-            except Exception:
-                pass
-        # Set the event to signal completion
-        try:
-            ev.set()
-        except Exception:
-            pass
-    except Exception:
-        # Never let signalling break detachment
-        pass
-
-
-def attach_with_links(
-    scheduler: "TaskScheduler",
-    *,
-    task_id: int,
-    prev_task: Optional[int],
-    next_task: Optional[int],
-    head_start_at: Optional[str],
-    err_prefix: str,
-) -> None:
-    """Attach a task into the runnable queue and update neighbours symmetrically."""
-    _q_attach_with_links(
-        scheduler,
-        task_id=task_id,
-        prev_task=prev_task,
-        next_task=next_task,
-        head_start_at=head_start_at,
-        err_prefix=err_prefix,
-    )

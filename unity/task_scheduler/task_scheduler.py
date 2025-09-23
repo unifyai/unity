@@ -1,3 +1,12 @@
+"""Task Scheduler: create, schedule, update, and execute tasks with queues.
+
+This module provides the concrete TaskScheduler which:
+- exposes read-only ask and mutating update methods;
+- manages runnable queues (head→tail) with invariant-preserving operations;
+- executes tasks individually or as a chain and tracks a single active task;
+- records reintegration plans to restore deferred tasks precisely.
+"""
+
 from __future__ import annotations
 
 import os
@@ -7,7 +16,6 @@ import functools
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable
 from typing import Literal
-from typing import cast
 from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
@@ -53,7 +61,6 @@ from ..actor.base import BaseActor
 from ..actor.simulated import SimulatedActor
 from .active_task import ActiveTask
 from .active_queue import ActiveQueue
-import json
 from dataclasses import dataclass
 
 from ..events.manager_event_logging import (
@@ -62,17 +69,17 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..common.semantic_search import fetch_top_k_by_references, backfill_rows
-from ._queue_utils import (
+from .queue_utils import (
     sched_prev as _q_prev,
     sched_next as _q_next,
     sync_adjacent_links as _q_sync_adjacent_links,
 )
-from ._queue_ops import (
+from .activation_ops import (
     detach_from_queue_for_activation as _ops_detach_for_activation,
-    attach_with_links as _ops_attach_with_links,
 )
 from .reintegration import ReintegrationManager
-from .queue_engine import plan_reorder_queue
+from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
+from .llm import new_llm_client
 
 
 # Sentinel for optional-argument presence detection
@@ -187,7 +194,7 @@ def _ts_log_tool_runtime(func):
 #  Typed reintegration plan                                          #
 # ------------------------------------------------------------------ #
 from .types.reintegration_plan import ReintegrationPlan
-from .storage import TasksStore
+from .storage import TasksStore, LocalTaskView
 
 
 class TaskScheduler(BaseTaskScheduler):
@@ -370,15 +377,18 @@ class TaskScheduler(BaseTaskScheduler):
             fields=model_to_fields(Task),
         )
 
+        # Centralised local view for queue membership, allocator and light caching.
+        self._view = LocalTaskView(self._store)
+
+        # `_num_tasks()` will lazily populate and maintain the cached count.
+
         # In-memory checkpoints for reversible multi-queue edits within a session
         # Keyed by opaque checkpoint ids; values contain a minimal snapshot of all queues
         # (queue_id, head_id, order list, and queue-level start_at).
         self._queue_checkpoints: Dict[str, Dict[str, Any]] = {}
 
-        # ID of the *single* task that is allowed to be in the **active**
-        # state at any moment.  This will be maintained by a forthcoming
-        # tool; until then it may legitimately stay as ``None``.
-        # Pointer to the currently active task (if any)
+        # Pointer to the single currently active task handle (or None).
+        # Exactly one task can be active at a time.
         self._active_task: Optional[TaskScheduler.ActivePointer] = None
         primed_tasks = self._filter_tasks(filter="status == 'primed'")
         if primed_tasks:
@@ -395,32 +405,75 @@ class TaskScheduler(BaseTaskScheduler):
         # original position on defer stop. Map: task_id -> ReintegrationPlan
         self._reintegration_plans: dict[int, "ReintegrationPlan"] = {}
         self._reintegration_manager = ReintegrationManager(self)
+        # Queue index, log-id memoization and id allocator are centralized in
+        # LocalTaskView.
 
-        # In-memory acceleration: map task_id → log_event_id for fast deletes and updates
-        # within a single process lifetime. This avoids an extra get_logs lookup when we
-        # already know the backing log id (e.g., immediately after creation).
-        self._task_log_id_cache: Dict[int, int] = {}
-        # Track task_ids that are known to have multiple instances so we don't
-        # attempt single-id fast paths when deleting.
-        self._multi_instance_tasks: set[int] = set()
+        # Lightweight cached count of tasks within the current Tasks context.
+        # - Populated lazily on first use by _num_tasks()
+        # - Kept in sync by create/clone/delete flows
+        # Because this scheduler is a singleton and all mutations flow through it,
+        # this cache remains coherent without extra backend reads between tool calls.
+        self._num_tasks_cached: Optional[int] = None
 
-        # Linkage barriers: per-task events set after queue linkage updates
-        # complete for a given activation. ActiveQueue can await these to avoid
-        # racing reads before symmetric neighbour writes are visible.
-        import asyncio as _aio  # local import to avoid top-level cost
+    # ------------------------------ Small helpers ------------------------------ #
+    def _tid_to_log_id_map(self, task_ids: List[int]) -> Dict[int, int]:
+        """Resolve a mapping of task_id → log_id in one call (best-effort)."""
+        try:
+            log_objs = self._get_logs_by_task_ids(
+                task_ids=task_ids,
+                return_ids_only=False,
+            )
+        except Exception:
+            log_objs = []
+        id_map: Dict[int, int] = {}
+        for lg in log_objs or []:
+            try:
+                e = getattr(lg, "entries", {}) or {}
+                tid = e.get("task_id")
+                lid = getattr(lg, "id", None)
+                if isinstance(tid, int) and isinstance(lid, int):
+                    id_map[int(tid)] = int(lid)
+            except Exception:
+                continue
+        return id_map
 
-        self._linkage_barriers: Dict[int, _aio.Event] = {}
+    def _write_entries_batched(
+        self,
+        *,
+        entries_by_tid: Dict[int, Dict[str, Any]],
+    ) -> None:
+        """Best-effort batched write using LocalTaskView; fall back to per-task."""
+        if not entries_by_tid:
+            return
+        try:
+            self._view.write_entries_by_task_ids(entries_by_tid=entries_by_tid)
+            return
+        except Exception:
+            pass
+        # Fallback: per-task validated writes
+        for tid, write_entries in entries_by_tid.items():
+            row = self._get_single_row_or_raise(int(tid))
+            self._validated_write(
+                task_id=int(tid),
+                entries=write_entries,
+                err_prefix=f"While batched-writing entries (task {tid}):",
+                current_row=row,
+                skip_cross_queue_guard=True,
+                skip_sync=True,
+            )
 
-        # Lightweight, process-local queue index to avoid redundant backend reads
-        # within a single tool call for common queue lookups. Because this scheduler
-        # is a singleton, all queue mutations flow through it; we update the index
-        # in high-level queue tools and conservatively invalidate it elsewhere.
-        # - _queue_index: queue_id → exact head→tail order (runnable members only)
-        # - _task_to_queue: task_id → queue_id (runnable membership only)
-        # - _queue_index_stale: when True, bypass fast-path reads until next update
-        self._queue_index: Dict[int, List[int]] = {}
-        self._task_to_queue: Dict[int, int] = {}
-        self._queue_index_stale: bool = False
+    def _head_start_at_from_rows(self, rows: List[Dict[str, Any]]) -> Optional[str]:
+        """Return the queue-level start_at from the head row among provided rows.
+
+        Expects rows as simple dicts with a 'schedule' key; ignores non-dict entries.
+        """
+        for r in rows or []:
+            if not isinstance(r, dict):
+                continue
+            sched = r.get("schedule") or {}
+            if (sched or {}).get("prev_task") is None:
+                return (sched or {}).get("start_at")
+        return None
 
     # Public #
     # -------#
@@ -445,7 +498,7 @@ class TaskScheduler(BaseTaskScheduler):
             None,
         ] = "default",
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client("gpt-5@openai")
 
         # Build a live tools dictionary so the prompt reflects reality
         tools = dict(self._ask_tools)
@@ -517,166 +570,10 @@ class TaskScheduler(BaseTaskScheduler):
             None,
         ] = "default",
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client("gpt-5@openai")
 
         # Build a live tools dictionary first (prompt needs it)
         tools = dict(self._update_tools)
-
-        # Add queue planning helpers for atomic modifications, mirroring execute
-        # and include checkpoint helpers for reversibility.
-        def _later_group_schema():
-            class _LaterGroup(BaseModel):
-                task_ids: List[int] = Field(min_length=1)
-                queue_start_at: Optional[str] = None
-
-            return _LaterGroup
-
-        _LaterGroup = _later_group_schema()
-
-        class _QueuePlan(BaseModel):
-            now: List[int] = Field(min_length=1)
-            later_groups: List[_LaterGroup] = Field(default_factory=list)  # type: ignore[name-defined]
-            notes: Optional[str] = None
-
-        def validate_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            import json as _json
-
-            try:
-                parsed = _json.loads(plan) if isinstance(plan, str) else plan
-            except Exception as _e:  # noqa: N806
-                raise ValueError(f"Invalid plan: {_e}")
-            model = _QueuePlan.model_validate(parsed)
-            preview: Dict[str, Any] = {"now": model.now, "later": []}
-            for g in model.later_groups:
-                preview["later"].append(
-                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at},
-                )
-            return {
-                "outcome": "validated",
-                "details": {"plan": model.model_dump(), "preview": preview},
-            }
-
-        def apply_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            import json as _json
-
-            try:
-                parsed = _json.loads(plan) if isinstance(plan, str) else plan
-            except Exception as _e:
-                raise ValueError(f"Invalid plan: {_e}")
-            model = _QueuePlan.model_validate(parsed)
-            if model.later_groups:
-                parts = [{"task_ids": list(model.now)}] + [
-                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at}
-                    for g in model.later_groups
-                ]
-                self._partition_queue(parts=parts, strategy="preserve_order")
-            else:
-                if model.now:
-                    self._reorder_queue(queue_id=None, new_order=list(model.now))
-            cp = checkpoint_queue_state(label="post-apply-plan")
-            return {
-                "outcome": "applied",
-                "details": {"checkpoint_id": cp["details"]["checkpoint_id"]},
-            }
-
-        def checkpoint_queue_state(*, label: Optional[str] = None) -> Dict[str, Any]:  # type: ignore[valid-type]
-            snapshot: Dict[str, Any] = {"label": label, "queues": []}
-            try:
-                all_q = self._list_queues()
-            except Exception:
-                all_q = []
-            for q in all_q:
-                qid = q.get("queue_id")
-                start_at = q.get("start_at")
-                try:
-                    order = [t.task_id for t in self._get_queue(queue_id=qid)]
-                except Exception:
-                    order = []
-                snapshot["queues"].append(
-                    {
-                        "queue_id": qid,
-                        "head_id": q.get("head_id"),
-                        "start_at": start_at,
-                        "order": order,
-                    },
-                )
-
-            from ..common.llm_helpers import short_id as _short_id  # local import
-
-            cid = _short_id(8)
-            self._queue_checkpoints[cid] = snapshot
-            try:
-                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    self._persist_checkpoint(cid, label, snapshot)
-            except Exception:
-                pass
-            return {"outcome": "checkpointed", "details": {"checkpoint_id": cid}}
-
-        def revert_to_checkpoint(*, checkpoint_id: str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            snap = self._queue_checkpoints.get(str(checkpoint_id))
-            if snap is None:
-                try:
-                    if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                        "1",
-                        "true",
-                        "yes",
-                    }:
-                        snap = self._load_checkpoint(str(checkpoint_id))
-                except Exception:
-                    snap = None
-            assert snap is not None, f"Unknown checkpoint_id={checkpoint_id}"
-            for q in snap.get("queues", []):
-                qid = q.get("queue_id")
-                order = list(q.get("order", []) or [])
-                if order:
-                    self._reorder_queue(queue_id=qid, new_order=order)
-                    start_at = q.get("start_at")
-                    if start_at is not None:
-                        head_tid = int(order[0])
-                        try:
-                            head_row = self._get_single_row_or_raise(head_tid)
-                            sched = {**(head_row.get("schedule") or {})}
-                            sched["start_at"] = start_at
-                            self._validated_write(
-                                task_id=head_tid,
-                                entries={"schedule": sched, "status": Status.scheduled},
-                                err_prefix="While restoring queue start_at from checkpoint:",
-                            )
-                        except Exception:
-                            pass
-            return {"outcome": "reverted", "details": {"checkpoint_id": checkpoint_id}}
-
-        def get_latest_checkpoint() -> Dict[str, Any]:  # type: ignore[valid-type]
-            try:
-                keys = list(self._queue_checkpoints.keys())
-                if keys:
-                    cid = keys[-1]
-                    snap = self._queue_checkpoints.get(cid, {})
-                    return {
-                        "outcome": "ok",
-                        "details": {"checkpoint_id": cid, "label": snap.get("label")},
-                    }
-                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    latest = self._get_latest_persisted_checkpoint()
-                    if latest is not None:
-                        return {"outcome": "ok", "details": latest}
-                return {
-                    "outcome": "none",
-                    "details": {"checkpoint_id": None, "label": None},
-                }
-            except Exception:
-                return {
-                    "outcome": "none",
-                    "details": {"checkpoint_id": None, "label": None},
-                }
 
         # Bind to shared scheduler helpers to avoid duplication
         validate_queue_plan = self.validate_queue_plan
@@ -779,18 +676,17 @@ class TaskScheduler(BaseTaskScheduler):
                 "A task is marked as active, but no active handle is present – reconcile state before starting another task.",
             )
 
-        # Fast path: numeric task_id provided → start at that id using queue semantics
+        # Fast path: numeric task_id provided → start at that id
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
-                # Honor explicit override when provided; default remains chained
+                # Honor explicit override when provided; default is chained
                 if isolated is True:
-                    return await self._execute_internal(
+                    return await self._execute_queue_internal(
                         task_id=int(stripped),
                         parent_chat_context=parent_chat_context,
                         clarification_up_q=clarification_up_q,
                         clarification_down_q=clarification_down_q,
-                        activated_by=ActivatedBy.explicit,
                         detach=True,
                     )
                 else:
@@ -799,6 +695,7 @@ class TaskScheduler(BaseTaskScheduler):
                         parent_chat_context=parent_chat_context,
                         clarification_up_q=clarification_up_q,
                         clarification_down_q=clarification_down_q,
+                        detach=False,
                     )
             except (ValueError, RuntimeError):
                 # Fall back to the outer loop (will ask/clarify/create)
@@ -895,29 +792,11 @@ class TaskScheduler(BaseTaskScheduler):
         # Adjust queue linkages for activation (and record reintegration plan).
         # detach=True → isolation semantics; detach=False → chain semantics.
         desired_next: Optional[int] = _q_next(task_row.get("schedule"))
+
         self._detach_from_queue_for_activation(
             task_id=task_id,
             detach=detach,
         )
-        # Yield the event loop until the current row reflects the expected
-        # sub-head linkage when chaining (prev=None, next=desired_next).
-        # Avoids relying on arbitrary sleeps while remaining low-latency.
-        if not detach and desired_next is not None:
-            for _ in range(5):  # a handful of yields should suffice
-                try:
-                    rows_after = self._filter_tasks(
-                        filter=f"task_id == {task_id}",
-                        limit=1,
-                    )
-                    if rows_after:
-                        sched_after = rows_after[0].get("schedule") or {}
-                        if (sched_after.get("prev_task") is None) and (
-                            sched_after.get("next_task") == desired_next
-                        ):
-                            break
-                except Exception:
-                    pass
-                await asyncio.sleep(0)
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
         _task_desc = task_row.get("description") or task_row.get("name") or ""
@@ -985,6 +864,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        detach: bool = False,
     ) -> SteerableToolHandle:
         """Start queue execution at `task_id` and return a composite queue handle."""
         first = await self._execute_internal(
@@ -993,8 +873,8 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             activated_by=ActivatedBy.explicit,
-            # Always use queue semantics – followers remain attached
-            detach=False,
+            # Detach first task when explicitly requested; otherwise keep queue semantics
+            detach=bool(detach),
         )
         return ActiveQueue(
             self,
@@ -1017,215 +897,13 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """Compose tools and prompt, then start the execute reasoning loop."""
-        client = self._new_llm_client("gpt-5@openai")
-
-        # ── tool definitions ────────────────────────────────────────────────
-        class _LaterGroup(BaseModel):
-            task_ids: List[int] = Field(min_length=1)
-            queue_start_at: Optional[str] = None
-
-        class _QueuePlan(BaseModel):
-            now: List[int] = Field(min_length=1)
-            later_groups: List[_LaterGroup] = Field(default_factory=list)
-            notes: Optional[str] = None
-
-        def validate_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Validate a proposed queue plan (dict or JSON string) and return the normalised structure.
-
-            The plan must include a non-empty `now` list and zero or more
-            `later_groups`, each with a non-empty `task_ids` list. The function
-            returns the validated plan and previews of the resulting queues.
-            """
-            import json as _json
-
-            try:
-                parsed = _json.loads(plan) if isinstance(plan, str) else plan
-            except Exception as _e:  # noqa: N806 (keep local name)
-                raise ValueError(f"Invalid plan: {_e}")
-            model = _QueuePlan.model_validate(parsed)
-            # Preview shapes – we do not mutate here
-            preview: Dict[str, Any] = {"now": model.now, "later": []}
-            for g in model.later_groups:
-                preview["later"].append(
-                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at},
-                )
-            return {
-                "outcome": "validated",
-                "details": {"plan": model.model_dump(), "preview": preview},
-            }
-
-        def apply_queue_plan(*, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Atomically apply a validated plan (dict or JSON string) using invariant-preserving tools.
-
-            Strategy:
-            - Use `_partition_queue` when there are any later groups to split the
-              source queue into [now] and later queues with optional dates.
-            - Otherwise, reorder the chosen queue so that `now` is the head
-              (dropping other runnable tasks from that queue).
-            After success, automatically create a checkpoint to allow revert.
-            """
-            import json as _json
-
-            try:
-                parsed = _json.loads(plan) if isinstance(plan, str) else plan
-            except Exception as _e:
-                raise ValueError(f"Invalid plan: {_e}")
-            model = _QueuePlan.model_validate(parsed)
-            # If later groups exist, build parts payload
-            if model.later_groups:
-                parts = [{"task_ids": list(model.now)}] + [
-                    {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at}
-                    for g in model.later_groups
-                ]
-                self._partition_queue(parts=parts, strategy="preserve_order")
-            else:
-                # Only reorder the selected queue to contain exactly `now`
-                if model.now:
-                    self._reorder_queue(queue_id=None, new_order=list(model.now))
-            # Auto-checkpoint
-            cp = checkpoint_queue_state(label="post-apply-plan")
-            return {
-                "outcome": "applied",
-                "details": {"checkpoint_id": cp["details"]["checkpoint_id"]},
-            }
-
-        def checkpoint_queue_state(*, label: Optional[str] = None) -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Create a session-scoped checkpoint of ALL runnable queues.
-
-            The checkpoint captures, for every queue, the head id, the full order
-            (head→tail), and the queue-level start_at timestamp. This enables the
-            execute loop to revert multi-queue edits if the user changes their mind
-            before completion.
-
-            Parameters
-            ----------
-            label : str | None, optional
-                Optional human-readable label for diagnostics.
-
-            Returns
-            -------
-            dict
-                {"outcome": "checkpointed", "details": {"checkpoint_id": str}}
-            """
-            # Build snapshot
-            snapshot: Dict[str, Any] = {"label": label, "queues": []}
-            try:
-                all_q = self._list_queues()
-            except Exception:
-                all_q = []
-            for q in all_q:
-                qid = q.get("queue_id")
-                start_at = q.get("start_at")
-                try:
-                    order = [t.task_id for t in self._get_queue(queue_id=qid)]
-                except Exception:
-                    order = []
-                snapshot["queues"].append(
-                    {
-                        "queue_id": qid,
-                        "head_id": q.get("head_id"),
-                        "start_at": start_at,
-                        "order": order,
-                    },
-                )
-
-            from ..common.llm_helpers import short_id as _short_id  # local import
-
-            cid = _short_id(8)
-            self._queue_checkpoints[cid] = snapshot
-            # Optionally persist to a dedicated context for cross-session safety
-            try:
-                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    self._persist_checkpoint(cid, label, snapshot)
-            except Exception:
-                pass
-            return {"outcome": "checkpointed", "details": {"checkpoint_id": cid}}
+        client = new_llm_client("gpt-5@openai")
 
         # Create an initial checkpoint at the start of execute to guarantee a known revert point
         try:
-            checkpoint_queue_state(label="pre-execute")
+            self.checkpoint_queue_state(label="pre-execute")
         except Exception:
             pass
-
-        def revert_to_checkpoint(*, checkpoint_id: str) -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Revert all queues to a previously created checkpoint.
-
-            This operation is deterministic and invariant-preserving. It rewrites
-            each queue to the exact order stored in the checkpoint and reapplies
-            the queue-level start_at to each restored head.
-            """
-            snap = self._queue_checkpoints.get(str(checkpoint_id))
-            if snap is None:
-                # Optionally load from persistence when enabled
-                try:
-                    if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                        "1",
-                        "true",
-                        "yes",
-                    }:
-                        snap = self._load_checkpoint(str(checkpoint_id))
-                except Exception:
-                    snap = None
-            assert snap is not None, f"Unknown checkpoint_id={checkpoint_id}"
-            for q in snap.get("queues", []):
-                qid = q.get("queue_id")
-                order = list(q.get("order", []) or [])
-                if order:
-                    self._reorder_queue(queue_id=qid, new_order=order)
-                    # Restore queue-level start_at on head if present
-                    start_at = q.get("start_at")
-                    if start_at is not None:
-                        head_tid = int(order[0])
-                        try:
-                            head_row = self._get_single_row_or_raise(head_tid)
-                            sched = {**(head_row.get("schedule") or {})}
-                            sched["start_at"] = start_at
-                            self._validated_write(
-                                task_id=head_tid,
-                                entries={"schedule": sched, "status": Status.scheduled},
-                                err_prefix="While restoring queue start_at from checkpoint:",
-                            )
-                        except Exception:
-                            # Defensive: if head row cannot be found now, skip silently
-                            pass
-            return {"outcome": "reverted", "details": {"checkpoint_id": checkpoint_id}}
-
-        def get_latest_checkpoint() -> Dict[str, Any]:  # type: ignore[valid-type]
-            """Return the most recently created checkpoint id and label.
-
-            When no checkpoints exist yet, returns {"checkpoint_id": None}.
-            """
-            try:
-                keys = list(self._queue_checkpoints.keys())
-                if keys:
-                    cid = keys[-1]
-                    snap = self._queue_checkpoints.get(cid, {})
-                    return {
-                        "outcome": "ok",
-                        "details": {"checkpoint_id": cid, "label": snap.get("label")},
-                    }
-                # Optionally consult persisted store
-                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    latest = self._get_latest_persisted_checkpoint()
-                    if latest is not None:
-                        return {"outcome": "ok", "details": latest}
-                return {
-                    "outcome": "none",
-                    "details": {"checkpoint_id": None, "label": None},
-                }
-            except Exception:
-                return {
-                    "outcome": "none",
-                    "details": {"checkpoint_id": None, "label": None},
-                }
 
         def create_task(*, name: str, description: str) -> ToolOutcome:  # type: ignore[valid-type]
             """Create a brand-new task with minimal inputs (name, description).
@@ -1273,32 +951,14 @@ class TaskScheduler(BaseTaskScheduler):
         ) -> SteerableToolHandle:  # type: ignore[valid-type]
             """Start ONLY the specified task by first detaching it from the queue.
 
-            Behavioural rules
-            -----------------
-            - Use this when the user explicitly requests to run a task "in isolation"
-              or to "detach it entirely from the queue".
-            - Detachment semantics:
-              • If the task is the current head, its successor (if any) becomes the new head
-                and inherits the queue-level start_at timestamp.
-              • The detached task loses its schedule entirely (no prev/next/start_at).
-              • Followers of the detached task remain linked to each other.
-            - This does NOT move the task into a new queue, and does NOT partition queues.
-
-            Post-conditions (for the outer loop / LLM):
-            - Mode: "isolated" (detached execution).
-            - The started task is NO LONGER a member of its former queue.
-            - You MUST re-query queues using `list_queues()` / `get_queue(queue_id=…)` before
-              any subsequent queue edits. Do NOT include the detached task id in `reorder_queue`
-              `new_order` arrays for its former queue.
+            Returns an ActiveQueue handle that wraps the isolated task (singleton passthrough).
             """
 
-            # Run internal execute with detach=True to enforce isolation semantics
-            handle = await self._execute_internal(
+            handle = await self._execute_queue_internal(
                 task_id=task_id,
                 parent_chat_context=parent_chat_context,
                 clarification_up_q=clarification_up_q,
                 clarification_down_q=clarification_down_q,
-                activated_by=ActivatedBy.explicit,
                 detach=True,
             )
             # Signal pass-through so the outer loop adopts this handle
@@ -1326,13 +986,13 @@ class TaskScheduler(BaseTaskScheduler):
             self._set_queue,
             self._set_schedules_atomic,
             # Plan helpers
-            validate_queue_plan,
-            apply_queue_plan,
+            self.validate_queue_plan,
+            self.apply_queue_plan,
             # Reintegration and safety
             self._reinstate_task_to_previous_queue,
-            checkpoint_queue_state,
-            revert_to_checkpoint,
-            get_latest_checkpoint,
+            self.checkpoint_queue_state,
+            self.revert_to_checkpoint,
+            self.get_latest_checkpoint,
             # Start execution
             _execute_by_id,
             _execute_isolated_by_id,
@@ -1401,7 +1061,7 @@ class TaskScheduler(BaseTaskScheduler):
         AssertionError
             If more than one row matches the composite key.
         """
-        log_objs = self._store.get_rows(
+        log_objs = self._view.get_rows(
             filter=f"task_id == {task_id} and instance_id == {instance_id}",
             return_ids_only=False,
         )
@@ -1460,7 +1120,13 @@ class TaskScheduler(BaseTaskScheduler):
         # Do not carry over activation metadata to a fresh instance
         clone_payload.pop("activated_by", None)
         # Drop any internal bookkeeping injected by Unify (_id, _log_id …)
-        self._store.log(entries=clone_payload, new=True)
+        self._view.create_one(entries=clone_payload, new=True)
+        # Maintain cached total count (+1 new instance row)
+        try:
+            if self._num_tasks_cached is not None:
+                self._num_tasks_cached += 1
+        except Exception:
+            pass
 
     # Private Helpers #
     # ----------------#
@@ -1507,7 +1173,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Normalise status and extract linkage/timestamp
         status = self._to_status(status)
-        prev_task_id = self._sched_prev(schedule)
+        prev_task_id = _q_prev(schedule)
         start_at_ts = self._extract_start_at(schedule)
 
         # Head-of-queue tasks with explicit start_at must be 'scheduled'
@@ -1589,7 +1255,7 @@ class TaskScheduler(BaseTaskScheduler):
         list[int | unify.Log]
             The matching log identifiers or objects.
         """
-        return self._store.get_logs_by_task_ids(
+        return self._view.get_log_ids_by_task_ids(
             task_ids=task_ids,
             return_ids_only=return_ids_only,
         )
@@ -1683,10 +1349,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Uniqueness (name/description) – single read covering both columns within this tool call
         # Escape values via repr to keep a valid filter string regardless of content.
-        _name_lit = f"{name!r}"
-        _desc_lit = f"{description!r}"
-        _dupe_rows = self._store.get_entries(
-            filter=f"name == {_name_lit} or description == {_desc_lit}",
+        _dupe_rows = self._find_name_desc_collisions(
+            name=name,
+            description=description,
             limit=2,
         )
         if _dupe_rows:
@@ -1731,7 +1396,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         #  If the task is explicitly linked **behind**  another task (prev_task ≠ None)
         # and that task is not terminal, we NEVER mark the newcomer as *primed*.
-        prev_ptr = self._sched_prev(schedule)
+        prev_ptr = _q_prev(schedule)
 
         if trigger is not None:
             # --------  event-driven task  -------- #
@@ -1799,7 +1464,7 @@ class TaskScheduler(BaseTaskScheduler):
             if queue_id is not None:
                 derived_qid = int(queue_id)
             elif schedule is not None:
-                prev_tid = self._sched_prev(schedule)
+                prev_tid = _q_prev(schedule)
                 if prev_tid is not None:
                     try:
                         prev_row = self._get_single_row_or_raise(int(prev_tid))
@@ -1826,19 +1491,53 @@ class TaskScheduler(BaseTaskScheduler):
         ).to_post_json()
 
         # ------------------  write log immediately  ------------------ #
-        log = self._store.log(entries=task_details, new=True)
+        log = self._view.create_one(entries=task_details, new=True)
         task_id = log.entries["task_id"]
         task_details["task_id"] = task_id
-        # Cache the backing log id for fast single-call delete/updates.
+        # Keep the monotonic queue-id allocator in sync with the id we just
+        # materialized (if any). This ensures preview calls to
+        # _allocate_new_queue_id() do not consume ids and tests that capture a
+        # queue id before creation continue to pass.
         try:
-            _lid = getattr(log, "id", None)
-            if isinstance(_lid, int):
-                self._task_log_id_cache[int(task_id)] = int(_lid)
+            if isinstance(derived_qid, int):
+                self._view.sync_max_queue_id_seen(int(derived_qid))
+        except Exception:
+            pass
+        # Cache the backing log id for fast single-call delete/updates.
+        # Best-effort: no need to memoize here; LocalTaskView wrappers handle cache coherency.
+        try:
+            _ = getattr(log, "id", None)
         except Exception:
             pass
 
-        # Keep linkage symmetric right after creation
-        self._sync_adjacent_links(task_id=task_id, schedule=schedule)
+        # Maintain cached total count (+1 new row)
+        try:
+            if self._num_tasks_cached is not None:
+                self._num_tasks_cached += 1
+        except Exception:
+            pass
+
+        # Keep linkage symmetric only when linkage exists; reuse any prefetched
+        # neighbour row (e.g., predecessor) to avoid an extra backend read.
+        if schedule is not None:
+            prefetched = None
+            try:
+                # from earlier derivation
+                prev_tid = _q_prev(schedule)
+                if prev_tid is not None:
+                    try:
+                        prev_row = locals().get("prev_row")
+                    except Exception:
+                        prev_row = None
+                    if prev_row is not None:
+                        prefetched = {int(prev_tid): prev_row}
+            except Exception:
+                prefetched = None
+            self._sync_adjacent_links(
+                task_id=task_id,
+                schedule=schedule,
+                prefetched_rows=prefetched,
+            )
 
         # ── Ensure the in-memory cache reflects any linkage tweaks ──
         if status == Status.primed:
@@ -1863,8 +1562,7 @@ class TaskScheduler(BaseTaskScheduler):
             # explicit linkage (prev/next).  If linkage was given we assume
             # the user knows where the task belongs.
             explicit_linkage = schedule is not None and (
-                self._sched_prev(schedule) is not None
-                or self._sched_next(schedule) is not None
+                _q_prev(schedule) is not None or _q_next(schedule) is not None
             )
 
             if explicit_linkage:
@@ -1983,228 +1681,31 @@ class TaskScheduler(BaseTaskScheduler):
             seen_names.add(str(name))
             seen_descs.add(str(desc))
 
-        # Batched fast path: simple specs (no schedule/trigger/queue edits) and no explicit ordering
-        simple_allowed = queue_ordering is None and all(
-            not any(
-                k in spec
-                for k in (
-                    "schedule",
-                    "trigger",
-                    "deadline",
-                    "repeat",
-                    "priority",
-                    "response_policy",
-                    "status",
-                    "queue_id",
-                )
-            )
-            for spec in tasks
-        )
-
+        # Always create tasks sequentially to preserve ascending id assignment
         created_ids: List[int] = []
-        if simple_allowed:
-            # Single deduplication read across all names/descriptions
-            try:
-                # Build a single OR-chain filter across provided names/descriptions
-                clauses: list[str] = []
-                for spec in tasks:
-                    nm = spec.get("name")
-                    ds = spec.get("description")
-                    if nm:
-                        clauses.append(f"name == {nm!r}")
-                    if ds:
-                        clauses.append(f"description == {ds!r}")
-                filter_expr = " or ".join(clauses) if clauses else None
-                existing = (
-                    self._store.get_entries(filter=filter_expr, limit=len(tasks) + 1)
-                    if filter_expr
-                    else []
-                )
-            except Exception:
-                existing = []
-            # Check collisions precisely
-            if existing:
-                existing_names = {r.get("name") for r in existing}
-                existing_descs = {r.get("description") for r in existing}
-                for idx, spec in enumerate(tasks):
-                    if spec.get("name") in existing_names:
-                        raise ValueError(
-                            f"A task with {'name'!r} = {spec.get('name')!r} already exists",
-                        )
-                    if spec.get("description") in existing_descs:
-                        raise ValueError(
-                            f"A task with {'description'!r} = {spec.get('description')!r} already exists",
-                        )
+        for spec in tasks:
+            payload: Dict[str, Any] = {}
+            for key in (
+                "name",
+                "description",
+                "status",
+                "schedule",
+                "trigger",
+                "deadline",
+                "repeat",
+                "priority",
+                "response_policy",
+            ):
+                if key in spec:
+                    payload[key] = spec[key]
 
-            # Decide statuses once (no extra reads within this tool call)
-            assign_primed = self._active_task is None and (
-                self._primed_task is None
-                or self._to_status(self._primed_task.get("status")) != Status.primed
-            )  # type: ignore[arg-type]
+            # When queue_ordering is provided, avoid auto-priming during creation.
+            # Defer head-state selection to the explicit queue materialization below.
+            if queue_ordering is not None and "status" not in payload:
+                payload["status"] = Status.queued
 
-            entries_list: List[Dict[str, Any]] = []
-            primed_index: Optional[int] = (
-                0 if assign_primed and len(tasks) > 0 else None
-            )
-            for idx, spec in enumerate(tasks):
-                desired_status = (
-                    Status.primed
-                    if primed_index is not None and idx == primed_index
-                    else Status.queued
-                )
-                task_payload = Task(
-                    name=str(spec.get("name")),
-                    description=str(spec.get("description")),
-                    status=desired_status,
-                    schedule=None,
-                    trigger=None,
-                    deadline=None,
-                    repeat=None,
-                    priority=Priority.normal,
-                    response_policy=None,
-                    queue_id=None,
-                ).to_post_json()
-                entries_list.append(task_payload)
-
-            # Create all in one backend call, then fetch created rows once
-            resp = self._store.create_many(entries_list=entries_list)
-            created_log_ids: List[int] = []
-            try:
-                # Primary: explicit log_event_ids from backend
-                created_log_ids = list(resp.get("log_event_ids") or [])
-            except Exception:
-                created_log_ids = []
-            if not created_log_ids:
-                # Some client variants may return a different key
-                for alt in ("ids", "log_ids"):
-                    try:
-                        created_log_ids = list(resp.get(alt) or [])
-                        if created_log_ids:
-                            break
-                    except Exception:
-                        created_log_ids = []
-
-            rows = []
-            try:
-                if created_log_ids:
-                    rows = self._store.get_rows_by_log_ids(log_ids=created_log_ids)
-            except Exception:
-                rows = []
-            # Fallback: fetch by pairwise (name AND description) to avoid collisions
-            if not rows:
-                try:
-                    pair_clauses: list[str] = []
-                    for spec in tasks:
-                        nm = spec.get("name")
-                        ds = spec.get("description")
-                        if nm is None or ds is None:
-                            continue
-                        pair_clauses.append(
-                            f"(name == {nm!r} and description == {ds!r})",
-                        )
-                    filter_expr = " or ".join(pair_clauses) if pair_clauses else None
-                    rows = (
-                        self._store.get_rows(
-                            filter=filter_expr,
-                            limit=max(10, len(tasks) * 2),
-                            return_ids_only=False,
-                        )
-                        if filter_expr
-                        else []
-                    )
-                except Exception:
-                    rows = []
-            # Derive task_ids from returned rows in the same order as input specs
-            by_key: Dict[tuple[str, str], int] = {}
-            for lg in rows:
-                try:
-                    e = getattr(lg, "entries", {}) or {}
-                    nm = str(e.get("name"))
-                    ds = str(e.get("description"))
-                    tid_maybe = e.get("task_id")
-                    if tid_maybe is not None:
-                        by_key[(nm, ds)] = int(tid_maybe)
-                        # Also cache task_id → log_id mapping while we have both
-                        try:
-                            _lid = getattr(lg, "id", None)
-                            if isinstance(_lid, int):
-                                self._task_log_id_cache[int(tid_maybe)] = int(_lid)
-                        except Exception:
-                            pass
-                except Exception:
-                    continue
-            created_ids = []
-            for spec in tasks:
-                tid = by_key.get((str(spec.get("name")), str(spec.get("description"))))
-                if tid is not None:
-                    created_ids.append(int(tid))
-
-            # Robust fallback: fetch by names only if mapping failed / partial
-            if len(created_ids) < len(tasks):
-                try:
-                    name_list = [str(spec.get("name")) for spec in tasks]
-                    list_literal = "[" + ", ".join(repr(n) for n in name_list) + "]"
-                    expr = f"name in {list_literal}"
-                    ents = self._store.get_entries(filter=expr, limit=len(tasks))
-                except Exception:
-                    ents = []
-                if ents:
-                    by_name: Dict[str, int] = {}
-                    for r in ents:
-                        try:
-                            by_name[str(r.get("name"))] = int(r.get("task_id"))
-                        except Exception:
-                            continue
-                    created_ids = []
-                    for spec in tasks:
-                        nm = str(spec.get("name"))
-                        if nm in by_name:
-                            created_ids.append(int(by_name[nm]))
-
-            # Reflect primed pointer in memory if we created one
-            if primed_index is not None:
-                try:
-                    # Prefer 'rows' if available; else consult 'ents' fallback
-                    primed_found: Optional[Dict[str, Any]] = None
-                    if rows:
-                        for r in rows:
-                            e = getattr(r, "entries", {}) or {}
-                            if e.get("status") == str(Status.primed):
-                                primed_found = e
-                                break
-                    if primed_found is None:
-                        try:
-                            ents  # type: ignore[name-defined]
-                        except Exception:
-                            ents = []  # type: ignore[assignment]
-                        for e in ents or []:
-                            if e.get("status") == str(Status.primed):
-                                primed_found = e
-                                break
-                    if primed_found is not None:
-                        self._primed_task = dict(primed_found)
-                except Exception:
-                    pass
-        else:
-            # Create tasks sequentially to preserve ascending id assignment
-            created_ids = []
-            for spec in tasks:
-                payload: Dict[str, Any] = {}
-                for key in (
-                    "name",
-                    "description",
-                    "status",
-                    "schedule",
-                    "trigger",
-                    "deadline",
-                    "repeat",
-                    "priority",
-                    "response_policy",
-                ):
-                    if key in spec:
-                        payload[key] = spec[key]
-                out = self._create_task(**payload)
-                created_ids.append(int(out["details"]["task_id"]))
+            out = self._create_task(**payload)
+            created_ids.append(int(out["details"]["task_id"]))
 
         queues_report: List[Dict[str, Any]] = []
 
@@ -2352,29 +1853,27 @@ class TaskScheduler(BaseTaskScheduler):
         """
         self._ensure_not_active_task(task_id)
         # Fast path: if we know the backing log id for this task, delete directly
+        # Resolve the log id via a single lookup then delete (LocalTaskView manages memoization)
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
+        self._view.delete(logs=log_id)
         try:
-            cached_log_id = self._task_log_id_cache.get(int(task_id))
+            removed_count = (
+                len(log_id)
+                if isinstance(log_id, list)
+                else (1 if log_id is not None else 0)
+            )
         except Exception:
-            cached_log_id = None
+            removed_count = 0
 
-        if isinstance(cached_log_id, int):
-            try:
-                self._store.delete(logs=cached_log_id)
-            finally:
-                # Remove cache entry regardless of backend outcome to avoid stale ids
-                try:
-                    self._task_log_id_cache.pop(int(task_id), None)
-                except Exception:
-                    pass
-        else:
-            # Fallback: resolve the log id via a single lookup then delete
-            log_id = self._get_logs_by_task_ids(task_ids=task_id)
-            self._store.delete(logs=log_id)
-            # Best-effort cache clean-up
-            try:
-                self._task_log_id_cache.pop(int(task_id), None)
-            except Exception:
-                pass
+        # Maintain cached total count (subtract removed rows)
+        try:
+            if self._num_tasks_cached is not None and removed_count:
+                self._num_tasks_cached = max(
+                    0,
+                    int(self._num_tasks_cached) - int(removed_count),
+                )
+        except Exception:
+            pass
         return {
             "outcome": "task deleted",
             "details": {"task_id": task_id},
@@ -2408,11 +1907,11 @@ class TaskScheduler(BaseTaskScheduler):
         # Guard against touching the active task (fast in‑memory check)
         self._ensure_not_active_task(task_ids)
 
-        # Single targeted read for the referenced tasks only
-        # (avoid scanning all completed tasks in the context).
-        logs = self._get_logs_by_task_ids(
+        # Single targeted read for the referenced tasks only with a minimal field projection
+        # (avoid scanning all completed tasks and avoid fetching unused columns within this call).
+        logs = self._view.get_minimal_rows_by_task_ids(
             task_ids=task_ids,
-            return_ids_only=False,
+            fields=["status"],
         )
         # Validate none of the referenced tasks are already completed
         try:
@@ -2428,9 +1927,11 @@ class TaskScheduler(BaseTaskScheduler):
             "Cannot cancel completed tasks. Attempted to cancel: " f"{overlap}"
         )
 
-        # Batch update status using the resolved log ids (no extra reads)
-        log_ids = [lg.id if hasattr(lg, "id") else lg for lg in logs]
-        self._write_log_entries(logs=log_ids, entries={"status": Status.cancelled})
+        # Batch update status using the resolved log ids directly (no extra reads)
+        self._write_log_entries(
+            logs=[lg.id for lg in logs],
+            entries={"status": Status.cancelled},
+        )
         return {
             "outcome": "tasks cancelled",
             "details": {"task_ids": task_ids},
@@ -2439,15 +1940,6 @@ class TaskScheduler(BaseTaskScheduler):
     # Update Task Queue
 
     # --------------------  small helpers  -------------------- #
-    @staticmethod
-    def _sched_prev(sched):
-        """Thin wrapper: delegate to queue-utils (prev pointer)."""
-        return _q_prev(sched)
-
-    @staticmethod
-    def _sched_next(sched):
-        """Thin wrapper: delegate to queue-utils (next pointer)."""
-        return _q_next(sched)
 
     def _extract_start_at(self, sched):
         """Return the start_at value from a Schedule model or plain dict, or None.
@@ -2485,77 +1977,8 @@ class TaskScheduler(BaseTaskScheduler):
     # ────────────────────────────────────────────────────────────────────
 
     def _allocate_new_queue_id(self) -> int:
-        """Return a fresh integer queue identifier.
-
-        Strategy – scan all tasks for existing top‑level ``queue_id`` numeric
-        values and return ``max + 1`` (starting at 1). Queues are implicit in
-        this scheduler: a queue exists as soon as at least one task carries a
-        numeric ``queue_id``.
-        """
-        rows = self._filter_tasks()
-        max_id = 0
-        for r in rows:
-            qid = r.get("queue_id")
-            try:
-                if isinstance(qid, int):
-                    max_id = max(max_id, qid)
-            except Exception:
-                pass
-        new_id = max_id + 1 if max_id >= 0 else 1
-        return new_id
-
-    def _head_row_for_queue(self, queue_id: Optional[int]) -> Optional[TaskRow]:
-        """Best-effort fetch of the head row for a given queue.
-
-        The "default" queue is represented by ``queue_id is None``.
-        Only non-terminal tasks are considered part of a runnable queue.
-        Returns ``None`` when no head exists (e.g., empty queue).
-        """
-        rows = [
-            r
-            for r in self._filter_tasks()
-            if r.get("schedule") is not None
-            and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
-        ]
-        heads: list[TaskRow] = []
-        for r in rows:
-            sched = r.get("schedule") or {}
-            qid = r.get("queue_id")
-            prev_id = sched.get("prev_task")
-            if qid == queue_id and prev_id is None:
-                heads.append(r)
-        if not heads:
-            return None
-        assert (
-            len(heads) == 1
-        ), f"Multiple heads detected for queue_id={queue_id}: {heads}"
-        return heads[0]
-
-    def _walk_queue(self, head_row: TaskRow) -> list[TaskRow]:
-        """Walk from ``head_row`` forward using ``next_task`` and return rows.
-
-        Defensive against missing rows or broken links; stops at first gap.
-        """
-        ordered: list[TaskRow] = []
-        cur = head_row
-        seen: set[int] = set()
-        while cur is not None:
-            tid = cur.get("task_id")
-            try:
-                if isinstance(tid, int) and tid in seen:
-                    break
-                if isinstance(tid, int):
-                    seen.add(tid)
-            except Exception:
-                pass
-            ordered.append(cur)
-            sched = cur.get("schedule") or {}
-            nxt = sched.get("next_task")
-            if nxt is None:
-                break
-            nxt_rows = self._filter_tasks(filter=f"task_id == {int(nxt)}", limit=1)
-            cur = nxt_rows[0] if nxt_rows else None
-        return ordered
+        """Return a fresh integer queue identifier via LocalTaskView."""
+        return self._view.allocate_new_queue_id()
 
     @_ts_log_tool_runtime
     def _list_queues(self) -> List[Dict[str, Any]]:
@@ -2578,6 +2001,35 @@ class TaskScheduler(BaseTaskScheduler):
         are non-terminal tasks with `schedule.prev_task is None` and a numeric
         `queue_id`.
         """
+        # Fast-path via LocalTaskView cache.
+        try:
+            summaries = self._view.get_all_queue_summaries()
+        except Exception:
+            summaries = []
+        if summaries:
+            out_fast: list[Dict[str, Any]] = []
+            for s in summaries:
+                try:
+                    qid = s.get("queue_id")
+                    order = list(s.get("order") or [])
+                    if not order:
+                        continue
+                    head_id = order[0]
+                    start_at = s.get("start_at")
+                    out_fast.append(
+                        {
+                            "queue_id": qid,
+                            "queue_label": f"Q{qid}",
+                            "head_id": head_id,
+                            "size": len(order),
+                            "start_at": start_at,
+                        },
+                    )
+                except Exception:
+                    continue
+            if out_fast:
+                return out_fast
+
         rows = [
             r
             for r in self._filter_tasks()
@@ -2601,18 +2053,22 @@ class TaskScheduler(BaseTaskScheduler):
         ]
 
         out: list[Dict[str, Any]] = []
+        # Prepare fresh caches reconstructed from the single read above
+        new_queue_index: Dict[int, List[int]] = {}
+        new_task_to_queue: Dict[int, int] = {}
+        new_head_start_at: Dict[int, Optional[str]] = {}
         for h in heads:
             sched = h.get("schedule") or {}
             start_at = sched.get("start_at")
             qid = h.get("queue_id")
             if not isinstance(qid, int):
-                # Skip any legacy rows lacking a numeric queue_id
                 continue
 
             # Compute chain size purely in-memory to avoid extra backend reads
             size = 0
             seen: set[int] = set()
             cur = h
+            order_for_q: list[int] = []
             while cur is not None:
                 try:
                     tid_val = cur.get("task_id")
@@ -2624,6 +2080,7 @@ class TaskScheduler(BaseTaskScheduler):
                         break
                     seen.add(tid_int)
                     size += 1
+                    order_for_q.append(tid_int)
                 nxt = (cur.get("schedule") or {}).get("next_task")
                 if nxt is None:
                     break
@@ -2632,6 +2089,13 @@ class TaskScheduler(BaseTaskScheduler):
                 except Exception:
                     break
                 cur = rows_by_id.get(nxt_int)
+
+            # Update reconstructed caches
+            if order_for_q:
+                new_queue_index[int(qid)] = list(order_for_q)
+                for _tid in order_for_q:
+                    new_task_to_queue[int(_tid)] = int(qid)
+                new_head_start_at[int(qid)] = start_at
 
             out.append(
                 {
@@ -2642,6 +2106,12 @@ class TaskScheduler(BaseTaskScheduler):
                     "start_at": start_at,
                 },
             )
+
+        # Best-effort: refresh the LocalTaskView cache for future fast-paths
+        try:
+            self._view.refresh_queue_index_from_rows(rows)
+        except Exception:
+            pass
 
         return out
 
@@ -2674,7 +2144,37 @@ class TaskScheduler(BaseTaskScheduler):
         if queue_id is None:
             return []
 
-        # Single filtered read of all runnable rows in this queue
+        # Fast-path via LocalTaskView with a single minimal read.
+        try:
+            if isinstance(queue_id, int):
+                member_ids = list(self._view.get_member_ids(int(queue_id)) or [])
+            else:
+                member_ids = []
+        except Exception:
+            member_ids = []
+        if member_ids:
+            fields_needed: List[str] = self._queue_member_fields()
+            rows_by_id: Dict[int, Dict[str, Any]] = self._read_rows_by_ids(
+                ids=member_ids,
+                fields=fields_needed,
+            )
+
+            ordered: List[Task] = []
+            for tid in member_ids:
+                row = rows_by_id.get(int(tid))
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    st = self._to_status(row.get("status"))  # type: ignore[arg-type]
+                    if st in self._TERMINAL_STATUSES:
+                        continue
+                except Exception:
+                    pass
+                row = self._sanitize_activation(row)
+                ordered.append(Task(**row))
+            return ordered
+
+        # Fallback: single filtered read of all runnable rows in this queue
         rows_in_queue: List[TaskRow] = [
             r
             for r in self._filter_tasks(
@@ -2688,18 +2188,47 @@ class TaskScheduler(BaseTaskScheduler):
         if not rows_in_queue:
             return []
 
-        # Identify head locally (prev_task is None)
-        heads = [
-            r
-            for r in rows_in_queue
-            if (r.get("schedule") or {}).get("prev_task") is None
-        ]
-        if not heads:
+        # Identify head with tolerance for terminal/missing predecessor.
+        # A row is a head if: prev_task is None OR prev_task not present among non-terminal members.
+        ids_in_q: set[int] = set()
+        for r in rows_in_queue:
+            try:
+                tid_val = r.get("task_id")
+                if isinstance(tid_val, int):
+                    ids_in_q.add(int(tid_val))
+            except Exception:
+                continue
+        head_candidates: list[TaskRow] = []
+        prefer_none_prev: list[TaskRow] = []
+        for r in rows_in_queue:
+            sched = r.get("schedule") or {}
+            prev_id = sched.get("prev_task")
+            if prev_id is None:
+                prefer_none_prev.append(r)
+                head_candidates.append(r)
+            else:
+                try:
+                    prev_int = int(prev_id)
+                except Exception:
+                    prev_int = None  # type: ignore[assignment]
+                if prev_int is None or prev_int not in ids_in_q:
+                    head_candidates.append(r)
+        if not head_candidates:
             return []
-        assert (
-            len(heads) == 1
-        ), f"Multiple heads detected for queue_id={queue_id}: {heads}"
-        head = heads[0]
+        # If multiple, prefer a true None-prev head; else choose deterministically by task_id
+        if len(head_candidates) > 1:
+            if prefer_none_prev:
+                head = prefer_none_prev[0]
+            else:
+                try:
+                    head = sorted(
+                        head_candidates,
+                        key=lambda x: int(x.get("task_id")),
+                    )[0]
+                except Exception:
+                    head = head_candidates[0]
+        else:
+            head = head_candidates[0]
 
         # Build id -> row map for O(1) next lookups without further backend reads
         rows_by_id: Dict[int, TaskRow] = {}
@@ -2727,13 +2256,7 @@ class TaskScheduler(BaseTaskScheduler):
                 seen.add(tid_int)
 
             # Strip stale activation metadata on non-active rows
-            _row = dict(cur)
-            try:
-                if self._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
-                    _row.pop("activated_by", None)
-            except Exception:
-                if str(_row.get("status")) != str(Status.active):
-                    _row.pop("activated_by", None)
+            _row = self._sanitize_activation(dict(cur))
             ordered.append(Task(**_row))
 
             nxt = (cur.get("schedule") or {}).get("next_task")
@@ -2795,13 +2318,7 @@ class TaskScheduler(BaseTaskScheduler):
             if tid_int is not None:
                 seen.add(tid_int)
             # Strip stale activation metadata on non-active rows
-            _row = dict(node)
-            try:
-                if self._to_status(_row.get("status")) != Status.active:  # type: ignore[arg-type]
-                    _row.pop("activated_by", None)
-            except Exception:
-                if str(_row.get("status")) != str(Status.active):
-                    _row.pop("activated_by", None)
+            _row = self._sanitize_activation(dict(node))
             ordered.append(Task(**_row))
             nxt_id = (node.get("schedule") or {}).get("next_task")
             if nxt_id is None:
@@ -2819,22 +2336,20 @@ class TaskScheduler(BaseTaskScheduler):
         Strategy
         --------
         - Fast-path: when a local queue index is available and not marked stale,
-          use it to resolve the queue_id directly and delegate to `_get_queue`.
-          This avoids an extra backend read to fetch the single row just to get
-          its `queue_id`.
-        - Otherwise, fall back to the storage-based resolution.
+          resolve `queue_id` and delegate to `_get_queue(queue_id=…)`.
+        - Otherwise, read the single row; if it carries a numeric `queue_id`,
+          delegate to `_get_queue(queue_id=…)`; else fall back to
+          `_walk_queue_from_task` which ignores `queue_id` and follows links.
         """
-        # Fast-path via in-memory index (populated by high-level queue tools)
+        # Fast-path via LocalTaskView when membership is known.
         try:
-            if not self._queue_index_stale:
-                qid_cached = self._task_to_queue.get(int(task_id))
-                if isinstance(qid_cached, int):
-                    members = self._queue_index.get(int(qid_cached)) or []
-                    if int(task_id) in members:
-                        return self._get_queue(queue_id=qid_cached)
+            qid_cached = self._view.get_queue_id_for_task(int(task_id))
         except Exception:
-            # Defensive: ignore cache failures and fall back
-            pass
+            qid_cached = None
+        if isinstance(qid_cached, int):
+            members = list(self._view.get_member_ids(int(qid_cached)) or [])
+            if int(task_id) in members:
+                return self._get_queue(queue_id=qid_cached)
 
         # Fallback: resolve via storage
         try:
@@ -2845,6 +2360,8 @@ class TaskScheduler(BaseTaskScheduler):
         qid = row.get("queue_id")
         if isinstance(qid, int):
             return self._get_queue(queue_id=qid)
+
+        # No numeric queue_id – follow the linked chain defensively
         return self._walk_queue_from_task(task_id=int(task_id))
 
     @_ts_log_tool_runtime
@@ -2877,8 +2394,8 @@ class TaskScheduler(BaseTaskScheduler):
         Behaviour
         ---------
         - Maintains neighbour pointers symmetrically.
-        - Ensures exactly one head owns ``start_at`` (carried from the former
-          head if present) and sets statuses consistently:
+        - Ensures exactly one head owns ``start_at`` (preserves the queue-level
+          timestamp when present) and sets statuses consistently:
             • head with ``start_at`` → ``scheduled``;
             • non-heads → at most ``queued``.
         - The active task (if any) in this queue retains its ``active`` status.
@@ -2886,35 +2403,49 @@ class TaskScheduler(BaseTaskScheduler):
         Guidance for callers (outer loop / LLM):
         - Always refresh the queue membership immediately before constructing `new_order`
           by calling `list_queues()` and `get_queue(queue_id=…)`.
-        - If a task was started via `execute_isolated_by_id`, it is DETACHED and no longer a
-          member of its former queue; do NOT include it in `new_order` for that queue.
+        - Tasks executed in isolation are detached from their queues; do not
+          include detached tasks in `new_order` for that queue.
         - This method asserts that `new_order` is an exact permutation of the current queue;
           if you see an assertion error, refresh state and reconstruct `new_order` accordingly.
         """
-        # Build current queue membership with a single targeted read when possible.
-        # Within a single tool call the backend state is stable, so reuse this view.
-        if isinstance(queue_id, int):
-            in_queue_rows: list[TaskRow] = [
-                r
-                for r in self._filter_tasks(
-                    filter=(
-                        "schedule is not None and "
-                        "status not in ('completed','cancelled','failed') and "
-                        f"queue_id == {int(queue_id)}"
-                    ),
-                )
-            ]
-        else:
-            # Fallback path (rare): no numeric queue_id → derive membership locally
-            all_rows = self._filter_tasks()
-            in_queue_rows = [
-                r
-                for r in all_rows
-                if r.get("schedule") is not None
-                and r.get("queue_id") == queue_id
-                and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
-            ]
-        current_set: set[int] = {int(r.get("task_id")) for r in in_queue_rows}
+        # Resolve current membership once (prefer local index; fallback to storage)
+        try:
+            member_ids = (
+                list(self._view.get_member_ids(int(queue_id)) or [])
+                if isinstance(queue_id, int)
+                else []
+            )
+        except Exception:
+            member_ids = []
+
+        in_queue_rows: list[TaskRow] | None = None
+        if not member_ids:
+            # Single filtered read of runnable rows in this queue
+            if isinstance(queue_id, int):
+                in_queue_rows = [
+                    r
+                    for r in self._filter_tasks(
+                        filter=(
+                            "schedule is not None and "
+                            "status not in ('completed','cancelled','failed') and "
+                            f"queue_id == {int(queue_id)}"
+                        ),
+                    )
+                ]
+            else:
+                # Rare path: non-numeric queue_id (e.g., None) → derive membership locally
+                all_rows = self._filter_tasks()
+                in_queue_rows = [
+                    r
+                    for r in all_rows
+                    if r.get("schedule") is not None
+                    and r.get("queue_id") == queue_id
+                    and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+                ]
+            member_ids = [int(r.get("task_id")) for r in (in_queue_rows or [])]
+
+        # Validate permutation
+        current_set: set[int] = {int(t) for t in member_ids}
         if current_set != set(new_order):
             raise AssertionError(
                 "new_order must be a permutation of the current queue. "
@@ -2924,27 +2455,31 @@ class TaskScheduler(BaseTaskScheduler):
                 "then rebuild new_order accordingly.",
             )
 
-        # Reuse the rows we already fetched to avoid another backend read.
-        rows_by_id: Dict[int, TaskRow] = {int(r["task_id"]): r for r in in_queue_rows}
-        # Trim to the ids we actually care about (defensive)
-        rows_by_id = {int(tid): rows_by_id[int(tid)] for tid in new_order}
+        # Minimal fields required for planning and comparison
+        minimal_fields = ["task_id", "status", "schedule"]
+        rows_by_id: Dict[int, Dict[str, Any]] = self._read_rows_by_ids(
+            ids=member_ids,
+            fields=minimal_fields,
+        )
+        # Trim to ids we actually care about (defensive and deterministic order)
+        rows_by_id = {int(tid): rows_by_id.get(int(tid), {}) for tid in new_order}
 
-        # Compute an invariant-preserving update plan via QueueEngine
+        # Compute invariant-preserving plan
         updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
             new_order=new_order,
             rows_by_id=rows_by_id,
             queue_id=queue_id,
         )
 
-        # Persist through the central validated write funnel, but:
-        # - pass current_row to avoid an extra read,
-        # - skip neighbour sync (we write all members symmetrically),
-        # - skip cross-queue guard (reorder stays within the same queue).
-        for tid, payload in updates_per_log.items():
-            cur_row = rows_by_id.get(int(tid))
-            if cur_row is None:
-                continue
-            # Skip no-op writes
+        # Build tid→log_id map once
+        id_map: Dict[int, int] = self._tid_to_log_id_map(list(new_order))
+
+        # Filter out no-op writes and batch the rest
+        to_write_ids: list[int] = []
+        to_write_entries: list[Dict[str, Any]] = []
+        for tid in new_order:
+            payload = updates_per_log.get(int(tid)) or {}
+            cur_row = rows_by_id.get(int(tid)) or {}
             cur_sched = {**(cur_row.get("schedule") or {})}
             desired_sched = {**(payload.get("schedule") or {})}
             need_status = False
@@ -2956,59 +2491,43 @@ class TaskScheduler(BaseTaskScheduler):
                 need_status = "status" in payload
             if (cur_sched == desired_sched) and (not need_status):
                 continue
-            self._validated_write(
-                task_id=int(tid),
-                entries=payload,
-                err_prefix=f"While reordering queue {queue_id} (task {tid}):",
-                current_row=cur_row,
-                skip_sync=True,
-                skip_cross_queue_guard=True,
-            )
+            lid = id_map.get(int(tid))
+            if isinstance(lid, int):
+                to_write_ids.append(int(lid))
+                to_write_entries.append(payload)
+
+        if to_write_ids:
+            self._write_log_entries(logs=to_write_ids, entries=to_write_entries)
 
         # Auto-checkpoint after successful edit (best-effort)
         try:
-            # Silent; the execute loop also checkpoints explicitly
-            _ = self._queue_checkpoints  # guard attribute existence
-            # Build lightweight snapshot of just this queue
             from ..common.llm_helpers import short_id as _short_id  # local import
 
             cid = _short_id(8)
             snap = {"label": "auto:_reorder_queue", "queues": []}
-            # Avoid extra reads: we already know the final order and head start_at.
-            order_now = list(new_order)
-            # Derive queue-level start_at from the previous head in our local view
-            head_start = None
-            try:
-                for r in in_queue_rows:
-                    sched = r.get("schedule") or {}
-                    if (sched or {}).get("prev_task") is None:
-                        head_start = (sched or {}).get("start_at")
-                        break
-            except Exception:
-                head_start = None
+            head_start = self._head_start_at_from_rows(list(rows_by_id.values()))
             snap["queues"].append(
                 {
                     "queue_id": queue_id,
-                    "head_id": order_now[0] if order_now else None,
+                    "head_id": new_order[0] if new_order else None,
                     "start_at": head_start,
-                    "order": order_now,
+                    "order": list(new_order),
                 },
             )
             self._queue_checkpoints[cid] = snap
-            # Expose the checkpoint id in the return payload via outer scope variable
-            _last_checkpoint_id = cid  # noqa: F841 (read by return below if available)
+            _last_checkpoint_id = cid  # noqa: F841
         except Exception:
-            pass
+            head_start = locals().get("head_start", None)  # type: ignore[assignment]
 
-        # Best-effort: refresh local index so subsequent lookups can avoid a read
+        # Best-effort: refresh LocalTaskView
         try:
             if isinstance(queue_id, int):
-                self._queue_index[queue_id] = list(new_order)
-                for tid in new_order:
-                    self._task_to_queue[int(tid)] = int(queue_id)
-                self._queue_index_stale = False
+                self._view.update_after_reorder(
+                    queue_id=int(queue_id),
+                    new_order=list(new_order),
+                    head_start_at=head_start,
+                )
         except Exception:
-            # Never let cache maintenance affect the tool outcome
             pass
 
         return {
@@ -3021,9 +2540,7 @@ class TaskScheduler(BaseTaskScheduler):
         }
 
         # Keep local queue index in sync (best-effort)
-        # Note: code below is unreachable due to the return above; intentionally
-        # placed earlier would alter logging/timing semantics. Leave updates to
-        # the call-site right after persistence instead (see below).
+        # Intentionally left to call-sites post-persistence when needed.
 
     @_ts_log_tool_runtime
     def _move_tasks_to_queue(
@@ -3071,37 +2588,44 @@ class TaskScheduler(BaseTaskScheduler):
                     f"Task {r['task_id']} is trigger-based and cannot be placed in the queue.",
                 )
 
-        # Determine each task's current queue (prefer local index; single fallback read)
+        # Determine each task's current queue (prefer local index; reuse prefetched rows)
         source_qid_by_tid: Dict[int, Optional[int]] = {}
         try:
-            if not self._queue_index_stale:
-                for tid in block:
-                    qid = self._task_to_queue.get(int(tid))
-                    if qid is not None:
-                        source_qid_by_tid[int(tid)] = int(qid)
-            # If any are missing, fetch once for all
-            missing = [t for t in block if int(t) not in source_qid_by_tid]
-            if missing:
-                by_id = {int(r.get("task_id")): r for r in rows} if rows else {}
-                for t in missing:
-                    row = by_id.get(int(t))
-                    source_qid_by_tid[int(t)] = row.get("queue_id") if row else None
+            for tid in block:
+                qid = self._view.get_queue_id_for_task(int(tid))
+                if isinstance(qid, int):
+                    source_qid_by_tid[int(tid)] = int(qid)
         except Exception:
-            # Conservative fallback: best-effort single read for all
-            rows = self._filter_tasks(filter=f"task_id in {block}")
-            by_id = {int(r.get("task_id")): r for r in rows}
-            for t in block:
+            pass
+        # For any remaining ids, reuse the single consolidated read done above
+        missing = [t for t in block if int(t) not in source_qid_by_tid]
+        if missing:
+            by_id = {int(r.get("task_id")): r for r in (rows or [])}
+            for t in missing:
                 row = by_id.get(int(t))
-                source_qid_by_tid[int(t)] = row.get("queue_id") if row else None
+                try:
+                    source_qid_by_tid[int(t)] = (
+                        row.get("queue_id") if isinstance(row, dict) else None
+                    )
+                except Exception:
+                    source_qid_by_tid[int(t)] = None
 
         # Allocate target queue id when requested (new queue)
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
+        # Keep monotonic allocator in sync when caller specifies a higher id
+        try:
+            if isinstance(target_qid, int):
+                self._view.sync_max_queue_id_seen(int(target_qid))
+        except Exception:
+            pass
 
         # Build target queue's existing order once (prefer local index)
         try:
-            if not self._queue_index_stale and isinstance(target_qid, int):
-                tgt_existing = list(self._queue_index.get(int(target_qid)) or [])
+            if isinstance(target_qid, int):
+                tgt_existing = list(self._view.get_member_ids(int(target_qid)) or [])
             else:
+                tgt_existing = []
+            if not tgt_existing:
                 raise RuntimeError
         except Exception:
             try:
@@ -3129,8 +2653,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         def _current_order_for(qid: int) -> List[int]:
             try:
-                if not self._queue_index_stale:
-                    return list(self._queue_index.get(int(qid)) or [])
+                cached = self._view.get_member_ids(int(qid))
+                if cached is not None and len(cached) > 0:
+                    return list(cached)
                 raise RuntimeError
             except Exception:
                 return [t.task_id for t in self._get_queue(queue_id=int(qid))]
@@ -3155,9 +2680,11 @@ class TaskScheduler(BaseTaskScheduler):
                     continue
             except Exception:
                 pass
+            # Use core primitive to preserve head start_at and status semantics reliably
             self._set_queue(queue_id=qid, order=cur_order)
 
         if tgt_new_order:
+            # Apply target queue materialization in one batch using the core primitive
             set_res = self._set_queue(queue_id=target_qid, order=tgt_new_order)
             try:
                 target_qid = set_res.get("details", {}).get("queue_id", target_qid)
@@ -3238,6 +2765,12 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Allocate queue id when needed
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
+        # Keep the allocator in sync when a new queue becomes materialized here
+        try:
+            if isinstance(target_qid, int):
+                self._view.sync_max_queue_id_seen(int(target_qid))
+        except Exception:
+            pass
 
         # Capture existing head-level start_at BEFORE any mutations so it can be
         # restored onto the new head reliably (avoids losing it during neutralisation)
@@ -3245,30 +2778,51 @@ class TaskScheduler(BaseTaskScheduler):
 
         # When the caller explicitly supplies queue_start_at, we don't need to read
         # the current head. Similarly, when we can confidently determine that the
-        # target queue is a fresh, empty queue (not present in the local index and
-        # the index is not marked stale), we avoid an unnecessary backend read.
+        # target queue is a fresh, empty queue, we avoid an unnecessary backend read.
         assume_empty_target_queue = False
         try:
-            if isinstance(queue_id, int) and (not self._queue_index_stale):
-                assume_empty_target_queue = int(queue_id) not in self._queue_index
+            if isinstance(queue_id, int):
+                cached_members = self._view.get_member_ids(int(queue_id))
+                assume_empty_target_queue = not bool(cached_members)
         except Exception:
             assume_empty_target_queue = False
 
-        if (
-            (queue_id is not None)
-            and (queue_start_at is None)
-            and (not assume_empty_target_queue)
-        ):
+        # Remove any other members currently in the target queue (strict by queue_id)
+        current_members: List[int] = []
+        current_rows_by_id: Dict[int, Dict[str, Any]] = {}
+
+        # Prefer a single filtered read of the target queue to derive both:
+        # - existing head start_at (when queue_start_at not provided), and
+        # - current membership to compute removals.
+        if queue_id is not None and not assume_empty_target_queue:
             try:
-                _orig_head = self._head_row_for_queue(target_qid)
-                if _orig_head is not None:
-                    existing_head_start = (_orig_head.get("schedule") or {}).get(
-                        "start_at",
-                    )
+                rows_in_queue: List[TaskRow] = self._filter_tasks(
+                    filter=(
+                        "schedule is not None and "
+                        "status not in ('completed','cancelled','failed') and "
+                        f"queue_id == {int(target_qid)}"
+                    ),
+                )
             except Exception:
-                existing_head_start = None
-        # Fallback using already-fetched rows when available
-        if existing_head_start is None:
+                rows_in_queue = []
+
+            # Derive current members and by-id map from the same read
+            current_members = [int(r.get("task_id")) for r in rows_in_queue]
+            current_rows_by_id = {int(r.get("task_id")): r for r in rows_in_queue}
+
+            # Compute existing head start_at locally to avoid an unfiltered scan
+            if queue_start_at is None and existing_head_start is None:
+                try:
+                    for r in rows_in_queue:
+                        _sched = r.get("schedule") or {}
+                        if _sched.get("prev_task") is None:
+                            existing_head_start = _sched.get("start_at")
+                            break
+                except Exception:
+                    pass
+
+        # Fallback using already-fetched rows when available (only scans 'order')
+        if queue_start_at is None and existing_head_start is None:
             try:
                 for _tid in order:
                     _row = rows_by_id.get(int(_tid))
@@ -3284,70 +2838,42 @@ class TaskScheduler(BaseTaskScheduler):
             except Exception:
                 pass
 
-        # Remove any other members currently in the target queue (strict by queue_id)
-        current_members: List[int] = []
-        current_rows_by_id: Dict[int, Dict[str, Any]] = {}
-        if queue_id is not None and not assume_empty_target_queue:
-            try:
-                rows_in_queue: List[TaskRow] = self._filter_tasks(
-                    filter=(
-                        "schedule is not None and "
-                        "status not in ('completed','cancelled','failed') and "
-                        f"queue_id == {int(target_qid)}"
-                    ),
-                )
-            except Exception:
-                rows_in_queue = []
-            current_members = [int(r.get("task_id")) for r in rows_in_queue]
-            current_rows_by_id = {int(r.get("task_id")): r for r in rows_in_queue}
-
         to_remove = [tid for tid in current_members if tid not in order]
+
         if to_remove:
-            # Detach removed tasks: clear prev/next on schedule; set top-level queue_id=None
-            for tid in to_remove:
-                row = current_rows_by_id.get(int(tid)) or self._get_single_row_or_raise(
-                    int(tid),
-                )
-                sched = {**(row.get("schedule") or {})}
-                # Clear any neighbour pointers and start_at on non-heads
-                sched.pop("prev_task", None)
-                sched.pop("next_task", None)
-                sched.pop("start_at", None)
-                self._validated_write(
-                    task_id=int(tid),
+            # Detach removed tasks in a single backend call: neutral schedule, queued status, no queue_id
+            try:
+                log_ids = self._get_logs_by_task_ids(task_ids=to_remove)
+                self._write_log_entries(
+                    logs=log_ids,
                     entries={
-                        "schedule": sched or {},
-                        # Ensure invariants: a detached task without start_at must not be 'scheduled'
+                        "schedule": {},
                         "status": Status.queued,
                         "queue_id": None,
                     },
-                    err_prefix=f"While clearing removed task {tid} from queue {target_qid}:",
-                    current_row=row,
                 )
+            except Exception:
+                # Fallback to per-task validated writes if batch update fails for any reason
+                for tid in to_remove:
+                    row = current_rows_by_id.get(
+                        int(tid),
+                    ) or self._get_single_row_or_raise(
+                        int(tid),
+                    )
+                    self._validated_write(
+                        task_id=int(tid),
+                        entries={
+                            "schedule": {},
+                            "status": Status.queued,
+                            "queue_id": None,
+                        },
+                        err_prefix=f"While clearing removed task {tid} from queue {target_qid}:",
+                        current_row=row,
+                    )
 
-        # Ensure all specified tasks belong to target queue and have no conflicting links
-        for tid in order:
-            row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(int(tid))
-            sched = {**(row.get("schedule") or {})}
-            # neutralize prev/next; set precisely below
-            sched["prev_task"] = None
-            sched["next_task"] = None
-            # Remove start_at for now; we will reapply for head only
-            sched.pop("start_at", None)
-            # Preserve 'active' status on the currently running task by omitting a status write
-            prep_entries: Dict[str, Any] = {"schedule": sched, "queue_id": target_qid}
-            if active_tid is None or int(tid) != int(active_tid):
-                prep_entries["status"] = Status.queued  # temporary neutral state
-            self._validated_write(
-                task_id=int(tid),
-                entries=prep_entries,
-                err_prefix=f"While preparing task {tid} for queue materialization:",
-                current_row=row,
-                # Keep cross-queue guard here because tasks might still have neighbours in other queues
-                skip_cross_queue_guard=False,
-            )
-
-        # Rewire links to match order and apply head start_at
+        # Rewire links to match order and apply head start_at (single write per member)
+        # Accumulate member writes and persist in one batch to minimize I/O
+        entries_by_tid: Dict[int, Dict[str, Any]] = {}
         for idx, tid in enumerate(order):
             prev_tid = None if idx == 0 else order[idx - 1]
             next_tid = None if idx == len(order) - 1 else order[idx + 1]
@@ -3356,32 +2882,69 @@ class TaskScheduler(BaseTaskScheduler):
                 "next_task": next_tid,
             }
             if idx == 0:
-                # Prefer provided queue_start_at; else preserve previously-captured head start
+                # Prefer provided queue_start_at; else preserve the existing head start
                 if queue_start_at is not None:
                     sched["start_at"] = queue_start_at
                 elif existing_head_start is not None:
                     sched["start_at"] = existing_head_start
 
-            # Derive status for non-active tasks only; keep the active task as 'active'
+            # Prepare entries; derive status centrally and avoid writing 'active'
             write_entries: Dict[str, Any] = {"schedule": sched, "queue_id": target_qid}
-            if active_tid is None or int(tid) != int(active_tid):
-                desired_status = (
-                    Status.scheduled
-                    if (idx == 0 and ("start_at" in sched))
-                    else Status.queued
-                )
-                write_entries["status"] = desired_status
-            self._validated_write(
-                task_id=int(tid),
-                entries=write_entries,
-                err_prefix=f"While materializing queue {target_qid} (task {tid}):",
-                current_row=row,
-                # After neutralization all members are in the same queue; skip guard and per-write neighbour syncing
-                skip_cross_queue_guard=True,
-                skip_sync=True,
-            )
 
-        # No additional start_at write needed – applied on head in the previous step
+            # Fetch current row once for status derivation and no-op detection
+            row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(int(tid))
+            existing_status = row.get("status")
+            is_head = idx == 0
+            head_has_start_at = "start_at" in sched
+
+            if not (active_tid is not None and int(tid) == int(active_tid)):
+                # Centralized derivation; non-head cannot remain primed
+                derived_status = derive_status_after_queue_edit(
+                    existing_status=existing_status,
+                    is_head=is_head,
+                    head_has_start_at=head_has_start_at,
+                )
+                if (not is_head) and derived_status == Status.primed:
+                    derived_status = Status.queued
+                # Only include status when it actually changes and is not 'active'
+                try:
+                    if self._to_status(existing_status) != self._to_status(derived_status):  # type: ignore[arg-type]
+                        write_entries["status"] = derived_status
+                except Exception:
+                    write_entries["status"] = derived_status
+
+            # Skip no-op writes when the current row already matches the desired state
+            try:
+                cur_sched = {**(row.get("schedule") or {})}
+                cur_qid = row.get("queue_id")
+                cur_status = row.get("status")
+                same_sched = (
+                    cur_sched.get("prev_task") == sched.get("prev_task")
+                    and cur_sched.get("next_task") == sched.get("next_task")
+                    and (cur_sched.get("start_at") == sched.get("start_at"))
+                )
+                same_qid = cur_qid == target_qid
+                if "status" in write_entries:
+                    desired_st = self._to_status(write_entries["status"])  # type: ignore[arg-type]
+                    try:
+                        cur_st = self._to_status(cur_status)  # type: ignore[arg-type]
+                    except Exception:
+                        cur_st = cur_status
+                    same_status = cur_st == desired_st
+                else:
+                    # When active, we never change status in this call
+                    same_status = True
+                if same_sched and same_qid and same_status:
+                    continue
+            except Exception:
+                pass
+            entries_by_tid[int(tid)] = write_entries
+
+        if entries_by_tid:
+            # Prefer a single batched write; fall back internally to per-task
+            self._write_entries_batched(entries_by_tid=entries_by_tid)
+
+        # No additional start_at write needed – applied on head above
 
         # Auto-checkpoint (avoid extra reads by using local state)
         try:
@@ -3390,7 +2953,7 @@ class TaskScheduler(BaseTaskScheduler):
             cid = _short_id(8)
             snap = {"label": "auto:_set_queue", "queues": []}
             order_now = list(int(x) for x in order)
-            # Prefer explicit queue_start_at; else preserved head start captured earlier
+            # Prefer explicit queue_start_at; else preserve the captured head start
             head_start = (
                 queue_start_at if queue_start_at is not None else existing_head_start
             )
@@ -3407,29 +2970,19 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             pass
 
-        # Best-effort: refresh local index and membership mapping. Also clear
-        # removed members that were previously in this queue.
+        # Best-effort: refresh LocalTaskView membership mapping
         try:
-            target_qid_int = int(target_qid) if isinstance(target_qid, int) else None
-        except Exception:
-            target_qid_int = None
-
-        try:
-            if target_qid_int is not None:
-                # Build a set of removed ids from earlier computation if available
-                try:
-                    _removed_ids = set(int(x) for x in to_remove)  # type: ignore[name-defined]
-                except Exception:
-                    _removed_ids = set()
-                # Update forward index
-                self._queue_index[target_qid_int] = list(int(x) for x in order)
-                # Update membership
-                for tid in order:
-                    self._task_to_queue[int(tid)] = target_qid_int
-                # Clear membership for removed ids
-                for tid in _removed_ids:
-                    self._task_to_queue.pop(int(tid), None)
-                self._queue_index_stale = False
+            if isinstance(target_qid, int):
+                _head_start_local = (
+                    queue_start_at
+                    if queue_start_at is not None
+                    else existing_head_start
+                )
+                self._view.update_after_queue_materialized(
+                    queue_id=int(target_qid),
+                    order=[int(x) for x in order],
+                    head_start_at=_head_start_local,
+                )
         except Exception:
             pass
 
@@ -3443,9 +2996,7 @@ class TaskScheduler(BaseTaskScheduler):
         }
 
         # Keep local queue index in sync (best-effort)
-        # Note: code below is unreachable due to the return above; intentionally
-        # placed earlier would alter logging/timing semantics. Leave updates to
-        # the call-site right after persistence instead (see below).
+        # Intentionally left to call-sites post-persistence when needed.
 
     # ------------------------------------------------------------------ #
     #  Bulk low-level schedule edit (atomic)                              #
@@ -3586,25 +3137,38 @@ class TaskScheduler(BaseTaskScheduler):
         # 9) Apply atomically: reuse current_row and skip cross-queue guard (already validated)
         for tid, sch in by_id.items():
             is_head = sch.get("prev_task") is None
-            desired_status = (
-                Status.scheduled
-                if (is_head and sch.get("start_at") is not None)
-                else Status.queued
+            head_has_start_at = sch.get("start_at") is not None
+
+            row = rows_by_id.get(int(tid))
+            existing_status = row.get("status") if row else Status.queued
+            desired_status = derive_status_after_queue_edit(
+                existing_status=existing_status,
+                is_head=is_head,
+                head_has_start_at=head_has_start_at,
             )
+            # Non-head cannot remain primed
+            if (not is_head) and desired_status == Status.primed:
+                desired_status = Status.queued
+
             top_qid = provided_qid.get(int(tid))
             if top_qid is None:
-                row = rows_by_id.get(int(tid))
                 top_qid = row.get("queue_id") if row else None
+
+            entries = {
+                "schedule": sch,
+                **({"queue_id": int(top_qid)} if isinstance(top_qid, int) else {}),
+            }
+            try:
+                if self._to_status(existing_status) != self._to_status(desired_status):  # type: ignore[arg-type]
+                    entries["status"] = desired_status
+            except Exception:
+                entries["status"] = desired_status
 
             self._validated_write(
                 task_id=int(tid),
-                entries={
-                    "schedule": sch,
-                    "status": desired_status,
-                    **({"queue_id": int(top_qid)} if isinstance(top_qid, int) else {}),
-                },
+                entries=entries,
                 err_prefix=f"While applying set_schedules_atomic (task {tid}):",
-                current_row=rows_by_id.get(int(tid)),
+                current_row=row,
                 skip_cross_queue_guard=True,
             )
 
@@ -3613,8 +3177,6 @@ class TaskScheduler(BaseTaskScheduler):
     # ------------------------------------------------------------------ #
     #  Diagnostics                                                        #
     # ------------------------------------------------------------------ #
-
-    # Deprecated: _explain_queue removed. Compose using _list_queues() and _get_queue().
 
     @_ts_log_tool_runtime
     def _partition_queue(
@@ -3634,8 +3196,7 @@ class TaskScheduler(BaseTaskScheduler):
             - ``queue_start_at`` (str | datetime | None, optional): when set, the
               head of this queue will carry this ``start_at`` and the queue head
               status becomes ``scheduled``; otherwise it remains ``queued``.
-            - ``queue_name`` (str | None, optional): unused metadata; accepted for
-              future compatibility.
+            - ``queue_name`` (str | None, optional): unused metadata (accepted for future use).
 
             The first part is applied to the identified source queue. Subsequent
             parts are materialised as new queues (fresh ``queue_id``s).
@@ -3742,11 +3303,13 @@ class TaskScheduler(BaseTaskScheduler):
             # Materialize the new queue in one step via core primitive; pass start_at when provided
             qstart = later_parts[j].get("queue_start_at")
             self._set_queue(queue_id=qid, order=ordered, queue_start_at=qstart)
-            # Update local index/membership for the new queue
+            # Update LocalTaskView for the new queue
             try:
-                self._queue_index[int(qid)] = list(ordered)
-                for _tid in ordered:
-                    self._task_to_queue[int(_tid)] = int(qid)
+                self._view.update_after_queue_materialized(
+                    queue_id=int(qid),
+                    order=list(ordered),
+                    head_start_at=qstart,
+                )
             except Exception:
                 pass
             created.append(
@@ -3766,18 +3329,14 @@ class TaskScheduler(BaseTaskScheduler):
                 order=first_list,
                 queue_start_at=fstart,
             )
-            # Update local index/membership for source queue reduction
+            # Update LocalTaskView for the reduced source queue
             try:
                 if isinstance(source_qid, int):
-                    self._queue_index[int(source_qid)] = list(first_list)
-                    for _tid in first_list:
-                        self._task_to_queue[int(_tid)] = int(source_qid)
-                    # Remove moved ids from membership map
-                    moved_set = set(rest_ids)
-                    for _tid in moved_set:
-                        if int(_tid) not in first_list:
-                            self._task_to_queue.pop(int(_tid), None)
-                self._queue_index_stale = False
+                    self._view.update_after_queue_materialized(
+                        queue_id=int(source_qid),
+                        order=list(first_list),
+                        head_start_at=fstart,
+                    )
             except Exception:
                 pass
         else:
@@ -3859,16 +3418,8 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         if not touches_lifecycle:
-            # Resolve log id via cache or a single lookup, then write entries
-            try:
-                _cached_log_id = self._task_log_id_cache.get(int(task_id))
-            except Exception:
-                _cached_log_id = None
-            log_id = (
-                _cached_log_id
-                if isinstance(_cached_log_id, int)
-                else self._get_logs_by_task_ids(task_ids=task_id)
-            )
+            # Resolve log id via a single lookup, then write entries
+            log_id = self._get_logs_by_task_ids(task_ids=task_id)
             return self._write_log_entries(logs=log_id, entries=entries)
 
         current = current_row or self._get_single_row_or_raise(task_id)
@@ -3994,16 +3545,8 @@ class TaskScheduler(BaseTaskScheduler):
             except Exception:
                 pass
 
-        # Fast-path: reuse cached log_id when available to avoid a read
-        try:
-            _cached_log_id = self._task_log_id_cache.get(int(task_id))
-        except Exception:
-            _cached_log_id = None
-        log_id = (
-            _cached_log_id
-            if isinstance(_cached_log_id, int)
-            else self._get_logs_by_task_ids(task_ids=task_id)
-        )
+        # Resolve log id via a single lookup
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
         result = self._write_log_entries(logs=log_id, entries=entries)
 
         # Ensure neighbour symmetry whenever schedule changed (unless skipped by caller)
@@ -4036,37 +3579,6 @@ class TaskScheduler(BaseTaskScheduler):
             task_id=task_id,
             detach=detach,
         )
-        # Queue structure changed – mark index stale. We do not attempt to
-        # micro-update the cache here because adjacency semantics differ for
-        # isolated vs chained activation and may involve multiple neighbours.
-        try:
-            self._queue_index_stale = True
-        except Exception:
-            pass
-
-    @_ts_log_tool_runtime
-    def _attach_with_links(
-        self,
-        *,
-        task_id: int,
-        prev_task: Optional[int],
-        next_task: Optional[int],
-        head_start_at: Optional[str],
-        err_prefix: str,
-    ) -> None:
-        _ops_attach_with_links(
-            self,
-            task_id=task_id,
-            prev_task=prev_task,
-            next_task=next_task,
-            head_start_at=head_start_at,
-            err_prefix=err_prefix,
-        )
-        # Structural queue linkage update – index may be outdated
-        try:
-            self._queue_index_stale = True
-        except Exception:
-            pass
 
     _TERMINAL_STATUSES = {Status.completed, Status.cancelled, Status.failed}
 
@@ -4114,81 +3626,7 @@ class TaskScheduler(BaseTaskScheduler):
         else:
             self._primed_task = None
 
-    # Deprecated: _get_task_queue removed in favor of explicit helpers.
-
-    # Small helper for ActiveQueue to await linkage stabilisation
-    @_ts_log_tool_runtime
-    def _get_linkage_barrier(self, *, task_id: int):
-        try:
-            return self._linkage_barriers.get(int(task_id))
-        except Exception:
-            return None
-
-    # ------------------------------------------------------------------ #
-    #  Pure neighbour selection helper                                    #
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _select_final_neighbours(
-        *,
-        task_id: int,
-        was_head: bool,
-        original_prev: Optional[int],
-        original_next: Optional[int],
-        queue_ids: list[int],
-        is_viable: "Callable[[Optional[int]], bool]",
-    ) -> tuple[Optional[int], Optional[int]]:
-        """
-        Decide `(final_prev, final_next)` for reinstatement using a minimal, deterministic
-        policy and no I/O.
-
-        Policy:
-        - If `was_head`: `final_prev=None`; `final_next` is `original_next` if viable,
-          otherwise the current head (first in `queue_ids`) if different from `task_id`,
-          otherwise `None`.
-        - If middle: `final_prev` is `original_prev` if viable, else `None`;
-          `final_next` is `original_next` if viable and distinct from `final_prev`, else `None`.
-        - Avoid self-loops and identical prev/next; prefer keeping prev and dropping next.
-        """
-        current_head_id = queue_ids[0] if queue_ids else None
-
-        def _clean(tid: Optional[int]) -> Optional[int]:
-            return None if tid == task_id else tid
-
-        if was_head:
-            final_prev = None
-            if is_viable(original_next):
-                final_next = original_next
-            else:
-                final_next = (
-                    current_head_id
-                    if (current_head_id is not None and current_head_id != task_id)
-                    else None
-                )
-        else:
-            # Prefer restoring the original predecessor when still viable; else become head.
-            final_prev = original_prev if is_viable(original_prev) else None
-            # Preserve the original successor when viable and not equal to prev.
-            final_next = (
-                original_next
-                if (is_viable(original_next) and original_next != final_prev)
-                else None
-            )
-
-        final_prev = _clean(final_prev)
-        final_next = _clean(final_next)
-        if (
-            final_prev is not None
-            and final_next is not None
-            and final_prev == final_next
-        ):
-            final_next = None
-
-        return final_prev, final_next
-
-    # Deprecated: _update_task_queue removed. Use _reorder_queue/_set_queue directly.
-
-    # Legacy per-field updaters are no longer exposed as tools. Unified into _update_task.
+    # (moved) _select_final_neighbours: now defined in reintegration.py
 
     # Update Task(s) Status / Schedule / Deadline / Repetition / Priority
 
@@ -4228,7 +3666,6 @@ class TaskScheduler(BaseTaskScheduler):
                     err_prefix=f"While changing status of task {row['task_id']}:",
                 )
 
-        # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
         entries: Dict[str, Any] = {"status": new_status_enum}
         return self._write_log_entries(logs=log_ids, entries=entries, overwrite=True)
@@ -4324,7 +3761,7 @@ class TaskScheduler(BaseTaskScheduler):
                     "Cannot add/update *start_at* – the task is trigger-based.",
                 )
             # Guard-rail: tasks with a predecessor cannot own start_at
-            if self._sched_prev(current_sched) is not None:
+            if _q_prev(current_sched) is not None:
                 raise ValueError(
                     "Cannot set 'start_at' when the task has 'prev_task'. Move it to the queue head first.",
                 )
@@ -4335,8 +3772,8 @@ class TaskScheduler(BaseTaskScheduler):
                 except Exception:
                     pass
             schedule_payload = {
-                "prev_task": self._sched_prev(current_sched),
-                "next_task": self._sched_next(current_sched),
+                "prev_task": _q_prev(current_sched),
+                "next_task": _q_next(current_sched),
                 "start_at": start_at,
             }
 
@@ -4430,9 +3867,9 @@ class TaskScheduler(BaseTaskScheduler):
             try:
                 if "schedule" in entries and isinstance(entries.get("schedule"), dict):
                     _new = entries["schedule"]
-                    _skip_sync = _new.get("prev_task") == self._sched_prev(
+                    _skip_sync = _new.get("prev_task") == _q_prev(
                         current_sched,
-                    ) and _new.get("next_task") == self._sched_next(current_sched)
+                    ) and _new.get("next_task") == _q_next(current_sched)
                     _skip_cross_guard = _skip_sync
             except Exception:
                 _skip_sync = False
@@ -4447,33 +3884,14 @@ class TaskScheduler(BaseTaskScheduler):
                 skip_cross_queue_guard=_skip_cross_guard,
             )
         else:
-            # Prefer the in-memory cache to avoid a lookup when possible
-            try:
-                _cached_log_id = self._task_log_id_cache.get(int(task_id))
-            except Exception:
-                _cached_log_id = None
-            log_id = (
-                _cached_log_id
-                if isinstance(_cached_log_id, int)
-                else self._get_logs_by_task_ids(task_ids=task_id)
-            )
+            log_id = self._get_logs_by_task_ids(task_ids=task_id)
             return self._write_log_entries(logs=log_id, entries=entries, overwrite=True)
-
-    # Legacy per-field updaters are kept above as comments; use _update_task instead.
 
     # ────────────────────────────────────────────────────────────────────
     # Small internal helpers
     # ────────────────────────────────────────────────────────────────────
 
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        """Construct a configured AsyncUnify client for the given model."""
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+    # moved to unity/task_scheduler/llm.py as new_llm_client
 
     # ------------------------------------------------------------------ #
     #  Queue plan + checkpoints (shared helpers exposed as tools)        #
@@ -4567,30 +3985,11 @@ class TaskScheduler(BaseTaskScheduler):
 
         cid = _short_id(8)
         self._queue_checkpoints[cid] = snapshot
-        try:
-            if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                "1",
-                "true",
-                "yes",
-            }:
-                self._persist_checkpoint(cid, label, snapshot)
-        except Exception:
-            pass
         return {"outcome": "checkpointed", "details": {"checkpoint_id": cid}}
 
     def revert_to_checkpoint(self, *, checkpoint_id: str) -> Dict[str, Any]:
         """Revert all queues to a previously created checkpoint."""
         snap = self._queue_checkpoints.get(str(checkpoint_id))
-        if snap is None:
-            try:
-                if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    snap = self._load_checkpoint(str(checkpoint_id))
-            except Exception:
-                snap = None
         assert snap is not None, f"Unknown checkpoint_id={checkpoint_id}"
         for q in snap.get("queues", []):
             qid = q.get("queue_id")
@@ -4624,14 +4023,6 @@ class TaskScheduler(BaseTaskScheduler):
                     "outcome": "ok",
                     "details": {"checkpoint_id": cid, "label": snap.get("label")},
                 }
-            if str(os.getenv("UNITY_TS_PERSIST_CHECKPOINTS", "")).lower() in {
-                "1",
-                "true",
-                "yes",
-            }:
-                latest = self._get_latest_persisted_checkpoint()
-                if latest is not None:
-                    return {"outcome": "ok", "details": latest}
             return {
                 "outcome": "none",
                 "details": {"checkpoint_id": None, "label": None},
@@ -4678,23 +4069,6 @@ class TaskScheduler(BaseTaskScheduler):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
-    # Centralised simple-field writer
-    def _update_fields_if_not_active(
-        self,
-        *,
-        task_id: int,
-        entries: Dict[str, Any],
-    ) -> Dict[str, str]:
-        """
-        Update arbitrary fields on a single task, guarding against active-task edits.
-
-        This consolidates the repetitive pattern used by name/description/deadline/
-        repetition/priority updates without changing behaviour.
-        """
-        self._ensure_not_active_task(task_id)
-        log_id = self._get_logs_by_task_ids(task_ids=task_id)
-        return self._write_log_entries(logs=log_id, entries=entries)
-
     # ------------------------------------------------------------------ #
     #  Small centralised write helper                                     #
     # ------------------------------------------------------------------ #
@@ -4710,88 +4084,11 @@ class TaskScheduler(BaseTaskScheduler):
         Centralised adapter for log writes. Keeps all mutation calls going
         through one place in the scheduler.
         """
-        return self._store.update(logs=logs, entries=entries, overwrite=overwrite)
+        return self._view.write_entries(logs=logs, entries=entries, overwrite=overwrite)
 
     # ------------------------------------------------------------------ #
-    #  Optional checkpoint persistence                                   #
+    #  (removed) checkpoint persistence                                   #
     # ------------------------------------------------------------------ #
-
-    def _persist_checkpoint(
-        self,
-        cid: str,
-        label: Optional[str],
-        snapshot: Dict[str, Any],
-    ) -> None:
-        try:
-            ctx = f"{self._ctx}/Checkpoints"
-            if ctx not in unify.get_contexts():
-                unify.create_context(ctx)
-                unify.create_fields(
-                    {
-                        "checkpoint_id": "str",
-                        "label": "str",
-                        "payload": "json",
-                    },
-                    context=ctx,
-                )
-            unify.log(
-                context=ctx,
-                new=True,
-                checkpoint_id=cid,
-                label=label,
-                payload=snapshot,
-            )
-        except Exception:
-            pass
-
-    def _load_checkpoint(self, cid: str) -> Optional[Dict[str, Any]]:
-        try:
-            ctx = f"{self._ctx}/Checkpoints"
-            rows = unify.get_logs(
-                context=ctx,
-                filter=f"checkpoint_id == {cid!r}",
-                limit=1,
-                return_ids_only=False,
-            )
-            if not rows:
-                return None
-            log = rows[0]
-            entries = getattr(log, "entries", {}) or {}
-            return entries.get("payload")
-        except Exception:
-            return None
-
-    def _get_latest_persisted_checkpoint(self) -> Optional[Dict[str, Any]]:
-        try:
-            ctx = f"{self._ctx}/Checkpoints"
-            rows = unify.get_logs(context=ctx, offset=0, limit=1, return_ids_only=False)
-            if not rows:
-                return None
-            log = rows[-1]
-            entries = getattr(log, "entries", {}) or {}
-            return {
-                "checkpoint_id": entries.get("checkpoint_id"),
-                "label": entries.get("label"),
-            }
-        except Exception:
-            return None
-
-    # ------------------------------------------------------------------ #
-    #  Best-effort helper                                                 #
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _best_effort(func: "Callable[[], Any]") -> None:
-        """
-        Execute func and intentionally swallow any exceptions.
-
-        Use only for non-critical maintenance paths (e.g., cache refresh,
-        neighbour status fix-ups) where failure must not affect correctness.
-        """
-        try:
-            func()
-        except Exception:
-            pass
 
     @staticmethod
     def _normalize_filter_expr(expr: Optional[str]) -> Optional[str]:
@@ -4908,12 +4205,6 @@ class TaskScheduler(BaseTaskScheduler):
             raise ValueError(f"No task found with id={task_id}")
         return rows[0]
 
-    def _get_single_log_obj_or_raise(self, task_id: int) -> "unify.Log":
-        """Fetch the unique unify.Log object for task_id or raise."""
-        logs = self._get_logs_by_task_ids(task_ids=task_id, return_ids_only=False)
-        assert len(logs) == 1, "Task IDs should be unique"
-        return logs[0]  # type: ignore[return-value]
-
     # Reinstate a previously isolated-and-activated task back to its prior queue position
 
     def _reinstate_task_to_previous_queue(
@@ -4922,7 +4213,7 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         _allow_active: bool = False,
     ) -> ToolOutcome:
-        # Delegate to manager; keep signature for backwards-compat with existing callers/tests
+        # Delegate to the reintegration manager; accepts `_allow_active` for tests/callers
         return self._reintegration_manager.apply(
             task_id=task_id,
             allow_active=_allow_active,
@@ -4971,8 +4262,6 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_down_q=clarification_down_q,
         )
 
-    # (Removed) heuristic fallback reinstatement – rely on stored plan only
-
     # Search Across Tasks
 
     @_ts_log_tool_runtime
@@ -5001,23 +4290,19 @@ class TaskScheduler(BaseTaskScheduler):
             than ``k`` tasks overall, the remainder is backfilled from
             ``unify.get_logs(limit=k)`` in returned order, skipping duplicates.
         """
-        # Use a tight field projection to avoid metadata lookups (get_fields)
-        # and reduce payload sizes during search and backfill.
+        # Use a minimal field projection to reduce backend payload size.
+        # Only include fields required to construct a Task model.
         allowed_fields: List[str] = [
-            # Minimal set sufficient to hydrate a Task for search results
             "task_id",
             "instance_id",
             "name",
             "description",
             "status",
-            "schedule",
-            "queue_id",
-            # Include activation metadata but drop it below when stale
-            "activated_by",
-            # Small, commonly useful fields (kept lightweight)
-            "deadline",
             "priority",
-            "response_policy",
+            # Include schedule/deadline so callers can answer date-related questions
+            # without issuing an additional read per task.
+            "schedule",
+            "deadline",
         ]
 
         # 1) Primary: semantic similarity results (ordered). When references is None/empty,
@@ -5035,19 +4320,7 @@ class TaskScheduler(BaseTaskScheduler):
             unique_id_field="task_id",
             allowed_fields=allowed_fields,
         )
-        # Defensive read: drop stale activation metadata on non-active rows to avoid
-        # Pydantic validation errors if any legacy writes left it behind.
-        sanitized: list[Task] = []
-        for lg in filled:
-            row = dict(lg)
-            try:
-                if self._to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
-                    row.pop("activated_by", None)
-            except Exception:
-                if str(row.get("status")) != str(Status.active):
-                    row.pop("activated_by", None)
-            sanitized.append(Task(**row))
-        return sanitized
+        return [Task(**lg) for lg in filled]
 
     @_ts_log_tool_runtime
     def _filter_tasks(
@@ -5083,10 +4356,15 @@ class TaskScheduler(BaseTaskScheduler):
             Entries for each matching task (raw JSON-serialisable dictionaries).
         """
         filter = self._normalize_filter_expr(filter)
-        rows = self._store.get_entries(
+
+        # Note: Avoid capping limits for task_id filters; tests may expect
+        # multiple instances of the same task_id to be returned (e.g., clones).
+        effective_limit = limit
+
+        rows = self._view.get_entries(
             filter=filter,
             offset=offset,
-            limit=limit,
+            limit=effective_limit,
             # Avoid an extra backend call here by deriving private fields from the
             # cached schema instead of calling get_fields() again.
             exclude_fields=[
@@ -5190,7 +4468,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Return {column_name: column_type} for the tasks table.
         """
-        return self._store.fields
+        return self._view.fields
 
     @_ts_log_tool_runtime
     def _list_columns(
@@ -5207,93 +4485,94 @@ class TaskScheduler(BaseTaskScheduler):
     @_ts_log_tool_runtime
     def _num_tasks(self) -> int:
         """Return the total number of tasks in the Tasks context."""
-        return self._store.get_metric_count(key="task_id")
-
-    # (Removed) LLM-based scope classifier
-
-    # ------------------------------------------------------------------ #
-    #  Steering intent classification (LLM-routed)                        #
-    # ------------------------------------------------------------------ #
-
-    async def _classify_steering_intent(
-        self,
-        message: str,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-    ) -> tuple[str, str]:
-        """Classify steering into: cancel | defer | pause | resume | continue | none."""
-        try:
-            client = self._new_llm_client("gpt-5@openai")
-            system = (
-                "You are a router that classifies an in-flight steering message.\n"
-                "Labels: cancel | defer | pause | resume | continue | none.\n"
-                "Definitions:\n"
-                "- cancel: abandon/kill/drop the task (terminal).\n"
-                "- defer: stop for now but resume later / return to prior queue/schedule.\n"
-                "- pause: temporarily pause, expecting explicit resume soon.\n"
-                "- resume: continue after a pause.\n"
-                "- continue: keep going (no change).\n"
-                "- none: message is not a steering instruction.\n"
-                'Output ONLY JSON with rationale first: {"rationale": <short string>, "action": <label>, "reason": <short substring or null>}'
-            )
-            client.set_system_message(system)
-
-            # Build a compact, recent-first transcript for added context
-            def _format_ctx(
-                ctx: Optional[List[Dict[str, Any]]],
-                limit_chars: int = 2000,
-            ) -> str:
-                try:
-                    if not ctx:
-                        return "(no prior context)"
-                    lines: List[str] = []
-                    total = 0
-                    for msg in reversed(ctx[-20:]):
-                        role = str(msg.get("role", "")).strip() or "user"
-                        content = str(msg.get("content", "")).strip()
-                        line = f"{role}: {content}"
-                        if total + len(line) > limit_chars:
-                            break
-                        lines.append(line)
-                        total += len(line)
-                    return "\n".join(reversed(lines)) if lines else "(no prior context)"
-                except Exception:
-                    return "(no prior context)"
-
-            ctx_block = _format_ctx(parent_chat_context)
-            user = (
-                "Recent conversation (most recent last):\n"
-                f"{ctx_block}\n\n"
-                "Steering message:\n"
-                f"{(message or '').strip()}"
-            )
-            raw = await client.generate(user)
-            import json as _json
-
-            data = None
+        if self._num_tasks_cached is None:
             try:
-                data = _json.loads(raw)
-                action = str(data.get("action", "none")).strip().lower()
-                reason = data.get("reason")
-                if action not in {
-                    "cancel",
-                    "defer",
-                    "pause",
-                    "resume",
-                    "continue",
-                    "none",
-                }:
-                    action = "none"
-                if reason is not None:
-                    reason = str(reason)
-                else:
-                    reason = message
-                return action, cast(str, reason)
+                self._num_tasks_cached = int(
+                    self._view.get_metric_count(key="task_id"),
+                )
             except Exception:
-                # fallback: pattern match a minimal token
-                low = (raw or "").lower()
-                for tok in ["cancel", "defer", "pause", "resume", "continue"]:
-                    if tok in low:
-                        return tok, message
-                return "none", message
+                # Defensive fallback; a failed metric read should not crash tools
+                self._num_tasks_cached = 0
+        return int(self._num_tasks_cached)
+
+    # ----------------------------- Read helpers ----------------------------- #
+    def _read_rows_by_ids(
+        self,
+        *,
+        ids: List[int],
+        fields: List[str],
+    ) -> Dict[int, Dict[str, Any]]:
+        """
+        Fetch a minimal projection for the given task ids and return a map
+        of task_id -> entries dict. Always includes task_id in the projection.
+        """
+        try:
+            logs = self._view.get_minimal_rows_by_task_ids(
+                task_ids=ids,
+                fields=fields,
+            )
         except Exception:
-            return "none", message
+            logs = []
+        rows_by_id: Dict[int, Dict[str, Any]] = {}
+        for lg in logs or []:
+            try:
+                e = dict(getattr(lg, "entries", {}) or {})
+                tid = e.get("task_id")
+                if isinstance(tid, int):
+                    rows_by_id[int(tid)] = e
+            except Exception:
+                continue
+        return rows_by_id
+
+    def _find_name_desc_collisions(
+        self,
+        *,
+        name: str,
+        description: str,
+        limit: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return existing rows that collide on name or description.
+        Uses a single filtered read within the current tool call.
+        """
+        try:
+            return self._view.get_entries(
+                filter=f"name == {name!r} or description == {description!r}",
+                limit=limit,
+            )
+        except Exception:
+            return []
+
+    # ---------------------------- Field helpers ---------------------------- #
+    def _queue_member_fields(self) -> List[str]:
+        """Projection for queue member rows used in ordered queue reads."""
+        return [
+            "task_id",
+            "instance_id",
+            "name",
+            "description",
+            "status",
+            "schedule",
+            "priority",
+            "queue_id",
+            "activated_by",
+            "trigger",
+            "deadline",
+            "repeat",
+            "response_policy",
+        ]
+
+    def _sanitize_activation(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Drop `activated_by` unless the row is currently active to keep
+        payloads clean and Pydantic construction predictable.
+        """
+        try:
+            if self._to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
+                row.pop("activated_by", None)
+        except Exception:
+            if str(row.get("status")) != str(Status.active):
+                row.pop("activated_by", None)
+        return row
+
+    # Steering intent classifier moved to ActiveTask.classify_steering_intent

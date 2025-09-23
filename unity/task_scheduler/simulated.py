@@ -1,4 +1,11 @@
 # unity/task_scheduler/simulated_task_scheduler.py
+"""
+Simulated task scheduler.
+
+Provides a storage-free interface that returns steerable handles for ask, update,
+and execute. All responses are produced by a shared, stateful LLM; no storage
+or queue state is read or written.
+"""
 import asyncio
 import json
 import os
@@ -114,9 +121,8 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
     def stop(self, *, cancel: bool, reason: Optional[str] = None) -> str:
         """Cancel further processing so `.result()` raises.
 
-        The signature mirrors the real ActiveTask handle: a keyword-only
-        `cancel` flag is required. In this simulated handle the flag does
-        not change behaviour – the interaction is always cancelled.
+        The `cancel` flag is required but ignored; the interaction is always
+        cancelled.
         """
         self._cancelled = True
         self._done_event.set()
@@ -182,9 +188,10 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
 
 class SimulatedTaskScheduler(BaseTaskScheduler):
     """
-    Drop-in replacement for TaskScheduler where the underlying data is
-    entirely imaginary – useful for offline demos or unit tests that only
-    need the conversational surface.
+    Simulated scheduler for demos and tests.
+
+    Uses a shared stateful LLM to produce plausible task lists and to run
+    ask/update/execute interactions without touching storage.
     """
 
     def __init__(
@@ -207,8 +214,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
-        # Mirror the real TaskScheduler tool exposure programmatically
-        # so prompts always reflect the current surface.
+        # Build tool lists programmatically so prompts match the exposed surface.
         ask_tools = mirror_task_scheduler_tools("ask")
         update_tools = mirror_task_scheduler_tools("update")
 
@@ -300,11 +306,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         return handle
 
-    # Provide guidance for outer orchestrators via tool description (read-only ask)
-    ask.__doc__ = (ask.__doc__ or "") + (
-        "\n\nOuter-orchestrator guidance: Avoid invoking this tool repeatedly with the same "
-        "arguments within the same conversation. Prefer reusing prior results and "
-        "compose the final answer once sufficient information has been gathered."
+    # Preserve base doc-string (from wraps) and append a brief simulated note
+    ask.__doc__ = (ask.__doc__ or "").rstrip() + (
+        "\n\nSimulated scheduler note: returns a steerable handle backed by a shared, "
+        "stateful LLM; no real storage is read or written."
     )
 
     # ------------------------------------------------------------------ #
@@ -362,14 +367,14 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         return handle
 
-    # Provide guidance for outer orchestrators (mutation idempotence)
-    update.__doc__ = (update.__doc__ or "") + (
-        "\n\nOuter-orchestrator guidance: Avoid invoking this mutation with the same arguments multiple times in the same "
-        "conversation. Treat this operation as idempotent; if confirmation is needed, perform a single read to verify the outcome."
+    # Preserve base doc-string (from wraps) and append a brief simulated note
+    update.__doc__ = (update.__doc__ or "").rstrip() + (
+        "\n\nSimulated scheduler note: returns a steerable handle; no real storage is "
+        "touched and replies may include invented task ids."
     )
 
     # ------------------------------------------------------------------ #
-    #  execite_task – delegate to SimulatedActor.act                     #
+    #  execute_task – delegate to SimulatedActor.act                     #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseTaskScheduler.execute, updated=())
     async def execute(

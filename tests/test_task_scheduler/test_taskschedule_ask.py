@@ -34,16 +34,39 @@ class ScenarioBuilder:
         self.ts = TaskScheduler()
         self._seed_tasks()
 
+    def _create_if_missing(
+        self,
+        *,
+        name: str,
+        description: str,
+        status: str,
+        schedule: Schedule | None = None,
+        priority: Priority | None = None,
+    ) -> None:
+        """Idempotent create: only add when a task with the same name is absent."""
+        try:
+            existing = self.ts._filter_tasks(filter=f"name == {name!r}", limit=1)
+        except Exception:
+            existing = []
+        if existing:
+            return
+        kwargs = {"name": name, "description": description, "status": status}
+        if schedule is not None:
+            kwargs["schedule"] = schedule
+        if priority is not None:
+            kwargs["priority"] = priority
+        self.ts._create_task(**kwargs)
+
     def _seed_tasks(self) -> None:
         """Create five tasks with various states for robust querying."""
 
-        self.ts._create_task(  # Active
+        self._create_if_missing(  # Active
             name="Write quarterly report",
             description="Compile and draft the Q2 report for management.",
             status="primed",
         )
 
-        self.ts._create_task(  # Queued
+        self._create_if_missing(  # Queued
             name="Prepare slide deck",
             description="Create slides for the upcoming board meeting.",
             status="queued",
@@ -54,20 +77,20 @@ class ScenarioBuilder:
             next_task=None,
             start_at=datetime(2050, 6, 1, 9, 0, tzinfo=timezone.utc).isoformat(),
         )
-        self.ts._create_task(
+        self._create_if_missing(
             name="Client meeting",
             description="Meet with ABC Corp for contract renewal.",
             status="scheduled",
             schedule=sched,
         )
 
-        self.ts._create_task(  # Paused
+        self._create_if_missing(  # Paused
             name="Deploy new release",
             description="Roll out version 2.0 to production servers.",
             status="paused",
         )
 
-        self.ts._create_task(  # High-priority queued
+        self._create_if_missing(  # High-priority queued
             name="Hotfix security vulnerability",
             description="Apply CVE-2025-1234 patch to all services.",
             status="queued",

@@ -6,7 +6,6 @@ import functools
 import json
 import logging
 import os
-from ..common.http import request as http_request
 import shutil
 import tempfile
 from pathlib import Path
@@ -528,14 +527,7 @@ class FileManager(BaseFileManager):
         Dict[str, str]
             Dictionary mapping column names to their types.
         """
-        proj = unify.active_project()
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={self._ctx}"
-        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-        response = http_request("GET", url, headers=headers)
-        from ..helpers import _handle_exceptions
-
-        _handle_exceptions(response)
-        ret = response.json()
+        ret = unify.get_fields(context=self._ctx)
         return {k: v["data_type"] for k, v in ret.items()}
 
     def _list_columns(

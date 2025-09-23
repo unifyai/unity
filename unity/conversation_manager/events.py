@@ -144,9 +144,10 @@ class StartupEvent(Event):
         self.user_number = kwargs.pop("user_number", None)
         self.user_whatsapp_number = kwargs.pop("user_whatsapp_number", None)
         self.user_email = kwargs.pop("user_email", None)
-        self.tts_provider = kwargs.pop("tts_provider", None)
+        self.voice_provider = kwargs.pop("voice_provider", None)
         self.voice_id = kwargs.pop("voice_id", None)
         kwargs.pop("user_phone_number", None)  # legacy field
+        kwargs.pop("tts_provider", None)  # legacy field
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -167,7 +168,7 @@ class StartupEvent(Event):
                 "user_number": self.user_number,
                 "user_whatsapp_number": self.user_whatsapp_number,
                 "user_email": self.user_email,
-                "tts_provider": self.tts_provider,
+                "voice_provider": self.voice_provider,
                 "voice_id": self.voice_id,
             },
         )
@@ -202,12 +203,19 @@ class EmailSentEvent(_Message):
 
     def __init__(self, **kwargs):
         self.message_id = kwargs.pop("message_id", None)
+        self.subject = kwargs.pop("subject", None)
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
-        base_dict["payload"].update({"message_id": self.message_id})
+        base_dict["payload"].update(
+            {"message_id": self.message_id, "subject": self.subject}
+        )
         return base_dict
+
+    def __str__(self):
+        message_str = super().__str__()
+        return f"{message_str} (message_id: {self.message_id}, subject: {self.subject})"
 
 
 class WhatsappMessageRecievedEvent(_Message):
@@ -226,12 +234,19 @@ class EmailRecievedEvent(_Message):
 
     def __init__(self, **kwargs):
         self.message_id = kwargs.pop("message_id", None)
+        self.subject = kwargs.pop("subject", None)
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
-        base_dict["payload"].update({"message_id": self.message_id})
+        base_dict["payload"].update(
+            {"message_id": self.message_id, "subject": self.subject}
+        )
         return base_dict
+
+    def __str__(self):
+        message_str = super().__str__()
+        return f"{message_str} (message_id: {self.message_id}, subject: {self.subject})"
 
 
 # this should be either done by user or assistant, should
@@ -255,7 +270,7 @@ class PhoneCallInitiatedEvent(Event):
         target_number: str = None,
         meet_id: str = None,
         voice_id: str = None,
-        tts_provider: str = None,
+        voice_provider: str = None,
         outbound: bool = False,
         **kwargs,
     ):
@@ -265,7 +280,7 @@ class PhoneCallInitiatedEvent(Event):
         kwargs.pop("target_number", None)
         kwargs.pop("meet_id", None)
         kwargs.pop("voice_id", None)
-        kwargs.pop("tts_provider", None)
+        kwargs.pop("voice_provider", None)
         kwargs.pop("outbound", None)
 
         self.purpose = purpose if purpose else "general"
@@ -273,8 +288,9 @@ class PhoneCallInitiatedEvent(Event):
         self.target_number = target_number
         self.meet_id = meet_id
         self.voice_id = voice_id
-        self.tts_provider = tts_provider
+        self.voice_provider = voice_provider
         self.outbound = outbound
+        kwargs.pop("tts_provider", None)  # legacy field
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -286,7 +302,7 @@ class PhoneCallInitiatedEvent(Event):
                 "target_number": self.target_number,
                 "meet_id": self.meet_id,
                 "voice_id": self.voice_id,
-                "tts_provider": self.tts_provider,
+                "voice_provider": self.voice_provider,
                 "outbound": self.outbound,
             },
         )

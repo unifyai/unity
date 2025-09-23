@@ -50,7 +50,6 @@ from sandboxes.utils import (
     _wait_for_tts_end as _wait_tts_end,
     configure_sandbox_logging,
     call_manager_with_optional_clarifications,
-    pydantic_response_format,
     # Simulation planning (sandbox-only)
     SIMULATION_PLANS,
     SimulationParams,
@@ -112,7 +111,7 @@ def _parse_simulation_config(text: str) -> _SimConfig:
     try:
         judge = unify.Unify(
             "gpt-5@openai",
-            response_format=pydantic_response_format(_SimConfig),
+            response_format=_SimConfig,
             reasoning_effort="high",
             service_tier="priority",
         )
@@ -306,7 +305,7 @@ async def _dispatch_with_context(
     judge = unify.Unify("gpt-5@openai", response_format=_Intent)
     judge = unify.Unify(
         "gpt-5@openai",
-        response_format=pydantic_response_format(_Intent),
+        response_format=_Intent,
     )
     intent = _Intent.model_validate_json(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),

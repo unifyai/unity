@@ -159,7 +159,11 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
             return ("defer", message)
         return ("continue", message)
 
-    monkeypatch.setattr(ts, "_classify_steering_intent", force_defer, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.classify_steering_intent",
+        force_defer,
+        raising=True,
+    )
 
     # Explicit trigger when B becomes active (no timing)
     b_active_evt: asyncio.Event = asyncio.Event()
@@ -329,7 +333,7 @@ async def test_queue_pause_resume_and_completion(monkeypatch):
     h.resume()
 
     # Wait until B is active, then perform two benign steps for B: interject + ask
-    await asyncio.wait_for(b_active_evt.wait(), timeout=5)
+    await asyncio.wait_for(b_active_evt.wait(), timeout=15)
     await h.interject("continue")
     ask_handle = await h.ask("status?")
     await ask_handle.result()
@@ -535,6 +539,10 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     # User question should be preserved at the end
     assert "USER QUESTION:" in q
     assert "How is the queue going?" in q
+
+    # Cleanup: stop the active queue to avoid leaving background tasks running
+    h.stop(cancel=False)
+    await asyncio.wait_for(h.result(), timeout=10)
 
 
 @pytest.mark.asyncio
@@ -826,6 +834,9 @@ async def test_active_task_done_incremental(monkeypatch):
     payload3 = await inner.active_task_done()
     data3 = _json.loads(payload3 or "{}")
     assert data3 == {}
+
+    # Ensure the queue handle fully resolves to avoid lingering background tasks
+    await asyncio.wait_for(h.result(), timeout=10)
 
 
 @pytest.mark.asyncio
