@@ -385,7 +385,7 @@ async def test_execute_requests_clarification_for_unknown_id(monkeypatch):
 async def test_execute_sets_activated_by_explicit():
     """Starting a task explicitly via execute should set activated_by='explicit'."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=1)
     ts = TaskScheduler(actor=actor)
 
     # Seed a simple queued task
@@ -547,8 +547,8 @@ async def test_execute_default_keeps_followers():
 
     handle = await ts.execute(text=str(b))
 
-    # Give the scheduler a brief moment to apply activation-side linkage updates
-    await asyncio.sleep(0.05)
+    # Yield once to allow activation-side linkage writes to settle without advancing the queue
+    await asyncio.sleep(0)
 
     # Inspect linkage immediately after activation
     rows_b = ts._filter_tasks(filter=f"task_id == {b}")
