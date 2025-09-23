@@ -8,7 +8,7 @@ from typing import List, Optional
 
 import unify
 
-from ..common.llm_helpers import SteerableToolHandle
+from ..common.async_tool_loop import SteerableToolHandle
 from .base import BaseTaskScheduler
 from .prompt_builders import (
     build_ask_prompt,

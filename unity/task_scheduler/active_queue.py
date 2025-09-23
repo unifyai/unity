@@ -7,7 +7,7 @@ import os
 
 import unify
 
-from ..common.llm_helpers import SteerableToolHandle
+from ..common.async_tool_loop import SteerableToolHandle
 from .types.activated_by import ActivatedBy
 
 if TYPE_CHECKING:  # avoid import cycles at runtime
