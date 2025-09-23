@@ -351,6 +351,17 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
     def _current_queue_size(self) -> int:
         try:
             q = self._s._get_queue_for_task(task_id=self._current_task_id)
+            # When the current task is no longer a member of any queue (isolated/detached),
+            # treat the queue as a singleton for pass-through purposes.
+            try:
+                contains_current = any(
+                    int(getattr(t, "task_id", -1)) == int(self._current_task_id)
+                    for t in (q or [])
+                )
+            except Exception:
+                contains_current = True
+            if not contains_current:
+                return 1
             return len(q)
         except Exception:
             return 0
@@ -397,13 +408,13 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except Exception:
             cur_id = None
 
-        # If current id is not found (e.g., was detached), start at the head
+        # If current id is not found (e.g., task was detached/is isolated), do not chain.
         try:
             if cur_id is None:
-                return ids[0]
+                return None
             idx = ids.index(cur_id)
         except ValueError:
-            return ids[0]
+            return None
 
         # Return the first follower, if any
         return ids[idx + 1] if (idx + 1) < len(ids) else None

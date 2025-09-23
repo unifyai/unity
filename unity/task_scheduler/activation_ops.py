@@ -206,9 +206,9 @@ def detach_from_queue_for_activation(
                             else None
                         ),
                     )
-            # Clear schedule on the detached task entirely (isolated)
+            # Clear schedule on the detached task entirely (isolated) and remove queue membership
             cur_log = _get_log_obj(task_id)
-            _update_schedule(cur_log, {}, extra={"schedule": None})
+            _update_schedule(cur_log, {}, extra={"schedule": None, "queue_id": None})
         else:
             # Middle task: unlink from neighbours
             if prev_tid is not None:
@@ -227,9 +227,9 @@ def detach_from_queue_for_activation(
                         # Non-head must not carry start_at
                         next_sched.pop("start_at", None)
                         _update_schedule(next_log, next_sched)
-            # Clear schedule on the detached task
+            # Clear schedule on the detached task and remove queue membership
             cur_log = _get_log_obj(task_id)
-            _update_schedule(cur_log, {}, extra={"schedule": None})
+            _update_schedule(cur_log, {}, extra={"schedule": None, "queue_id": None})
     else:
         # ----- Chained queue execution semantics -----
         # Disconnect previous neighbour's next pointer when promoting current task to head
