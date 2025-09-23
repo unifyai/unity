@@ -12,6 +12,9 @@ from contextlib import suppress
 from .tools_utils import create_tool_call_message
 
 
+# TODO: Some of these helpers should not be placed here, but in utils.py or their own files
+
+
 # Helper: scan transcript for assistant messages that have tool_calls with
 # missing tool replies (before the next assistant message).
 def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:

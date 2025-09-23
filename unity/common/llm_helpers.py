@@ -2,6 +2,8 @@ from __future__ import annotations
 import json
 import asyncio
 import inspect
+import string
+import secrets
 from enum import Enum
 from pydantic import BaseModel
 from typing import (
@@ -17,19 +19,17 @@ from typing import (
     Callable,
     Awaitable,
 )
-import string
-import secrets
 
 
 from .tool_spec import ToolSpec, normalise_tools  # Backward-compatibility
-
-TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 
 def short_id(length=4):
     alphabet = string.ascii_lowercase + string.digits  # base36
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
+
+TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Image-handling helpers
