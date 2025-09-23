@@ -5,6 +5,7 @@ restricted to Pydantic payload types declared in *events/types/*.
 from __future__ import annotations
 
 import unify
+import json
 import asyncio
 import datetime as dt
 from collections import deque
