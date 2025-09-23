@@ -19,8 +19,8 @@ Options:
     --num-questions      Number of test questions to evaluate (default: all)
     --api-url           API base URL for HTTP evaluation (default: http://0.0.0.0:8000)
     --max-concurrent    Maximum concurrent HTTP requests (default: 5)
-    --timeout           HTTP timeout in seconds (default: 120)
-    --validator-model   Model for semantic validation (default: gpt-4o-mini@openai)
+    --timeout           HTTP timeout in seconds (default: 600)
+    --validator-model   Model for semantic validation (default: o4-mini@openai)
     --output-dir        Output directory for results (default: intranet/evals)
     --examples-count    Number of validation examples to generate (default: 4)
 """
@@ -42,7 +42,7 @@ if not initialize_script_environment():
 # Import new evaluation components
 from intranet.core.semantic_validator import SemanticValidator
 from intranet.core.rag_http_client import RAGHTTPClient
-from intranet.core.qa_loader import QAManager, JSONQALoader
+from intranet.core.qa_loader import QAManager, PolicyJSONLoader
 from intranet.core.evaluation_results import (
     EvaluationResults,
     QuestionEvaluation,
@@ -50,15 +50,16 @@ from intranet.core.evaluation_results import (
 
 
 async def run_semantic_evaluation(
-    qa_pairs_file="intranet/data/qa_pairs.json",
+    data_dir: str | None = "intranet/data",
     num_questions=None,
     api_url="http://0.0.0.0:8000",
     max_concurrent=5,
-    timeout=1000,
-    validator_model="gpt-4o-mini@openai",
+    timeout=600,
+    validator_model="o4-mini@openai",
     output_dir="intranet/evals",
     examples_count=4,
-    batch_size: int | None = None,
+    batch_size: int | None = 1,
+    per_difficulty: int = 2,
 ):
     """Run comprehensive semantic evaluation of the RAG system."""
 
@@ -71,15 +72,17 @@ async def run_semantic_evaluation(
         # Initialize evaluation results
         results = EvaluationResults()
         results.config = {
-            "qa_pairs_file": qa_pairs_file,
+            "data_dir": data_dir,
             "num_questions": num_questions,
             "api_url": api_url,
             "max_concurrent": max_concurrent,
             "timeout": timeout,
             "validator_model": validator_model,
             "examples_count": examples_count,
+            "per_difficulty": per_difficulty,
+            "batch_size": batch_size,
         }
-        results.qa_source = qa_pairs_file
+        results.qa_source = data_dir
         results.api_endpoint = api_url
 
         # Pre-compute results file path for rolling writes
@@ -88,28 +91,47 @@ async def run_semantic_evaluation(
         output_path.mkdir(exist_ok=True)
         results_file = output_path / f"semantic_evaluation_{timestamp}.json"
 
-        # Load QA pairs
-        print(f"📚 Loading QA pairs from {qa_pairs_file}...")
-        qa_manager = QAManager(loader=JSONQALoader())
+        # Load QA pairs (supports single file or directory)
+        print(f"📚 Loading QA pairs from data dir/file: {data_dir} (unified format)...")
+        data_path = Path(data_dir or "intranet/data")
+        loader = PolicyJSONLoader()
+        grouped = loader.load_grouped(str(data_path))
+        if not grouped:
+            print("❌ No policy files loaded!")
+            return False
 
-        try:
-            qa_pairs = qa_manager.load_qa_pairs(qa_pairs_file)
-            if not qa_pairs:
-                print("❌ No QA pairs loaded!")
-                return False
-        except FileNotFoundError:
-            print(f"❌ QA pairs file not found: {qa_pairs_file}")
-            print("   Make sure the QA pairs file exists")
-            return False
-        except Exception as e:
-            print(f"❌ Error loading QA pairs: {e}")
-            return False
+        # Single-file mode → ignore file batching
+        is_single_file = data_path.is_file()
+        if is_single_file and (batch_size is None or batch_size != 1):
+            print(
+                f"ℹ️ Single-file input detected; ignoring --batch-size={batch_size} and using 1.",
+            )
+            batch_size = 1
 
         # Get subset if requested
-        qa_subset = qa_manager.get_subset(num_questions)
-        questions = qa_manager.get_questions()[: len(qa_subset)]
+        # Build per-file subsets: pick N per difficulty (easy/medium/hard) for each policy
+        def _select_per_difficulty(pairs: list, n: int) -> list:
+            by_diff = {"easy": [], "medium": [], "hard": []}
+            for p in pairs:
+                diff = (p.metadata or {}).get("difficulty")
+                if diff in by_diff:
+                    by_diff[diff].append(p)
+            selected = []
+            for k in ("easy", "medium", "hard"):
+                selected.extend(by_diff[k][: max(0, n)])
+            return selected
 
-        print(f"📊 QA Pairs loaded: {len(qa_subset)} questions")
+        file_batches: list[tuple[str, list]] = []
+        total_selected = 0
+        for policy_name, pairs in grouped:
+            sel = _select_per_difficulty(pairs, per_difficulty)
+            if sel:
+                file_batches.append((policy_name, sel))
+                total_selected += len(sel)
+
+        print(
+            f"📊 Built evaluation set: {len(file_batches)} files, {total_selected} questions",
+        )
 
         # Initialize HTTP client
         print(f"🌐 Initializing HTTP client for {api_url}...")
@@ -121,16 +143,24 @@ async def run_semantic_evaluation(
 
         # Test API connectivity
         print("🔍 Testing API connectivity...")
-        health_status = await http_client.health_check()
+        try:
+            health_status = await http_client.health_check()
+        except Exception as e:
+            print(f"⚠️ API health check request failed: {e}")
+            health_status = {"status": "unknown", "error": str(e)}
 
         if health_status.get("status") != "healthy":
             print(f"⚠️ API health check failed: {health_status}")
             print("   Proceeding with evaluation anyway...")
 
-        # Generate validation examples from QA pairs
+        # Generate validation examples from QA pairs (optional synthetic examples)
         print(f"📝 Generating {examples_count} validation examples...")
+        # Keep examples purely synthetic and independent of grouped selection
+        qa_manager = QAManager(loader=PolicyJSONLoader())
+        # Flat load to reuse the existing example generation path
+        _flat_pairs = qa_manager.load_qa_pairs(data_dir or "intranet/data")
         validation_examples = qa_manager.generate_validation_examples(
-            num_examples=examples_count,
+            num_examples=max(0, int(examples_count or 0)),
             include_negative=True,
         )
         results.validation_examples_used = validation_examples
@@ -148,7 +178,7 @@ async def run_semantic_evaluation(
         results.system_info = system_stats
 
         print(f"\n🎯 Evaluation Configuration:")
-        print(f"   📚 QA Pairs: {len(qa_subset)} questions")
+        print(f"   📚 Selected Questions: {total_selected}")
         print(f"   🌐 API Endpoint: {api_url}")
         print(f"   🔍 Validator Model: {validator_model}")
         print(f"   ⚡ Max Concurrent: {max_concurrent}")
@@ -164,20 +194,27 @@ async def run_semantic_evaluation(
         print(f"\n🚀 Step 1: Querying RAG API & validating in batches…")
         print("-" * 50)
 
-        rag_responses: list = []
-        validation_results_all: list = []
-
-        # helper to process one slice
-        async def _process_batch(batch_qs, batch_qa_pairs, batch_idx):
+        # helper to process one file worth of questions
+        async def _process_file_batch(
+            policy_name: str,
+            qa_pairs_file: list,
+            file_idx: int,
+        ):
             print(
-                f"   • Batch {batch_idx+1}: Q{batch_idx*batch_size+1}–Q{batch_idx*batch_size + len(batch_qs)}",
+                f"   • File {file_idx+1}/{len(file_batches)}: {policy_name} ({len(qa_pairs_file)} qs)",
             )
+
+            # Prepare question texts
+            batch_qs = [qa.question for qa in qa_pairs_file]
+
+            # Query RAG in batch
             batch_rag = await http_client.query_batch(
                 questions=batch_qs,
                 max_concurrent=max_concurrent,
-                conversation_prefix=f"eval_b{batch_idx}",
+                conversation_prefix=f"eval_{policy_name}",
             )
-            # validation
+
+            # Validate
             validation_data = [
                 {
                     "answer": r.answer,
@@ -187,41 +224,55 @@ async def run_semantic_evaluation(
                 for r in batch_rag
             ]
             batch_val = await validator.validate_batch(
-                qa_pairs=[qa.to_dict() for qa in batch_qa_pairs],
+                qa_pairs=[qa.to_dict() for qa in qa_pairs_file],
                 generated_responses=validation_data,
                 max_concurrent=3,
             )
-            # aggregate
-            rag_responses.extend(batch_rag)
-            validation_results_all.extend(batch_val)
-            # push into EvaluationResults
-            for qa_pair, rag_resp, val_res in zip(batch_qa_pairs, batch_rag, batch_val):
+
+            # Aggregate into a fresh EvaluationResults for this file
+            file_results = EvaluationResults()
+            file_results.config = results.config
+            file_results.qa_source = policy_name
+            file_results.api_endpoint = results.api_endpoint
+
+            for qa_pair, rag_resp, val_res in zip(qa_pairs_file, batch_rag, batch_val):
                 q_eval = QuestionEvaluation.from_qa_and_responses(
                     qa_pair,
                     rag_resp,
                     val_res,
                 )
+                file_results.add_question_evaluation(q_eval)
+                # Also aggregate into the global results object
                 results.add_question_evaluation(q_eval)
-            # stream save
-            try:
-                results.save_to_file(str(results_file))
-            except Exception as e:
-                print(f"⚠️ Could not stream batch results: {e}")
 
+            file_results.finalize()
+
+            # Save per-file results immediately
+            file_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_out = output_path / f"semantic_eval_{policy_name}_{file_ts}.json"
+            try:
+                file_results.save_to_file(str(file_out))
+                print(f"   💾 Saved: {file_out}")
+            except Exception as e:
+                print(f"⚠️ Could not save file results for {policy_name}: {e}")
+
+        # Process files in batches of 'batch_size' files (default 1)
         if batch_size is None or batch_size <= 0:
-            await _process_batch(
-                batch_qs=questions,
-                batch_qa_pairs=qa_subset,
-                batch_idx=0,
-            )
-        else:
-            for b_idx, start in enumerate(range(0, len(questions), batch_size)):
-                end = start + batch_size
-                await _process_batch(
-                    batch_qs=questions[start:end],
-                    batch_qa_pairs=qa_subset[start:end],
-                    batch_idx=b_idx,
-                )
+            batch_size = 1
+
+        for b_idx, start in enumerate(range(0, len(file_batches), batch_size)):
+            chunk = file_batches[start : start + batch_size]
+            # Run each file in this chunk sequentially to avoid mixing outputs
+            for idx_in, (pname, pqs) in enumerate(chunk):
+                await _process_file_batch(pname, pqs, start + idx_in)
+
+            # After each batch, update and save the global results incrementally
+            try:
+                results.finalize()
+                results.save_to_file(str(results_file))
+                print(f"   🗂️ Updated global results: {results_file}")
+            except Exception as e:
+                print(f"⚠️ Could not update global results: {e}")
 
         # Step 3: Compile results (already added incrementally)
         print(f"\n📊 Compiling final results…")
@@ -370,10 +421,10 @@ def main():
         description="Run comprehensive RAG system semantic evaluation",
     )
     parser.add_argument(
-        "--qa-pairs-file",
+        "--data-dir",
         type=str,
-        default="intranet/data/qa_pairs.json",
-        help="Path to QA pairs JSON file (default: intranet/data/qa_pairs.json)",
+        default="intranet/data",
+        help="Directory or file with unified policy eval JSONs (easy/medium/hard)",
     )
     parser.add_argument(
         "--num-questions",
@@ -396,14 +447,14 @@ def main():
     parser.add_argument(
         "--timeout",
         type=int,
-        default=120,
-        help="HTTP timeout in seconds (default: 120)",
+        default=600,
+        help="HTTP timeout in seconds (default: 600)",
     )
     parser.add_argument(
         "--validator-model",
         type=str,
-        default="gpt-4o-mini@openai",
-        help="Model for semantic validation (default: gpt-4o-mini@openai)",
+        default="o4-mini@openai",
+        help="Model for semantic validation (default: o4-mini@openai)",
     )
     parser.add_argument(
         "--output-dir",
@@ -420,21 +471,27 @@ def main():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=None,
-        help="Number of questions per API batch (default: all in one batch)",
+        default=1,
+        help="Number of files per evaluation batch (default: 1 file per batch)",
+    )
+    parser.add_argument(
+        "--per-difficulty",
+        type=int,
+        default=2,
+        help="Number of questions to sample from each difficulty per file (default: 2)",
     )
 
     args = parser.parse_args()
 
     print(f"🔬 RAG System Semantic Evaluation")
-    print(f"📚 QA Pairs: {args.qa_pairs_file}")
+    print(f"📚 Data Dir/File: {args.data_dir}")
     print(f"🌐 API URL: {args.api_url}")
     print(f"🔍 Validator: {args.validator_model}")
     print()
 
     success = asyncio.run(
         run_semantic_evaluation(
-            qa_pairs_file=args.qa_pairs_file,
+            data_dir=args.data_dir,
             num_questions=args.num_questions,
             api_url=args.api_url,
             max_concurrent=args.max_concurrent,
@@ -443,6 +500,7 @@ def main():
             output_dir=args.output_dir,
             examples_count=args.examples_count,
             batch_size=args.batch_size,
+            per_difficulty=args.per_difficulty,
         ),
     )
 

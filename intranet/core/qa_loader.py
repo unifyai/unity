@@ -56,83 +56,106 @@ class QALoader(Protocol):
         ...
 
 
-class JSONQALoader:
-    """Loader for JSON format QA pairs."""
+class PolicyJSONLoader:
+    """Loader for the unified policy eval format under intranet/data.
 
-    def __init__(self, required_fields: Optional[List[str]] = None):
-        """
-        Initialize the JSON QA loader.
+    Expects JSON files with top-level keys: "easy", "medium", "hard",
+    each mapping to a list of objects with {"question": str, "answer": str}.
+    Can load a single JSON file or a directory of JSON files.
+    """
 
-        Args:
-            required_fields: List of required fields in each QA pair
-        """
-        self.required_fields = required_fields or ["question", "answer"]
+    def __init__(self) -> None:
+        pass
 
-    def load(self, file_path: str) -> List[QAPair]:
-        """
-        Load QA pairs from a JSON file.
-
-        Args:
-            file_path: Path to the JSON file
-
-        Returns:
-            List of QAPair objects
-        """
-        path = Path(file_path)
-
-        if not path.exists():
-            raise FileNotFoundError(f"QA pairs file not found: {file_path}")
-
-        with open(path, "r", encoding="utf-8") as f:
+    def _load_one_file(self, file_path: Path, next_id: int) -> tuple[list[QAPair], int]:
+        with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        if not self.validate_format(data):
-            raise ValueError(f"Invalid QA pairs format in {file_path}")
+        qa_pairs: list[QAPair] = []
+        policy_name = file_path.stem
 
-        qa_pairs = []
-        for item in data:
-            try:
-                qa_pair = QAPair.from_dict(item)
-                qa_pairs.append(qa_pair)
-            except KeyError as e:
-                print(
-                    f"⚠️ Skipping invalid QA pair (missing {e}): {item.get('id', 'unknown')}",
-                )
+        # Unified keys and their order
+        for difficulty in ("easy", "medium", "hard"):
+            items = data.get(difficulty, []) or []
+            if not isinstance(items, list):
                 continue
+            for item in items:
+                q = item.get("question")
+                a = item.get("answer")
+                if not isinstance(q, str) or not isinstance(a, str):
+                    continue
+                qa_pairs.append(
+                    QAPair(
+                        id=next_id,
+                        question=q,
+                        answer=a,
+                        sources=[policy_name],
+                        metadata={"difficulty": difficulty, "policy": policy_name},
+                    ),
+                )
+                next_id += 1
+        return qa_pairs, next_id
 
-        print(f"📚 Loaded {len(qa_pairs)} QA pairs from {file_path}")
-        return qa_pairs
+    def load(self, source: str) -> List[QAPair]:
+        path = Path(source)
+        if not path.exists():
+            raise FileNotFoundError(f"Policy data path not found: {source}")
 
-    def validate_format(self, data: Any) -> bool:
-        """
-        Validate the format of QA pairs data.
+        all_pairs: list[QAPair] = []
+        next_id = 1
+
+        if path.is_file() and path.suffix.lower() == ".json":
+            pairs, next_id = self._load_one_file(path, next_id)
+            all_pairs.extend(pairs)
+        elif path.is_dir():
+            for fp in sorted(path.glob("*.json")):
+                pairs, next_id = self._load_one_file(fp, next_id)
+                all_pairs.extend(pairs)
+        else:
+            raise ValueError(
+                "Source must be a .json file or a directory of .json files",
+            )
+
+        print(
+            f"📚 Loaded {len(all_pairs)} QA pairs from {source} (unified policy format)",
+        )
+        return all_pairs
+
+    def validate_format(self, data: Any) -> bool:  # Not used; validation done per file
+        return True
+
+    def load_grouped(self, source: str) -> list[tuple[str, List[QAPair]]]:
+        """Load QA pairs grouped per file (policy_name, pairs).
 
         Args:
-            data: The loaded data to validate
+            source: JSON file path or directory path
 
         Returns:
-            True if format is valid, False otherwise
+            List of tuples: (policy_name, list[QAPair]) preserving per-file grouping
         """
-        if not isinstance(data, list):
-            print("❌ QA pairs data must be a list")
-            return False
+        path = Path(source)
+        if not path.exists():
+            raise FileNotFoundError(f"Policy data path not found: {source}")
 
-        if not data:
-            print("❌ QA pairs list is empty")
-            return False
+        groups: list[tuple[str, List[QAPair]]] = []
+        next_id = 1
 
-        # Check first few items for required fields
-        for i, item in enumerate(data[:3]):
-            if not isinstance(item, dict):
-                print(f"❌ QA pair {i} is not a dictionary")
-                return False
+        def _append_group(fp: Path, next_id_in: int) -> int:
+            pairs, next_after = self._load_one_file(fp, next_id_in)
+            groups.append((fp.stem, pairs))
+            return next_after
 
-            for field in self.required_fields:
-                if field not in item:
-                    print(f"❌ QA pair {i} missing required field: {field}")
-                    return False
+        if path.is_file() and path.suffix.lower() == ".json":
+            next_id = _append_group(path, next_id)
+        elif path.is_dir():
+            for fp in sorted(path.glob("*.json")):
+                next_id = _append_group(fp, next_id)
+        else:
+            raise ValueError(
+                "Source must be a .json file or a directory of .json files",
+            )
 
-        return True
+        return groups
 
 
 class QAManager:
@@ -145,9 +168,9 @@ class QAManager:
         Initialize the QA manager.
 
         Args:
-            loader: QA loader instance (defaults to JSONQALoader)
+            loader: QA loader instance (defaults to PolicyJSONLoader)
         """
-        self.loader = loader or JSONQALoader()
+        self.loader = loader or PolicyJSONLoader()
         self.qa_pairs: List[QAPair] = []
         self.loaded_from: Optional[str] = None
 

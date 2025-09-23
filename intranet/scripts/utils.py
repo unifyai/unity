@@ -29,8 +29,14 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
         project_name,
         overwrite=("contexts" if overwrite else False),
     )
-    # Clears all contexts in the EventBus
-    EVENT_BUS.reset()
+    # Clears/initialises EventBus contexts. In multi-worker/server setups this
+    # can race on first boot; make this best-effort and tolerate "already exists".
+    try:
+        EVENT_BUS.reset()
+    except Exception as e:
+        # Ignore context-exists and other benign initialisation races.
+        # The global EventBus context will already be present.
+        print(f"⚠️  EVENT_BUS reset skipped due to concurrency: {e}")
 
     import unify
 

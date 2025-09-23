@@ -1,0 +1,92 @@
+{
+    "easy": [
+      {
+        "question": "Which tenures and charges are covered by the Rent Setting and Service Charge Policy?",
+        "answer": "Social Rent (assured/secure), Affordable Rent, Protected Licence (temporary accommodation), Market Rent, Shared Ownership, Intermediate Market Rent, Garages, Commercial properties, and Service Charges. :contentReference[oaicite:0]{index=0}"
+      },
+      {
+        "question": "What rent flexibility can Midland Heart apply above Formula Rent, and when?",
+        "answer": "Up to +5% for general needs and +10% for supported housing. MH uses the full flexibility for relets and as a limit on the rent charged. :contentReference[oaicite:1]{index=1}"
+      },
+      {
+        "question": "What is the normal annual increase formula for Social Rents and when do changes take effect?",
+        "answer": "CPI (September) + 1%. Changes apply on 1 April for monthly tenancies and the first Monday in April for weekly tenancies. :contentReference[oaicite:2]{index=2}"
+      },
+      {
+        "question": "Who calculates Secure (fair) rents and how often?",
+        "answer": "The VOA calculates them every two years, with notifications sent by both Midland Heart and the VOA. :contentReference[oaicite:3]{index=3}"
+      },
+      {
+        "question": "What’s the basic Affordable Rent rule on setting and rebasing?",
+        "answer": "Set up to 80% of market rent (inclusive of service charges). Existing tenants: CPI+1% (subject to any government caps). On relet after >12 months’ prior occupation, MH rechecks the market and rebases to 80%. :contentReference[oaicite:4]{index=4}"
+      },
+      {
+        "question": "Define fixed vs. variable service charges.",
+        "answer": "Fixed: no year-end adjustment. Variable: year-end reconciliation to actuals with surplus/deficit rolled into the following year; actuals are signed off by independent examiners. :contentReference[oaicite:5]{index=5}"
+      },
+      {
+        "question": "List two common ‘other charges’ that may be payable in addition to service charges.",
+        "answer": "Management fees and administration fees; some leases also include ground rent at ‘low rent’ level. :contentReference[oaicite:6]{index=6}"
+      },
+      {
+        "question": "What appeal route is available to assured tenants after a rent review?",
+        "answer": "They can appeal to the First-tier Tribunal within the one-month notice period (Form 4 lays out details). :contentReference[oaicite:7]{index=7}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "A general needs Social Rent weekly tenancy is due an April uplift. CPI (Sept) is 3.6%. What is the allowed uplift and when is it applied?",
+        "answer": "Increase by CPI+1% = 4.6%, taking effect on the first Monday in April for weekly tenancies (subject to any government cap in force that year). :contentReference[oaicite:8]{index=8}"
+      },
+      {
+        "question": "A Secure tenant transfers internally. How is the new rent set and what registrations are required?",
+        "answer": "MH checks the Fair Rent Register for the new property. If one exists, tenant signs at that rent; if not, sign at Formula Rent + flexibility and MH applies to the VOA to register. :contentReference[oaicite:9]{index=9}"
+      },
+      {
+        "question": "An Affordable Rent relet returns after 18 months. How should rent be determined on the relet?",
+        "answer": "MH rechecks the market rent and re-bases to 80% (inclusive of eligible service charges); Affordable Rent must not fall below the property’s potential Formula Rent (Formula Rent acts as a floor). :contentReference[oaicite:10]{index=10}"
+      },
+      {
+        "question": "A tenant queries why variable service charge actuals increased. What documents and sign-offs should you reference?",
+        "answer": "Year-end actuals and reconciliation (surplus/deficit) are issued each year, with calculations signed off by independent examiners; explain cost drivers and the legal basis (Landlord & Tenant Act 1985). :contentReference[oaicite:11]{index=11}"
+      },
+      {
+        "question": "How are Market Rents reviewed and what index is commonly used?",
+        "answer": "Cygnet manages Market Rent homes; reviews at renewal/relet. Annual increases typically follow lease terms—normally RPI+0.5% (MH can cap via Cygnet board). :contentReference[oaicite:12]{index=12}"
+      },
+      {
+        "question": "A tenant on a garage license asks about the annual increase basis.",
+        "answer": "Garage rents are increased annually by September CPI + 1% (Rent Standard doesn’t apply). :contentReference[oaicite:13]{index=13}"
+      },
+      {
+        "question": "What discretion does the Board have during high inflation years?",
+        "answer": "MH’s board may implement an uplift below any Government cap or CPI/RPI benchmark, considering market/economic factors and counter-measures such as hardship funding. :contentReference[oaicite:14]{index=14}"
+      },
+      {
+        "question": "Where can a reader quickly find the legal framework for variable service charges?",
+        "answer": "See the ‘Related Law & Regulations’ table (p.6) referencing the Landlord & Tenant Act 1985 and Service Charge (Consultation Requirements) Regulations 2003. :contentReference[oaicite:15]{index=15}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "You are setting charges for a mixed block (Affordable Rent + Social Rent). Services include cleaning, lifts and communal heating. (a) How do you structure fixed vs. variable charges? (b) How do you ensure Affordable Rent is not lower than the property’s Formula Rent? (c) What assurance steps evidence compliance?",
+        "answer": "(a) Adopt variable service charges where costs fluctuate materially, ensuring year-end reconciliation and roll-forward of surplus/deficit; retain fixed charges only where volatility is low and the lease permits. (b) On Affordable Rent, re-check market rent; if 80% of market minus rising service costs would undercut Formula Rent, charge Formula Rent + service costs (Formula Rent is a floor). (c) Evidence independent sign-off of actuals, external audit sampling of rent/charge increases, SDR checks, and clear tenant communications with alternative formats. :contentReference[oaicite:16]{index=16}"
+      },
+      {
+        "question": "A Secure tenant (post-2012) challenges a CPI+1% increase, claiming a VOA determination supersedes it. What is the correct position and why?",
+        "answer": "Secure rents increase by CPI+1% unless they have already reached either the registered rent or Formula Rent + flexibility (whichever lower). VOA involvement covers registration/biennial fair rent; CPI+1% applies within those bounds. :contentReference[oaicite:17]{index=17}"
+      },
+      {
+        "question": "Formulate a decision note for the Board proposing a rent uplift below the CPI+1% formula. What factors and mitigations must be cited?",
+        "answer": "Reference macroeconomic context, tenant affordability, RSH compliance, legal caps (if any), effects on viability and stock investment, with mitigations including hardship funds and communications/appeals information. :contentReference[oaicite:18]{index=18}"
+      },
+      {
+        "question": "An intermediate market rent AST reaches its anniversary. What principles govern the new rent and how would you evidence compliance in notes?",
+        "answer": "Intermediate market rent is set at 80% of market rent (best practice across MH’s IMR) and increased annually on the AST anniversary; file market evidence (e.g., RICS-aligned valuation/benchmarks) and tenancy/lease references. :contentReference[oaicite:19]{index=19}"
+      },
+      {
+        "question": "A building has a spike in actual concierge costs vs. estimate. Draft a resident-facing explanation consistent with the policy and legal framework.",
+        "answer": "Explain that variable service charges reconcile to actuals at year-end; independent examiners sign off; the Landlord & Tenant Act 1985 governs variable charging; the following year’s budget includes a surplus/deficit adjustment. Offer contact routes and accessible formats. :contentReference[oaicite:20]{index=20}"
+      }
+    ]
+  }

@@ -1,0 +1,100 @@
+{
+    "easy": [
+      {
+        "question": "What is the purpose of the Income Policy?",
+        "answer": "To manage income effectively by minimising debt and maximising rent/service/other charges so Midland Heart can maintain/improve stock, provide services, and meet regulatory duties. :contentReference[oaicite:66]{index=66}"
+      },
+      {
+        "question": "Who does the policy apply to?",
+        "answer": "All Midland Heart tenants and residents who pay rent, service charges and planned leasehold charges. :contentReference[oaicite:67]{index=67}"
+      },
+      {
+        "question": "List three preventative measures in the policy.",
+        "answer": "Early intervention to prevent arrears, additional support for those who need it (e.g., Money Advice referrals), and an effective escalation process in line with law. :contentReference[oaicite:68]{index=68}"
+      },
+      {
+        "question": "Name three service features offered to help tenants manage rent.",
+        "answer": "Benefit/debt advice via Money Advice Team, multiple payment methods (e.g., direct debit any day, app), and digital access to rent statements (paper on request). :contentReference[oaicite:69]{index=69}"
+      },
+      {
+        "question": "What is required at general needs sign-up regarding rent in advance?",
+        "answer": "Proof of at least one week’s rent in advance; exemptions require Voids & Lettings Manager approval. :contentReference[oaicite:70]{index=70}"
+      },
+      {
+        "question": "How are Housing Benefit/Universal Credit claims treated while pending?",
+        "answer": "Midland Heart estimates likely award; if a shortfall is expected, tenants are encouraged to make payments until the award is known. :contentReference[oaicite:71]{index=71}"
+      },
+      {
+        "question": "Are joint tenants each responsible for the full arrears?",
+        "answer": "Yes—joint tenants are jointly and severally responsible for all tenancy obligations, including rent and arrears. :contentReference[oaicite:72]{index=72}"
+      },
+      {
+        "question": "Is eviction the default outcome for arrears?",
+        "answer": "No—evictions are a last resort; legal action is taken when payments are not made regularly, and affordable arrangements are considered first. :contentReference[oaicite:73]{index=73}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "An applicant passes allocations checks but is borderline for affordability. What supports or checks occur pre-tenancy?",
+        "answer": "Affordability assessments are carried out; advice at sign-up clarifies rent responsibilities and consequences; referral to the Money Advice Service can be made if concerns arise. :contentReference[oaicite:74]{index=74}"
+      },
+      {
+        "question": "A tenant on UC awaits first payment and falls into arrears. How should the account be managed?",
+        "answer": "Apply early intervention, agree a realistic repayment plan based on circumstances, encourage interim payments for shortfalls, and where possible arrange direct payments from UC/HB to Midland Heart. :contentReference[oaicite:75]{index=75}"
+      },
+      {
+        "question": "An advocate emails about arrears. Can you discuss details?",
+        "answer": "Only with the tenant’s consent; otherwise communicate directly with the tenant. (MP/Councillor enquiries follow the usual route and don’t require written consent.) :contentReference[oaicite:76]{index=76}"
+      },
+      {
+        "question": "What legal protocol governs pre-action conduct for rent possession?",
+        "answer": "The Rent Arrears Pre-Action Protocol (2015), which the service commits to comply with. :contentReference[oaicite:77]{index=77}"
+      },
+      {
+        "question": "How are former tenancy debts pursued?",
+        "answer": "In line with Former Tenancy and Write-Off procedures; when internal attempts are exhausted, cases may be sent to an external Debt Collection Agency. :contentReference[oaicite:78]{index=78}"
+      },
+      {
+        "question": "What checks help prevent fraud/money laundering in income processes?",
+        "answer": "Credit balance checks, effective income procedures, and reporting suspected fraud to relevant external agencies. :contentReference[oaicite:79]{index=79}"
+      },
+      {
+        "question": "What reasonable adjustments are available to support tenants?",
+        "answer": "Accessible documentation, interpreters (e.g., Language Line), home appointments, help with benefit applications, and liaison with third-party support. :contentReference[oaicite:80]{index=80}"
+      },
+      {
+        "question": "How is performance on income management monitored?",
+        "answer": "Reports to Boards include arrears levels, UC claimants, Money Advice activity, and evictions; statutory indicators are reported; annual tenant reports cover arrears, evictions, former tenancy arrears, and Money Advice gains. :contentReference[oaicite:81]{index=81}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "A tenant with persistent arrears doesn’t engage and is believed not to be living at the property. Consider possession grounds and escalation.",
+        "answer": "Consider legal action with a Money Judgment; Ground 8 (mandatory) may be used for persistent non-payers with Senior Manager approval (factors: non-engagement, direct rent received but withheld, suspected non-occupation); Grounds 10/11/12 may also be relevant depending on circumstances; eviction remains last resort. :contentReference[oaicite:82]{index=82}"
+      },
+      {
+        "question": "Design a proportionate arrears plan for a vulnerable tenant with irregular income who has engaged with the Money Advice Team.",
+        "answer": "Prioritise prevention: agree an affordable repayment plan aligned to income cycles; enable direct debits/App payments; consider direct HB/UC to landlord; provide accessible comms and interpreter/home visits if needed; review regularly before contemplating legal action. :contentReference[oaicite:83]{index=83}"
+      },
+      {
+        "question": "List enforcement tools to secure payment if a court Money Judgment is breached.",
+        "answer": "Attachment of Earnings Order, deductions from DWP benefits under Housing Costs, Charging Order, Enforcement Agents, and (for leaseholds) forfeiture routes as applicable. :contentReference[oaicite:84]{index=84}"
+      },
+      {
+        "question": "A social media post alleges Midland Heart won’t take payments. What’s the compliant response path?",
+        "answer": "Reply privately to protect confidentiality; log and investigate; signpost payment methods (DD on any day, app, etc.); offer support/Money Advice and confirm repayment options. :contentReference[oaicite:85]{index=85}"
+      },
+      {
+        "question": "How do joint and several liability considerations affect repayment negotiations?",
+        "answer": "Either joint tenant can be pursued for the whole arrears; repayment plans should consider household circumstances but do not reduce overall joint liability. :contentReference[oaicite:86]{index=86}"
+      },
+      {
+        "question": "Set out a governance/assurance pack for quarterly income performance review.",
+        "answer": "Include arrears vs. gross debit, UC cohort trends, Money Advice referrals and gains, legal actions/evictions (last resort), former tenancy arrears, credit-balance checks/fraud reports, and equality/adjustments monitoring. :contentReference[oaicite:87]{index=87}"
+      },
+      {
+        "question": "Under what circumstances might discretion be applied during arrears recovery?",
+        "answer": "Where individual circumstances provide good reason (e.g., vulnerability, engagement, temporary hardship); actions remain fair and balanced while sustaining tenancies. :contentReference[oaicite:88]{index=88}"
+      }
+    ]
+  }

@@ -1,0 +1,68 @@
+{
+    "easy": [
+      {
+        "question": "What is the core purpose of the Planned Investment Policy and which programmes does it cover?",
+        "answer": "To ensure the upkeep, safety and functionality of Midland Heart properties via a systematic Planned Maintenance and Cyclical Programme, providing a framework to manage stock efficiently and make best use of resources. :contentReference[oaicite:0]{index=0}"
+      },
+      {
+        "question": "Name three policy principles that shape how planned maintenance is delivered.",
+        "answer": "Compliance with health and safety regulations; eco-friendly practices (sustainable materials, energy efficiency, waste reduction); a tenant-centric approach using satisfaction data. :contentReference[oaicite:1]{index=1}"
+      },
+      {
+        "question": "Which properties are excluded from this policy’s scope?",
+        "answer": "Properties leased on a full repairing basis, internal elements of leasehold/shared ownership, and managed properties with their own maintenance agreements. :contentReference[oaicite:2]{index=2}"
+      },
+      {
+        "question": "List three typical CAPITAL programme budget headings shown in the document.",
+        "answer": "Examples include Kitchens, Bathrooms, Roofing, Windows, Doors, Security, Electrical Re-wire, Fire Compartmentation, and Heating/Boiler (see the budget list on page 2). :contentReference[oaicite:3]{index=3}"
+      },
+      {
+        "question": "Which external standards and laws are highlighted (name two) and what are they for?",
+        "answer": "HHSRS (hazard assessment in dwellings) and the Decent Homes Standard (structural soundness, modern facilities, energy efficiency, safety, repair). Also noted: Awaab’s Law, Building Regulations 2010, HSWA 1974, Building Safety Act 2022, and Fire Safety Order 2005. :contentReference[oaicite:4]{index=4}"
+      },
+      {
+        "question": "How are planned works refusals handled?",
+        "answer": "Tenants may refuse choice-based (non-essential) upgrades. MH will visit, discuss concerns, record refusals, and if a tenant later agrees (or on change of tenancy) re-add the property when budget/capacity allow, prioritised by notification date. :contentReference[oaicite:5]{index=5}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "A block is due for window replacements but several tenants want to refuse on disruption grounds. What does the policy say about refusals and re-programming?",
+        "answer": "Refusals are permitted for non-essential works; MH will engage to resolve concerns, record refusals on the asset system, and re-add later when budget/capacity allow—potentially the following financial year—prioritised by the date MH is told the tenant changed their mind. :contentReference[oaicite:6]{index=6}"
+      },
+      {
+        "question": "Mid-year, the planned programme needs a material change. Who must be told and what procedural document governs new additions?",
+        "answer": "Significant changes are escalated to the Head of Planned Investment and Head of Portfolio Management; new additions follow the ‘Planned Works Referral Procedure’. :contentReference[oaicite:7]{index=7}"
+      },
+      {
+        "question": "How does tenant feedback shape investment priorities?",
+        "answer": "A tenant-centric approach uses tenant satisfaction data to inform which planned works are delivered and where quality of life can be most improved. :contentReference[oaicite:8]{index=8}"
+      },
+      {
+        "question": "You’re programming boiler upgrades. Which legal frameworks are relevant and why?",
+        "answer": "HHSRS (hazard control), Decent Homes Standard (modern, efficient heating), Building Regulations (safe, energy-efficient design), Fire Safety Order (fire risk), HSWA 1974 (duty of care), and Building Safety Act 2022 (safe construction/maintenance). :contentReference[oaicite:9]{index=9}"
+      },
+      {
+        "question": "A vulnerable tenant needs flexible access for works. What does the policy commit to?",
+        "answer": "Providing reasonable adjustments and ensuring equal access in line with the Equality Act 2010, with a stated commitment to support diverse needs. :contentReference[oaicite:10]{index=10}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "Design a portfolio-level approach to align planned kitchen/bathroom renewals with fire compartmentation in high-risk blocks, balancing tenant satisfaction, legal compliance, and sustainability.",
+        "answer": "Use accurate stock condition data (policy priority) to sequence component renewals alongside life-safety upgrades. Anchor to HHSRS and Decent Homes (safe, modern facilities), Building Regulations and Fire Safety Order (compartmentation), and Building Safety Act (safe maintenance). Optimise by bundling works to reduce disruption/waste, prioritising schemes with low tenant satisfaction or higher risk. Publish annual programme updates. :contentReference[oaicite:11]{index=11}"
+      },
+      {
+        "question": "A scheme shows emerging damp/mould risks among clinically vulnerable residents. How should the planned programme respond?",
+        "answer": "Factor Awaab’s Law expectations (timely investigation/remedy), apply reasonable adjustments, and re-prioritise works (e.g., ventilation/heating upgrades) using tenant vulnerability insights referenced under ‘Reasonable adjustments’ and communication duties. :contentReference[oaicite:12]{index=12}"
+      },
+      {
+        "question": "A contractor proposes substituting materials with a lower-cost alternative. What principles guide acceptance?",
+        "answer": "Any change must maintain health & safety and legal compliance, support sustainability aims (eco-friendly practices), and protect service quality/tenant outcomes; significant programme changes require escalation to heads of service. :contentReference[oaicite:13]{index=13}"
+      },
+      {
+        "question": "How should MH evidence assurance that planned investment is efficient and compliant over a 30-year forecast?",
+        "answer": "Run annual programme reviews against the 30-year plan; maintain robust stock condition data; publish annual information on works; track refusals; evidence alignment to external frameworks (HHSRS, Decent Homes, Building/Fire Safety). :contentReference[oaicite:14]{index=14}"
+      }
+    ]
+  }

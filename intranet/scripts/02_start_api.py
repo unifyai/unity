@@ -178,7 +178,12 @@ def verify_setup():
         return True  # Still allow API to start
 
 
-async def start_api_server(host=None, port=None, dev_mode=False):
+async def start_api_server(
+    host=None,
+    port=None,
+    dev_mode=False,
+    workers: int | None = None,
+):
     """Start the FastAPI server with graceful shutdown handling."""
     global server_process
 
@@ -244,8 +249,9 @@ async def start_api_server(host=None, port=None, dev_mode=False):
         cmd.extend(["--reload", "--log-level", "debug"])
         print("🔧 Development mode enabled (auto-reload)")
     else:
-        cmd.extend(["--workers", "1"])
-        print("🏭 Production mode")
+        worker_count = str(workers or max(1, os.cpu_count() or 1))
+        cmd.extend(["--workers", worker_count])
+        print(f"🏭 Production mode with {worker_count} worker(s)")
 
     print(f"🌐 Server starting on: http://{host}:{port}")
     print(f"📖 API Documentation: http://{host}:{port}/docs")
@@ -333,6 +339,12 @@ async def main():
         action="store_true",
         help="Use tool loop architecture for initialization (slower, more robust)",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of uvicorn workers to serve API (default: CPU count)",
+    )
 
     args = parser.parse_args()
 
@@ -347,6 +359,7 @@ async def main():
         host=args.host,
         port=args.port,
         dev_mode=args.dev,
+        workers=args.workers,
     )
 
     sys.exit(0 if success else 1)

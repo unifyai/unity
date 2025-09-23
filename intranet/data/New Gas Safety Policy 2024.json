@@ -1,0 +1,64 @@
+{
+    "easy": [
+      {
+        "question": "What is the purpose and scope of the Gas Safety & Servicing Policy?",
+        "answer": "To ensure all gas systems (individual and communal) are safely maintained and risks to tenants, staff, contractors and the public are controlled; it applies to all MH-owned/managed properties with gas supplies (leasehold/shared owners are reminded but not MH’s responsibility). :contentReference[oaicite:39]{index=39}"
+      },
+      {
+        "question": "How often are gas safety checks carried out and what records are provided?",
+        "answer": "Annually for each appliance and/flue. MH provides tenants with a Landlord Gas Safety Record (LGSR); in communal installations, LGSR is displayed prominently. :contentReference[oaicite:40]{index=40}"
+      },
+      {
+        "question": "What happens in void properties on key receipt?",
+        "answer": "Gas is capped off within 24 hours; former tenant’s gas appliances are removed; reconnection and a full safety check occur after the new tenant takes occupancy, with a fresh LGSR issued. :contentReference[oaicite:41]{index=41}"
+      },
+      {
+        "question": "What check is done on mutual exchange day?",
+        "answer": "A gas safety check is carried out on the day of exchange. :contentReference[oaicite:42]{index=42}"
+      },
+      {
+        "question": "Which contractors may carry out MH gas work?",
+        "answer": "Contractors must be Gas Safe registered and qualified for the work. :contentReference[oaicite:43]{index=43}"
+      },
+      {
+        "question": "Name two communication/engagement features for access and awareness.",
+        "answer": "A monthly prize draw for first-appointment access; multi-channel communications with privacy-protecting responses to social media reports. :contentReference[oaicite:44]{index=44}"
+      }
+    ],
+    "medium": [
+      {
+        "question": "Kitchen refurb and window replacements are planned. What coordination is needed with gas safety requirements?",
+        "answer": "MH ensures compliance with Regulation 8 of the Gas Safety (Installation and Use) Regulations 1998 (as amended): no alterations that adversely affect gas fitting/storage vessel safety; consider kitchens, bathrooms, windows/doors, roofing/insulation. :contentReference[oaicite:45]{index=45}"
+      },
+      {
+        "question": "An advocate emails on behalf of a tenant refusing access for servicing. What consent and data rules apply?",
+        "answer": "Discuss case details only with tenant consent (in line with GDPR and MH Data Protection Policy). MP/Councillor enquiries do not require written consent and follow the usual complaints route. :contentReference[oaicite:46]{index=46}"
+      },
+      {
+        "question": "A tenant works shifts and can’t do daytime appointments. What adjustments does the policy allow?",
+        "answer": "MH will endeavour to make reasonable adjustments, including flexible contractor working patterns, to facilitate the tenant’s availability. :contentReference[oaicite:47]{index=47}"
+      },
+      {
+        "question": "List three roles with responsibilities for delivering/overseeing gas compliance.",
+        "answer": "Property Risk & Compliance Manager – Gas (operational delivery/compliance); Head of Gas & M&E Services (procedures/monitoring/review); Director of Building Safety (resources). Executive Director of Property Services/Chief Executive retain overall responsibility. :contentReference[oaicite:48]{index=48}"
+      },
+      {
+        "question": "What discretion may MH apply where an LGSR lapses but the tenant is engaging?",
+        "answer": "MH may apply discretion (e.g., not serving NSP, not capping supply, delaying immediate legal action) and in exceptional cases allow up to 4 weeks’ grace before legal action—documenting any deviation. :contentReference[oaicite:49]{index=49}"
+      }
+    ],
+    "hard": [
+      {
+        "question": "Draft an access escalation plan for a high-risk scheme with multiple no-access cases, ensuring legal compliance and tenant fairness.",
+        "answer": "Escalate multi-channel comms and alternative appointment windows; record reasonable adjustments (language, disability support, flexible hours); document engagement and risk; consider injunctions only after following the no-access procedure and applying discretion where engagement is evident; maintain evidence trail and LGSR tracking; publicise outcomes and preventive advice. :contentReference[oaicite:50]{index=50}"
+      },
+      {
+        "question": "After a wider refurbishment, CO alarms repeatedly activate. Set out MH’s initial investigation and policy-aligned actions.",
+        "answer": "Check that alterations complied with Regulation 8 (no adverse effect on gas fittings); verify contractor Gas Safe credentials; perform safety checks on affected appliances/flues; issue/refresh LGSRs; communicate with tenants; if communal, display updated LGSR; capture lessons learned for M&E and contractors. :contentReference[oaicite:51]{index=51}"
+      },
+      {
+        "question": "A mutual exchange occurs where one party has a history of access refusals. How should MH manage gas checks and future compliance on exchange day?",
+        "answer": "Carry out the gas safety check on the day of exchange; set expectations for annual access and reasonable adjustments; put flags in servicing schedules; apply the prize-draw incentive and early engagement to avoid future lapses. :contentReference[oaicite:52]{index=52}"
+      }
+    ]
+  }
