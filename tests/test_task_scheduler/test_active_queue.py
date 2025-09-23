@@ -133,6 +133,70 @@ async def test_execute_queue_by_numeric_id_forwards_and_runs_followers(monkeypat
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
+    """Running a pre-scheduled queue in chained mode must not mutate schedule fields.
+
+    Specifically:
+    - Head's schedule.start_at must remain on the original head task.
+    - Follower prev_task/next_task links remain unchanged.
+    - queue_id membership remains unchanged across all members.
+    """
+
+    # Immediate completion per task for determinism and speed
+    class _Immediate(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw.pop("duration", None)
+            super().__init__(steps=0, duration=None, *a, **kw)
+
+    monkeypatch.setattr(
+        "unity.actor.simulated.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    a, b, c = await _make_ordered_queue(ts, ["S_A", "S_B", "S_C"])  # type: ignore[misc]
+
+    # Snapshot original schedules and queue_ids
+    def _row(tid: int) -> Dict:
+        return ts._filter_tasks(filter=f"task_id == {tid}")[0]
+
+    ra0 = _row(a)
+    rb0 = _row(b)
+    rc0 = _row(c)
+
+    sched_a0 = dict(ra0.get("schedule") or {})
+    sched_b0 = dict(rb0.get("schedule") or {})
+    sched_c0 = dict(rc0.get("schedule") or {})
+    qid_a0 = ra0.get("queue_id")
+    qid_b0 = rb0.get("queue_id")
+    qid_c0 = rc0.get("queue_id")
+
+    # Execute starting at head (queue/chained semantics)
+    h = await ts.execute(text=str(a))
+    await h.result()
+
+    # Fetch final rows and compare schedules/queue_ids – they must be unchanged
+    ra1 = _row(a)
+    rb1 = _row(b)
+    rc1 = _row(c)
+
+    assert dict(ra1.get("schedule") or {}) == sched_a0
+    assert dict(rb1.get("schedule") or {}) == sched_b0
+    assert dict(rc1.get("schedule") or {}) == sched_c0
+
+    assert ra1.get("queue_id") == qid_a0
+    assert rb1.get("queue_id") == qid_b0
+    assert rc1.get("queue_id") == qid_c0
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
     monkeypatch,
 ):
