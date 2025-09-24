@@ -1,4 +1,5 @@
 from datetime import datetime
+import signal
 from dotenv import load_dotenv
 
 from unity.conversation_manager_2.debug_logger import mark_job_done
@@ -29,6 +30,12 @@ def signal_handler(signum, frame):
 
 
 async def main(local: bool = False, project_name: str = "Assistants"):
+    global stop
+
+    # Set up signal handlers
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     stop = asyncio.Event()
 
     # passes events around, uses redis
