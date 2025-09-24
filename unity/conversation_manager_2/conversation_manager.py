@@ -279,6 +279,7 @@ class ConversationManager:
 
                 if msg is not None:
                     print(msg)
+                    self.last_activity_time = self.loop.time()
 
                 # there are still pending messages and no scheduled responses or currently running responses
                 # TODO: fix this branch
@@ -295,7 +296,6 @@ class ConversationManager:
                     if isinstance(event, Ping):
                         print("ping received - keeping conversation manager alive")
                         continue
-                    self.last_activity_time = self.loop.time()
                     await self.handle_event(event)
 
     async def handle_event(self, event: Event):
