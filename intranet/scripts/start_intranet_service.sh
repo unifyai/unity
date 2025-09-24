@@ -63,13 +63,28 @@ done
 
 find_pids_on_port() {
   local port="$1"
+  local pids=""
+  # lsof: one PID per line
   if command -v lsof >/dev/null 2>&1; then
-    lsof -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
-  elif command -v fuser >/dev/null 2>&1; then
-    fuser -n tcp "$port" 2>/dev/null | tr -d ' ' || true
-  else
-    ss -ltnp 2>/dev/null | awk -v p=":$port" '$4 ~ p {print $6}' | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' || true
+    pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
   fi
+  # ss: extract all pid=NUM occurrences
+  if command -v ss >/dev/null 2>&1; then
+    local ss_out
+    ss_out="$(ss -ltnp 2>/dev/null | awk -v p=":$port" '$4 ~ p {print $0}')"
+    if [ -n "$ss_out" ]; then
+      pids="$(printf "%s\n%s" "$pids" "$(echo "$ss_out" | grep -o 'pid=[0-9]\+' | cut -d= -f2)")"
+    fi
+  fi
+  # fuser: output like "8000/tcp: 1234 1235"
+  if command -v fuser >/dev/null 2>&1; then
+    local fuser_out
+    fuser_out="$(fuser -n tcp "$port" 2>/dev/null || true)"
+    if [ -n "$fuser_out" ]; then
+      pids="$(printf "%s\n%s" "$pids" "$(echo "$fuser_out" | awk -F: '{print $2}' | tr -s ' ' '\n' | sed '/^$/d')")"
+    fi
+  fi
+  echo "$pids" | sed '/^$/d' | sort -u
 }
 
 require_port_free() {
@@ -94,8 +109,14 @@ require_port_free() {
       if [ -n "$pids" ]; then
         echo "[intranet] Forcing stop of remaining PID(s): $pids"
         for pid in $pids; do
-          kill -KILL "$pid" 2>/dev/null || true
+          if kill -KILL "$pid" 2>/dev/null; then
+            echo "[intranet] Sent SIGKILL to $pid"
+          fi
         done
+        # Best-effort kill via fuser too (covers inherited listeners)
+        if command -v fuser >/dev/null 2>&1; then
+          fuser -k -n tcp "$port" 2>/dev/null || true
+        fi
       fi
       pids=$(find_pids_on_port "$port")
       if [ -n "$pids" ]; then
