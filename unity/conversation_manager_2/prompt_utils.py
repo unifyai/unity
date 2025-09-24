@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from collections import deque
 
 
@@ -10,18 +12,22 @@ class NotificationBar:
     def __init__(self):
         self.notifs = []
 
-    def push_notif(self, n, timestamp=None):
+    def push_notif(self, type, n, timestamp=None):
         if timestamp:
-            timestamp = timestamp.strftime("%A, %B %d, %Y at %I:%M %p")
+            str_timestamp = timestamp.strftime("%A, %B %d, %Y at %I:%M %p")
 
-        self.notifs.append({"content": n, "timestamp": timestamp})
+        self.notifs.append({"type": type, "content": n, "str_timestamp": str_timestamp, "timestamp": timestamp})
 
-    def clear(self):
-        self.notifs = []
+    def clear(self, timestamp=None):
+        if timestamp:
+            # print("comparing to", timestamp)
+            self.notifs = [n for n in self.notifs if n["timestamp"] > timestamp]
+        else:
+            self.notifs = []
 
     def __str__(self):
         return "\n".join(
-            [f"[Notification @ {n['timestamp']}] {n['content']}" for n in self.notifs]
+            [f"[{n['type'].title()} Notification @ {n['str_timestamp']}] {n['content']}" for n in self.notifs]
         )
 
 
