@@ -83,7 +83,9 @@ def test_parse_empty_file(sample_files: Path):
         all_content = " ".join(
             str(record.get("content_text", "")) for record in records
         ).strip()
-        assert all_content == "", "Empty file should have no content"
+        assert (
+            all_content == "empty"
+        ), "Empty file with no content should fallback to using the title as content"
 
 
 def test_parse_supported_formats(supported_file_examples: dict):
