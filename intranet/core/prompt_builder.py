@@ -4,6 +4,13 @@ Centralized prompts for the Midland Heart RAG system.
 
 from __future__ import annotations
 import json
+import textwrap
+from typing import List, Dict, Any, Optional
+from unity.common.prompt_helpers import now_utc_str
+
+
+def _now() -> str:  # UTC timestamp helper
+    return now_utc_str()
 
 
 # Enhanced metadata extraction prompt for new parser
@@ -65,6 +72,11 @@ ANALYZE THE FOLLOWING DOCUMENT:
 """
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# ask: tool-loop RAG system prompt
+# ────────────────────────────────────────────────────────────────────────────
+
+
 def build_intranet_ask_instructions(*, generate_follow_up: bool = False) -> str:
     text = """
    INTRANET RAG — Retrieval addendum (single-table)
@@ -106,6 +118,174 @@ def build_intranet_ask_instructions(*, generate_follow_up: bool = False) -> str:
     if not generate_follow_up:
         text += " Return an empty list for 'follow_up_questions' in the final JSON. You do NOT need to suggest follow-up questions."
     return text
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# ask_llm: direct RAG system prompt
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def build_intranet_ask_llm_prompt(
+    *,
+    include_activity: bool = True,
+    case_specific_instructions: str | None = None,
+    aggregated_fulltexts: List[str] | None = None,
+    aggregated_docs: Optional[List[Dict[str, Any]]] = None,
+    logger: Any | None = None,
+    generate_follow_up: bool = False,
+) -> str:
+    """
+    Build the system message for a vanilla RAG query over Midland Heart policy documents.
+
+    This prompt is used by KnowledgeManager.ask_llm, which bypasses tool-use and
+    sends all available full-texts directly to the model for a single-shot answer.
+    """
+
+    activity_block = "{broader_context}" if include_activity else ""
+
+    # Core instructions for Midland Heart policy QA
+    core = textwrap.dedent(
+        """
+        You are a retrieval-augmented generation assistant helping Midland Heart employees
+        query their company's policy documentation. Your job is to read the provided policy
+        texts and answer user questions accurately, citing the relevant parts when useful.
+
+        Guidelines
+        ---------
+        • Only rely on information contained in the provided context. If the answer is not in the context, say you do not have enough information.
+        • Lead with a direct, concise answer, then add 1–2 sentences of practical context (implications, conditions, caveats). Include short supporting quotes when helpful.
+        • Resolve ambiguities conservatively; do not invent policy details.
+        • When policies impose conditions, list the key conditions and exceptions.
+        • If the question asks for steps or eligibility, present a clear, ordered list.
+        • If multiple documents conflict, point out the discrepancy succinctly.
+        • Tailor tone for internal staff (clear, practical, compliance-aware).
+        • If dates/revisions are relevant, mention the most recent policy revision you see.
+
+        Citations and Grounding (Mandatory)
+        -----------------------
+        • Ground the final answer in the provided documents and include a Sources section (mandatory).
+        • In Sources, list:
+          - The exact document title(s) as given (do not invent new titles).
+          - When possible, the specific section heading/title where the answer was found.
+        • If the referenced information came from an extracted table, parse the table and present its findings in a human‑friendly way. In the citation, mention that it is from a table and which document it was found in. Tables may appear under a proxy heading like "Tables (html)" and may not be linked to a specific section.
+        • Never use internal IDs, doctags, or synthetic labels in citations—only the visible textual titles/headings present in the provided text.
+        • If asked which section contains certain information, infer the best matching section heading based on the raw text. If no clear heading exists, state that it comes from an unheaded passage of the document.
+        • Any short supporting quotes must be clearly attributed to the cited document/section and kept minimal.
+        • IMPORTANT: Return a complete list of citations as a JSON array in the `sources` field. Inline citations in the `answer` are allowed when helpful.
+
+        Summarization (Raw Text) Mode
+        ----------------------------
+        When the user asks to "summarize" a policy/document, produce a direct, document‑level summary from the raw text (do not perform staged paragraph→section→document flows here).
+        • Preserve numeric precision:
+          - Keep ALL numbers/thresholds/units exactly as written (percentages, dates, limits, measurements).
+          - Never round or paraphrase numeric values.
+        • Maintain exact terminology: keep technical terms, acronyms, proper nouns verbatim.
+        • Executive overview (2–3 sentences): purpose, audience/stakeholders, key outcomes.
+        • Structured content summary:
+          - Major topics and relationships, processes/procedures, responsibilities and roles
+          - All critical specifications/requirements/guidelines and exceptions/edge cases
+          - Temporal elements (dates, deadlines, durations) and references to external standards/policies
+        • Include metadata at the end:
+          - Key Topics (3–8), Named Entities (orgs, systems, roles, locations), Critical Values (important numbers with units)
+        • Tables: if present in the raw text, parse and present salient figures in human‑friendly bullets (retain exact values).
+        • Concision: remove redundancy while preserving every distinct number, limit, or requirement.
+        • Grounding: include a Sources section (as above) with document titles and, when inferable, section headings.
+
+        Output (Strict)
+        ------
+        • Synthesize a concise factual answer strictly from retrieved evidence.
+        • After the direct answer, add 1–2 sentences of context so an employee can apply the information without guesswork (e.g., scope, exceptions, escalation paths).
+        • For multi‑part, cross‑policy, scenario‑based complex questions, expand with short paragraphs or bullets covering each sub‑part; aim to minimize follow‑up questions by being complete and human‑digestible.
+        • Always include a Sources section (mandatory) with:
+          - exact document title(s)
+          - section heading/title when inferable; otherwise note it’s an unheaded passage
+          - for table‑sourced facts, note it is from a table in the cited document
+        • Short supporting quotes are permitted only when they directly support a claim; keep them minimal and attribute them to the cited source.
+        • Do not ask the user follow‑up questions in your final response.
+        """,
+    ).strip()
+
+    # Follow-up generation policy
+    if not generate_follow_up:
+        core += "\n\nReturn an empty list for 'follow_up_questions' in the final JSON. You do NOT need to suggest follow-up questions."
+
+    # Aggregate documents into a bounded section with optional logging of trimming/skips
+    MAX_TOTAL_CHARS = 1000000
+    joined: List[str] = []
+    total = 0
+
+    if aggregated_docs is not None:
+        for idx, d in enumerate(aggregated_docs):
+            title = d.get("title")
+            content = d.get("content")
+            if not isinstance(content, str) or not content:
+                continue
+            remaining = MAX_TOTAL_CHARS - total
+            if remaining <= 0:
+                if logger:
+                    logger.info(
+                        f"ask_llm: capacity exhausted before DOC_{idx+1} (title={title!r}) – skipping",
+                    )
+                break
+            prefix = (
+                f"Title: {title}\n\n"
+                if isinstance(title, str) and title.strip()
+                else ""
+            )
+            payload = prefix + content
+            if len(payload) > remaining:
+                snippet = payload[:remaining]
+                if logger:
+                    logger.info(
+                        f"ask_llm: trimming DOC_{idx+1} (title={title!r}) from {len(payload)} to {len(snippet)} chars",
+                    )
+            else:
+                snippet = payload
+            joined.append(f"<DOC_{idx+1}>\n{snippet}\n</DOC_{idx+1}>")
+            total += len(snippet)
+    else:
+        texts = aggregated_fulltexts or []
+        for idx, t in enumerate(texts):
+            if not isinstance(t, str) or not t:
+                continue
+            remaining = MAX_TOTAL_CHARS - total
+            if remaining <= 0:
+                if logger:
+                    logger.info(
+                        f"ask_llm: capacity exhausted before DOC_{idx+1} – skipping",
+                    )
+                break
+            snippet = t if len(t) <= remaining else t[:remaining]
+            if logger and len(t) > remaining:
+                logger.info(
+                    f"ask_llm: trimming DOC_{idx+1} (no title) from {len(t)} to {len(snippet)} chars",
+                )
+            joined.append(f"<DOC_{idx+1}>\n{snippet}\n</DOC_{idx+1}>")
+            total += len(snippet)
+
+    documents_block = "\n".join(
+        [
+            "Policy Documents (Full Text)",
+            "----------------------------",
+            *(joined if joined else ["<no documents provided>"]),
+            "",
+        ],
+    )
+
+    extra = (case_specific_instructions or "").strip()
+    if extra:
+        extra = f"\nCase-specific instructions\n--------------------------\n{extra}\n"
+
+    parts: list[str] = [
+        activity_block,
+        core,
+        "",
+        documents_block,
+        extra,
+        f"Current UTC time: {_now()}.",
+    ]
+
+    return "\n".join(parts)
 
 
 def build_intranet_update_instructions() -> str:

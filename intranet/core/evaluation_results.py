@@ -128,11 +128,12 @@ class PerformanceMetrics:
     average_relevance: Optional[float] = None
 
     # Response time metrics
-    total_response_time: float = 0.0
+    total_response_time: float = 0.0  # aggregated; may be overridden by wall_clock_time
     average_response_time: float = 0.0
     median_response_time: float = 0.0
     min_response_time: float = 0.0
     max_response_time: float = 0.0
+    wall_clock_time: float = 0.0  # actual elapsed time of the evaluation run
 
     # Distribution metrics
     score_distribution: Dict[str, int] = field(default_factory=dict)
@@ -161,6 +162,7 @@ class PerformanceMetrics:
             "median_response_time": self.median_response_time,
             "min_response_time": self.min_response_time,
             "max_response_time": self.max_response_time,
+            "wall_clock_time": self.wall_clock_time,
             "score_distribution": self.score_distribution,
             "performance_categories": self.performance_categories,
         }
@@ -309,7 +311,7 @@ class EvaluationResults:
         # Response time metrics
         response_times = [q.response_time for q in self.question_evaluations]
         if response_times:
-            self.performance_metrics.total_response_time = sum(response_times)
+            aggregated_time = sum(response_times)
             self.performance_metrics.average_response_time = sum(response_times) / len(
                 response_times,
             )
@@ -319,6 +321,12 @@ class EvaluationResults:
             ]
             self.performance_metrics.min_response_time = min(response_times)
             self.performance_metrics.max_response_time = max(response_times)
+            # Prefer real elapsed (wall clock) if available over naive sum
+            self.performance_metrics.total_response_time = (
+                self.performance_metrics.wall_clock_time
+                if self.performance_metrics.wall_clock_time > 0.0
+                else aggregated_time
+            )
 
         # Score distribution
         score_ranges = {

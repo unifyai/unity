@@ -446,13 +446,15 @@ class QueryRequest(BaseModel):
     query: str
     conversation_id: Optional[str] = None
     user_id: Optional[str] = None
+    # Choose retrieval path: "tool_loop" (default) or "llm"
+    retreival_mode: Optional[str] = "tool_loop"
 
 
 class APIQueryResponse(BaseModel):
     """API-specific response model that includes additional API metadata."""
 
     # Core RAG response fields
-    answer: str
+    answer: Optional[str]
     sources: List[Dict[str, Any]]
     follow_up_questions: List[str]
     conversation_id: str
@@ -461,6 +463,7 @@ class APIQueryResponse(BaseModel):
     confidence: Optional[float] = None
     search_metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    success: bool
 
     # API-specific fields
     query: str
@@ -500,35 +503,105 @@ async def query_endpoint(request: QueryRequest):
         start_time = datetime.now()
 
         # Use RAG agent which now returns a validated dictionary
-        rag_response = await rag_agent.ask(
-            query_text=request.query,
-            conversation_id=request.conversation_id or f"conv_{uuid.uuid4().hex[:8]}",
-            user_id=request.user_id,
-        )
+        mode = (request.retreival_mode or "tool_loop").lower()
+        conv_id = request.conversation_id or f"conv_{uuid.uuid4().hex[:8]}"
+        if mode == "llm":
+            rag_response = await rag_agent.ask_llm(
+                request.query,
+                conversation_id=conv_id,
+                user_id=request.user_id,
+            )
+        else:
+            rag_response = await rag_agent.ask(
+                query_text=request.query,
+                conversation_id=conv_id,
+                user_id=request.user_id,
+            )
 
         response_time = (datetime.now() - start_time).total_seconds()
 
         # Log response details safely
-        confidence = rag_response.get("confidence", 0.0)
-        if confidence:
+        confidence = rag_response.get("confidence")
+        is_success = bool(rag_response.get("success", False))
+        if is_success and isinstance(confidence, (int, float)):
             logger.info(
-                f"✅ Query processed in {response_time:.2f}s, confidence: {confidence:.2f}",
+                f"✅ Query processed in {response_time:.2f}s, confidence: {float(confidence):.2f}",
             )
         else:
-            logger.info(f"✅ Query processed in {response_time:.2f}s")
+            status = "ok" if is_success else "error"
+            logger.info(f"✅ Query processed in {response_time:.2f}s ({status})")
 
         # Create API response using the validated RAG response
+        # Normalize provider-friendly types for metadata
+        _search_meta = rag_response.get("search_metadata", {})
+        if hasattr(_search_meta, "model_dump"):
+            _search_meta = _search_meta.model_dump()
+
+        # Only post-process formatting if success is True
+        is_success = bool(rag_response.get("success", False))
+        error_msg = rag_response.get("error") if not is_success else None
+
+        pretty_answer: Optional[str]
+        sources_list = rag_response.get("sources", []) or []
+        if is_success:
+            formatted_sources: List[str] = []
+            if mode == "llm":
+                for s in sources_list:
+                    try:
+                        if hasattr(s, "model_dump"):
+                            s = s.model_dump()
+                        if not isinstance(s, dict):
+                            continue
+                        title = s.get("title") or "Untitled Document"
+                        section_title = s.get("section_title")
+                        from_tables = bool(s.get("from_tables", False))
+                        suffix = ""
+                        if section_title:
+                            suffix += f" — Section: {section_title}"
+                        if from_tables:
+                            suffix += " (table)"
+                        formatted_sources.append(f"- Document: {title}{suffix}")
+                    except Exception:
+                        continue
+            else:
+                for s in sources_list:
+                    try:
+                        if hasattr(s, "model_dump"):
+                            s = s.model_dump()
+                        if not isinstance(s, dict):
+                            continue
+                        title = s.get("title") or "Untitled Document"
+                        formatted_sources.append(f"- {title}")
+                    except Exception:
+                        continue
+            sources_block = (
+                ("\n\nSources:\n" + "\n".join(formatted_sources))
+                if formatted_sources
+                else ""
+            )
+            pretty_answer = (
+                "Query:\n"
+                + request.query.strip()
+                + "\n\n"
+                + "Answer:\n"
+                + str(rag_response.get("answer", "")).strip()
+                + sources_block
+            )
+        else:
+            pretty_answer = None
+
         api_response = APIQueryResponse(
             # Core fields from RAG response
-            answer=rag_response.get("answer", ""),
+            answer=pretty_answer,
             sources=rag_response.get("sources", []),
             follow_up_questions=rag_response.get("follow_up_questions", []),
             conversation_id=rag_response.get("conversation_id", ""),
             user_id=rag_response.get("user_id"),
             timestamp=rag_response.get("timestamp", datetime.now().isoformat()),
             confidence=rag_response.get("confidence"),
-            search_metadata=rag_response.get("search_metadata", {}),
-            error=rag_response.get("error"),
+            search_metadata=_search_meta,
+            error=error_msg,
+            success=is_success,
             # API-specific fields
             query=request.query,
             response_time=response_time,
@@ -753,14 +826,23 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 "conversation_id": rag_response.get("conversation_id", conversation_id),
                 "turn_id": f"turn_{uuid.uuid4().hex[:8]}",
                 "query": query_text,
-                "answer": rag_response.get("answer", ""),
-                "confidence": rag_response.get("confidence", 0.0),
+                "answer": (
+                    rag_response.get("answer")
+                    if rag_response.get("success", False)
+                    else None
+                ),
+                "confidence": rag_response.get("confidence"),
                 "sources": rag_response.get("sources", []),
                 "follow_up_questions": rag_response.get("follow_up_questions", []),
                 "response_time": response_time,
                 "context_used": True,
                 "timestamp": rag_response.get("timestamp", datetime.now().isoformat()),
-                "error": rag_response.get("error"),
+                "error": (
+                    rag_response.get("error")
+                    if not rag_response.get("success", False)
+                    else None
+                ),
+                "success": bool(rag_response.get("success", False)),
             }
 
             logger.info(f"✅ WebSocket query processed in {response_time:.2f}s")

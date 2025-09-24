@@ -104,6 +104,12 @@ EVALUATION CRITERIA:
 3. **Completeness**: Does the generated answer cover the key points from the expected answer?
 4. **Relevance**: Does the generated answer directly address the question asked?
 
+CRITICAL POLICY ON EXTRA INFORMATION:
+• Extra information beyond the expected answer that is accurate and relevant MUST NOT reduce correctness or factual accuracy.
+• Mark the generated answer as correct if it includes all key facts from the expected answer and those facts are accurate — even if the generated answer contains additional, non‑contradictory context.
+• Only penalize when extra information contradicts the expected answer or introduces incorrect claims. Do not penalize for well‑scoped additional context, notes, or examples.
+• Completeness is measured relative to the expected answer: missing expected key points reduces completeness; adding extra correct details does not.
+
 SCORING GUIDELINES:
 - Score 1.0: Perfect semantic match, all facts correct, complete coverage
 - Score 0.8-0.9: Very good match, minor differences in wording or style
@@ -138,6 +144,7 @@ CRITICAL: Your reasoning must be detailed and specific. Explain:
 - Missing information
 - Why you assigned the specific scores
 - How the generated answer compares to the expected answer
+- Explicitly state whether any extra information is present and whether it is accurate and non‑contradictory (this should not lower correctness).
 
 Respond only with the JSON object, no additional text."""
 
@@ -159,6 +166,20 @@ Respond only with the JSON object, no additional text."""
                 },
             },
             {
+                "question": "What is the maximum speed limit for Class 2 mobility scooters?",
+                "expected_answer": "Class 2 scooters are limited to 4 mph.",
+                "generated_answer": "Class 2 scooters are limited to 4 mph. They are typically intended for footpaths.",
+                "evaluation": {
+                    "is_correct": True,
+                    "confidence_score": 0.95,
+                    "reasoning": "Core fact (4 mph) is correct and present. The extra note about footpaths is accurate and non‑contradictory, so it does not reduce correctness.",
+                    "semantic_similarity": 0.95,
+                    "factual_accuracy": 1.0,
+                    "completeness": 1.0,
+                    "relevance": 1.0,
+                },
+            },
+            {
                 "question": "How many working days must Midland Heart acknowledge a Stage 1 complaint?",
                 "expected_answer": "Within 5 working days of receipt.",
                 "generated_answer": "Midland Heart must acknowledge Stage 1 complaints within 10 working days.",
@@ -168,6 +189,20 @@ Respond only with the JSON object, no additional text."""
                     "reasoning": "The generated answer contains a factual error. It states 10 working days when the correct timeframe is 5 working days. This is a significant factual discrepancy that makes the answer incorrect.",
                     "semantic_similarity": 0.7,
                     "factual_accuracy": 0.0,
+                    "completeness": 1.0,
+                    "relevance": 1.0,
+                },
+            },
+            {
+                "question": "What is the contact route for IT issues?",
+                "expected_answer": "Raise a ticket via the IT Service Desk portal.",
+                "generated_answer": "Raise a ticket via the IT Service Desk portal. You can also call after hours for critical incidents.",
+                "evaluation": {
+                    "is_correct": True,
+                    "confidence_score": 0.9,
+                    "reasoning": "The answer includes the exact expected action and adds accurate, non‑contradictory context about after‑hours support; extra information is allowed and should not reduce correctness.",
+                    "semantic_similarity": 0.9,
+                    "factual_accuracy": 1.0,
                     "completeness": 1.0,
                     "relevance": 1.0,
                 },
