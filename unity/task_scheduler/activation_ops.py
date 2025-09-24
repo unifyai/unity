@@ -26,6 +26,7 @@ def detach_from_queue_for_activation(
     *,
     task_id: int,
     detach: bool = True,
+    unlink_from_prev: bool = False,
 ) -> None:
     """Detach a runnable task ahead of activation and record a reintegration plan.
 
@@ -43,12 +44,12 @@ def detach_from_queue_for_activation(
         (only heads may carry it). The detached task loses its schedule.
     - Chained activation (``detach=False``): keep the queue behind the activated task
       attached to it and preserve the existing ``schedule`` for followers. Do not move
-      the queue-level ``start_at`` during execution. However, when the activated task
-      is not already the head (it has a ``prev_task``), detach it cleanly from its
-      predecessor by setting the predecessor's ``next_task`` to ``None`` and the
-      current task's ``prev_task`` to ``None``. This makes the activated task the
-      effective head of the active execution while avoiding per-step rewrites for the
-      rest of the chain.
+      the queue-level ``start_at`` during execution. When creating a NEW ActiveQueue
+      instance starting from a mid-queue task (extracted from a larger queue), set
+      ``unlink_from_prev=True`` to detach ONLY from the predecessor once by clearing
+      the predecessor's ``next_task`` (to ``None``) and the current task's
+      ``prev_task`` (to ``None``). During subsequent follower activations within the
+      same ActiveQueue run, keep ``unlink_from_prev=False`` so no links are rewritten.
 
     These rules make reinstatement deterministic and easy to reason about.
     """
@@ -236,9 +237,9 @@ def detach_from_queue_for_activation(
             _update_schedule(cur_log, {}, extra={"schedule": None, "queue_id": None})
     else:
         # ----- Chained queue execution semantics -----
-        # Detach ONLY from the predecessor when the activated task is not already
-        # the head, keeping followers attached and not moving start_at.
-        if prev_tid is not None:
+        # Only when explicitly requested (unlink_from_prev=True) and the task is not
+        # already the head, detach from the predecessor ONCE at ActiveQueue creation.
+        if unlink_from_prev and prev_tid is not None:
             # 1) Disconnect previous neighbour's next pointer if it still points to us
             prev_log = _get_log_obj(prev_tid)
             if prev_log is not None:
@@ -257,4 +258,4 @@ def detach_from_queue_for_activation(
                 new_sched["prev_task"] = None
                 _update_schedule(cur_log, new_sched)
 
-        # If already head (prev_tid is None), do nothing: preserve schedule fully.
+        # Otherwise, preserve the existing schedule fully.
