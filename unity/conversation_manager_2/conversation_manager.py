@@ -116,6 +116,7 @@ class ConversationManager:
         self.inactivity_check_interval = 30  # seconds
         self.last_activity_time = self.loop.time()
         self.stop = stop
+
         self.event_broker = event_broker
         self.openai_client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
