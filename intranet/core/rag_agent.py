@@ -21,18 +21,21 @@ This implementation uses Unity's tool-loop pattern while supporting the efficien
 
 import asyncio
 import json
+import logging
+import time
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
 from .prompt_builder import (
     build_intranet_ask_instructions,
     build_intranet_update_instructions,
+    build_intranet_ask_llm_prompt,
 )
 from unity.file_manager.file_manager import FileManager
 
 # Import Pydantic models
 try:
-    from .models import RAGQueryResponse, RAGLLMResponse
+    from .models import RAGQueryResponse, RAGLLMResponse, RAGLLMResponseRaw
 
     MODELS_AVAILABLE = True
 except ImportError:
@@ -55,6 +58,9 @@ __all__ = [
     "pre_embed_from_configuration",
     "load_embedding_configuration",
 ]
+
+
+logger = logging.getLogger(__name__)
 
 
 def load_embedding_configuration(schema_path: str) -> Dict[str, Any]:
@@ -267,6 +273,10 @@ class IntranetRAGAgent:
         print(f"🤖 RAG Agent initialized with {len(self.enabled_tools)} tools")
         print(f"💬 Conversation Context: {conv_context_length} messages")
 
+        # ── Usage-logging context ────────────────
+        # Ensure a dedicated, idempotent context exists for usage logs.
+        self._logging_ctx = self._ensure_logging_context()
+
     def _build_enabled_tools(self, tool_categories: List[str]) -> Dict[str, Any]:
         """
         Build the tool dictionary for the agent using Unity's methods_to_tool_dict.
@@ -323,12 +333,9 @@ class IntranetRAGAgent:
             if conversation_context is None:
                 conversation_context = self._get_conversation_context(conversation_id)
 
-            # print("🔍 Calling KnowledgeManager.ask directly for retrieval")
-
             case_specific_instructions = build_intranet_ask_instructions(
                 generate_follow_up=generate_follow_up,
             )
-
             ask_handle = await self.knowledge_manager.ask(
                 query_text,
                 case_specific_instructions=case_specific_instructions,
@@ -353,6 +360,10 @@ class IntranetRAGAgent:
                 generate_follow_up,
             )
 
+            # Attach success semantics
+            response["success"] = True
+            response["error"] = None
+
             self._update_conversation(conversation_id, query_text, response, user_id)
             # print(f"✅ Query processed successfully")
             return response
@@ -360,13 +371,296 @@ class IntranetRAGAgent:
         except Exception as e:
             print(f"❌ Error processing query: {e}")
             return {
-                "answer": f"I encountered an error processing your question: {str(e)}",
+                "answer": None,
                 "sources": [],
                 "follow_up_questions": [],
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "error": str(e),
+                "success": False,
             }
+
+    async def ask_llm(
+        self,
+        query_text: str,
+        *,
+        conversation_context: Optional[List[Dict[str, str]]] = None,
+        conversation_id: str = "default",
+        user_id: Optional[str] = None,
+        _return_reasoning_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
+    ) -> Any:
+        """Direct LLM query over aggregated full-text policy documents (no tool loop)."""
+        try:
+            _t0 = time.monotonic()
+            if conversation_context is None:
+                conversation_context = self._get_conversation_context(conversation_id)
+
+            # 1) Collect documents
+            rows_by_table = self.knowledge_manager._filter(  # type: ignore[attr-defined]
+                filter="content_type == 'document'",
+                limit=100,
+                tables="Content",
+            )
+            rows = (
+                rows_by_table.get("Content", [])
+                if isinstance(rows_by_table, dict)
+                else []
+            )
+            if not rows:
+
+                class _StaticAnswerHandle:
+                    def __init__(self, ans: str):
+                        self._ans = ans
+
+                    async def result(self):
+                        return self._ans
+
+                handle = _StaticAnswerHandle(
+                    "No documents available to answer your question.",
+                )
+                if self.sandbox_mode:
+                    return handle
+
+                response = self._structure_response_raw(
+                    result="No documents available to answer your question.",
+                    query=query_text,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                )
+
+                # Attach success semantics
+                response["success"] = True
+                response["error"] = None
+
+                try:
+                    import unify
+
+                    payload = {
+                        "query": query_text,
+                        "answer": response.get("answer", ""),
+                        "sources": response.get("sources", []),
+                        "confidence": response.get("confidence"),
+                        "response_time": max(0.0, time.monotonic() - _t0),
+                        "success": True,
+                        "error": None,
+                    }
+                    unify.log(
+                        context=self._logging_ctx,
+                        new=True,
+                        mutable=True,
+                        **payload,
+                    )
+                except Exception:
+                    # Logging must never break user flow
+                    pass
+
+                return response
+
+            # Resolve conflicting titles (keep longest content per title) and dedupe by content
+            title_to_best: Dict[str, Dict[str, Any]] = {}
+            untitled_contents: List[str] = []
+            for row in rows:
+                txt = (row or {}).get("content_text")
+                raw_title = (row or {}).get("title")
+                title = raw_title.strip() if isinstance(raw_title, str) else None
+                if not isinstance(txt, str) or not txt:
+                    continue
+                if title:
+                    current = title_to_best.get(title)
+                    if current is None or len(txt) > len(current.get("content", "")):
+                        title_to_best[title] = {"title": title, "content": txt}
+                else:
+                    untitled_contents.append(txt)
+
+            aggregated_docs: List[Dict[str, Any]] = []
+            content_seen: set[str] = set()
+            for doc in title_to_best.values():
+                c = doc.get("content")
+                if isinstance(c, str) and c and c not in content_seen:
+                    aggregated_docs.append(doc)
+                    content_seen.add(c)
+            for txt in untitled_contents:
+                if txt not in content_seen:
+                    aggregated_docs.append({"title": None, "content": txt})
+                    content_seen.add(txt)
+
+            aggregated_fulltexts: List[str] = []
+            for doc in aggregated_docs:
+                t = doc.get("title")
+                c = doc.get("content", "")
+                combined = (
+                    f"Title: {t}\n\n" if isinstance(t, str) and t.strip() else ""
+                ) + c
+                aggregated_fulltexts.append(combined)
+
+            # 2) Build system prompt
+            system_msg = build_intranet_ask_llm_prompt(
+                include_activity=(rolling_summary_in_prompts is not False),
+                case_specific_instructions=None,
+                aggregated_fulltexts=aggregated_fulltexts,
+                aggregated_docs=aggregated_docs,
+                logger=logger,
+                generate_follow_up=False,
+            )
+
+            # 3) Create client and set prompt
+            import unify
+
+            client = unify.AsyncUnify(
+                "gpt-5@openai",
+                cache=True,
+                traced=True,
+                reasoning_effort="high",
+                service_tier="priority",
+                response_format=RAGLLMResponseRaw,
+            )
+            client.set_system_message(system_msg)
+
+            # 4) Generate
+            try:
+                answer: str = await client.generate(query_text)
+            except Exception as e:
+                answer = f"Error generating answer: {e}"
+
+            # 5) If sandbox_mode, return handle-like object; otherwise structure like ask
+            class _StaticAnswerHandle:
+                def __init__(
+                    self,
+                    payload: Any,
+                    msgs: List[Dict[str, Any]],
+                    ret_msgs: bool,
+                ) -> None:
+                    self._payload = payload
+                    self._msgs = msgs
+                    self._ret_msgs = ret_msgs
+
+                async def result(self):
+                    if self._ret_msgs:
+                        return self._payload, self._msgs
+                    return self._payload
+
+            handle = _StaticAnswerHandle(
+                answer,
+                getattr(client, "messages", []),
+                _return_reasoning_steps,
+            )
+            if self.sandbox_mode:
+                return handle
+
+            # Validate & structure using raw schema path (mirror of _structure_response)
+            response = self._structure_response_raw(
+                result=answer,
+                query=query_text,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+
+            # Attach success semantics
+            response["success"] = True
+            response["error"] = None
+
+            try:
+                import unify
+
+                payload = {
+                    "query": query_text,
+                    "answer": response.get("answer", ""),
+                    "sources": response.get("sources", []),
+                    "confidence": response.get("confidence"),
+                    "response_time": max(0.0, time.monotonic() - _t0),
+                    "success": True,
+                    "error": None,
+                }
+                unify.log(context=self._logging_ctx, new=True, mutable=True, **payload)
+            except Exception:
+                # Logging must never break user flow
+                pass
+
+            return response
+
+        except Exception as e:
+            # Best-effort logging of failures too
+            try:
+                import unify
+
+                payload = {
+                    "query": query_text,
+                    "answer": None,
+                    "sources": [],
+                    "confidence": None,
+                    "response_time": max(
+                        0.0,
+                        (time.monotonic() if "time" in globals() else 0.0)
+                        - (_t0 if "_t0" in locals() else 0.0),
+                    ),
+                    "success": False,
+                    "error": f"Error in ask_llm: {e}",
+                }
+                unify.log(context=self._logging_ctx, new=True, mutable=True, **payload)
+            except Exception:
+                pass
+
+            return {
+                "answer": None,
+                "sources": [],
+                "follow_up_questions": [],
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "timestamp": datetime.now().isoformat(),
+                "success": False,
+                "error": f"Error in ask_llm: {e}",
+            }
+
+    @classmethod
+    def _ensure_logging_context(cls) -> str:
+        """Create the `IntranetUsage` context (idempotent) and return its name.
+
+        Mirrors the pattern used for rolling context to be safe under concurrency.
+        """
+        try:
+            import unify
+        except Exception:
+            # In stubbed environments, bail out to a sane default name
+            return "IntranetUsage"
+
+        active_ctx = (unify.get_active_context() or {}).get("write") or ""
+        if not active_ctx:
+            # Ensure a consistent assistant context is selected first
+            try:
+                from unity import (
+                    ensure_initialised as _ensure_initialised,
+                )  # local to avoid cycles
+
+                _ensure_initialised()
+                active_ctx = (unify.get_active_context() or {}).get("write") or ""
+            except Exception:
+                pass
+
+        ctx = f"{active_ctx}/IntranetUsage" if active_ctx else "IntranetUsage"
+        try:
+            if ctx not in unify.get_contexts():
+                unify.create_context(ctx)
+                unify.create_fields(
+                    {
+                        "query": {"type": "str", "mutable": True},
+                        "answer": {"type": "str", "mutable": True},
+                        "success": {"type": "bool", "mutable": True},
+                        "error": {"type": "str", "mutable": True},
+                        "sources": {"type": "list", "mutable": True},
+                        "confidence": {"type": "float", "mutable": True},
+                        "response_time": {"type": "float", "mutable": True},
+                    },
+                    context=ctx,
+                )
+        except Exception:
+            # Tolerate races or partial creation in concurrent scenarios
+            pass
+
+        return ctx
 
     async def update(
         self,
@@ -637,6 +931,42 @@ class IntranetRAGAgent:
                 str(e),
                 generate_follow_up,
             )
+
+    def _structure_response_raw(
+        self,
+        result: str,
+        query: str,
+        conversation_id: str,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Structure the LLM response for ask_llm using Raw Pydantic models (same style as _structure_response)."""
+        try:
+            if MODELS_AVAILABLE:
+                from .models import RAGQueryResponseRaw
+
+                response_model = RAGQueryResponseRaw.from_unstructured_response(
+                    result=result,
+                    query=query,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                )
+                return response_model.to_legacy_format()
+        except Exception as e:
+            print(f"❌ Response structuring/validation (raw) failed: {e}")
+
+        # Fallback minimal structure
+        return {
+            "answer": (
+                result
+                if isinstance(result, str) and result.strip()
+                else "I encountered an issue processing your question."
+            ),
+            "sources": [],
+            "follow_up_questions": [],
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+            "timestamp": datetime.now().isoformat(),
+        }
 
     def _fallback_structure_response(
         self,

@@ -18,7 +18,7 @@ from datetime import datetime
 class RAGResponse:
     """Response from the RAG API."""
 
-    answer: str
+    answer: Optional[str]
     sources: List[Dict[str, Any]]
     follow_up_questions: List[str]
     conversation_id: str
@@ -27,6 +27,7 @@ class RAGResponse:
     confidence: Optional[float]
     response_time: float
     error: Optional[str] = None
+    success: bool = False
 
     # API-specific fields
     query: Optional[str] = None
@@ -41,7 +42,7 @@ class RAGResponse:
     ) -> "RAGResponse":
         """Create RAGResponse from API JSON response."""
         return cls(
-            answer=api_data.get("answer", ""),
+            answer=api_data.get("answer"),
             sources=api_data.get("sources", []),
             follow_up_questions=api_data.get("follow_up_questions", []),
             conversation_id=api_data.get("conversation_id", ""),
@@ -50,6 +51,7 @@ class RAGResponse:
             confidence=api_data.get("confidence"),
             response_time=measured_response_time,
             error=api_data.get("error"),
+            success=bool(api_data.get("success", False)),
             query=api_data.get("query"),
             turn_id=api_data.get("turn_id"),
             context_used=api_data.get("context_used"),
@@ -67,6 +69,7 @@ class RAGResponse:
             "confidence": self.confidence,
             "response_time": self.response_time,
             "error": self.error,
+            "success": self.success,
             "query": self.query,
             "turn_id": self.turn_id,
             "context_used": self.context_used,
@@ -131,6 +134,7 @@ class RAGHTTPClient:
         conversation_id: Optional[str] = None,
         user_id: Optional[str] = None,
         *,
+        retreival_mode: str = "tool_loop",
         session: Optional[aiohttp.ClientSession] = None,
     ) -> RAGResponse:
         """
@@ -148,6 +152,7 @@ class RAGHTTPClient:
             "query": question,
             "conversation_id": conversation_id,
             "user_id": user_id,
+            "retreival_mode": (retreival_mode or "tool_loop"),
         }
 
         # Remove None values
@@ -184,7 +189,7 @@ class RAGHTTPClient:
                                 )
 
                                 return RAGResponse(
-                                    answer="",
+                                    answer=None,
                                     sources=[],
                                     follow_up_questions=[],
                                     conversation_id=conversation_id or "",
@@ -193,6 +198,7 @@ class RAGHTTPClient:
                                     confidence=None,
                                     response_time=response_time,
                                     error=f"HTTP {response.status}: {error_text}",
+                                    success=False,
                                     query=question,
                                 )
                 else:
@@ -216,7 +222,7 @@ class RAGHTTPClient:
                             )
 
                             return RAGResponse(
-                                answer="",
+                                answer=None,
                                 sources=[],
                                 follow_up_questions=[],
                                 conversation_id=conversation_id or "",
@@ -225,6 +231,7 @@ class RAGHTTPClient:
                                 confidence=None,
                                 response_time=response_time,
                                 error=f"HTTP {response.status}: {error_text}",
+                                success=False,
                                 query=question,
                             )
 
@@ -237,7 +244,7 @@ class RAGHTTPClient:
                     continue
                 else:
                     return RAGResponse(
-                        answer="",
+                        answer=None,
                         sources=[],
                         follow_up_questions=[],
                         conversation_id=conversation_id or "",
@@ -246,6 +253,7 @@ class RAGHTTPClient:
                         confidence=None,
                         response_time=self.timeout or 0.0,
                         error="Request timeout",
+                        success=False,
                         query=question,
                     )
 
@@ -258,7 +266,7 @@ class RAGHTTPClient:
                     continue
                 else:
                     return RAGResponse(
-                        answer="",
+                        answer=None,
                         sources=[],
                         follow_up_questions=[],
                         conversation_id=conversation_id or "",
@@ -267,6 +275,7 @@ class RAGHTTPClient:
                         confidence=None,
                         response_time=0.0,
                         error=str(e),
+                        success=False,
                         query=question,
                     )
 

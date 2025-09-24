@@ -60,6 +60,9 @@ async def run_semantic_evaluation(
     examples_count=4,
     batch_size: int | None = 1,
     per_difficulty: int = 2,
+    save_after: int = 6,
+    per_difficulty_map: dict | None = None,
+    retreival_mode: str = "tool_loop",
 ):
     """Run comprehensive semantic evaluation of the RAG system."""
 
@@ -116,9 +119,18 @@ async def run_semantic_evaluation(
                 diff = (p.metadata or {}).get("difficulty")
                 if diff in by_diff:
                     by_diff[diff].append(p)
-            selected = []
-            for k in ("easy", "medium", "hard"):
-                selected.extend(by_diff[k][: max(0, n)])
+            # Allow granular per-difficulty override
+            if per_difficulty_map:
+                easy_n = max(0, int(per_difficulty_map.get("easy", n)))
+                med_n = max(0, int(per_difficulty_map.get("medium", n)))
+                hard_n = max(0, int(per_difficulty_map.get("hard", n)))
+            else:
+                easy_n = med_n = hard_n = max(0, n)
+
+            selected: list = []
+            selected.extend(by_diff["easy"][:easy_n])
+            selected.extend(by_diff["medium"][:med_n])
+            selected.extend(by_diff["hard"][:hard_n])
             return selected
 
         file_batches: list[tuple[str, list]] = []
@@ -204,50 +216,110 @@ async def run_semantic_evaluation(
                 f"   • File {file_idx+1}/{len(file_batches)}: {policy_name} ({len(qa_pairs_file)} qs)",
             )
 
-            # Prepare question texts
-            batch_qs = [qa.question for qa in qa_pairs_file]
-
-            # Query RAG in batch
-            batch_rag = await http_client.query_batch(
-                questions=batch_qs,
-                max_concurrent=max_concurrent,
-                conversation_prefix=f"eval_{policy_name}",
-            )
-
-            # Validate
-            validation_data = [
-                {
-                    "answer": r.answer,
-                    "sources": r.sources,
-                    "response_time": r.response_time,
-                }
-                for r in batch_rag
-            ]
-            batch_val = await validator.validate_batch(
-                qa_pairs=[qa.to_dict() for qa in qa_pairs_file],
-                generated_responses=validation_data,
-                max_concurrent=3,
-            )
-
             # Aggregate into a fresh EvaluationResults for this file
             file_results = EvaluationResults()
             file_results.config = results.config
             file_results.qa_source = policy_name
             file_results.api_endpoint = results.api_endpoint
 
-            for qa_pair, rag_resp, val_res in zip(qa_pairs_file, batch_rag, batch_val):
-                q_eval = QuestionEvaluation.from_qa_and_responses(
-                    qa_pair,
-                    rag_resp,
-                    val_res,
-                )
-                file_results.add_question_evaluation(q_eval)
-                # Also aggregate into the global results object
-                results.add_question_evaluation(q_eval)
+            # Stream queries with concurrency and evaluate/snapshot every `save_after`
+            semaphore = asyncio.Semaphore(max_concurrent)
 
+            async def _query_one(idx: int, question: str):
+                async with semaphore:
+                    return idx, await http_client.query(
+                        question,
+                        conversation_id=f"eval_{policy_name}_{idx:04d}",
+                        user_id=f"eval_user_{idx:04d}",
+                        retreival_mode=retreival_mode,
+                    )
+
+            tasks = [
+                asyncio.create_task(_query_one(i, qa.question))
+                for i, qa in enumerate(qa_pairs_file)
+            ]
+
+            pending_indices: list[int] = []
+            pending_responses: list = []
+
+            async def _process_chunk(indices: list[int], responses: list):
+                if not indices:
+                    return
+                # Prepare matching QA pairs and validation inputs
+                qa_chunk = [qa_pairs_file[i] for i in indices]
+                # Only validate successful responses with non-empty answers
+                validation_pairs = []
+                validation_data = []
+                for qa_p, r in zip(qa_chunk, responses):
+                    if getattr(r, "success", False) and (
+                        r.answer is not None and str(r.answer).strip() != ""
+                    ):
+                        validation_pairs.append(qa_p)
+                        validation_data.append(
+                            {
+                                "answer": r.answer,
+                                "sources": r.sources,
+                                "response_time": r.response_time,
+                            },
+                        )
+                if validation_pairs:
+                    val_results = await validator.validate_batch(
+                        qa_pairs=[qa.to_dict() for qa in validation_pairs],
+                        generated_responses=validation_data,
+                        max_concurrent=3,
+                    )
+                else:
+                    val_results = []
+                # Aggregate into file and global results
+                v_idx = 0
+                for qa_pair, rag_resp in zip(qa_chunk, responses):
+                    if getattr(rag_resp, "success", False) and (
+                        rag_resp.answer is not None
+                        and str(rag_resp.answer).strip() != ""
+                    ):
+                        val_res = val_results[v_idx]
+                        v_idx += 1
+                    else:
+                        # Create a minimal validation record for failed responses
+                        val_res = {
+                            "score": 0.0,
+                            "details": {
+                                "reason": rag_resp.error or "unsuccessful response",
+                            },
+                        }
+                    q_eval = QuestionEvaluation.from_qa_and_responses(
+                        qa_pair,
+                        rag_resp,
+                        val_res,
+                    )
+                    file_results.add_question_evaluation(q_eval)
+                    results.add_question_evaluation(q_eval)
+                # Rolling save of global results
+                try:
+                    results.finalize()
+                    results.save_to_file(str(results_file))
+                    print(
+                        f"   🗂️ Rolling update saved ({len(results.question_evaluations)} total questions so far)",
+                    )
+                except Exception as e:
+                    print(f"⚠️ Rolling save failed: {e}")
+
+            # Consume completions as they arrive
+            for fut in asyncio.as_completed(tasks):
+                idx, rag_resp = await fut
+                pending_indices.append(idx)
+                pending_responses.append(rag_resp)
+                if save_after and len(pending_responses) >= save_after:
+                    await _process_chunk(pending_indices, pending_responses)
+                    pending_indices = []
+                    pending_responses = []
+
+            # Process any remaining responses
+            if pending_responses:
+                await _process_chunk(pending_indices, pending_responses)
+
+            # Finalize and save per-file results
             file_results.finalize()
-
-            # Save per-file results immediately
             file_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_out = output_path / f"semantic_eval_{policy_name}_{file_ts}.json"
             try:
@@ -282,6 +354,8 @@ async def run_semantic_evaluation(
         results.finalize()
 
         total_time = time.time() - start_time
+        # Record wall clock time so totals are not an overcount in parallel runs
+        results.performance_metrics.wall_clock_time = total_time
 
         # Display comprehensive results
         print(f"\n{'='*70}")
@@ -480,6 +554,25 @@ def main():
         default=2,
         help="Number of questions to sample from each difficulty per file (default: 2)",
     )
+    parser.add_argument(
+        "--save-after",
+        type=int,
+        default=6,
+        help="Evaluate and persist after this many completed queries (rolling save)",
+    )
+    parser.add_argument(
+        "--per-difficulty-map",
+        type=str,
+        default=None,
+        help='JSON string to override counts per difficulty, e.g. {"easy":10,"medium":10,"hard":5}',
+    )
+    parser.add_argument(
+        "--retreival-mode",
+        type=str,
+        default="tool_loop",
+        choices=["tool_loop", "llm"],
+        help='Retrieval path: "tool_loop" (default) or "llm"',
+    )
 
     args = parser.parse_args()
 
@@ -501,6 +594,11 @@ def main():
             examples_count=args.examples_count,
             batch_size=args.batch_size,
             per_difficulty=args.per_difficulty,
+            save_after=args.save_after,
+            per_difficulty_map=(
+                json.loads(args.per_difficulty_map) if args.per_difficulty_map else None
+            ),
+            retreival_mode=args.retreival_mode,
         ),
     )
 

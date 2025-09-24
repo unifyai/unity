@@ -11,6 +11,9 @@ import json
 class SourceDocument(BaseModel):
     """Model for a source document/section reference."""
 
+    # Disallow undeclared fields to ensure additionalProperties: false
+    model_config = {"extra": "forbid"}
+
     document_id: Optional[str] = Field(None, description="Unique document identifier")
     section_id: Optional[str] = Field(None, description="Unique section identifier")
     title: Optional[str] = Field(None, description="Document or section title")
@@ -21,14 +24,40 @@ class SourceDocument(BaseModel):
         description="Type of document (policy, procedure, etc.)",
     )
     department: Optional[str] = Field(None, description="Associated department")
-    metadata: Optional[Dict[str, Any]] = Field(
-        default_factory=dict,
-        description="Additional metadata",
+
+    # Provider response_format rejects free-form dicts. Use a strict object with
+    # no additional properties for compatibility. When present, it must be an
+    # empty object {}.
+    class _EmptyMetadata(BaseModel):
+        model_config = {"extra": "forbid"}
+
+    metadata: Optional[_EmptyMetadata] = Field(
+        default=None,
+        description="Additional metadata (empty object)",
+    )
+
+
+# Raw source doc for ask_llm (more permissive/minimal)
+class SourceDocumentRaw(BaseModel):
+    """Raw source reference schema for LLM direct mode.
+
+    Only minimal/canonical fields that the LLM can reasonably populate.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    title: Optional[str] = Field(None, description="Document title")
+    section_title: Optional[str] = Field(None, description="Section heading/title")
+    from_tables: Optional[bool] = Field(
+        default=False,
+        description="True if the source content came from a table",
     )
 
 
 # New simpler response model expected directly from LLM
 class RAGLLMResponse(BaseModel):
+    # Disallow undeclared fields to ensure additionalProperties: false
+    model_config = {"extra": "forbid"}
     """Minimal response schema returned directly by the LLM.
 
     This subset is enough for end-users while keeping the JSON small. It is
@@ -59,10 +88,23 @@ class RAGLLMResponse(BaseModel):
         le=1.0,
     )
 
-    search_metadata: Optional[Dict[str, Any]] = Field(
-        default_factory=dict,
-        description="Metadata about the search process (strategy used, etc.)",
+    class _EmptySearchMetadata(BaseModel):
+        model_config = {"extra": "forbid"}
+
+    search_metadata: Optional[_EmptySearchMetadata] = Field(
+        default=None,
+        description="Metadata about the search process (empty object)",
     )
+
+
+# Minimal raw response schema for ask_llm
+class RAGLLMResponseRaw(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    answer: str
+    sources: List[SourceDocumentRaw] = Field(default_factory=list)
+    follow_up_questions: Optional[List[str]] = Field(default_factory=list)
+    confidence: Optional[float] = None
 
 
 # Old comprehensive response now *extends* the minimal LLM response
@@ -126,6 +168,13 @@ class RAGQueryResponse(RAGLLMResponse):
 
     def to_legacy_format(self, generate_follow_up: bool = True) -> Dict[str, Any]:
         """Convert to the legacy dictionary format for backwards compatibility."""
+        # Ensure provider‑friendly strict types (dicts, lists, primitives)
+        search_meta: Dict[str, Any] | None
+        if isinstance(self.search_metadata, BaseModel):
+            search_meta = self.search_metadata.model_dump()
+        else:
+            search_meta = self.search_metadata or {}
+
         legacy_dict = {
             "answer": self.answer,
             "sources": [source.model_dump() for source in self.sources],
@@ -134,7 +183,7 @@ class RAGQueryResponse(RAGLLMResponse):
             "user_id": self.user_id,
             "timestamp": self.timestamp,
             "confidence": self.confidence,
-            "search_metadata": self.search_metadata,
+            "search_metadata": search_meta,
             "error": self.error,
         }
         if not generate_follow_up:
@@ -194,6 +243,71 @@ class RAGQueryResponse(RAGLLMResponse):
             ),
             sources=[],
             follow_up_questions=follow_ups,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            timestamp=datetime.now().isoformat(),
+        )
+
+
+class RAGQueryResponseRaw(RAGLLMResponseRaw):
+    """Raw variant of query response for ask_llm with conversation metadata."""
+
+    model_config = {"extra": "forbid"}
+
+    conversation_id: str
+    user_id: Optional[str] = None
+    timestamp: str
+    error: Optional[str] = None
+
+    def to_legacy_format(self) -> Dict[str, Any]:
+        return {
+            "answer": self.answer,
+            "sources": [s.model_dump() for s in self.sources],
+            "follow_up_questions": self.follow_up_questions,
+            "conversation_id": self.conversation_id,
+            "user_id": self.user_id,
+            "timestamp": self.timestamp,
+            "confidence": self.confidence,
+            "error": self.error,
+        }
+
+    @classmethod
+    def from_unstructured_response(
+        cls,
+        result: str,
+        query: str,
+        conversation_id: str,
+        user_id: Optional[str] = None,
+    ) -> "RAGQueryResponseRaw":
+        try:
+            if (
+                isinstance(result, str)
+                and result.strip().startswith("{")
+                and result.strip().endswith("}")
+            ):
+                parsed = json.loads(result.strip())
+                base = RAGLLMResponseRaw.model_validate(parsed)
+                return cls(
+                    answer=base.answer,
+                    sources=base.sources,
+                    follow_up_questions=base.follow_up_questions or [],
+                    confidence=base.confidence,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    timestamp=datetime.now().isoformat(),
+                )
+        except Exception:
+            pass
+
+        return cls(
+            answer=(
+                result
+                if isinstance(result, str) and result.strip()
+                else "I encountered an issue processing your question."
+            ),
+            sources=[],
+            follow_up_questions=[],
+            confidence=None,
             conversation_id=conversation_id,
             user_id=user_id,
             timestamp=datetime.now().isoformat(),
