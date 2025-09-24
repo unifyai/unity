@@ -1479,7 +1479,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                             deleted_count = len(existing.get(table, []))
 
                             if deleted_count > 0:
-                                self._delete_rows(table=table, filter=filter_expr)
+                                self._delete_rows(tables=[table], filter=filter_expr)
                                 total_deleted += deleted_count
                                 print(
                                     f"✅ Deleted {deleted_count} old records for {filename}",
