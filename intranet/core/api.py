@@ -579,13 +579,27 @@ async def query_endpoint(request: QueryRequest):
                 if formatted_sources
                 else ""
             )
+            # Reflow query and answer for better email rendering
+            _query_text = request.query.strip()
+            _answer_text = (str(rag_response.get("answer", "")).strip(),)
+
+            # Confidence percentage (if provided)
+            confidence_block = ""
+            try:
+                _conf = rag_response.get("confidence")
+                if isinstance(_conf, (int, float)):
+                    confidence_block = f"\n\nConfidence: {float(_conf) * 100:.0f}%"
+            except Exception:
+                pass
+
             pretty_answer = (
                 "Query:\n"
-                + request.query.strip()
+                + _query_text
                 + "\n\n"
                 + "Answer:\n"
-                + str(rag_response.get("answer", "")).strip()
+                + _answer_text
                 + sources_block
+                + confidence_block
             )
         else:
             pretty_answer = None
