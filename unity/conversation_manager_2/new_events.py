@@ -121,4 +121,3 @@ class StartupEvent(Event):
 @dataclass
 class Ping(Event):
     kind: str
-    contact: str | None = None
