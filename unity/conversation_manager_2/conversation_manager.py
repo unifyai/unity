@@ -294,6 +294,9 @@ class ConversationManager:
                 else:
                     event = Event.from_json(msg["data"])
                     print(event)
+                    if isinstance(event, Ping):
+                        print("ping received - keeping conversation manager alive")
+                        continue
                     await self.handle_event(event)
 
     def set_details(self, payload):
@@ -331,10 +334,8 @@ class ConversationManager:
 
     async def handle_event(self, event: Event):
         self.state.push_event(event)
-        if isinstance(event, Ping):
-            print("ping received - keeping conversation manager alive")
 
-        elif isinstance(event, StartupEvent):
+        if isinstance(event, StartupEvent):
             payload = event.to_dict()["payload"]
             self.set_details(payload)
             kwargs = {
