@@ -515,6 +515,7 @@ def start_async_tool_use_loop(
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
+    semantic_cache: Optional[bool] = False,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -573,6 +574,7 @@ def start_async_tool_use_loop(
             outer_handle_container=outer_handle_container,
             response_format=response_format,
             max_parallel_tool_calls=max_parallel_tool_calls,
+            semantic_cache=semantic_cache,
         ),
         name="ToolUseLoop",
     )

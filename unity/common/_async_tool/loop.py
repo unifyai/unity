@@ -120,6 +120,7 @@ async def async_tool_use_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
+    semantic_cache: Optional[bool] = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
