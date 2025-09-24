@@ -627,20 +627,20 @@ class IntranetRAGAgent:
             # In stubbed environments, bail out to a sane default name
             return "IntranetUsage"
 
-        active_ctx = (unify.get_active_context() or {}).get("write") or ""
-        if not active_ctx:
-            # Ensure a consistent assistant context is selected first
-            try:
-                from unity import (
-                    ensure_initialised as _ensure_initialised,
-                )  # local to avoid cycles
+        # active_ctx = (unify.get_active_context() or {}).get("write") or ""
+        # if not active_ctx:
+        #     # Ensure a consistent assistant context is selected first
+        #     try:
+        #         from unity import (
+        #             ensure_initialised as _ensure_initialised,
+        #         )  # local to avoid cycles
 
-                _ensure_initialised()
-                active_ctx = (unify.get_active_context() or {}).get("write") or ""
-            except Exception:
-                pass
+        #         _ensure_initialised()
+        #         active_ctx = (unify.get_active_context() or {}).get("write") or ""
+        #     except Exception:
+        #         pass
 
-        ctx = f"{active_ctx}/IntranetUsage" if active_ctx else "IntranetUsage"
+        ctx = "IntranetUsage"  # f"{active_ctx}/IntranetUsage" if active_ctx else "IntranetUsage"
         try:
             if ctx not in unify.get_contexts():
                 unify.create_context(ctx)
