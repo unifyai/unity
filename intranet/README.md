@@ -41,6 +41,37 @@ sudo apt update && sudo apt install -y \
    # → http://localhost:8000/docs
    ```
 
+## 🧭 Start services (tmux)
+Use the tmux-based launcher to run both the API and COMMS services with logs.
+
+1) Make the script executable (one-time):
+```bash
+chmod +x intranet/scripts/start_intranet_service.sh
+```
+
+2) Start both services and open a logs window (detached session named "intranet"):
+```bash
+./intranet/scripts/start_intranet_service.sh --logs
+```
+
+3) Optional: attach to the tmux session to view API and COMMS logs side-by-side:
+```bash
+tmux attach -t intranet
+```
+
+Flags:
+- `--logs`: Creates a `logs` window with side-by-side tails of `/tmp/intranet_api.log` and `/tmp/intranet_comms.log`.
+- `--kill-port`: Frees port 8000 before starting if another process is listening.
+
+Common examples:
+```bash
+# Clear logs, free port 8000 if needed, start services, create logs window
+./intranet/scripts/start_intranet_service.sh --kill-port --logs
+
+# Preserve existing logs, start and open logs window
+./intranet/scripts/start_intranet_service.sh --no-clear-logs --logs
+```
+
 ### Voice / CLI sandbox (optional)
 ```
 python sandboxes/knowledge_manager/sandbox.py -P Intranet   # interactive demo

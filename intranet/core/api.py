@@ -581,7 +581,7 @@ async def query_endpoint(request: QueryRequest):
             )
             # Reflow query and answer for better email rendering
             _query_text = request.query.strip()
-            _answer_text = (str(rag_response.get("answer", "")).strip(),)
+            _answer_text = str(rag_response.get("answer", "")).strip()
 
             # Confidence percentage (if provided)
             confidence_block = ""
