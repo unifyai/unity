@@ -139,3 +139,29 @@ async def _send_email_via_address(
             response_text = await response.text()
             print(f"Response: {response_text}")
             return response_text
+
+async def _start_call(
+    from_number: str,
+    to_number: str,
+) -> str:
+    """
+    Send a call using the call provider API.
+
+    Args:
+        from_number: The sender's phone number
+        to_number: The recipient's phone number
+
+    Returns:
+        str: The response
+    """
+    print(f"Sending call from {from_number} to {to_number}")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
+            headers=headers,
+            json={"From": from_number, "To": to_number, "NewCall": "true"},
+        ) as response:
+            response.raise_for_status()
+            response_text = await response.text()
+            print(f"Response: {response_text}")
+            return response_text
