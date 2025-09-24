@@ -1,9 +1,6 @@
-from dataclasses import dataclass
-
 from .prompt_utils import (
     ThreadMessage,
     ConversationContact,
-    ContactThread,
     NotificationBar,
     add_spaces,
 )
@@ -30,7 +27,7 @@ class ConversationManagerState:
     def push_event(self, event: Event):
         if hasattr(event, "contact"):
             contact = self.phone_contacts_map.get(
-                event.contact
+                event.contact,
             ) or self.email_contacts_map.get(event.contact)
             if not contact:
                 # will deal with this later
@@ -43,7 +40,9 @@ class ConversationManagerState:
                 if isinstance(event, PhoneCallStarted):
                     on_phone = True
                 self.add_contact_to_active_conversations(
-                    contact, on_phone, event.timestamp
+                    contact,
+                    on_phone,
+                    event.timestamp,
                 )
                 contact_added = True
 
@@ -53,21 +52,29 @@ class ConversationManagerState:
             active_c.push_message(
                 "phone",
                 message=ThreadMessage(
-                    contact.name, "<Phone call Initiated...>", event.timestamp
+                    contact.name,
+                    "<Phone call Initiated...>",
+                    event.timestamp,
                 ),
             )
             self.notifications.push_notif(
-                "comms", f"Phone Call Initiated by '{contact.name}'", event.timestamp
+                "comms",
+                f"Phone Call Initiated by '{contact.name}'",
+                event.timestamp,
             )
         elif isinstance(event, PhoneCallStarted):
             active_c.push_message(
                 "phone",
                 message=ThreadMessage(
-                    contact.name, "<Phone call Started...>", event.timestamp
+                    contact.name,
+                    "<Phone call Started...>",
+                    event.timestamp,
                 ),
             )
             self.notifications.push_notif(
-                "comms", f"Phone Call Started with '{contact.name}'", event.timestamp
+                "comms",
+                f"Phone Call Started with '{contact.name}'",
+                event.timestamp,
             )
         elif isinstance(event, PhoneUtterance):
             active_c.push_message(
@@ -83,11 +90,15 @@ class ConversationManagerState:
             active_c.push_message(
                 "phone",
                 message=ThreadMessage(
-                    contact.name, "<Phone call Ended...>", event.timestamp
+                    contact.name,
+                    "<Phone call Ended...>",
+                    event.timestamp,
                 ),
             )
             self.notifications.push_notif(
-                "comms", f"Phone Call Ended with '{contact.name}'", event.timestamp
+                "comms",
+                f"Phone Call Ended with '{contact.name}'",
+                event.timestamp,
             )
 
         elif isinstance(event, SMSRecieved):
@@ -96,17 +107,22 @@ class ConversationManagerState:
                 message=ThreadMessage(contact.name, event.content, event.timestamp),
             )
             self.notifications.push_notif(
-                "comms", f"SMS recieved recieved from '{contact.name}'", event.timestamp
+                "comms",
+                f"SMS recieved recieved from '{contact.name}'",
+                event.timestamp,
             )
         elif isinstance(event, EmailRecieved):
             ...
         # assistant events
         elif isinstance(event, SMSSent):
             active_c.push_message(
-                "sms", message=ThreadMessage("You", event.content, event.timestamp)
+                "sms",
+                message=ThreadMessage("You", event.content, event.timestamp),
             )
             self.notifications.push_notif(
-                "comms", f"SMS sent to '{contact.name}'", event.timestamp
+                "comms",
+                f"SMS sent to '{contact.name}'",
+                event.timestamp,
             )
 
         elif isinstance(event, ConductorQuerySent):
@@ -131,12 +147,18 @@ class ConversationManagerState:
                 )
 
     def add_contact_to_active_conversations(
-        self, contact, on_phone=False, timestamp=None
+        self,
+        contact,
+        on_phone=False,
+        timestamp=None,
     ):
         if contact.id in self.active_conversations:
             return
         self.active_conversations[contact.id] = ConversationContact(
-            contact.id, contact.name, contact.is_boss, on_phone=on_phone
+            contact.id,
+            contact.name,
+            contact.is_boss,
+            on_phone=on_phone,
         )
 
     def is_contact_in_active_conversations(self, contact_id=None, contact=None):
