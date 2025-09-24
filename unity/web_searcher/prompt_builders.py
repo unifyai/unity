@@ -1,4 +1,5 @@
 from typing import Dict, Callable
+from ..common.prompt_helpers import clarification_guidance
 
 
 def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
@@ -86,5 +87,8 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "- If evidence is insufficient, do one targeted step; otherwise answer with best-supported facts.",
         "- After you write the final answer, do not call further tools.",
     ]
+
+    # Clarification guidance (conditionally references request_clarification when available)
+    lines += ["", clarification_guidance(tools)]
 
     return "\n".join(lines)
