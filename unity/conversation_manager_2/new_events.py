@@ -115,8 +115,10 @@ class StartupEvent(Event):
     user_email: str
     voice_id: str
     voice_provider: str = "cartesia"
+    contact: str | None = None
 
 
 @dataclass
 class Ping(Event):
     kind: str
+    contact: str | None = None
