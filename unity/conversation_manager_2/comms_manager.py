@@ -83,30 +83,24 @@ class CommsManager:
                 task = asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
                         "app:comms:start_up",
-                        json.dumps(
-                            {
-                                "topic": "startup",
-                                "to": "past",
-                                "event": StartupEvent(
-                                    api_key=event["api_key"],
-                                    medium=event["medium"],
-                                    assistant_id=event["assistant_id"],
-                                    user_id=event["user_id"],
-                                    assistant_name=event["assistant_name"],
-                                    assistant_age=event["assistant_age"],
-                                    assistant_region=event["assistant_region"],
-                                    assistant_about=event["assistant_about"],
-                                    assistant_number=event["assistant_number"],
-                                    assistant_email=event["assistant_email"],
-                                    user_name=event["user_name"],
-                                    user_number=event["user_number"],
-                                    user_whatsapp_number=event["user_whatsapp_number"],
-                                    user_email=event["user_email"],
-                                    voice_provider=event["voice_provider"],
-                                    voice_id=event["voice_id"],
-                                ).to_dict(),
-                            }
-                        ),
+                        StartupEvent(
+                            api_key=event["api_key"],
+                            medium=event["medium"],
+                            assistant_id=event["assistant_id"],
+                            user_id=event["user_id"],
+                            assistant_name=event["assistant_name"],
+                            assistant_age=event["assistant_age"],
+                            assistant_region=event["assistant_region"],
+                            assistant_about=event["assistant_about"],
+                            assistant_number=event["assistant_number"],
+                            assistant_email=event["assistant_email"],
+                            user_name=event["user_name"],
+                            user_number=event["user_number"],
+                            user_whatsapp_number=event["user_whatsapp_number"],
+                            user_email=event["user_email"],
+                            voice_provider=event["voice_provider"],
+                            voice_id=event["voice_id"],
+                        ).to_json(),
                     ),
                     self.loop,
                 )
