@@ -79,7 +79,6 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         client: "unify.AsyncUnify | None" = None,
         loop_id: str = "",
         initial_user_message: Optional[str] = None,
-        persist: bool = False,
     ):
         self._task = task
         self._queue = interject_queue
@@ -93,7 +92,6 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self._delegate: Optional["SteerableToolHandle"] = None
         self._pause_event.set()
         self._loop_id: str = loop_id
-        self._persist: bool = persist
 
         # Buffer interjections that may arrive **before** a downstream handle
         # (e.g. an `ActiveTask`) has been adopted.  Once a delegate is ready we
@@ -499,7 +497,6 @@ def start_async_tool_use_loop(
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    persist: bool = False,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -558,7 +555,6 @@ def start_async_tool_use_loop(
             outer_handle_container=outer_handle_container,
             response_format=response_format,
             max_parallel_tool_calls=max_parallel_tool_calls,
-            persist=persist,
         ),
         name="ToolUseLoop",
     )
@@ -587,7 +583,6 @@ def start_async_tool_use_loop(
         client=client,
         loop_id=loop_id,
         initial_user_message=init_content,
-        persist=persist,
     )
 
     # Attach lineage to handle for optional external inspection
