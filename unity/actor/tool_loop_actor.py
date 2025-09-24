@@ -335,7 +335,6 @@ class ToolLoopPlan(BaseActiveTask):
                     log_steps=True,
                     max_steps=self.MAX_STEPS,
                     timeout=self._timeout,
-                    persist=self._persist,
                     tool_policy=self._tool_policy,
                 )
 

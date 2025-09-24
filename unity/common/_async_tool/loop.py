@@ -120,7 +120,6 @@ async def async_tool_use_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    persist: bool = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -388,9 +387,7 @@ async def async_tool_use_loop_inner(
     # before waiting again (user interjection, clarification answer, etc.).
     llm_turn_required = False
 
-    # Last known assistant answer when the model produced a final tool-less reply.
-    # Used when `persist=True` to return a stable result upon explicit stop.
-    last_final_answer: Optional[str] = None
+    # No persist mode: loop returns immediately upon final assistant message
 
     try:
         while True:
@@ -411,14 +408,9 @@ async def async_tool_use_loop_inner(
                         cancel_event.wait(),
                         name="CancelEventWait",
                     )
-                    graceful_stop_waiter = asyncio.create_task(
-                        stop_event.wait(),
-                        name="StopEventWait",
-                    )
                     waiters = tools_data.pending | {
                         pause_waiter,
                         cancel_waiter,
-                        graceful_stop_waiter,
                     }
 
                     done, _ = await asyncio.wait(
@@ -428,7 +420,7 @@ async def async_tool_use_loop_inner(
                     )
 
                     # helper-task cleanup so they don't dangle
-                    for w in (pause_waiter, cancel_waiter, graceful_stop_waiter):
+                    for w in (pause_waiter, cancel_waiter):
                         if w not in done and not w.done():
                             w.cancel()
                             await asyncio.gather(w, return_exceptions=True)
@@ -451,15 +443,7 @@ async def async_tool_use_loop_inner(
                                 "outer-loop cancelled",
                             )
                         raise asyncio.CancelledError
-                    if stop_event.is_set() and persist:
-                        with suppress(Exception):
-                            _stop_forwarded_once = await propagate_stop_once(
-                                tools_data.info,
-                                _stop_forwarded_once,
-                                "outer-loop stopped",
-                            )
-                        # Graceful stop requested during pause
-                        return last_final_answer or ""
+                    # No graceful stop path without persist
                     continue  # remain paused: do not allow the LLM to speak while paused
                 else:
                     # nothing running – just idle until resumed or cancelled
@@ -472,10 +456,6 @@ async def async_tool_use_loop_inner(
                             asyncio.create_task(
                                 cancel_event.wait(),
                                 name="CancelEventWait",
-                            ),
-                            asyncio.create_task(
-                                stop_event.wait(),
-                                name="StopEventWait",
                             ),
                         },
                         return_when=asyncio.FIRST_COMPLETED,
@@ -494,15 +474,8 @@ async def async_tool_use_loop_inner(
                                 "outer-loop cancelled",
                             )
                         raise asyncio.CancelledError
-                    if stop_event.is_set() and persist:
-                        with suppress(Exception):
-                            _stop_forwarded_once = await propagate_stop_once(
-                                tools_data.info,
-                                _stop_forwarded_once,
-                                "outer-loop stopped",
-                            )
-                        return last_final_answer or ""
-                        continue  # top-of-loop, still paused
+                    # remain paused
+                    continue  # top-of-loop, still paused
 
             # 0-α. **Global timeout**
             if timer.has_exceeded_time():
@@ -617,10 +590,6 @@ async def async_tool_use_loop_inner(
                     cancel_event.wait(),
                     name="CancelEventWait",
                 )
-                graceful_stop_waiter = asyncio.create_task(
-                    stop_event.wait(),
-                    name="StopEventWait",
-                )
                 clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
                 for _t in tools_data.pending:
                     # Only listen for *new* clarification questions.
@@ -636,7 +605,7 @@ async def async_tool_use_loop_inner(
                 waiters = (
                     tools_data.pending
                     | set(clar_waiters)
-                    | {cancel_waiter, interject_w, graceful_stop_waiter}
+                    | {cancel_waiter, interject_w}
                 )
 
                 # ── honour global *timeout* while we wait for tools ───────────
@@ -669,7 +638,6 @@ async def async_tool_use_loop_inner(
                 for aux in (
                     interject_w,
                     cancel_waiter,
-                    graceful_stop_waiter,
                     *clar_waiters.keys(),
                 ):
                     if aux not in done and not aux.done():
@@ -689,14 +657,7 @@ async def async_tool_use_loop_inner(
                             "outer-loop cancelled",
                         )
                     raise asyncio.CancelledError  # cancellation wins
-                if graceful_stop_waiter in done and persist:
-                    with suppress(Exception):
-                        _stop_forwarded_once = await propagate_stop_once(
-                            tools_data.info,
-                            _stop_forwarded_once,
-                            "outer-loop stopped",
-                        )
-                    return last_final_answer or ""
+                # No graceful stop without persist
 
                 # ── clarification request bubbled up from a child tool ──────────────
                 if done & clar_waiters.keys():
@@ -1652,50 +1613,7 @@ async def async_tool_use_loop_inner(
 
             final_answer = msg["content"]
 
-            if not persist:
-                return final_answer  # DONE!
-
-            # Persist mode: remember latest final answer and enter a lingering state
-            last_final_answer = final_answer
-
-            # Wait for either a new interjection (to extend the loop),
-            # a graceful stop (to return the last answer), or a hard cancel.
-            while True:
-                interject_w = asyncio.create_task(
-                    interject_queue.get(),
-                    name="InterjectQueueGet",
-                )
-                cancel_waiter = asyncio.create_task(
-                    cancel_event.wait(),
-                    name="CancelEventWait",
-                )
-                graceful_stop_waiter = asyncio.create_task(
-                    stop_event.wait(),
-                    name="StopEventWait",
-                )
-
-                done, _ = await asyncio.wait(
-                    {interject_w, cancel_waiter, graceful_stop_waiter},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                # cleanup unused helpers
-                for tsk in (interject_w, cancel_waiter, graceful_stop_waiter):
-                    if tsk not in done and not tsk.done():
-                        tsk.cancel()
-                        await asyncio.gather(tsk, return_exceptions=True)
-
-                if interject_w in done:
-                    # push back so the standard interjection drain builds system guidance
-                    await interject_queue.put(interject_w.result())
-                    llm_turn_required = True
-                    break  # resume main loop to handle new turn
-
-                if cancel_waiter in done:
-                    raise asyncio.CancelledError
-
-                if graceful_stop_waiter in done:
-                    return last_final_answer or ""
+            return final_answer  # DONE!
 
     except asyncio.CancelledError:  # graceful shutdown
         # NOTE: Caller (or parent task) requested cancellation.  We propagate
