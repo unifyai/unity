@@ -391,6 +391,41 @@ async def async_tool_use_loop_inner(
 
     try:
         while True:
+            # ── 0-Ø. Immediate handover for passthrough delegates ─────────────
+            # If a base tool returned a SteerableToolHandle with __passthrough__
+            # set, the outer loop must stop doing any further work and simply
+            # await the delegate's result. This guarantees no extra assistant
+            # turns, tools, or events are emitted by the outer loop.
+            try:
+                _delegate = getattr(tools_data, "handover_delegate", None)
+            except Exception:
+                _delegate = None
+            if _delegate is not None:
+                if log_steps:
+                    logger.info(
+                        "Handing over to passthrough delegate – outer loop exiting.",
+                        prefix="🔁",
+                    )
+                # Proactively stop any remaining outer pending tasks, but DO NOT touch the
+                # delegate itself (it lives in the inner loop and is now in charge).
+                try:
+                    if tools_data.pending:
+                        # Forward a stop to any nested steerable handles first to allow graceful shutdown
+                        with suppress(Exception):
+                            _stop_forwarded_once = await propagate_stop_once(
+                                tools_data.info,
+                                _stop_forwarded_once,
+                                "outer-loop handover",
+                            )
+                        await tools_data.cancel_pending_tasks()
+                except Exception:
+                    pass
+                # Await the delegate and return its answer as the final reply for the outer loop.
+                try:
+                    return await _delegate.result()
+                finally:
+                    # Ensure lineage contextvar is reset even on early return
+                    pass
 
             # ── 0-α-P. Global *pause* gate  ────────────────────────────
             # Keep handling tool completions & cancellation, but *never*

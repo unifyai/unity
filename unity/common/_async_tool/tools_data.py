@@ -39,6 +39,10 @@ class ToolsData:
             Tuple[asyncio.Queue[str], asyncio.Queue[str]],
         ] = {}
         self.completed_results: Dict[str, str] = {}
+        # When a tool returns a passthrough handle, the outer loop should hand over
+        # and stop doing any further work. We record the delegate here so the main
+        # loop can immediately await it and return, without emitting extra messages.
+        self.handover_delegate = None
 
     def _quota_count(self, task_name: str) -> int:
         return self.call_counts.get(task_name, 0)
@@ -344,13 +348,18 @@ class ToolsData:
 
             if isinstance(raw, SteerableToolHandle):
                 # If the nested handle explicitly requests pass-through behaviour
-                # expose it directly to the outer caller *immediately*.
+                # expose it directly to the outer caller *immediately* and hand over.
                 if (
                     getattr(raw, "__passthrough__", False)
                     and outer_handle_container
                     and outer_handle_container[0] is not None
                 ):
                     outer_handle_container[0]._adopt(raw)
+                    # Signal to the outer loop that it should stop doing work and
+                    # simply await the delegate's result.
+                    self.handover_delegate = raw
+                    return False  # outer loop will handle return path
+
                 # ── upgrade interject / clarification flags from handle ─────
                 if hasattr(raw, "interject"):
                     info.is_interjectable = True
@@ -365,11 +374,7 @@ class ToolsData:
                         "Both queues are required (or neither).",
                     )
 
-                # 1️⃣ spawn the nested waiter
-                #
-                # ⤷ `handle.result` can now be **sync OR async**:
-                #    • async ⇒ use the coroutine directly,
-                #    • sync  ⇒ run it in a worker-thread so the event-loop never blocks.
+                # 1️⃣ spawn the nested waiter (non-passthrough nested handle)
                 if inspect.iscoroutinefunction(raw.result):
                     nested_coro = raw.result()  # already a coroutine
                 else:
