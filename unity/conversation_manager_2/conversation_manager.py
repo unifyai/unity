@@ -284,6 +284,9 @@ class ConversationManager:
                 else:
                     event = Event.from_json(msg["data"])
                     print(event)
+                    if isinstance(event, Ping):
+                        print("ping received - keeping conversation manager alive")
+                        continue
                     await self.handle_event(event)
 
     async def handle_event(self, event: Event):

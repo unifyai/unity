@@ -224,10 +224,13 @@ class CommsManager:
         while True:
             try:
                 # Send ping to event manager
-                # self.loop.call_soon_threadsafe(
-                #     self.message_queue.put_nowait,
-                #     {"topic": "ping", "event": {"type": "keepalive"}},
-                # )
+                asyncio.run_coroutine_threadsafe(
+                    self.message_queue.publish(
+                        f"app:comms:ping",
+                        Ping(kind="keepalive").to_json(),
+                    ),
+                    self.loop,
+                )
 
                 # Wait 30 seconds before next ping (half the inactivity timeout)
                 await asyncio.sleep(30)

@@ -115,3 +115,8 @@ class StartupEvent(Event):
     user_email: str
     voice_id: str
     voice_provider: str = "cartesia"
+
+
+@dataclass
+class Ping(Event):
+    kind: str
