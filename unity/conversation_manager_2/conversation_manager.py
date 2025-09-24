@@ -333,8 +333,7 @@ class ConversationManager:
             # otherwise (whatsapp, sms, email) just schedule another llm run after 2 seconds
             # if there is no response at the moment, if there is a response, cancel it, and scheduel
             # check if there is a scheduled response, reschedule
-            if self.mode == "text":
-                await self.schedule_llm_run(2, cancel_running=True)
+            await self.schedule_llm_run(2, cancel_running=True)
 
 
 # think about the end behaviour (how the events should look like in the end)
