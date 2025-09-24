@@ -231,6 +231,7 @@ def create_global_secrets(api_client, namespace="default"):
             "CARTESIA_API_KEY",
             "ELEVEN_API_KEY",
             "OPENAI_API_KEY",
+            "TAVILY_API_KEY",
             "ORCHESTRA_ADMIN_KEY",
             "SHARED_UNIFY_KEY",
         ]
