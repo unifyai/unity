@@ -247,14 +247,20 @@ async def admin_update_assistant(
 
 # dispatch agent
 def dispatch_agent(agent_name: str):
-    response = requests.post(
-        f"{unity_comms_url}/phone/dispatch-agent",
-        headers=admin_headers,
-        json={"agent_name": agent_name},
-    )
-    if response.status_code != 200:
-        print(f"Failed to dispatch agent. Status: {response.status_code}")
-        return False
+    try:
+        response = requests.post(
+            f"{unity_comms_url}/phone/dispatch-agent",
+            headers=admin_headers,
+            json={"agent_name": agent_name},
+            timeout=1,
+        )
+        if response.status_code != 200:
+            print(f"Failed to dispatch agent. {response.text}")
+            return False
+        else:
+            print("Agent dispatched")
+    except requests.exceptions.Timeout:
+        print("Agent dispatched (timeout)")
     return True
 
 
