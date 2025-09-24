@@ -72,13 +72,13 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
     ]
     handle = await ts.execute(text=str(tid1))
 
-    # 1) Passthrough path: queue length == 1 → inner sees raw question
+    # 1) Passthrough path: queue length == 1 → inner receives progress/direct asks
     await handle.ask("Q1: status?")
     # Give the background actor a moment to process
     await asyncio.sleep(0.05)
     assert captured, "Inner ask should have been invoked"
-    # The inner ask now receives a progress prompt, not a CHAIN preamble
-    assert "CHAIN CONTEXT" not in captured[-1]
+    # The inner ask receives a detailed progress prompt among calls
+    assert any("progress update" in q for q in captured)
 
     # 2) Append a follower behind the active task – this grows the queue to >1
     name2 = "Follower B"
@@ -570,6 +570,31 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
 
     monkeypatch.setattr(SimulatedActorHandle, "ask", spy_actor_ask, raising=True)
 
+    # Fake the queue-level LLM used by ActiveQueue.ask to avoid network and
+    # capture the synthesized prompt for assertions
+    prompt_capture: Dict[str, str] = {}
+
+    class _FakeQueueClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def set_system_message(self, sys_msg):
+            try:
+                prompt_capture["system"] = str(sys_msg)
+            except Exception:
+                prompt_capture["system"] = ""
+            return None
+
+        async def generate(self, user: str) -> str:
+            try:
+                prompt_capture["user"] = str(user)
+            except Exception:
+                prompt_capture["user"] = ""
+            # Deterministic synthesized answer
+            return "OK"
+
+    monkeypatch.setattr("unify.AsyncUnify", _FakeQueueClient, raising=True)
+
     h = await ts.execute(text=str(a))
 
     # Wait deterministically until a task becomes active to ensure the scheduler state is populated
@@ -590,13 +615,20 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     res = await ask_handle.result()
     assert res == "OK"
 
-    # Inner ask should have been invoked with a progress prompt (no CHAIN preamble)
+    # Inner ask should have been invoked for both progress and direct answer (no CHAIN preamble)
     assert captured_questions, "expected SimulatedActorHandle.ask to be called"
-    q_inner = captured_questions[-1]
-    assert "CHAIN CONTEXT" not in q_inner
-    assert "progress update" in q_inner
+    assert any(
+        "progress update" in q for q in captured_questions
+    ), f"expected a progress prompt, got: {captured_questions}"
+    assert any("How is the queue going?" in q for q in captured_questions)
+    assert all("CHAIN CONTEXT" not in q for q in captured_questions)
 
-    # We no longer assert internals of the synthesized queue-level prompt; only outcome
+    # The queue-level synthesized prompt should include chain context and the user question
+    user_prompt = prompt_capture.get("user", "")
+    assert "CHAIN_ROWS_JSON:" in user_prompt
+    assert "CURRENT_TASK_DIRECT_ANSWER" in user_prompt
+    assert "CURRENT_TASK_PROGRESS" in user_prompt
+    assert "USER QUESTION:" in user_prompt and "How is the queue going?" in user_prompt
 
     # Cleanup: stop the active queue to avoid leaving background tasks running
     h.stop(cancel=False)
