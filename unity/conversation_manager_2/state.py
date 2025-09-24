@@ -23,27 +23,29 @@ class ConversationManagerState:
     def push_notif(self, notif, timestamp=None):
         self.notifications.push_notif(notif, timestamp)
 
-    def clear_notifications(self):
-        self.notifications.clear()
+    def clear_notifications(self, timestamp=None):
+        print(self.notifications.notifs)
+        self.notifications.clear(timestamp=timestamp)
 
     def push_event(self, event: Event):
-        contact = self.phone_contacts_map.get(
-            event.contact
-        ) or self.email_contacts_map.get(event.contact)
-        if not contact:
-            # will deal with this later
-            # but in general probably either create a new contact here or
-            # add a new anon contact
-            ...
-        contact_added = False
-        if not self.is_contact_in_active_conversations(contact=contact):
-            on_phone = False
-            if isinstance(event, PhoneCallStarted):
-                on_phone = True
-            self.add_contact_to_active_conversations(contact, on_phone, event.timestamp)
-            contact_added = True
+        if hasattr(event, "contact"):
+            contact = self.phone_contacts_map.get(
+                event.contact
+            ) or self.email_contacts_map.get(event.contact)
+            if not contact:
+                # will deal with this later
+                # but in general probably either create a new contact here or
+                # add a new anon contact
+                ...
+            contact_added = False
+            if not self.is_contact_in_active_conversations(contact=contact):
+                on_phone = False
+                if isinstance(event, PhoneCallStarted):
+                    on_phone = True
+                self.add_contact_to_active_conversations(contact, on_phone, event.timestamp)
+                contact_added = True
 
-        active_c = self.active_conversations[contact.id]
+            active_c = self.active_conversations[contact.id]
 
         if isinstance(event, PhoneCallInitiated):
             active_c.push_message(
@@ -53,7 +55,7 @@ class ConversationManagerState:
                 ),
             )
             self.notifications.push_notif(
-                f"Phone Call Initiated by '{contact.name}'", event.timestamp
+                "comms", f"Phone Call Initiated by '{contact.name}'", event.timestamp
             )
         elif isinstance(event, PhoneCallStarted):
             active_c.push_message(
@@ -63,7 +65,7 @@ class ConversationManagerState:
                 ),
             )
             self.notifications.push_notif(
-                f"Phone Call Started with '{contact.name}'", event.timestamp
+                "comms", f"Phone Call Started with '{contact.name}'", event.timestamp
             )
         elif isinstance(event, PhoneUtterance):
             active_c.push_message(
@@ -71,7 +73,7 @@ class ConversationManagerState:
                 message=ThreadMessage(contact.name, event.content, event.timestamp),
             )
             self.notifications.push_notif(
-                f"Phone utterance recieved from '{contact.name}'", event.timestamp
+                "comms", f"Phone utterance recieved from '{contact.name}'", event.timestamp
             )
         elif isinstance(event, PhoneCallEnded):
             active_c.push_message(
@@ -81,7 +83,7 @@ class ConversationManagerState:
                 ),
             )
             self.notifications.push_notif(
-                f"Phone Call Ended with '{contact.name}'", event.timestamp
+                "comms", f"Phone Call Ended with '{contact.name}'", event.timestamp
             )
 
         elif isinstance(event, SMSRecieved):
@@ -90,7 +92,7 @@ class ConversationManagerState:
                 message=ThreadMessage(contact.name, event.content, event.timestamp),
             )
             self.notifications.push_notif(
-                f"SMS recieved recieved from '{contact.name}'", event.timestamp
+                "comms", f"SMS recieved recieved from '{contact.name}'", event.timestamp
             )
         elif isinstance(event, EmailRecieved):
             ...
@@ -100,14 +102,25 @@ class ConversationManagerState:
                 "sms", message=ThreadMessage("You", event.content, event.timestamp)
             )
             self.notifications.push_notif(
-                f"SMS sent to '{contact.name}'", event.timestamp
+                "comms", f"SMS sent to '{contact.name}'", event.timestamp
             )
-
-        if contact_added:
+        
+        elif isinstance(event, ConductorQuerySent):
             self.notifications.push_notif(
-                f"Added contact '{contact.name}' to active conversations",
-                event.timestamp,
+                "conductor", f"Query '{event.query}' with id={event.id} sent and recieved by conductor and is being processed...",
+                event.timestamp
             )
+        
+        elif isinstance(event, ConductorResult):
+            self.notifications.push_notif(
+                "conductor", f"Query with id={event.id} result: {event.result}", event.timestamp
+            )
+        if hasattr(event, "contact"):
+            if contact_added:
+                self.notifications.push_notif(
+                    "comms", f"Added contact '{contact.name}' to active conversations",
+                    event.timestamp,
+                )
 
     def add_contact_to_active_conversations(
         self, contact, on_phone=False, timestamp=None
