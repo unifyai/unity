@@ -122,6 +122,7 @@ class ConversationManager:
         self.openai_client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
         # this will probs be retrieved from a database or whatever
+        # its hardcoded atm (obviously)
         self.phone_contacts_map = {
             "+12697784020": Contact(
                 "1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"
@@ -163,10 +164,14 @@ class ConversationManager:
         self.is_past_events_init.set()
 
     async def run_llm(self):
+        now = None
+        # this will be used at the end to only filter out notification before now
+        # this can be done in a better way but for now, this ~ensures, notifications added mid llm run are not cleared after the run
+        if self.state.notifications.notifs:
+            now = datetime.now()
         prompt = str(self.state)
         print(prompt)
         input_message = [{"role": "user", "content": prompt}]
-        print(input_message[0])
         if self.mode in ["call", "gmeet"]:
             print("running...")
             last_phone_utterance = ""
@@ -225,7 +230,7 @@ class ConversationManager:
             out = out.output[0].content[0].text
 
         print(parsed_out)
-        self.state.clear_notifications()
+        self.state.clear_notifications(now)
         if parsed_out["actions"] is not None:
             for action in parsed_out["actions"]:
                 if action["action_name"] == "send_sms":
@@ -242,7 +247,7 @@ class ConversationManager:
 
         self.chat_history.append(input_message[0])
         self.chat_history.append({"role": "assistant", "content": out})
-        print(self.chat_history)
+        # print(self.chat_history)
 
     async def schedule_llm_run(self, delay=1, cancel_running=False):
         if self.scheduled_response and not self.scheduled_response.done():
