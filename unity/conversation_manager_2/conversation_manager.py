@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pydantic_core import from_json
 
+from unity.conversation_manager_2.debug_logger import log_job_startup
 from unity.events.event_bus import EVENT_BUS
 from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager_2.actions import (
@@ -293,14 +294,66 @@ class ConversationManager:
                 else:
                     event = Event.from_json(msg["data"])
                     print(event)
-                    if isinstance(event, Ping):
-                        print("ping received - keeping conversation manager alive")
-                        continue
                     await self.handle_event(event)
+
+    def set_details(self, payload):
+        self.user_id = payload["user_id"]
+        self.assistant_id = payload["assistant_id"]
+        self.assistant_name = payload["assistant_name"]
+        self.assistant_age = payload["assistant_age"]
+        self.assistant_region = payload["assistant_region"]
+        self.assistant_about = payload["assistant_about"]
+        self.assistant_number = payload["assistant_number"]
+        self.assistant_email = payload["assistant_email"]
+        self.user_name = payload["user_name"]
+        self.user_number = payload["user_number"]
+        self.user_whatsapp_number = payload["user_whatsapp_number"]
+        self.user_email = payload["user_email"]
+        self.current_user = {
+            "user_name": self.user_name,
+            "user_number": self.user_number,
+            "user_whatsapp_number": self.user_whatsapp_number,
+            "user_email": self.user_email,
+        }
+        self.voice_provider = payload["voice_provider"]
+        self.voice_id = payload["voice_id"]
+        os.environ["UNIFY_KEY"] = payload.pop("api_key")
+        os.environ["USER_ID"] = self.user_id
+        os.environ["USER_NAME"] = self.user_name
+        os.environ["USER_NUMBER"] = self.user_number
+        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
+        os.environ["USER_EMAIL"] = self.user_email
+        os.environ["ASSISTANT_NAME"] = self.assistant_name
+        os.environ["ASSISTANT_NUMBER"] = self.assistant_number
+        os.environ["ASSISTANT_EMAIL"] = self.assistant_email
+        os.environ["VOICE_PROVIDER"] = self.voice_provider
+        os.environ["VOICE_ID"] = self.voice_id
 
     async def handle_event(self, event: Event):
         self.state.push_event(event)
-        if isinstance(event, PhoneCallInitiated):
+        if isinstance(event, Ping):
+            print("ping received - keeping conversation manager alive")
+
+        elif isinstance(event, StartupEvent):
+            payload = event.to_dict()["payload"]
+            self.set_details(payload)
+            kwargs = {
+                "job_name": self.job_name,
+                "timestamp": payload["timestamp"],
+                "medium": payload["medium"],
+                "user_id": self.user_id,
+                "assistant_id": self.assistant_id,
+                "user_name": self.user_name,
+                "assistant_name": self.assistant_name,
+                "user_number": self.user_number,
+                "user_whatsapp_number": self.user_whatsapp_number,
+                "assistant_number": self.assistant_number,
+                "user_email": self.user_email,
+                "assistant_email": self.assistant_email,
+            }
+            asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
+
+        elif isinstance(event, PhoneCallInitiated):
             # start phone call process and wait untils its done, we should probably make sure
             # first that any running llm calls are awaited, and any scheduled llm calls are canceled
             # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
