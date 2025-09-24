@@ -72,6 +72,7 @@ class ConversationManager:
         past_events: list | None = None,
         conv_context_length: int = 50,
         project_name: str = "Assistants",
+        stop: asyncio.Event = None,
     ):
         # assistant details
         self.job_name = job_name
@@ -110,6 +111,11 @@ class ConversationManager:
         self.is_past_events_init = asyncio.Event()
         # asyncio.create_task(self._init_past_events())
 
+        # inactivity & shutdown
+        self.inactivity_timeout = 360  # 6 minutes in seconds
+        self.inactivity_check_interval = 30  # seconds
+        self.last_activity_time = self.loop.time()
+        self.stop = stop
         self.event_broker = event_broker
         self.openai_client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -138,6 +144,7 @@ class ConversationManager:
             self.phone_contacts_map, self.email_contacts_map
         )
         self.chat_history = []
+        self.call_proc = None
 
     # should be re-written to account for the new refactor
     async def _init_past_events(self):
@@ -287,6 +294,7 @@ class ConversationManager:
                     if isinstance(event, Ping):
                         print("ping received - keeping conversation manager alive")
                         continue
+                    self.last_activity_time = self.loop.time()
                     await self.handle_event(event)
 
     async def handle_event(self, event: Event):
@@ -337,6 +345,17 @@ class ConversationManager:
             # if there is no response at the moment, if there is a response, cancel it, and scheduel
             # check if there is a scheduled response, reschedule
             await self.schedule_llm_run(2, cancel_running=True)
+
+    async def check_inactivity(self):
+        """Monitor for inactivity and shut down gracefully after timeout"""
+        while True:
+            await asyncio.sleep(self.inactivity_check_interval)
+            current_time = self.loop.time()
+            if current_time - self.last_activity_time > self.inactivity_timeout:
+                print(
+                    f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown...",
+                )
+                self.stop.set()
 
 
 # think about the end behaviour (how the events should look like in the end)
