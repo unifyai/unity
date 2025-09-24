@@ -124,17 +124,17 @@ class CommsManager:
                 )
                 else:
                     topic = event["from_number"].replace("whatsapp:", "").strip()
-                # Put the message in the queue instead of creating a task
-                task = asyncio.run_coroutine_threadsafe(
-                    self.message_queue.publish(
-                        f"app:comms:{thread}_message",
-                        events_map[thread](
-                            content=content,
-                            contact=topic,
-                        ).to_json(),
-                    ),
-                    self.loop,
-                )
+                    # Put the message in the queue instead of creating a task
+                    task = asyncio.run_coroutine_threadsafe(
+                        self.message_queue.publish(
+                            f"app:comms:{thread}_message",
+                            events_map[thread](
+                                content=content,
+                                contact=topic,
+                            ).to_json(),
+                        ),
+                        self.loop,
+                    )
                 message.ack()
             elif thread == "call":
                 try:
