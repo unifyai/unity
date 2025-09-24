@@ -1,3 +1,4 @@
+from datetime import datetime
 from dotenv import load_dotenv
 
 from unity.conversation_manager_2.debug_logger import mark_job_done
@@ -9,6 +10,22 @@ import asyncio
 from unity.conversation_manager_2.conversation_manager import ConversationManager
 from unity.conversation_manager_2.comms_manager import CommsManager
 from unity.conversation_manager_2.event_broker import get_event_broker
+
+
+stop = None
+
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully"""
+    print(
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        + " - [MAIN.PY] Received signal "
+        + str(signum)
+        + ", shutting down gracefully...",
+    )
+    global stop
+    if stop:
+        stop.set()
 
 
 async def main(local: bool = False, project_name: str = "Assistants"):
