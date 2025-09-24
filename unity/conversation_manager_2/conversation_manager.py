@@ -16,9 +16,11 @@ from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager_2.actions import (
     RESPONSES_MODEL,
     _send_sms_message_via_number,
-    _send_email_via_address
+    _send_email_via_address,
+    _start_call
 )
 from unity.conversation_manager_2.state import ConversationManagerState
+from unity.conversation_manager_2.prompt_utils import ThreadMessage
 from unity.helpers import run_script, terminate_process
 
 
@@ -149,6 +151,7 @@ class ConversationManager:
         )
         self.chat_history = []
         self.call_proc = None
+        self.call_contact = None
 
     # should be re-written to account for the new refactor
     async def _init_past_events(self):
@@ -216,7 +219,8 @@ class ConversationManager:
             await self.event_broker.publish(
                 "app:call:response_gen", json.dumps({"type": "end_gen"})
             )
-            print(parsed_out)
+            # print(parsed_out)
+            self.state.active_conversations[self.call_contact.id].push_message("phone", ThreadMessage("You", last_phone_utterance, datetime.now()))
 
         else:
             out = await self.openai_client.responses.parse(
@@ -254,6 +258,17 @@ class ConversationManager:
                     )
                     event = EmailSent(contact=contact.email, subject=action["subject"], body=action["body"], message_id=action.get("message_id"))
                     self.state.push_event(event)
+                elif action["action_name"] == "make_call":
+                    print("calling...")
+                    contact_num_id = action["number_or_id"]
+                    contact = self.phone_contacts_map.get(
+                        contact_num_id
+                    ) or self.inverted_contacts_map.get(contact_num_id)
+                    await self.event_broker.publish("app:comms:call_initiated", PhoneCallInitiated(
+                        contact=self.assistant_number
+                    ).to_json())
+                    await _start_call(self.assistant_number, contact.number)
+
 
         self.chat_history.append(input_message[0])
         self.chat_history.append({"role": "assistant", "content": out})
@@ -401,10 +416,15 @@ class ConversationManager:
 
         elif isinstance(event, PhoneCallStarted):
             self.mode = "call"
+            contact = self.phone_contacts_map.get(
+                        event.contact
+                    )
+            self.call_contact = contact
             await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, PhoneCallEnded):
             self.mode = "text"
+            self.call_contact = None
             terminate_process(self.call_proc)
 
         elif isinstance(event, PhoneUtterance):
