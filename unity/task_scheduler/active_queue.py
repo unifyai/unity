@@ -763,8 +763,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except Exception:
             chain_size = 0
 
-        # Get a detailed progress update from the current task (best‑effort)
-        progress_text: str = ""
+        # Single inner ask combining a progress update request with the user's question (best‑effort)
+        inner_task_response: str = ""
         try:
             progress_prompt = (
                 "Please provide a detailed, task‑centric progress update so far. "
@@ -772,24 +772,19 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 "items completed; items remaining; risks/blockers; estimated time to finish if applicable. "
                 "Be comprehensive but concise."
             )
-            ph = await self._current_handle.ask(progress_prompt)  # type: ignore[arg-type]
+            combined_prompt = (
+                progress_prompt
+                + "\n\nAdditionally, answer the following user question directly and concisely:"  # noqa: E501
+                + "\nUSER QUESTION:\n"
+                + question
+            )
+            ih = await self._current_handle.ask(combined_prompt)  # type: ignore[arg-type]
             try:
-                progress_text = await ph.result()
+                inner_task_response = await ih.result()
             except Exception:
-                progress_text = ""
+                inner_task_response = ""
         except Exception:
-            progress_text = ""
-
-        # Also get the inner task's direct answer to the user's question (best‑effort)
-        task_direct_text: str = ""
-        try:
-            th = await self._current_handle.ask(question)  # type: ignore[arg-type]
-            try:
-                task_direct_text = await th.result()
-            except Exception:
-                task_direct_text = ""
-        except Exception:
-            task_direct_text = ""
+            inner_task_response = ""
 
         # Compose completions snapshot since this queue started
         try:
@@ -822,10 +817,9 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             "\n"
             "COPY POLICY (critical):\n"
             "- If CHAIN_SIZE == 1 and the user’s question is about the current task (not the overall queue/chain),\n"
-            "  you MUST return exactly the CURRENT_TASK_DIRECT_ANSWER verbatim — no extra words, headings, or formatting.\n"
-            "- If CURRENT_TASK_DIRECT_ANSWER is empty/unavailable in that case, return EXACTLY CURRENT_TASK_PROGRESS verbatim.\n"
+            "  you MUST return exactly the INNER_TASK_RESPONSE verbatim — no extra words, headings, or formatting.\n"
             "- Only when the question is explicitly about the queue/chain (e.g., overall/next/remaining/how many/comparisons)\n"
-            "  should you synthesise a queue‑aware answer using the provided snapshot and progress.\n"
+            "  should you synthesise a queue‑aware answer using the provided snapshot and context.\n"
         )
         client.set_system_message(sys)
 
@@ -845,10 +839,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             + (completions_summary or "(none)")
             + "\n\nCURRENT_TASK_ID: "
             + str(self._current_task_id)
-            + "\nCURRENT_TASK_DIRECT_ANSWER (verbatim-ready):\n"
-            + (task_direct_text or "")
-            + "\nCURRENT_TASK_PROGRESS:\n"
-            + (progress_text or "(unavailable)")
+            + "\nINNER_TASK_RESPONSE (verbatim-ready):\n"
+            + (inner_task_response or "")
             + "\n\nUSER QUESTION:\n"
             + question
         )
