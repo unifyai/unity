@@ -20,9 +20,6 @@ subscription_path = subscriber.subscription_path(project_id, subscription_id)
 headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 assistant_email = "mh-policies@unify.ai"
 
-# Initialize Unity environment and system components
-await ensure_system_initialized()
-
 
 def _ensure_email_logging_context() -> str:
     """Create the `IntranetEmails` context (idempotent) and return its name.
@@ -225,6 +222,14 @@ def callback(message):
 
 
 async def main():
+    # Initialize Unity/RAG system before subscribing
+    try:
+        from intranet.core.api import ensure_system_initialized
+
+        await ensure_system_initialized()
+    except Exception as e:
+        print(f"Error during system initialization: {e}", flush=True)
+
     # Use a flow control to limit in-flight messages
     flow_control = pubsub_v1.types.FlowControl(max_messages=10)
     streaming_pull = subscriber.subscribe(
