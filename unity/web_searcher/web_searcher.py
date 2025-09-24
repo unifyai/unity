@@ -2,6 +2,7 @@ import os
 import json
 from tavily import TavilyClient
 from typing import List, Dict, Any, Optional
+import asyncio
 import unify
 from unity.common.async_tool_loop import (
     start_async_tool_use_loop,
@@ -11,8 +12,10 @@ from unity.common.async_tool_loop import (
 from unity.common.llm_helpers import (
     inject_broader_context,
     methods_to_tool_dict,
+    make_request_clarification_tool,
 )
 from unity.events.manager_event_logging import log_manager_call
+from unity.events.event_bus import EVENT_BUS, Event
 from unity.web_searcher import prompt_builders
 
 
@@ -39,6 +42,8 @@ class WebSearcher:
         *,
         _return_reasoning_steps: bool = False,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         """
@@ -47,6 +52,42 @@ class WebSearcher:
         client = self._new_llm_client("gpt-5@openai")
 
         tools = dict(self._ask_tools)
+        if clarification_up_q is not None and clarification_down_q is not None:
+
+            async def _on_request(q: str):
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ManagerMethod",
+                        calling_id=_call_id,
+                        payload={
+                            "manager": "WebSearcher",
+                            "method": "ask",
+                            "action": "clarification_request",
+                            "question": q,
+                        },
+                    ),
+                )
+
+            async def _on_answer(ans: str):
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ManagerMethod",
+                        calling_id=_call_id,
+                        payload={
+                            "manager": "WebSearcher",
+                            "method": "ask",
+                            "action": "clarification_answer",
+                            "answer": ans,
+                        },
+                    ),
+                )
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         client.set_system_message(
             prompt_builders.build_ask_prompt(tools=tools),
