@@ -34,12 +34,14 @@ async def main(local: bool = False, project_name: str = "Assistants"):
         os.getenv("VOICE_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
         project_name=project_name,
+        stop=stop,
     )
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
 
     asyncio.create_task(conversation_manager.wait_for_events())
+    asyncio.create_task(conversation_manager.check_inactivity())
     asyncio.create_task(comms_manager.start())
 
     print("Server is Running...")
