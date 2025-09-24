@@ -105,7 +105,9 @@ class Assistant(Agent):
 
 
 async def entrypoint(ctx: agents.JobContext):
+    print("Connecting to room...")
     await ctx.connect()
+    print("Connected to room")
 
     # Get phone numbers from environment variables
     from_number = os.environ.get("CALL_FROM_NUMBER", "")
@@ -350,7 +352,9 @@ if __name__ == "__main__":
 
     # dispatch agent
     if sys.argv[1] == "dev":
+        print("Dispatching agent")
         dispatch_agent(agent_name)
+        print("Agent dispatched")
 
     agents.cli.run_app(
         agents.WorkerOptions(
