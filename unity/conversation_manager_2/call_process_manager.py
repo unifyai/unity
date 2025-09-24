@@ -2,6 +2,7 @@ import json
 
 import redis.asyncio as redis
 
+
 class CallProcessManager:
     def __init__(self, event_broker):
         self.event_broker: redis.Redis = event_broker
@@ -15,7 +16,3 @@ class CallProcessManager:
                     if msg["event_name"] == "start_call":
                         # start call
                         self.event_broker.publish(...)
-
-
-
-
