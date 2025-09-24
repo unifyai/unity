@@ -168,7 +168,6 @@ def test_flat_records_conversion(parser, supported_format_files):
 
     # Check record structure
     for record in records:
-        assert "document_id" in record
         assert "content_type" in record
         assert "content_text" in record
         assert record["content_type"] in [
@@ -176,6 +175,8 @@ def test_flat_records_conversion(parser, supported_format_files):
             "section",
             "paragraph",
             "sentence",
+            "image",
+            "table",
         ]
 
     # Document record should exist

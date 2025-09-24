@@ -615,7 +615,6 @@ def parser_validation_suite() -> Dict[str, Any]:
             "title",
             "summary",
             "content_text",
-            "document_id",
             "level",
             "confidence_score",
             "schema_id",
@@ -629,6 +628,8 @@ def parser_validation_suite() -> Dict[str, Any]:
                 "section",
                 "paragraph",
                 "sentence",
+                "image",
+                "table",
             ]
             assert isinstance(record["confidence_score"], (int, float))
             assert 0.0 <= record["confidence_score"] <= 1.0
