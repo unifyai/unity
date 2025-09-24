@@ -16,7 +16,14 @@ class NotificationBar:
         if timestamp:
             str_timestamp = timestamp.strftime("%A, %B %d, %Y at %I:%M %p")
 
-        self.notifs.append({"type": type, "content": n, "str_timestamp": str_timestamp, "timestamp": timestamp})
+        self.notifs.append(
+            {
+                "type": type,
+                "content": n,
+                "str_timestamp": str_timestamp,
+                "timestamp": timestamp,
+            }
+        )
 
     def clear(self, timestamp=None):
         if timestamp:
@@ -27,7 +34,10 @@ class NotificationBar:
 
     def __str__(self):
         return "\n".join(
-            [f"[{n['type'].title()} Notification @ {n['str_timestamp']}] {n['content']}" for n in self.notifs]
+            [
+                f"[{n['type'].title()} Notification @ {n['str_timestamp']}] {n['content']}"
+                for n in self.notifs
+            ]
         )
 
 

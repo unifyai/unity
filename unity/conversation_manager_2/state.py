@@ -42,7 +42,9 @@ class ConversationManagerState:
                 on_phone = False
                 if isinstance(event, PhoneCallStarted):
                     on_phone = True
-                self.add_contact_to_active_conversations(contact, on_phone, event.timestamp)
+                self.add_contact_to_active_conversations(
+                    contact, on_phone, event.timestamp
+                )
                 contact_added = True
 
             active_c = self.active_conversations[contact.id]
@@ -73,7 +75,9 @@ class ConversationManagerState:
                 message=ThreadMessage(contact.name, event.content, event.timestamp),
             )
             self.notifications.push_notif(
-                "comms", f"Phone utterance recieved from '{contact.name}'", event.timestamp
+                "comms",
+                f"Phone utterance recieved from '{contact.name}'",
+                event.timestamp,
             )
         elif isinstance(event, PhoneCallEnded):
             active_c.push_message(
@@ -104,21 +108,25 @@ class ConversationManagerState:
             self.notifications.push_notif(
                 "comms", f"SMS sent to '{contact.name}'", event.timestamp
             )
-        
+
         elif isinstance(event, ConductorQuerySent):
             self.notifications.push_notif(
-                "conductor", f"Query '{event.query}' with id={event.id} sent and recieved by conductor and is being processed...",
-                event.timestamp
+                "conductor",
+                f"Query '{event.query}' with id={event.id} sent and recieved by conductor and is being processed...",
+                event.timestamp,
             )
-        
+
         elif isinstance(event, ConductorResult):
             self.notifications.push_notif(
-                "conductor", f"Query with id={event.id} result: {event.result}", event.timestamp
+                "conductor",
+                f"Query with id={event.id} result: {event.result}",
+                event.timestamp,
             )
         if hasattr(event, "contact"):
             if contact_added:
                 self.notifications.push_notif(
-                    "comms", f"Added contact '{contact.name}' to active conversations",
+                    "comms",
+                    f"Added contact '{contact.name}' to active conversations",
                     event.timestamp,
                 )
 
