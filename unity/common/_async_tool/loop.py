@@ -295,10 +295,16 @@ async def async_tool_use_loop_inner(
     # ── 0-a+. Optional: append an initial batch of messages (list support) ──
     seeded_batch = None
     if isinstance(message, list):
-        seeded_batch = [
-            (m if isinstance(m, dict) else {"role": "user", "content": m})
-            for m in message
-        ]
+        # If the provided list looks like a list of content blocks (no 'role'),
+        # wrap them into a single user message to form a valid chat entry.
+        if all(isinstance(m, dict) and "role" not in m for m in message):
+            seeded_batch = [{"role": "user", "content": message}]
+        else:
+            # Otherwise treat as a pre-structured list of chat messages/strings.
+            seeded_batch = [
+                (m if isinstance(m, dict) else {"role": "user", "content": m})
+                for m in message
+            ]
         await _msg_dispatcher.append_msgs(seeded_batch)
 
     # ── initial prompt ───────────────────────────────────────────────────────
