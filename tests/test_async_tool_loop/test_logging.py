@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import re
 import pytest
 import unify
 
@@ -94,7 +95,12 @@ async def test_nested_logging_hierarchy_labels():
         (evt.payload or {}).get("hierarchy") == ["Outer", "Inner"] for evt in events
     )
     has_outer_inner_label = any(
-        (evt.payload or {}).get("hierarchy_label") == "Outer->Inner" for evt in events
+        isinstance((evt.payload or {}).get("hierarchy_label"), str)
+        and re.fullmatch(
+            r"Outer->Inner(?:\([0-9a-f]{4}\))?",
+            (evt.payload or {}).get("hierarchy_label"),
+        )
+        for evt in events
     )
 
     assert has_outer_only, "No ToolLoop event recorded with hierarchy ['Outer']"
@@ -149,7 +155,12 @@ async def test_single_loop_logging_hierarchy_label():
 
     has_solo = any((evt.payload or {}).get("hierarchy") == ["Solo"] for evt in events)
     has_solo_label = any(
-        (evt.payload or {}).get("hierarchy_label") == "Solo" for evt in events
+        isinstance((evt.payload or {}).get("hierarchy_label"), str)
+        and re.fullmatch(
+            r"Solo(?:\([0-9a-f]{4}\))?",
+            (evt.payload or {}).get("hierarchy_label"),
+        )
+        for evt in events
     )
     has_nested_under_solo = any(
         isinstance((evt.payload or {}).get("hierarchy"), list)
