@@ -327,10 +327,20 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             except TypeError:
                 # Delegate may use legacy signature; best-effort forwarding
                 self._delegate.stop(reason)  # type: ignore[misc]
+            # Also cancel the outer loop so both layers wind down
+            self._cancel_event.set()
+            try:
+                self._stop_event.set()
+            except Exception:
+                pass
             return
 
         # Always perform hard cancel behaviour (equivalent to previous cancel=True)
         self._cancel_event.set()
+        try:
+            self._stop_event.set()
+        except Exception:
+            pass
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
     def pause(self) -> None:
@@ -404,7 +414,15 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     async def result(self) -> str:
         """Return the final answer once the conversation loop (or delegate) completes."""
         if self._delegate is not None:
-            return await self._delegate.result()
+            # 1) Wait for the delegated (inner) handle to finish and capture its answer.
+            ans = await self._delegate.result()
+            # 2) Best-effort: also wait for the OUTER loop task to finish so no background work remains.
+            #    Swallow any exceptions here to preserve prior semantics (caller receives the inner result).
+            try:
+                await self._task
+            except Exception:
+                pass
+            return ans
         return await self._task
 
     # ── internal helper ──────────────────────────────────────────────────────
