@@ -16,6 +16,7 @@ from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager_2.actions import (
     RESPONSES_MODEL,
     _send_sms_message_via_number,
+    _send_email_via_address
 )
 from unity.conversation_manager_2.state import ConversationManagerState
 from unity.helpers import run_script, terminate_process
@@ -243,6 +244,15 @@ class ConversationManager:
                         contact.number, action["message"]
                     )
                     event = SMSSent(contact=contact.number, content=action["message"])
+                    self.state.push_event(event)
+                elif action["action_name"] == "send_email":
+                    print("sending email")
+                    contact_email_id = action["email_or_id"]
+                    contact = self.email_contacts_map.get(contact_email_id) or self.inverted_contacts_map.get(contact_email_id)
+                    await _send_email_via_address(
+                        contact.email, action["subject"], action["body"], action.get("messge_id")
+                    )
+                    event = EmailSent(contact=contact.email, subject=action["subject"], body=action["body"], message_id=action.get("message_id"))
                     self.state.push_event(event)
 
         self.chat_history.append(input_message[0])

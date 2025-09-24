@@ -1,4 +1,5 @@
 import json
+from typing import Optional
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
 
@@ -88,6 +89,7 @@ class EmailRecieved(Event):
     contact: str
     subject: str
     body: str
+    message_id: Optional[str]
 
 
 # assistant events
@@ -95,6 +97,13 @@ class EmailRecieved(Event):
 class SMSSent(Event):
     contact: str
     content: str
+
+@dataclass
+class EmailSent(Event):
+    contact: str
+    subject: str
+    body: str
+    message_id: Optional[str]
 
 
 @dataclass

@@ -2,7 +2,7 @@ from datetime import datetime
 import signal
 from dotenv import load_dotenv
 
-from unity.conversation_manager_2.debug_logger import mark_job_done
+# from unity.conversation_manager_2.debug_logger import mark_job_done
 
 load_dotenv()
 import os
@@ -74,7 +74,7 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     await stop.wait()
 
     print(f"Marking job {conversation_manager.job_name} done")
-    mark_job_done(conversation_manager.job_name)
+    # mark_job_done(conversation_manager.job_name)
 
 
 if __name__ == "__main__":

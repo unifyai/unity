@@ -1,5 +1,6 @@
 from .prompt_utils import (
     ThreadMessage,
+    EmailThreadMessage,
     ConversationContact,
     NotificationBar,
     add_spaces,
@@ -21,7 +22,7 @@ class ConversationManagerState:
         self.notifications.push_notif(notif, timestamp)
 
     def clear_notifications(self, timestamp=None):
-        print(self.notifications.notifs)
+        # print(self.notifications.notifs)
         self.notifications.clear(timestamp=timestamp)
 
     def push_event(self, event: Event):
@@ -112,7 +113,13 @@ class ConversationManagerState:
                 event.timestamp,
             )
         elif isinstance(event, EmailRecieved):
-            ...
+            active_c.push_message(
+                "email",
+                message=EmailThreadMessage(contact.name, event.subject, event.body, event.timestamp),
+            )
+            self.notifications.push_notif(
+                "comms", f"Email recieved recieved from '{contact.name}'", event.timestamp
+            )
         # assistant events
         elif isinstance(event, SMSSent):
             active_c.push_message(
@@ -124,20 +131,28 @@ class ConversationManagerState:
                 f"SMS sent to '{contact.name}'",
                 event.timestamp,
             )
-
-        elif isinstance(event, ConductorQuerySent):
+        
+        elif isinstance(event, EmailSent):
+            active_c.push_message(
+                "email", message=EmailThreadMessage("You", event.subject, event.body, event.timestamp)
+            )
             self.notifications.push_notif(
-                "conductor",
-                f"Query '{event.query}' with id={event.id} sent and recieved by conductor and is being processed...",
-                event.timestamp,
+                "comms", f"Email sent to '{contact.name}'", event.timestamp
             )
 
-        elif isinstance(event, ConductorResult):
-            self.notifications.push_notif(
-                "conductor",
-                f"Query with id={event.id} result: {event.result}",
-                event.timestamp,
-            )
+        # elif isinstance(event, ConductorQuerySent):
+        #     self.notifications.push_notif(
+        #         "conductor",
+        #         f"Query '{event.query}' with id={event.id} sent and recieved by conductor and is being processed...",
+        #         event.timestamp,
+        #     )
+
+        # elif isinstance(event, ConductorResult):
+        #     self.notifications.push_notif(
+        #         "conductor",
+        #         f"Query with id={event.id} result: {event.result}",
+        #         event.timestamp,
+        #     )
         if hasattr(event, "contact"):
             if contact_added:
                 self.notifications.push_notif(

@@ -25,6 +25,9 @@ class WaitForNextEvent(BaseModel):
 
 class SendEmail(BaseModel):
     action_name: Literal["send_email"]
+    email_or_id: str =  Field(
+        ..., description="Exact email or contact id of the contact to email"
+    )
     subject: str
     body: str
 
@@ -44,7 +47,7 @@ class MakeCall(BaseModel):
     )
 
 
-actions = Union[WaitForNextEvent, SendSMS, MakeCall]
+actions = Union[WaitForNextEvent, SendSMS, SendEmail, MakeCall]
 
 
 class ResponsePhone(BaseModel):
@@ -92,6 +95,47 @@ async def _send_sms_message_via_number(to_number: str, message: str) -> str:
                 response.raise_for_status()
             except Exception as e:
                 print(e)
+            response_text = await response.text()
+            print(f"Response: {response_text}")
+            return response_text
+
+
+async def _send_email_via_address(
+    to_email: str,
+    subject: str,
+    content: str,
+    message_id: str=None,
+) -> str:
+    """
+    Send an SMS message using the SMS provider API.
+
+    Args:
+        to_email: The email address to send the email to
+        subject: The subject of the email
+        content: The message content to send
+        message_id: The message ID of the email to reply to
+
+    Returns:
+        str: The response from the email API
+    """
+    from_email = os.getenv("ASSISTANT_EMAIL")
+
+    print(
+        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}"
+    )
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{os.getenv('UNITY_COMMS_URL')}/email/send",
+            headers=headers,
+            json={
+                "from": from_email,
+                "to": to_email,
+                "subject": subject,
+                "body": content,
+                "in_reply_to": message_id,
+            },
+        ) as response:
+            response.raise_for_status()
             response_text = await response.text()
             print(f"Response: {response_text}")
             return response_text
