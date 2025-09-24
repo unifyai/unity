@@ -8,9 +8,6 @@ cd ~/unity (wherever you cloned it)
 uv venv --python 3.11 .unity
 source .unity/bin/activate
 uv pip install -r requirements.txt
-
-# Step 2: Install docling separately (avoids resolver deadlock)
-uv pip install "docling>=2.49.0"
 ```
 
 ### Environment Variables
