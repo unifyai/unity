@@ -92,3 +92,34 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     lines += ["", clarification_guidance(tools)]
 
     return "\n".join(lines)
+
+
+def build_simulated_method_prompt(
+    method: str,
+    user_request: str,
+    parent_chat_context: list[dict] | None = None,
+) -> str:
+    """Return instruction prompt for the simulated WebSearcher."""
+    import json
+
+    preamble = f"On this turn you are simulating the '{method}' method."
+    if method.lower() == "ask":
+        behaviour = (
+            "Please always answer the question with an imaginary but plausible "
+            "response about the web research findings. Do NOT ask for "
+            "clarification or describe your process. Provide a concise answer "
+            "with brief source-like references (titles or URLs) as if you had searched."
+        )
+    else:
+        behaviour = (
+            "Provide a final response as though the requested operation has "
+            "already completed (past tense)."
+        )
+
+    parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
+    if parent_chat_context:
+        parts.append(
+            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+        )
+
+    return "\n".join(parts)
