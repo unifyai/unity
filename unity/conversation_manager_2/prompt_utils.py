@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from collections import deque
 
 
@@ -22,7 +20,7 @@ class NotificationBar:
                 "content": n,
                 "str_timestamp": str_timestamp,
                 "timestamp": timestamp,
-            }
+            },
         )
 
     def clear(self, timestamp=None):
@@ -37,7 +35,7 @@ class NotificationBar:
             [
                 f"[{n['type'].title()} Notification @ {n['str_timestamp']}] {n['content']}"
                 for n in self.notifs
-            ]
+            ],
         )
 
 
