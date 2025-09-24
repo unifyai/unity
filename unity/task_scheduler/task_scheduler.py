@@ -630,6 +630,7 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_down_q: asyncio.Queue[str] | None = None,
         activated_by: Optional[ActivatedBy] = None,
         detach: bool = True,
+        unlink_from_prev: bool = False,
     ) -> SteerableToolHandle:
         """
         Start the execution of a runnable task by its identifier.
@@ -691,6 +692,7 @@ class TaskScheduler(BaseTaskScheduler):
         self._detach_from_queue_for_activation(
             task_id=task_id,
             detach=detach,
+            unlink_from_prev=unlink_from_prev,
         )
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
@@ -770,6 +772,9 @@ class TaskScheduler(BaseTaskScheduler):
             activated_by=ActivatedBy.explicit,
             # Detach first task when explicitly requested; otherwise keep queue semantics
             detach=bool(detach),
+            # Only at creation: if we are starting from a mid-queue task in chained mode,
+            # unlink from predecessor once to make this the effective head.
+            unlink_from_prev=(not bool(detach)),
         )
         return ActiveQueue(
             self,
@@ -3445,11 +3450,13 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         task_id: int,
         detach: bool = True,
+        unlink_from_prev: bool = False,
     ) -> None:
         _ops_detach_for_activation(
             self,
             task_id=task_id,
             detach=detach,
+            unlink_from_prev=unlink_from_prev,
         )
 
     _TERMINAL_STATUSES = {Status.completed, Status.cancelled, Status.failed}
