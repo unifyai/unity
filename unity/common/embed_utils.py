@@ -83,20 +83,24 @@ def ensure_derived_column(
                     "lg": {"context": referenced_logs_context or context},
                 }
 
-            unify.create_derived_logs(
+            response = unify.create_derived_logs(
                 context=context,
                 key=key,
                 equation=equation,
-                referenced_logs={"lg": {"context": referenced_logs_context or context}},
+                referenced_logs=referenced_logs,
                 derived=derived,
             )
+            print(f"{response}")
         except unify.RequestError as e:
+            print(f"Failed to create derived column: {e.response.text}")
             body = getattr(e.response, "text", "") or ""
             if (
                 "already exists" in body
                 or "duplicate key value violates unique constraint" in body
             ):
                 return
+
+            raise e
 
 
 def ensure_vector_column(
