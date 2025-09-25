@@ -139,6 +139,20 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         except Exception:
             pass
 
+        # Small grace yield: if a pass-through delegate is being adopted,
+        # give the event loop a tick to complete adoption so we can route
+        # this ask directly to the inner handle.
+        try:
+            if self._delegate is None:
+                await asyncio.sleep(0)
+                if self._delegate is not None:
+                    return await self._delegate.ask(
+                        question,
+                        _return_reasoning_steps=_return_reasoning_steps,
+                    )
+        except Exception:
+            pass
+
         # 0.  Defensive guard: if the outer loop has already finished we can
         #     just answer from the final transcript without starting another
         #     loop.
