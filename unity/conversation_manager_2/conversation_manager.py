@@ -327,6 +327,24 @@ class ConversationManager:
                     if isinstance(event, Ping):
                         print("ping received - keeping conversation manager alive")
                         continue
+                    elif isinstance(event, StartupEvent):
+                        payload = event.to_dict()["payload"]
+                        self.set_details(payload)
+                        kwargs = {
+                            "job_name": self.job_name,
+                            "timestamp": payload["timestamp"],
+                            "medium": payload["medium"],
+                            "user_id": self.user_id,
+                            "assistant_id": self.assistant_id,
+                            "user_name": self.user_name,
+                            "assistant_name": self.assistant_name,
+                            "user_number": self.user_number,
+                            "user_whatsapp_number": self.user_whatsapp_number,
+                            "assistant_number": self.assistant_number,
+                            "user_email": self.user_email,
+                            "assistant_email": self.assistant_email,
+                        }
+                        asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
                     await self.handle_event(event)
 
     def set_details(self, payload):
@@ -365,26 +383,7 @@ class ConversationManager:
     async def handle_event(self, event: Event):
         self.state.push_event(event)
 
-        if isinstance(event, StartupEvent):
-            payload = event.to_dict()["payload"]
-            self.set_details(payload)
-            kwargs = {
-                "job_name": self.job_name,
-                "timestamp": payload["timestamp"],
-                "medium": payload["medium"],
-                "user_id": self.user_id,
-                "assistant_id": self.assistant_id,
-                "user_name": self.user_name,
-                "assistant_name": self.assistant_name,
-                "user_number": self.user_number,
-                "user_whatsapp_number": self.user_whatsapp_number,
-                "assistant_number": self.assistant_number,
-                "user_email": self.user_email,
-                "assistant_email": self.assistant_email,
-            }
-            asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
-
-        elif isinstance(event, PhoneCallInitiated):
+        if isinstance(event, PhoneCallInitiated):
             # start phone call process and wait untils its done, we should probably make sure
             # first that any running llm calls are awaited, and any scheduled llm calls are canceled
             # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
