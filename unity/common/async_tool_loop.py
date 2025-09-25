@@ -347,14 +347,20 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         # Best-effort forwarding to a delegate (no logging, no early return)
         if self._delegate is not None:
             try:
-                self._delegate.stop(reason=reason)  # type: ignore[misc]
+                maybe = self._delegate.stop(reason=reason)  # type: ignore[misc]
+                if asyncio.iscoroutine(maybe):
+                    asyncio.create_task(maybe)
             except TypeError:
                 try:
-                    self._delegate.stop(reason)  # type: ignore[misc]
+                    maybe = self._delegate.stop(reason)  # type: ignore[misc]
+                    if asyncio.iscoroutine(maybe):
+                        asyncio.create_task(maybe)
                 except Exception:
                     pass
             except Exception:
                 pass
+
+        # Pre-adoption nested handles are stopped by the inner loop via propagate_stop_once.
 
         # Expedite shutdown of the outer task and signal stop_event for any waiters
         try:
@@ -439,6 +445,13 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     @functools.wraps(SteerableToolHandle.result, updated=())
     async def result(self) -> str:
         """Return the final answer once the conversation loop (or delegate) completes."""
+        _stopped_notice = "processed stopped early, no result"
+        # If the outer stop() was requested, return immediately with a stable notice.
+        try:
+            if self._cancel_event.is_set():
+                return _stopped_notice
+        except Exception:
+            pass
         if self._delegate is not None:
             # 1) Wait for the delegated (inner) handle to finish and capture its answer.
             ans = await self._delegate.result()
@@ -447,12 +460,16 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             try:
                 await self._task
             except asyncio.CancelledError:
-                # Expected when outer stop() cancelled the loop task – ignore.
-                pass
+                # Outer task was cancelled – standardize the user-facing outcome.
+                return _stopped_notice
             except Exception:
                 pass
             return ans
-        return await self._task
+        try:
+            return await self._task
+        except asyncio.CancelledError:
+            # When callers cancel the OUTER loop without a delegate, return a stable notice.
+            return _stopped_notice
 
     # ── internal helper ──────────────────────────────────────────────────────
     def _adopt(self, new_handle: "SteerableToolHandle") -> None:

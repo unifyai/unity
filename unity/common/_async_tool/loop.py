@@ -419,8 +419,8 @@ async def async_tool_use_loop_inner(
                         "Handing over to passthrough delegate – outer loop exiting.",
                         prefix="🔁",
                     )
-                # Proactively stop any remaining outer pending tasks, but DO NOT touch the
-                # delegate itself (it lives in the inner loop and is now in charge).
+                # Proactively stop any remaining outer pending tasks, and also ask the
+                # delegated handle to stop if the outer loop has been cancelled already.
                 try:
                     if tools_data.pending:
                         # Forward a stop to any nested steerable handles first to allow graceful shutdown
@@ -431,11 +431,15 @@ async def async_tool_use_loop_inner(
                                 "outer-loop handover",
                             )
                         await tools_data.cancel_pending_tasks()
+                    # If the outer loop has been cancelled already, we will not await the delegate here;
+                    # result() will return immediately in the outer handle when cancel is set.
                 except Exception:
                     pass
                 # Await the delegate and return its answer as the final reply for the outer loop.
+                # Use asyncio.shield so that cancelling the OUTER loop task does not cancel
+                # the delegated inner handle – the inner should continue and produce its result.
                 try:
-                    return await _delegate.result()
+                    return await asyncio.shield(_delegate.result())
                 finally:
                     # Ensure lineage contextvar is reset even on early return
                     pass
