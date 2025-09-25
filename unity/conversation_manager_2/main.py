@@ -2,8 +2,6 @@ from datetime import datetime
 import signal
 from dotenv import load_dotenv
 
-# from unity.conversation_manager_2.debug_logger import mark_job_done
-
 load_dotenv()
 import os
 import asyncio
@@ -73,8 +71,7 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     print("Server is Running...")
     await stop.wait()
 
-    print(f"Marking job {conversation_manager.job_name} done")
-    # mark_job_done(conversation_manager.job_name)
+    conversation_manager.cleanup()
 
 
 if __name__ == "__main__":
