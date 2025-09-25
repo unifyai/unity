@@ -6,6 +6,7 @@ When a session starts, it executes roughly:
 
 ```bash
 export UNIFY_TESTS_RAND_PROJ=True
+export UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True
 source ~/unity/.unity/bin/activate
 pytest <that_file.py>
 ```
