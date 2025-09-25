@@ -443,3 +443,40 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager.import_directory,
             include_class_name=False,
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WebSearcher mirroring
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def mirror_web_searcher_tools() -> Dict[str, Any]:
+    """Build a tool-dict mirroring the real WebSearcher's ask tools.
+
+    Uses AST reflection of WebSearcher.__init__ with a static fallback.
+    """
+    from unity.common.llm_helpers import methods_to_tool_dict
+    from unity.web_searcher.web_searcher import WebSearcher
+
+    try:
+        pairs = _extract_owner_method_pairs(
+            WebSearcher,
+            "_ask_tools",
+            self_external_map=None,
+            extra_class_names={"WebSearcher": WebSearcher},
+        )
+        if pairs:
+            tools = _build_tool_dict(pairs)
+            if tools:
+                return tools
+    except Exception:
+        pass
+
+    # Fallback – current canonical ask tool set
+    return methods_to_tool_dict(
+        WebSearcher._search,
+        WebSearcher._extract,
+        WebSearcher._crawl,
+        WebSearcher._map,
+        include_class_name=False,
+    )
