@@ -446,15 +446,13 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     async def result(self) -> str:
         """Return the final answer once the conversation loop (or delegate) completes."""
         _stopped_notice = "processed stopped early, no result"
-        # If the outer stop() was requested, return immediately with a stable notice.
-        try:
-            if self._cancel_event.is_set():
-                return _stopped_notice
-        except Exception:
-            pass
         if self._delegate is not None:
             # 1) Wait for the delegated (inner) handle to finish and capture its answer.
-            ans = await self._delegate.result()
+            try:
+                ans = await self._delegate.result()
+            except asyncio.CancelledError:
+                # Standardised stop semantics: return a notice string instead of raising.
+                ans = "processed stopped early, no result"
             # 2) Best-effort: also wait for the OUTER loop task to finish so no background work remains.
             #    Swallow any exceptions here to preserve prior semantics (caller receives the inner result).
             try:
