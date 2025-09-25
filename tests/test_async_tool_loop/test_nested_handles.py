@@ -1025,9 +1025,9 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     # Now stop the OUTER loop directly – should propagate to inner
     outer.stop("test-stop")
 
-    # The outer handle result should raise (non-persist cancel mode)
-    with pytest.raises(asyncio.CancelledError):
-        await outer.result()
+    # The outer handle now returns a standardized notice instead of raising
+    final = await outer.result()
+    assert final == "processed stopped early, no result"
 
     # Assert that the inner handle's stop() was invoked exactly once
     assert stop_calls["count"] == 1, "inner handle stop() was not propagated"
