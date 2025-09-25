@@ -348,3 +348,91 @@ async def test_no_extra_llm_turn_during_passthrough_handover():
 
     # Inner finished successfully
     assert isinstance(final, str) and final, "Outer result should be a non-empty string"
+
+
+# ---------------------------------------------------------------------------
+#  Regression: result() must not raise CancelledError after outer stop
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_result_after_outer_stop_no_cancelled_error():
+    """After pass-through adoption, calling outer_handle.stop() cancels the
+    outer loop task; result() must still return the inner result (not raise).
+
+    Prior to swallowing asyncio.CancelledError in AsyncToolUseLoopHandle.result,
+    awaiting result() would propagate the cancellation of the outer task even
+    though the delegate finished cleanly. This test fails on the old behavior
+    and passes after the fix.
+    """
+
+    # Inner tool: quick async sleep
+    @unify.traced
+    async def sleeper(delay: float = 0.01) -> str:
+        await asyncio.sleep(delay)
+        return "slept"
+
+    # Delegating tool: returns a pass-through inner handle that completes normally
+    async def delegating_tool_pass():  # type: ignore[valid-type]
+        inner_client = unify.AsyncUnify(
+            endpoint="o4-mini@openai",
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
+        )
+        inner_handle = start_async_tool_use_loop(
+            inner_client,
+            message="Run sleeper then finish",
+            tools={"sleeper": sleeper},
+            log_steps=False,
+        )
+        inner_handle.__passthrough__ = True  # type: ignore[attr-defined]
+        return inner_handle
+
+    delegating_tool_pass.__name__ = "delegating_tool_pass"
+    delegating_tool_pass.__qualname__ = "delegating_tool_pass"
+
+    # Start outer loop
+    client = unify.AsyncUnify(
+        endpoint="o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "Call `delegating_tool_pass` once then wait for it to finish before replying DONE.",
+    )
+
+    outer_handle = start_async_tool_use_loop(
+        client,
+        message="go",
+        tools={"delegating_tool_pass": delegating_tool_pass},
+        log_steps=False,
+    )
+
+    # Wait until delegate is adopted
+    async def _delegated() -> bool:
+        return getattr(outer_handle, "_delegate", None) is not None
+
+    start = asyncio.get_event_loop().time()
+    while not await _delegated():
+        if asyncio.get_event_loop().time() - start > 30:
+            raise TimeoutError("Delegate not adopted within 30 s")
+        await asyncio.sleep(0.01)
+
+    delegate = outer_handle._delegate  # type: ignore[attr-defined]
+
+    # Prevent outer stop() from forwarding to the inner handle so the inner can
+    # complete normally; still cancel the OUTER loop task.
+    try:
+        setattr(delegate, "stop", None)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    # Cancel the outer loop; this used to make result() bubble CancelledError
+    outer_handle.stop(reason="test-outer-cancel")
+
+    # Must NOT raise – should return the inner result (e.g., "slept")
+    final = await outer_handle.result()
+    assert (
+        isinstance(final, str) and final
+    ), "result() should return inner result, not raise"
