@@ -626,8 +626,7 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     # The queue-level synthesized prompt should include chain context and the user question
     user_prompt = prompt_capture.get("user", "")
     assert "CHAIN_ROWS_JSON:" in user_prompt
-    assert "CURRENT_TASK_DIRECT_ANSWER" in user_prompt
-    assert "CURRENT_TASK_PROGRESS" in user_prompt
+    assert "INNER_TASK_RESPONSE" in user_prompt
     assert "USER QUESTION:" in user_prompt and "How is the queue going?" in user_prompt
 
     # Cleanup: stop the active queue to avoid leaving background tasks running
