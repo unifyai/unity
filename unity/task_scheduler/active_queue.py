@@ -201,13 +201,49 @@ class _QueueSnapshot:
                 current_task_id,
             )
 
-            total_count = len(queue_rows)
-            # Identify current index
-            current_index = -1
+            # Prefer a full chain snapshot (including terminal predecessors) for
+            # progress math, while keeping the details list runnable-only.
+            try:
+                _full_chain = (
+                    scheduler._walk_queue_from_task(  # type: ignore[attr-defined]
+                        task_id=int(current_task_id),
+                    )
+                    or []
+                )
+            except Exception:
+                _full_chain = []
+
+            full_rows: list[dict] = []
+            for t in _full_chain:
+                try:
+                    full_rows.append(
+                        {
+                            "task_id": getattr(t, "task_id", None),
+                            "name": getattr(t, "name", None),
+                            "description": getattr(t, "description", None),
+                            "status": getattr(t, "status", None),
+                            "schedule": getattr(t, "schedule", None),
+                        },
+                    )
+                except Exception:
+                    continue
+
+            # Compute indices against both views
+            total_count_runnable = len(queue_rows)
+            total_count_full = len(full_rows) if full_rows else total_count_runnable
+
+            # Identify current index in each view
+            current_index_runnable = -1
             for idx, r in enumerate(queue_rows):
                 if r.get("task_id") == current_task_id:
-                    current_index = idx
+                    current_index_runnable = idx
                     break
+            current_index_full = -1
+            if full_rows:
+                for idx, r in enumerate(full_rows):
+                    if r.get("task_id") == current_task_id:
+                        current_index_full = idx
+                        break
 
             # Count statuses
             def _to_status_str(row: dict) -> str:
@@ -216,25 +252,60 @@ class _QueueSnapshot:
                 except Exception:
                     return str(row.get("status"))
 
-            completed_count = sum(
-                1 for r in queue_rows if _to_status_str(r) == "completed"
-            )
-            remaining_count = max(0, total_count - completed_count)
+            # Use full chain (when available) to count completed predecessors and
+            # compute remaining/position; fall back to runnable-only otherwise.
+            if full_rows:
+                completed_count = sum(
+                    1 for r in full_rows if _to_status_str(r) == "completed"
+                )
+                total_count = total_count_full
+                remaining_count = max(0, total_count - completed_count)
+                current_index = current_index_full
+            else:
+                completed_count = sum(
+                    1 for r in queue_rows if _to_status_str(r) == "completed"
+                )
+                total_count = total_count_runnable
+                remaining_count = max(0, total_count - completed_count)
+                current_index = current_index_runnable
 
-            # Next tasks preview (up to 3)
+            # Next tasks preview (up to 3) – derive from runnable view to avoid index drift
             next_names: list[str] = []
-            if current_index >= 0:
-                for j in range(current_index + 1, min(current_index + 4, total_count)):
-                    nm = queue_rows[j].get("name")
+            if current_index_runnable >= 0 and total_count_runnable > 0:
+                for j in range(
+                    current_index_runnable + 1,
+                    min(current_index_runnable + 4, total_count_runnable),
+                ):
+                    try:
+                        nm = queue_rows[j].get("name")
+                    except Exception:
+                        nm = None
                     if nm:
                         next_names.append(str(nm))
 
             # High-level summary line
             if current_index >= 0 and current_index < total_count:
-                current_name = queue_rows[current_index].get("name") or "(unnamed task)"
+                # Use runnable view for the display name to ensure the active task is referenced
+                if 0 <= current_index_runnable < len(queue_rows):
+                    current_name = (
+                        queue_rows[current_index_runnable].get("name")
+                        or "(unnamed task)"
+                    )
+                elif full_rows and 0 <= current_index_full < len(full_rows):
+                    current_name = (
+                        full_rows[current_index_full].get("name") or "(unnamed task)"
+                    )
+                else:
+                    current_name = "(unnamed task)"
+                # Position uses full-chain index when available (e.g., 2/4), else runnable
+                current_pos = (
+                    (current_index_full + 1)
+                    if (full_rows and current_index_full >= 0)
+                    else (current_index_runnable + 1)
+                )
                 headline = (
                     f"Chain status: {completed_count}/{total_count} completed; "
-                    f"{remaining_count} remaining; executing {current_index + 1}/{total_count}: "
+                    f"{remaining_count} remaining; executing {current_pos}/{total_count}: "
                     f"{current_name}."
                 )
             else:
