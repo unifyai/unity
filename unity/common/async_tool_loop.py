@@ -502,6 +502,17 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                 # interjections are *best-effort* hints rather than critical.
                 pass
 
+            # Deduplicate: remove any identical buffered entries so the
+            # subsequent early-interjection replay does not double-forward.
+            try:
+                if self._early_interjects:
+                    self._early_interjects = [
+                        m for m in self._early_interjects if m != msg
+                    ]
+            except Exception:
+                # Best-effort only – never allow dedup bookkeeping to break adoption.
+                pass
+
         # Keep pause / cancel signals in sync – they might have been toggled
         # before we adopted the delegate.
         try:
