@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pydantic_core import from_json
 
-from unity.conversation_manager_2.debug_logger import log_job_startup
+from unity.conversation_manager_2.debug_logger import log_job_startup, mark_job_done
 from unity.events.event_bus import EVENT_BUS
 from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager_2.actions import (
@@ -425,7 +425,7 @@ class ConversationManager:
         elif isinstance(event, PhoneCallEnded):
             self.mode = "text"
             self.call_contact = None
-            terminate_process(self.call_proc)
+            self.cleanup_call_proc()
 
         elif isinstance(event, PhoneUtterance):
             await self.schedule_llm_run(0, cancel_running=True)
@@ -446,6 +446,22 @@ class ConversationManager:
                     f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown...",
                 )
                 self.stop.set()
+
+    def cleanup_call_proc(self):
+        if hasattr(self, "call_proc") and self.call_proc:
+            print(f"Terminating call process")
+            try:
+                terminate_process(self.call_proc)
+                self.call_proc = None
+                print(f"Call process terminated")
+            except Exception as e:
+                print(f"Error terminating call process: {e}")
+
+    def cleanup(self):
+        """Clean up any running call processes"""
+        print(f"Marking job {self.job_name} done")
+        mark_job_done(self.job_name)
+        self.cleanup_call_proc()
 
 
 # think about the end behaviour (how the events should look like in the end)
