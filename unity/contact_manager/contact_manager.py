@@ -1604,8 +1604,6 @@ class ContactManager(BaseContactManager):
         """
         # Prefer a single backend call that whitelists the built‑in columns to
         # keep payloads small without a prior fields introspection request.
-        # If the client does not support `from_fields`, fall back to excluding
-        # private fields using a lightweight introspection.
         # Fast-path: tighten the requested limit when the filter guarantees
         # at most a single match (unique equality) or a bounded small list.
         eff_limit = limit
@@ -1633,27 +1631,17 @@ class ContactManager(BaseContactManager):
                         if count_ids > 0:
                             eff_limit = min(eff_limit, count_ids)
 
-        try:
-            # Read built‑ins plus any custom columns we observed in this instance
-            from_fields = list(self._BUILTIN_FIELDS)
-            if getattr(self, "_known_custom_fields", None):
-                from_fields.extend(sorted(self._known_custom_fields))
-            logs = unify.get_logs(
-                context=self._ctx,
-                filter=filter,
-                offset=offset,
-                limit=eff_limit,
-                from_fields=from_fields,
-            )
-        except TypeError:
-            # Older client without from_fields support → avoid an extra
-            # get_fields call and fetch once with the tightened limit.
-            logs = unify.get_logs(
-                context=self._ctx,
-                filter=filter,
-                offset=offset,
-                limit=eff_limit,
-            )
+        # Read built‑ins plus any custom columns we observed in this instance
+        from_fields = list(self._BUILTIN_FIELDS)
+        if getattr(self, "_known_custom_fields", None):
+            from_fields.extend(sorted(self._known_custom_fields))
+        logs = unify.get_logs(
+            context=self._ctx,
+            filter=filter,
+            offset=offset,
+            limit=eff_limit,
+            from_fields=from_fields,
+        )
         return [Contact(**lg.entries) for lg in logs]
 
     # ------------------------------------------------------------------ #
