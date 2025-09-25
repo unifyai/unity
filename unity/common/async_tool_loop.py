@@ -446,6 +446,9 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             #    Swallow any exceptions here to preserve prior semantics (caller receives the inner result).
             try:
                 await self._task
+            except asyncio.CancelledError:
+                # Expected when outer stop() cancelled the loop task – ignore.
+                pass
             except Exception:
                 pass
             return ans
