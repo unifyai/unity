@@ -92,6 +92,10 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self._delegate: Optional["SteerableToolHandle"] = None
         self._pause_event.set()
         self._loop_id: str = loop_id
+        # Human-friendly label for logs (includes 4-hex suffix when available).
+        # This is populated by the inner loop as soon as it constructs LoopConfig.
+        # Until then, fall back to the bare loop_id.
+        self._log_label: str = loop_id
         # Only the top-level handle should emit the public stop log.
         # Nested/adopted handles will inherit False to avoid duplicate logging.
         self._is_root_handle: bool = False
@@ -120,7 +124,8 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         The question is read-only (the tool state is not modified whatsoever).
         The calling parent loop is left completely untouched.
         """
-        LOGGER.info(f"🕹️ [{self._loop_id}] Ask requested: {question}")
+        _label = getattr(self, "_log_label", None) or self._loop_id
+        LOGGER.info(f"🕹️ [{_label}] Ask requested: {question}")
         # Fast-path: delegated handles answer directly.
         if self._delegate is not None:
             return await self._delegate.ask(
@@ -235,7 +240,11 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         # "Question(TaskScheduler.execute->TaskScheduler.ask)" when a single
         # nested handle is present.
         try:
-            parent_label: str = getattr(self, "_loop_id", "unknown") or "unknown"
+            parent_label: str = (
+                getattr(self, "_log_label", None)
+                or getattr(self, "_loop_id", "unknown")
+                or "unknown"
+            )
         except Exception:
             parent_label = "unknown"
 
@@ -246,7 +255,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             nested_ids: set[str] = set()
             for _t, _inf in _ti.items() if isinstance(_ti, dict) else []:
                 _h = _inf.get("handle")
-                _lid = getattr(_h, "_loop_id", None)
+                _lid = getattr(_h, "_log_label", None) or getattr(_h, "_loop_id", None)
                 if isinstance(_lid, str) and _lid:
                     nested_ids.add(_lid)
             if len(nested_ids) == 1:
@@ -306,7 +315,8 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     # -- public API -----------------------------------------------------------
     @functools.wraps(SteerableToolHandle.interject, updated=())
     async def interject(self, message: str) -> None:
-        LOGGER.info(f"️ [{self._loop_id}] Interject requested: {message}")
+        _label = getattr(self, "_log_label", None) or self._loop_id
+        LOGGER.info(f"️ [{_label}] Interject requested: {message}")
         if self._delegate is not None:
             await self._delegate.interject(message)
             return
@@ -328,8 +338,9 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
         # Only the root/top-level handle logs the stop request
         if getattr(self, "_is_root_handle", False):
+            _label = getattr(self, "_log_label", None) or self._loop_id
             LOGGER.info(
-                f"🛑 [{self._loop_id}] Stop requested"
+                f"🛑 [{_label}] Stop requested"
                 + (f" – reason: {reason}" if reason else ""),
             )
 
@@ -357,7 +368,8 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
     def pause(self) -> None:
-        LOGGER.info(f"⏸️ [{self._loop_id}] Pause requested")
+        _label = getattr(self, "_log_label", None) or self._loop_id
+        LOGGER.info(f"⏸️ [{_label}] Pause requested")
         if self._delegate is not None:
             self._delegate.pause()
             return
@@ -388,7 +400,8 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
     def resume(self) -> None:
-        LOGGER.info(f"▶️ [{self._loop_id}] Resume requested")
+        _label = getattr(self, "_log_label", None) or self._loop_id
+        LOGGER.info(f"▶️ [{_label}] Resume requested")
         if self._delegate is not None:
             self._delegate.resume()
             return
