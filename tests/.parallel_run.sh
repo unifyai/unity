@@ -41,8 +41,8 @@ if (( $# == 0 )); then
 else
   for arg in "$@"; do
     if [[ -f "$arg" ]]; then
-      # only include python files directly
-      if [[ "$arg" == *.py ]]; then
+      # only include python files directly, ignoring any conftest.py
+      if [[ "$arg" == *.py && "${arg##*/}" != "conftest.py" ]]; then
         direct_files+=( "$arg" )
       fi
     elif [[ -d "$arg" ]]; then
@@ -77,7 +77,7 @@ build_find_cmd() {
       cmd+=( -o -name "$d" )
     fi
   done
-  cmd+=( ")" -prune ")" -o "(" -type f -name "*.py" -print0 ")" )
+  cmd+=( ")" -prune ")" -o "(" -type f -name "*.py" ! -name "conftest.py" -print0 ")" )
 
   printf '%q ' "${cmd[@]}"
 }
