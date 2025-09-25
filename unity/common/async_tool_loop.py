@@ -92,6 +92,9 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self._delegate: Optional["SteerableToolHandle"] = None
         self._pause_event.set()
         self._loop_id: str = loop_id
+        # Only the top-level handle should emit the public stop log.
+        # Nested/adopted handles will inherit False to avoid duplicate logging.
+        self._is_root_handle: bool = False
 
         # Buffer interjections that may arrive **before** a downstream handle
         # (e.g. an `ActiveTask`) has been adopted.  Once a delegate is ready we
@@ -316,27 +319,37 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self,
         reason: Optional[str] = None,
     ) -> None:
-        LOGGER.info(
-            f"🛑 [{self._loop_id}] Stop requested"
-            + (f" – reason: {reason}" if reason else ""),
-        )
-        if self._delegate is not None:
-            try:
-                # Forward to delegate (always hard-cancel semantics)
-                self._delegate.stop(reason=reason)  # type: ignore[misc]
-            except TypeError:
-                # Delegate may use legacy signature; best-effort forwarding
-                self._delegate.stop(reason)  # type: ignore[misc]
-            # Also cancel the outer loop so both layers wind down
-            self._cancel_event.set()
-            try:
-                self._stop_event.set()
-            except Exception:
-                pass
+        # Idempotent guard: if already stopping, do nothing and DO NOT log again
+        if self._cancel_event.is_set():
             return
 
-        # Always perform hard cancel behaviour (equivalent to previous cancel=True)
+        # Flip the cancel event first so concurrent callers see we are stopping
         self._cancel_event.set()
+
+        # Only the root/top-level handle logs the stop request
+        if getattr(self, "_is_root_handle", False):
+            LOGGER.info(
+                f"🛑 [{self._loop_id}] Stop requested"
+                + (f" – reason: {reason}" if reason else ""),
+            )
+
+        # Best-effort forwarding to a delegate (no logging, no early return)
+        if self._delegate is not None:
+            try:
+                self._delegate.stop(reason=reason)  # type: ignore[misc]
+            except TypeError:
+                try:
+                    self._delegate.stop(reason)  # type: ignore[misc]
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        # Expedite shutdown of the outer task and signal stop_event for any waiters
+        try:
+            self._task.cancel()
+        except Exception:
+            pass
         try:
             self._stop_event.set()
         except Exception:
@@ -468,6 +481,12 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         except Exception:
             # These are advisory only – failing to propagate them should never
             # break the overall execution.
+            pass
+
+        # Ensure only the original top-level handle is considered root for logging
+        try:
+            setattr(new_handle, "_is_root_handle", False)
+        except Exception:
             pass
 
         self._delegate = new_handle
@@ -606,6 +625,12 @@ def start_async_tool_use_loop(
     # Attach lineage to handle for optional external inspection
     try:
         handle._lineage = list(_lineage)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    # Mark this handle as the root/top-level for single-stop logging semantics
+    try:
+        handle._is_root_handle = True  # type: ignore[attr-defined]
     except Exception:
         pass
 
