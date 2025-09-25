@@ -3,7 +3,7 @@ import unify
 import os
 import functools
 import json
-from typing import Optional, Awaitable, Dict, Callable, Tuple, Any, Union
+from typing import Optional, Awaitable, Dict, Callable, Tuple, Any, Union, Type
 from ..constants import LOGGER
 from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
@@ -547,6 +547,7 @@ def start_async_tool_use_loop(
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
+    handle_cls: Optional[Type[AsyncToolUseLoopHandle]] = None,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -624,7 +625,8 @@ def start_async_tool_use_loop(
     else:
         init_content = message
 
-    handle = AsyncToolUseLoopHandle(
+    HandleType = handle_cls or AsyncToolUseLoopHandle
+    handle = HandleType(
         task=task,
         interject_queue=interject_queue,
         cancel_event=cancel_event,
