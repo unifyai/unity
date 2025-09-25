@@ -385,7 +385,7 @@ async def test_execute_requests_clarification_for_unknown_id(monkeypatch):
 async def test_execute_sets_activated_by_explicit():
     """Starting a task explicitly via execute should set activated_by='explicit'."""
 
-    actor = SimulatedActor(steps=1)
+    actor = SimulatedActor(steps=0)
     ts = TaskScheduler(actor=actor)
 
     # Seed a simple queued task
