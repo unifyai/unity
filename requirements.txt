@@ -13,8 +13,8 @@ google-cloud-pubsub>=2.18.0
 google-api-python-client==2.70.0
 langchain-openai
 langchain-anthropic
-livekit-agents[deepgram,openai,cartesia,silero,elevenlabs,turn-detector]
-livekit-plugins-noise-cancellation
+livekit-agents[deepgram,openai,cartesia,silero,elevenlabs,turn-detector]==1.2.11
+livekit-plugins-noise-cancellation==0.2.5
 openai>=1.0.0
 playwright==1.52.0
 psutil>=5.9.0
