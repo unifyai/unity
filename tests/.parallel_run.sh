@@ -126,7 +126,6 @@ for target in "${files[@]}"; do
   pending_name="$(unique_session_name "? ⏳ $session")"
   tmux rename-session -t "$session" "$pending_name"
   session="$pending_name"
-  tmux setw -t "$session:" remain-on-exit on
   tmux send-keys -t "$session:" "$(run_cmd "$target")" C-m
 
   made_sessions+=( "$session" )
