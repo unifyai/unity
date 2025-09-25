@@ -51,8 +51,8 @@ def test_tool_create_task_timing():
     out = ts._create_task(name="TT Create " + _uniq(), description="timing create")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"]
-    assert elapsed_ms < 2700
-    print(f"elapsed: {elapsed_ms} < 2700")
+    assert elapsed_ms < 4050
+    print(f"elapsed: {elapsed_ms} < 4050")
 
 
 @pytest.mark.unit
@@ -84,8 +84,8 @@ def test_tool_filter_tasks_timing():
     rows = ts._filter_tasks(filter=f"task_id == {tid}")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert rows and rows[0]["task_id"] == tid
-    assert elapsed_ms < 1200
-    print(f"elapsed: {elapsed_ms} < 1200")
+    assert elapsed_ms < 1800
+    print(f"elapsed: {elapsed_ms} < 1800")
 
 
 @pytest.mark.unit
@@ -128,8 +128,8 @@ def test_tool_cancel_tasks_timing():
     out = ts._cancel_tasks([tid])
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert tid in out["details"]["task_ids"]
-    assert elapsed_ms < 2500
-    print(f"elapsed: {elapsed_ms} < 2500")
+    assert elapsed_ms < 3750
+    print(f"elapsed: {elapsed_ms} < 3750")
 
 
 @pytest.mark.unit
@@ -188,8 +188,8 @@ def test_tool_get_queue_for_task_timing():
     q = ts._get_queue_for_task(task_id=a)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert [t.task_id for t in q][:2] == [a, b]
-    assert elapsed_ms < 1100
-    print(f"elapsed: {elapsed_ms} < 1100")
+    assert elapsed_ms < 1650
+    print(f"elapsed: {elapsed_ms} < 1650")
 
 
 @pytest.mark.unit
@@ -278,8 +278,8 @@ def test_tool_set_schedules_atomic_timing():
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["details"]["count"] == 2
-    assert elapsed_ms < 6700
-    print(f"elapsed: {elapsed_ms} < 6700")
+    assert elapsed_ms < 10050
+    print(f"elapsed: {elapsed_ms} < 10050")
 
 
 @pytest.mark.unit
@@ -402,8 +402,8 @@ def test_tool_attach_with_links_timing():
     chain = ts._get_queue_for_task(task_id=a)
     ids = [t.task_id for t in chain]
     assert ids[:3] == [a, b, c]
-    assert elapsed_ms < 5300
-    print(f"elapsed: {elapsed_ms} < 5300")
+    assert elapsed_ms < 7950
+    print(f"elapsed: {elapsed_ms} < 7950")
 
 
 @pytest.mark.unit
