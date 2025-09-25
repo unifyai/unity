@@ -576,5 +576,5 @@ async def test_backfills_missing_tool_reply_for_prior_assistant_turn() -> None:
     assert next_msg.get("role") == "tool" and next_msg.get("tool_call_id") == call_id
 
     handle.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    final2 = await handle.result()
+    assert final2 == "processed stopped early, no result"
