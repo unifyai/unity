@@ -539,7 +539,7 @@ class ToolsData:
                 ]
             self._logger.info(
                 f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
-                prefix=f"🛠️  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
+                prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
             )
 
         # 6️⃣  failure guard -------------------------------------------------

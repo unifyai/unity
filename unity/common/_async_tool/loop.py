@@ -417,7 +417,7 @@ async def async_tool_use_loop_inner(
                 if log_steps:
                     logger.info(
                         "Handing over to passthrough delegate – outer loop exiting.",
-                        prefix="🔁",
+                        prefix="↪️",
                     )
                 # Proactively stop any remaining outer pending tasks, and also ask the
                 # delegated handle to stop if the outer loop has been cancelled already.

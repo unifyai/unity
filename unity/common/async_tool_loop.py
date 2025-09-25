@@ -125,7 +125,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         The calling parent loop is left completely untouched.
         """
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.info(f"🕹️ [{_label}] Ask requested: {question}")
+        LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
         # Fast-path: delegated handles answer directly.
         if self._delegate is not None:
             return await self._delegate.ask(
@@ -330,7 +330,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     @functools.wraps(SteerableToolHandle.interject, updated=())
     async def interject(self, message: str) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.info(f"️ [{_label}] Interject requested: {message}")
+        LOGGER.info(f"💬 [{_label}] Interject requested: {message}")
         if self._delegate is not None:
             await self._delegate.interject(message)
             return
