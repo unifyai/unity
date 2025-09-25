@@ -49,18 +49,18 @@ class ConversationManagerState:
 
             active_c = self.active_conversations[contact.id]
 
-        if isinstance(event, PhoneCallInitiated):
+        if isinstance(event, PhoneCallRecieved):
             active_c.push_message(
                 "phone",
                 message=ThreadMessage(
                     contact.name,
-                    "<Phone call Initiated...>",
+                    "<Phone call Sent...>",
                     event.timestamp,
                 ),
             )
             self.notifications.push_notif(
                 "comms",
-                f"Phone Call Initiated by '{contact.name}'",
+                f"Phone Call Recieved by '{contact.name}'",
                 event.timestamp,
             )
         elif isinstance(event, PhoneCallStarted):
@@ -121,6 +121,16 @@ class ConversationManagerState:
                 "comms", f"Email recieved recieved from '{contact.name}'", event.timestamp
             )
         # assistant events
+        elif isinstance(event, PhoneCallSent):
+            active_c.push_message(
+                "phone",
+                message=ThreadMessage("You", "<Phone Call Sent...>", event.timestamp)
+            )
+            self.notifications.push_notif(
+                "comms",
+                f"Phone Call Sent to '{contact.name}'",
+                event.timestamp,
+            )
         elif isinstance(event, SMSSent):
             active_c.push_message(
                 "sms",
