@@ -169,7 +169,7 @@ async def test_interject_leads_to_second_tool_and_final_result():
 @pytest.mark.asyncio
 @_handle_project
 async def test_stop_stops_gracefully():
-    """handle.stop() cancels the loop: result() raises CancelledError and task is done."""
+    """handle.stop() cancels the loop and result() returns a standard notice string."""
     client = new_client()
     handle = start_async_tool_use_loop(
         client,
@@ -179,8 +179,8 @@ async def test_stop_stops_gracefully():
 
     handle.stop()
 
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    final = await handle.result()
+    assert final == "processed stopped early, no result"
 
 
 @pytest.mark.asyncio
@@ -245,8 +245,8 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
 
     # Cleanly stop the loop
     handle.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    final2 = await handle.result()
+    assert final2 == "processed stopped early, no result"
 
     assert handle.done()
 
