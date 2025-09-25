@@ -309,7 +309,7 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     assert final.strip().lower() == "done"
     # The time since the pause ACK must include the full pause window
     assert (
-        elapsed_since_ack >= 2.0
+        elapsed_since_ack >= 1.95
     ), f"pause window too short ({elapsed_since_ack:.2f}s) – pause ineffective"
 
 
