@@ -743,10 +743,11 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
           (sticky passthrough), bypass the queue-level LLM and delegate directly to
           the inner task's ask() with the user question unchanged.
         - Otherwise: construct a compact chain snapshot (head→tail) and headline;
-          ask the current task for a detailed progress update; and provide the LLM
-          with snapshot JSON, headline, completions since start, and the full
-          current-task progress. The LLM decides how much task‑level detail is
-          appropriate for the user’s question (high‑level vs granular).
+          forward the user's question verbatim to the current task and capture its
+          response; then provide the LLM with snapshot JSON, headline, completions
+          since start, and the inner task's answer. The LLM decides how much
+          task‑level detail is appropriate for the user’s question (high‑level vs
+          granular).
         """
 
         # Sticky singleton passthrough for ask(): delegate directly when this queue
@@ -775,22 +776,10 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except Exception:
             chain_size = 0
 
-        # Single inner ask combining a progress update request with the user's question (best‑effort)
+        # Ask inner task the user's question verbatim (no progress prompt)
         inner_task_response: str = ""
         try:
-            progress_prompt = (
-                "Please provide a detailed, task‑centric progress update so far. "
-                "Focus on facts only. Include: a one‑line headline; key outputs produced; "
-                "items completed; items remaining; risks/blockers; estimated time to finish if applicable. "
-                "Be comprehensive but concise."
-            )
-            combined_prompt = (
-                progress_prompt
-                + "\n\nAdditionally, answer the following user question directly and concisely:"  # noqa: E501
-                + "\nUSER QUESTION:\n"
-                + question
-            )
-            ih = await self._current_handle.ask(combined_prompt)  # type: ignore[arg-type]
+            ih = await self._current_handle.ask(question)  # type: ignore[arg-type]
             try:
                 inner_task_response = await ih.result()
             except Exception:
