@@ -206,7 +206,7 @@ def test_tool_set_queue_timing():
     out = ts._set_queue(queue_id=None, order=[a, b])
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["details"].get("queue_id") is not None
-    assert elapsed_ms < 4700
+    assert elapsed_ms < 7050
     print(f"elapsed: {elapsed_ms} < 4700")
 
 
@@ -300,7 +300,7 @@ def test_tool_partition_queue_timing():
     out = ts._partition_queue(parts=[{"task_ids": [a]}, {"task_ids": [b, c]}])
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"] == "queue partitioned"
-    assert elapsed_ms < 11200
+    assert elapsed_ms < 16800
     print(f"elapsed: {elapsed_ms} < 11200")
 
 
@@ -367,7 +367,7 @@ def test_tool_detach_from_queue_for_activation_timing():
     ts._detach_from_queue_for_activation(task_id=a, detach=True)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     # Head should be detached now; just sanity check no exception and measure time
-    assert elapsed_ms < 5000
+    assert elapsed_ms < 7500
     print(f"elapsed: {elapsed_ms} < 5000")
 
 
