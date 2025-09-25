@@ -13,7 +13,7 @@ pytest <that_file.py>
 
 ## Live status and auto-close
 
-- Status prefix: each tmux session name is prefixed with `⏳` while the test runs, then changes to `✅` on success or `❌` on failure.
+- Status prefix: each tmux session name is prefixed with a typeable marker and emoji: `? ⏳` while the test runs, `o ✅` on success, or `x ❌` on failure. This makes it easy to tab-complete names in shells like zsh.
 - Auto-close on success: sessions that pass are automatically killed about 10 seconds after completion. Failing sessions remain open for inspection.
 - You can still attach before auto-close; you'll see the final message (e.g., `pytest exited with code: 0`) and a short notice that auto-close is scheduled.
 
@@ -44,7 +44,7 @@ What happens:
 - **Discovery**: Recursively finds all `*.py` files (excluding caches/venvs; see excludes below).
 - **Sessions**: Creates one tmux session per file.
 - **Window name**: The file’s basename without `.py`.
-- **Session name**: Status-prefixed and derived from the file path, e.g., `tests/unit/test_math.py` → `⏳ tests-unit-test_math` (then `✅ tests-unit-test_math` or `❌ tests-unit-test_math`).
+- **Session name**: Status-prefixed and derived from the file path, e.g., `tests/unit/test_math.py` → `? ⏳ tests-unit-test_math` (then `o ✅ tests-unit-test_math` or `x ❌ tests-unit-test_math`).
 
 Common tmux actions:
 
@@ -84,7 +84,7 @@ How it interprets arguments:
 - **Excludes**: Skips directories: `.git`, `.hg`, `.svn`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `__pycache__`, `.idea`, `.vscode`.
   - You can edit the `EXCLUDE_DIRS` array in the script to add/remove entries.
 - **Names**:
-  - Session: `<status-prefix> <relative-path-with-slashes-replaced-by-dashes>` (without `.py`). Example: `⏳ tests-unit-test_math` → `✅ tests-unit-test_math` or `❌ tests-unit-test_math`.
+  - Session: `<status-prefix> <relative-path-with-slashes-replaced-by-dashes>` (without `.py`). Example: `? ⏳ tests-unit-test_math` → `o ✅ tests-unit-test_math` or `x ❌ tests-unit-test_math`.
   - Window: `<filename-without-.py>`.
   - If a session name already exists, the script appends `-2`, `-3`, … to avoid collisions.
 
@@ -96,7 +96,7 @@ How it interprets arguments:
   watch -n 0.5 'tmux ls'
   ```
 
-  As tests start, sessions show a `⏳` prefix. They flip to `✅` or `❌` when pytest exits. Successful sessions auto-close ~10s later.
+  As tests start, sessions show a `? ⏳` prefix. They flip to `o ✅` or `x ❌` when pytest exits. Successful sessions auto-close ~10s later.
 
 - **Kill a session** once a test finishes:
 
