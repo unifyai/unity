@@ -132,3 +132,7 @@ class StartupEvent(Event):
 @dataclass
 class Ping(Event):
     kind: str
+
+@dataclass
+class Error(Event):
+    message: str

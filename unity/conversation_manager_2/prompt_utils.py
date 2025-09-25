@@ -82,11 +82,13 @@ class ContactThread:
 
 
 class ConversationContact:
-    def __init__(self, id, name, is_boss=False, on_phone=False):
+    def __init__(self, id, name, is_boss=False, number=None, email=None, on_phone=False):
         self.id = id
         self.name = name
         self.is_boss = is_boss
         self.on_phone = on_phone
+        self.number = number
+        self.email = email
         self.threads = {
             "sms": ContactThread("sms"),
             "email": ContactThread("email"),
@@ -103,6 +105,6 @@ class ConversationContact:
                 threads.append(t)
         threads_content = "\n\n".join(str(t) for t in threads)
         return f"""
-<contact id="{self.id}" name="{self.name}" is_boss="{self.is_boss}">
+<contact id="{self.id}" name="{self.name}" is_boss="{self.is_boss}" phone_number="{self.number or ""}" email="{self.email or ""}">
 {add_spaces(threads_content)}
 </contact>""".strip()
