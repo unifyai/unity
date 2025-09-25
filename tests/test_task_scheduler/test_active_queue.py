@@ -90,13 +90,16 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
     # Establish explicit order: [tid1, tid2]
     ts._set_queue(queue_id=qid, order=[tid1, tid2])
 
-    # 3) Multi-task path: queue length > 1 → passthrough disabled, CHAIN preamble expected
+    # 3) Multi-task path: queue length > 1 → passthrough disabled. Inner ask still
+    #    receives the raw user question; queue context is handled by the outer LLM.
     await handle.ask("Q2: what remains?")
     await asyncio.sleep(0.05)
     # Ensure the inner ask was used again under multi-task mode
     assert len(captured) >= 2
-    # Now, under multi-task mode, ActiveQueue.ask synthesizes a progress prompt
-    assert "progress update" in captured[-1]
+    # Under multi-task mode, the inner ask receives the raw question without a
+    # progress preamble.
+    assert captured[-1] == "Q2: what remains?"
+    assert "progress update" not in captured[-1]
 
     # Cleanup: stop the active task to complete quickly
     handle.stop(cancel=False)
@@ -618,12 +621,10 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     res = await ask_handle.result()
     assert res == "OK"
 
-    # Inner ask should have been invoked for both progress and direct answer (no CHAIN preamble)
+    # Inner ask should have been invoked once with the raw user question (no CHAIN preamble)
     assert captured_questions, "expected SimulatedActorHandle.ask to be called"
-    assert any(
-        "progress update" in q for q in captured_questions
-    ), f"expected a progress prompt, got: {captured_questions}"
-    assert any("How is the queue going?" in q for q in captured_questions)
+    assert captured_questions[-1] == "How is the queue going?"
+    assert all("progress update" not in q for q in captured_questions)
     assert all("CHAIN CONTEXT" not in q for q in captured_questions)
 
     # The queue-level synthesized prompt should include chain context and the user question
