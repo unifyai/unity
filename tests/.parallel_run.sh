@@ -6,8 +6,9 @@ EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .i
 
 # Build the command to run in each tmux session
 run_cmd() {
-  local target="$1"
-  printf "bash -lc 'export UNify_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True; source ~/unity/.unity/bin/activate && pytest %q; status=\$?; echo; echo \"pytest exited with code: \$status\"; echo \"(You are now in a shell. Press Ctrl-D to close this window.)\"; exec bash -l'" "$target"
+  local target="$1"   # file path (relative or absolute)
+  # Run pytest; then change ONLY the leading status prefix on the current tmux session:
+  printf "bash -lc 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True; source ~/unity/.unity/bin/activate && pytest %q; status=\$?; sname=\$(tmux display-message -p -t \"\$TMUX_PANE\" \"#{session_name}\"); base=\"\$sname\"; case \"\$sname\" in \"✅ \"*) base=\"\${sname#✅ }\" ;; \"❌ \"*) base=\"\${sname#❌ }\" ;; \"⏳ \"*) base=\"\${sname#⏳ }\" ;; esac; if [ \$status -eq 0 ]; then pfx=\"✅\"; else pfx=\"❌\"; fi; tmux rename-session -t \"\$sname\" \"\$pfx \$base\"; if [ \$status -eq 0 ]; then sid=\$(tmux display-message -p -t \"\$TMUX_PANE\" \"#{session_id}\"); (sleep 10; tmux kill-session -t \"\$sid\") >/dev/null 2>&1 & disown; echo \"All tests passed. This tmux session will close in 10s...\"; fi; echo; echo \"pytest exited with code: \$status\"; echo \"(You are now in a shell. Press Ctrl-D to close this window.)\"; exec bash -l'" "$target"
 }
 
 # Ensure we don't collide with existing sessions
@@ -122,6 +123,9 @@ for target in "${files[@]}"; do
 
   # Create the session first (no command), set remain-on-exit, then send the command.
   tmux new-session -d -s "$session" -n "$wname"
+  pending_name="$(unique_session_name "⏳ $session")"
+  tmux rename-session -t "$session" "$pending_name"
+  session="$pending_name"
   tmux setw -t "$session:" remain-on-exit on
   tmux send-keys -t "$session:" "$(run_cmd "$target")" C-m
 
