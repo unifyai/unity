@@ -6,9 +6,8 @@ EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .i
 
 # Build the command to run in each tmux session
 run_cmd() {
-  local target="$1"   # file path (relative or absolute)
-  printf "bash -lc 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True; source ~/unity/.unity/bin/activate && pytest %q'" "$target"
-
+  local target="$1"
+  printf "bash -lc 'export UNify_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True; source ~/unity/.unity/bin/activate && pytest %q; status=\$?; echo; echo \"pytest exited with code: \$status\"; echo \"(You are now in a shell. Press Ctrl-D to close this window.)\"; exec bash -l'" "$target"
 }
 
 # Ensure we don't collide with existing sessions
@@ -21,7 +20,7 @@ unique_session_name() {
 }
 
 # Turn a file path into a session base name
-#   ./animals/dogs/test_bark.py  -> pytest-animals-dogs-test_bark
+#   ./animals/dogs/test_bark.py  -> animals-dogs-test_bark
 session_basename_for() {
   local p="$1"
   # normalize to a relative-looking path for naming
@@ -29,7 +28,8 @@ session_basename_for() {
   p="${p%.py}"
   p="${p#./}"
   p="${p//\//-}"
-  printf "pytest-%s" "$p"
+  # Shorter name: drop the "pytest-" prefix
+  printf "%s" "$p"
 }
 
 # Collect args: files and/or directories to search
@@ -51,7 +51,6 @@ else
       echo "Warning: Skipping non-existent path: $arg" >&2
     fi
   done
-  # If user only passed non-.py files, roots could be empty; that's fine.
   if (( ${#roots[@]} == 0 && ${#direct_files[@]} == 0 )); then
     echo "No valid directories or .py files provided." >&2
     exit 1
@@ -86,7 +85,6 @@ build_find_cmd() {
 # Gather recursive .py files from roots (NUL-delimited, sorted)
 declare -a found_files=()
 if (( ${#roots[@]} )); then
-  # shellcheck disable=SC2046
   found_files=()
   while IFS= read -r -d '' f; do
     found_files+=( "$f" )
@@ -94,7 +92,6 @@ if (( ${#roots[@]} )); then
 fi
 
 # Combine direct .py files (from args) and found files; sort deterministically
-# Use a temporary file to sort NUL-delimited lists cleanly
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 if (( ${#direct_files[@]} )); then
@@ -115,10 +112,7 @@ if (( ${#files[@]} == 0 )); then
 fi
 
 declare -a made_sessions=()
-for f in "${files[@]}"; do
-  # Keep the target exactly as-is (pytest handles relative/absolute)
-  target="$f"
-
+for target in "${files[@]}"; do
   base_sess="$(session_basename_for "$target")"
   session="$(unique_session_name "$base_sess")"
 
@@ -126,7 +120,11 @@ for f in "${files[@]}"; do
   fname="${target##*/}"
   wname="${fname%.py}"
 
-  tmux new-session -d -s "$session" -n "$wname" "$(run_cmd "$target")"
+  # Create the session first (no command), set remain-on-exit, then send the command.
+  tmux new-session -d -s "$session" -n "$wname"
+  tmux setw -t "$session:" remain-on-exit on
+  tmux send-keys -t "$session:" "$(run_cmd "$target")" C-m
+
   made_sessions+=( "$session" )
 done
 
@@ -137,10 +135,10 @@ done
 
 echo
 echo "Usage examples:"
-echo "  • Run everything under current dir:     ./\.parallel_run.sh"
-echo "  • Only a folder:                         ./\.parallel_run.sh test_cats"
-echo "  • Multiple roots:                        ./\.parallel_run.sh tests/unit tests/integration"
-echo "  • Specific files:                        ./\.parallel_run.sh tests/foo.py tests/bar.py"
+echo "  • Run everything under current dir:     ./\\.parallel_run.sh"
+echo "  • Only a folder:                         ./\\.parallel_run.sh test_cats"
+echo "  • Multiple roots:                        ./\\.parallel_run.sh tests/unit tests/integration"
+echo "  • Specific files:                        ./\\.parallel_run.sh tests/foo.py tests/bar.py"
 echo
 echo "Tips:"
 echo "  • List sessions: tmux ls"
