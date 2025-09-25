@@ -143,6 +143,7 @@ class ConversationManager:
                 "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
             ),
             "ved@unify.ai": Contact("3", "Ved", False, "+16605382869", "ved@unify.ai"),
+            
         }
 
         self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
@@ -264,8 +265,8 @@ class ConversationManager:
                     contact = self.phone_contacts_map.get(
                         contact_num_id
                     ) or self.inverted_contacts_map.get(contact_num_id)
-                    await self.event_broker.publish("app:comms:call_initiated", PhoneCallInitiated(
-                        contact=self.assistant_number
+                    await self.event_broker.publish("app:comms:call_initiated", PhoneCallSent(
+                        contact=contact.number
                     ).to_json())
                     await _start_call(self.assistant_number, contact.number)
 
@@ -383,7 +384,7 @@ class ConversationManager:
     async def handle_event(self, event: Event):
         self.state.push_event(event)
 
-        if isinstance(event, PhoneCallInitiated):
+        if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
             # start phone call process and wait untils its done, we should probably make sure
             # first that any running llm calls are awaited, and any scheduled llm calls are canceled
             # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
@@ -405,7 +406,7 @@ class ConversationManager:
                 self.call_proc = run_script(
                     str(target_path),
                     "dev",
-                    self.user_number,
+                    event.contact,
                     self.assistant_number,
                     self.voice_provider,
                     self.voice_id if self.voice_id else "None",

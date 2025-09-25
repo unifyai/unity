@@ -136,7 +136,7 @@ class CommsManager:
                         self.loop,
                     )
                 message.ack()
-            elif thread == "call":
+            elif "call" in thread:
                 try:
                     # Extract phone numbers from the message data
                     from_number = event.get("caller_number", "")
@@ -144,11 +144,13 @@ class CommsManager:
                         "Unity_",
                         "",
                     )
+
+                    # TODO: differentiate between calls picked up from outbound calls and inbound calls
                     task = asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
-                            "app:comms:call_initiated",
-                            PhoneCallInitiated(
-                                contact=event["caller_number"],
+                            "app:comms:call_recieved",
+                            PhoneCallRecieved(
+                                contact=event.get("caller_number", event.get("user_number")),
                                 # voice_id=event.get("voice_id", None),
                                 # voice_provider=event.get("voice_provider", None),
                             ).to_json(),
