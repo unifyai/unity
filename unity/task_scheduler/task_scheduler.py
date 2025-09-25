@@ -898,13 +898,18 @@ class TaskScheduler(BaseTaskScheduler):
             build_execute_prompt(tools),
         )
 
-        outer_handle = self._start_loop(
+        # Use a specialized outer handle so stop(cancel=...) is supported for execute
+        from .execute_handle import ExecuteLoopHandle  # local import to avoid cycles
+
+        outer_handle = start_async_tool_use_loop(
             client,
             freeform_text,
             tools,
             loop_id=f"{self.__class__.__name__}.execute",
             parent_chat_context=parent_chat_context,
             log_steps=True,
+            preprocess_msgs=inject_broader_context,
+            handle_cls=ExecuteLoopHandle,
         )
 
         return outer_handle
@@ -4045,6 +4050,7 @@ class TaskScheduler(BaseTaskScheduler):
                 Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
             ]
         ] = None,
+        handle_cls: Optional["type[SteerableToolHandle]"] = None,
     ) -> SteerableToolHandle:
         """Centralised wrapper around start_async_tool_use_loop."""
         return start_async_tool_use_loop(
@@ -4057,6 +4063,7 @@ class TaskScheduler(BaseTaskScheduler):
             log_steps=log_steps,
             preprocess_msgs=inject_broader_context,
             tool_policy=tool_policy,
+            handle_cls=handle_cls,
         )
 
     def _maybe_add_clarification_tool(
