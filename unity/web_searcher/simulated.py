@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import unify
 from .prompt_builders import build_ask_prompt, build_simulated_method_prompt
+from ..common.simulated import mirror_web_searcher_tools
 from ..common.async_tool_loop import SteerableToolHandle
 from ..events.manager_event_logging import (
     new_call_id,
@@ -119,6 +120,27 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle):
             tools[self.pause.__name__] = self.pause
         return tools
 
+    async def ask(self, question: str) -> "SteerableToolHandle":
+        q_msg = (
+            f"Your only task is to simulate an answer to the following question: {question}\n\n"
+            "However, there is also an ongoing simulated process which had the instructions given below. "
+            "Please make your answer realistic and conceivable given the provided context of the simulated task."
+        )
+        follow_up_prompt = "\n\n---\n\n".join(
+            [q_msg]
+            + [self._initial]
+            + self._extra_msgs
+            + [f"Question to answer (as a reminder!): {question}"],
+        )
+        return _SimulatedWebSearcherHandle(
+            self._llm,
+            follow_up_prompt,
+            _return_reasoning_steps=self._want_steps,
+            _requests_clarification=False,
+            clarification_up_q=self._clar_up_q,
+            clarification_down_q=self._clar_down_q,
+        )
+
 
 class SimulatedWebSearcher:
     """Drop-in simulated WebSearcher with imaginary results and stateful memory."""
@@ -131,6 +153,8 @@ class SimulatedWebSearcher:
     ) -> None:
         self._description = description
         self._log_events = log_events
+        # Mirror the real manager's tool exposure programmatically for prompts
+        self._ask_tools = mirror_web_searcher_tools()
 
         # Stateful async LLM
         self._llm = unify.AsyncUnify(
@@ -141,7 +165,7 @@ class SimulatedWebSearcher:
         )
 
         # Reference the real prompt as context (no real tools here)
-        ask_msg = build_ask_prompt(tools={})
+        ask_msg = build_ask_prompt(tools=self._ask_tools)
         self._llm.set_system_message(
             "You are a simulated web-search assistant. There is no real browser or API – "
             "invent plausible sources and keep your narrative consistent.\n\n"
