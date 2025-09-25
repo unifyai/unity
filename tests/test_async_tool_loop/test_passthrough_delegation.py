@@ -202,3 +202,149 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
     assert (
         early_msg in counter["msgs"]
     ), "Interjection was not forwarded to inner handle"
+
+
+# ---------------------------------------------------------------------------
+#  Regression: no extra outer LLM turn during passthrough handover
+# ---------------------------------------------------------------------------
+
+
+class _SpyAsyncUnify:
+    """Minimal AsyncUnify-compatible stub that records generate invocations.
+
+    It returns a single assistant turn that requests a tool, then (if called
+    again) returns a plain assistant message. Tests assert the outer loop does
+    not perform this second call in passthrough handover scenarios.
+    """
+
+    def __init__(self):
+        self.messages: list[dict] = []
+        self.seen_messages: list[list[dict]] = []
+        self._step = 0
+
+    def append_messages(self, msgs):
+        self.messages.extend(msgs)
+
+    async def generate(self, **_):
+        # Snapshot what the model "saw" at invocation time
+        import copy as _copy
+
+        self.seen_messages.append(_copy.deepcopy(self.messages))
+
+        if self._step == 0:
+            self._step += 1
+            assistant_msg = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_outer_1",
+                        "type": "function",
+                        "function": {
+                            "name": "delegating_tool_regression",
+                            "arguments": "{}",
+                        },
+                    },
+                ],
+            }
+        else:
+            # Any second outer LLM call would be a regression
+            self._step += 1
+            assistant_msg = {
+                "role": "assistant",
+                "content": "unexpected_extra_outer_turn",
+                "tool_calls": [],
+            }
+
+        self.messages.append(assistant_msg)
+        return assistant_msg
+
+    @property
+    def system_message(self) -> str:  # for logging access in the loop
+        return ""
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_no_extra_llm_turn_during_passthrough_handover():
+    """Outer loop must not perform an additional LLM step after adopting a
+    passthrough delegate. Prior to the guard, the outer loop could start a
+    stray LLM step between adoption and the top-of-loop handover.
+    Deterministic: this test would have failed by observing 2 outer generate
+    calls; with the fix it observes exactly 1.
+    """
+
+    # Inner spy client drives the inner loop to (1) request sleeper, then (2) finish.
+    class _InnerSpyClient(_SpyAsyncUnify):
+        async def generate(self, **_):
+            import copy as _copy
+
+            self.seen_messages.append(_copy.deepcopy(self.messages))
+            if self._step == 0:
+                self._step += 1
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_inner_1",
+                            "type": "function",
+                            "function": {
+                                "name": "sleeper",
+                                "arguments": '{"delay": 0.01}',
+                            },
+                        },
+                    ],
+                }
+            else:
+                self._step += 1
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": "DONE",
+                    "tool_calls": [],
+                }
+            self.messages.append(assistant_msg)
+            return assistant_msg
+
+    # Tool: quick async sleep
+    @unify.traced
+    async def sleeper(delay: float = 0.01) -> str:
+        await asyncio.sleep(delay)
+        return "slept"
+
+    # Delegating tool: returns a pass-through inner handle immediately
+    async def delegating_tool_regression() -> AsyncToolUseLoopHandle:  # type: ignore[valid-type]
+        inner_client = _InnerSpyClient()
+        inner_handle = start_async_tool_use_loop(
+            inner_client,
+            message="Run sleeper then finish",
+            tools={"sleeper": sleeper},
+            log_steps=False,
+        )
+        inner_handle.__passthrough__ = True  # type: ignore[attr-defined]
+        return inner_handle
+
+    # Name the tool as referenced by the outer spy's assistant message
+    delegating_tool_regression.__name__ = "delegating_tool_regression"
+    delegating_tool_regression.__qualname__ = "delegating_tool_regression"
+
+    # Outer spy client drives only one assistant turn (tool request)
+    outer_client = _SpyAsyncUnify()
+
+    outer_handle = start_async_tool_use_loop(
+        client=outer_client,  # type: ignore[arg-type]
+        message="please delegate",
+        tools={"delegating_tool_regression": delegating_tool_regression},
+        log_steps=False,
+    )
+
+    # Await final result bubbling from the inner loop
+    final = await outer_handle.result()
+
+    # Assert: outer LLM was invoked exactly once (no stray turn during handover)
+    assert (
+        len(outer_client.seen_messages) == 1
+    ), f"Expected exactly 1 outer LLM call, got {len(outer_client.seen_messages)}"
+
+    # Inner finished successfully
+    assert isinstance(final, str) and final, "Outer result should be a non-empty string"
