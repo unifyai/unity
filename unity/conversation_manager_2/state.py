@@ -7,19 +7,18 @@ from .prompt_utils import (
 )
 from .new_events import *
 
-
 class ConversationManagerState:
-    def __init__(self, phone_contacts_map: dict, email_contacts_map: dict):
+    def __init__(self, phone_contacts_map: dict, email_contacts_map: dict, inverted_contacts_map: dict):
         self.phone_contacts_map = phone_contacts_map
         self.email_contacts_map = email_contacts_map
-        self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
+        self.inverted_contacts_map = inverted_contacts_map
 
         self.active_conversations: dict[str, ConversationContact] = {}
         self.stale_conversations = {}
         self.notifications = NotificationBar()
 
-    def push_notif(self, notif, timestamp=None):
-        self.notifications.push_notif(notif, timestamp)
+    def push_notif(self, type, notif, timestamp=None):
+        self.notifications.push_notif(type, notif, timestamp)
 
     def clear_notifications(self, timestamp=None):
         # print(self.notifications.notifs)
@@ -27,13 +26,12 @@ class ConversationManagerState:
 
     def push_event(self, event: Event):
         if hasattr(event, "contact"):
+            print("EVENT FROM push EVENT", event)
+            print(self.email_contacts_map)
             contact = self.phone_contacts_map.get(
                 event.contact,
             ) or self.email_contacts_map.get(event.contact)
             if not contact:
-                # will deal with this later
-                # but in general probably either create a new contact here or
-                # add a new anon contact
                 ...
             contact_added = False
             if not self.is_contact_in_active_conversations(contact=contact):
@@ -88,6 +86,7 @@ class ConversationManagerState:
                 event.timestamp,
             )
         elif isinstance(event, PhoneCallEnded):
+            # TODO: switch on_phone to False here
             active_c.push_message(
                 "phone",
                 message=ThreadMessage(
@@ -149,6 +148,9 @@ class ConversationManagerState:
             self.notifications.push_notif(
                 "comms", f"Email sent to '{contact.name}'", event.timestamp
             )
+        
+        elif isinstance(event, Error):
+            self.push_notif("comms error", event.message, event.timestamp)
 
         # elif isinstance(event, ConductorQuerySent):
         #     self.notifications.push_notif(
@@ -179,12 +181,15 @@ class ConversationManagerState:
     ):
         if contact.id in self.active_conversations:
             return
-        self.active_conversations[contact.id] = ConversationContact(
-            contact.id,
-            contact.name,
-            contact.is_boss,
-            on_phone=on_phone,
-        )
+        # self.active_conversations[contact.id] = ConversationContact(
+        #     id=contact.id,
+        #     name=contact.name,
+        #     is_boss=contact.is_boss,
+        #     email=contact.email,
+        #     phone_number=contact.number,
+        #     on_phone=on_phone,
+        # )
+        self.active_conversations[contact.id] = contact
 
     def is_contact_in_active_conversations(self, contact_id=None, contact=None):
         if contact is None and contact_id is None:
