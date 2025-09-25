@@ -72,13 +72,14 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
     ]
     handle = await ts.execute(text=str(tid1))
 
-    # 1) Passthrough path: queue length == 1 → inner receives progress/direct asks
+    # 1) Passthrough path: queue length == 1 → inner receives direct asks
     await handle.ask("Q1: status?")
     # Give the background actor a moment to process
     await asyncio.sleep(0.05)
     assert captured, "Inner ask should have been invoked"
-    # The inner ask receives a detailed progress prompt among calls
-    assert any("progress update" in q for q in captured)
+    # The inner ask should receive the raw user question (no progress preamble)
+    assert captured[-1] == "Q1: status?"
+    assert all("progress update" not in q for q in captured)
 
     # 2) Append a follower behind the active task – this grows the queue to >1
     name2 = "Follower B"
@@ -94,6 +95,8 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
     await asyncio.sleep(0.05)
     # Ensure the inner ask was used again under multi-task mode
     assert len(captured) >= 2
+    # Now, under multi-task mode, ActiveQueue.ask synthesizes a progress prompt
+    assert "progress update" in captured[-1]
 
     # Cleanup: stop the active task to complete quickly
     handle.stop(cancel=False)
@@ -1044,14 +1047,14 @@ async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
 
     await _wait_until_active()
 
-    # ask() synthesizes via queue-level LLM even for singletons; inner ask
-    # receives a progress prompt rather than the raw user question.
+    # ask() should bypass queue-level LLM for singletons; inner ask receives
+    # the raw user question without a progress preamble.
     ask_handle = await h.ask("What are you doing?")
     res = await ask_handle.result()
     assert res == "OK"
     assert captured_questions, "expected inner ask to be invoked"
+    assert captured_questions[-1] == "What are you doing?"
     assert "CHAIN CONTEXT" not in captured_questions[-1]
-    assert "progress update" in captured_questions[-1]
 
     # Pass-through interject increments inner count
     await h.interject("Proceed")
