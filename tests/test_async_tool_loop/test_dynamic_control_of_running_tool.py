@@ -115,6 +115,39 @@ async def _wait_for_assistant_call_prefix(
     )
 
 
+@unify.traced
+async def _wait_for_tool_message_prefix(
+    client: "unify.AsyncUnify",
+    prefix: str,
+    *,
+    timeout: float = 15.0,
+    poll: float = 0.05,
+) -> None:
+    """Poll until a tool message whose `name` starts with `prefix` appears.
+
+    This is used to detect the moment a helper (e.g., pause_/resume_) has been
+    acknowledged and applied by the loop, which is stronger than observing only
+    the assistant's request for that helper.
+    """
+    import time as _time
+
+    start_ts = _time.perf_counter()
+    while _time.perf_counter() - start_ts < timeout:
+        msgs = client.messages or []
+        if any(
+            (m.get("role") == "tool")
+            and isinstance(m.get("name"), str)
+            and m["name"].startswith(prefix)
+            for m in msgs
+        ):
+            return
+        await asyncio.sleep(poll)
+
+    raise TimeoutError(
+        f"Timed out after {timeout}s waiting for a tool message with name starting with {prefix!r}.",
+    )
+
+
 # --------------------------------------------------------------------------- #
 #  FIXTURE                                                                    #
 # --------------------------------------------------------------------------- #
@@ -247,20 +280,37 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     # ── deterministically wait until the assistant has actually scheduled the
     #    tool so our *hold* interjection reliably occurs while it is running.
     await _wait_for_tool_request(client, "pausable_fn")
-    t0 = time.perf_counter()
-
+    # Trigger pause while the tool is running
     await outer.interject("hold")
-    # Ensure the assistant has actually invoked the pause helper before timing the pause window
+    # Wait until the assistant REQUESTS the pause helper…
     await _wait_for_assistant_call_prefix(client, "pause")
-    await asyncio.sleep(2.0)  # loop is paused here
-    await outer.interject("go")
+    # …and also until the loop ACKNOWLEDGES it (tool message inserted), which is
+    # the moment the tool's pause_event has been cleared.
+    await _wait_for_tool_message_prefix(client, "pause ")
 
+    t_pause_ack = time.perf_counter()
+
+    # While paused, the final assistant reply must NOT appear.
+    await asyncio.sleep(2.0)
+    msgs_during_pause = client.messages or []
+    assert not any(
+        (m.get("role") == "assistant")
+        and isinstance(m.get("content"), str)
+        and m["content"].strip().lower() == "done"
+        for m in msgs_during_pause
+    ), "assistant produced final reply while tool was paused"
+
+    # Resume and finish
+    await outer.interject("go")
     final = await outer.result()
-    elapsed = time.perf_counter() - t0
+    elapsed_since_ack = time.perf_counter() - t_pause_ack
 
     # ── assertions ───────────────────────────────────────────────────────
     assert final.strip().lower() == "done"
-    assert elapsed >= 4, f"loop finished too fast ({elapsed:.2f}s) – pause ineffective"
+    # The time since the pause ACK must include the full pause window
+    assert (
+        elapsed_since_ack >= 2.0
+    ), f"pause window too short ({elapsed_since_ack:.2f}s) – pause ineffective"
 
 
 @pytest.mark.asyncio
