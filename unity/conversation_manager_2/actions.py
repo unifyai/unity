@@ -24,27 +24,33 @@ class WaitForNextEvent(BaseModel):
 
 
 class SendEmail(BaseModel):
+    """Comms method to send emails"""
     action_name: Literal["send_email"]
-    email_or_id: str =  Field(
-        ..., description="Exact email or contact id of the contact to email"
-    )
+    contact_id: str = Field(..., description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations")
+    first_name: str
+    last_name: Optional[str]
+    email: str
     subject: str
     body: str
 
 
 class SendSMS(BaseModel):
+    """Comms method to send sms"""
     action_name: Literal["send_sms"]
-    number_or_id: str = Field(
-        ..., description="Exact number or contact id of the contact to sms"
-    )
+    contact_id: str = Field(..., description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations")
+    first_name: str
+    last_name: Optional[str]
+    number: str
     message: str
 
 
 class MakeCall(BaseModel):
+    """Comms method to make outbound calls"""
     action_name: Literal["make_call"]
-    number_or_id: str = Field(
-        ..., description="Exact number or contact id of the contact to call"
-    )
+    contact_id: str = Field(..., description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations")
+    first_name: Optional[str]
+    last_name: Optional[str]
+    number: str
 
 
 actions = Union[WaitForNextEvent, SendSMS, SendEmail, MakeCall]
@@ -95,9 +101,8 @@ async def _send_sms_message_via_number(to_number: str, message: str) -> str:
                 response.raise_for_status()
             except Exception as e:
                 print(e)
-            response_text = await response.text()
-            print(f"Response: {response_text}")
-            return response_text
+                return {"success": False}
+            return await response.json()
 
 
 async def _send_email_via_address(
@@ -135,10 +140,11 @@ async def _send_email_via_address(
                 "in_reply_to": message_id,
             },
         ) as response:
-            response.raise_for_status()
-            response_text = await response.text()
-            print(f"Response: {response_text}")
-            return response_text
+            try:
+                response.raise_for_status()
+            except Exception:
+                return {"success": False}
+            return await response.json()
 
 async def _start_call(
     from_number: str,
@@ -161,7 +167,8 @@ async def _start_call(
             headers=headers,
             json={"From": from_number, "To": to_number, "NewCall": "true"},
         ) as response:
-            response.raise_for_status()
-            response_text = await response.text()
-            print(f"Response: {response_text}")
-            return response_text
+            try:
+                response.raise_for_status()
+            except Exception:
+                return {"success": False}
+            return await response.json()
