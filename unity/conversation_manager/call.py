@@ -401,7 +401,7 @@ async def entrypoint(ctx: agents.JobContext):
         nonlocal session, last_activity_time
         handle = await session.generate_reply()
         last_activity_time = asyncio.get_event_loop().time()  # Update activity time
-        return handle.chat_message.text_content, handle.interrupted
+        return handle.chat_items[-1].text_content, handle.interrupted
 
     def on_response_end(t: asyncio.Task):
         nonlocal last_activity_time
