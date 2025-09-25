@@ -53,7 +53,7 @@ class Event:
 
 
 @dataclass
-class PhoneCallInitiated(Event):
+class PhoneCallRecieved(Event):
     contact: str
 
 
@@ -83,6 +83,9 @@ class SMSRecieved(Event):
     contact: str
     content: str
 
+@dataclass
+class PhoneCallSent(Event):
+    contact: str
 
 @dataclass
 class EmailRecieved(Event):
