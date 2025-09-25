@@ -739,13 +739,25 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
 
         Policy
         ------
-        - Construct a compact chain snapshot (head→tail) and headline.
-        - Ask the current task for a detailed progress update.
-        - Provide the LLM with: snapshot JSON, headline, completions since start,
-          and the full current-task progress. The LLM decides how much task‑level
-          detail is appropriate for the user’s question (high‑level vs granular).
-        - No pass‑through fast path; always synthesize a response with an LLM.
+        - If and only if this queue has always remained a singleton since creation
+          (sticky passthrough), bypass the queue-level LLM and delegate directly to
+          the inner task's ask() with the user question unchanged.
+        - Otherwise: construct a compact chain snapshot (head→tail) and headline;
+          ask the current task for a detailed progress update; and provide the LLM
+          with snapshot JSON, headline, completions since start, and the full
+          current-task progress. The LLM decides how much task‑level detail is
+          appropriate for the user’s question (high‑level vs granular).
         """
+
+        # Sticky singleton passthrough for ask(): delegate directly when this queue
+        # has only ever contained a single task. If the queue ever grew (size > 1),
+        # _should_passthrough() permanently disables passthrough for this instance.
+        if self._should_passthrough():
+            try:
+                return await self._current_handle.ask(question)  # type: ignore[arg-type]
+            except Exception:
+                # Defensive fallback: proceed with the LLM synthesis path below
+                pass
 
         # Build queue context
         queue_preamble: str | None = _QueueSnapshot.build_preamble(
