@@ -230,6 +230,13 @@ async def async_tool_use_loop_inner(
     """
     # unique id / lineage
     cfg = LoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
+    # Expose the resolved human-friendly label (with 4-hex suffix) to the outer handle
+    # so that any steering logs (stop/pause/resume/interject/ask) include the same suffix.
+    try:
+        if outer_handle_container and outer_handle_container[0] is not None:
+            setattr(outer_handle_container[0], "_log_label", cfg.label)
+    except Exception:
+        pass
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
