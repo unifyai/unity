@@ -46,7 +46,11 @@ class SimulatedSkillManager(BaseSkillManager):
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
-        self._function_manager = SimulatedFunctionManager(description=description)
+        self._function_manager = SimulatedFunctionManager(
+            description=description,
+            simulation_guidance=simulation_guidance,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
+        )
 
         # Expose the simulated FunctionManager's read-only tools directly (no wrappers)
         self._tools: Dict[str, Callable] = {
