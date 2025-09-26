@@ -29,6 +29,18 @@ class BaseActor(ABC):
     language description. It returns a steerable handle that can be paused,
     resumed, interjected, or stopped. This type is intentionally decoupled
     from any task-specific terminology or lifecycle.
+
+    Purpose and positioning
+    -----------------------
+    The Actor provides a direct, real-time handle to "act" in the world and
+    get things done – e.g. open a browser, click UI elements, or perform a
+    short-lived sandbox session during a conversation.
+
+    Intended use
+    ------------
+    Use the Actor for interactive, ephemeral sessions within a live
+    conversation (onboarding, guided walkthroughs, ad‑hoc demonstrations).
+    It returns a steerable handle suitable for pause/resume/interject/stop.
     """
 
     # ─────────────────────────── Work management ────────────────────────── #
@@ -45,4 +57,8 @@ class BaseActor(ABC):
         """
         Start performing work from a free‑form natural language description and
         return a steerable handle for controlling the ongoing activity.
+
+        Use this for live, conversational, sandbox-style execution within the
+        current session. The returned handle supports pause/resume/interject/
+        stop and ultimately yields a single result string.
         """
