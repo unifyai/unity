@@ -1,7 +1,6 @@
 import os
 from typing import Literal, Optional, Union
 
-import redis
 import aiohttp
 from pydantic import BaseModel, Field
 
@@ -138,7 +137,7 @@ async def _send_email_via_address(
     from_email = os.getenv("ASSISTANT_EMAIL")
 
     print(
-        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}"
+        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}",
     )
     async with aiohttp.ClientSession() as session:
         async with session.post(
