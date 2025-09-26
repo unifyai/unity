@@ -89,6 +89,12 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
     as first‑class Tasks – with names, descriptions, scheduling fields and a
     completion status – and for returning a live, steerable execution handle
     when starting such tasks.
+
+    Scope and positioning (LLM‑facing)
+    ----------------------------------
+    Use this interface for activities that should be represented as durable
+    Tasks with names, descriptions, scheduling fields and completion status.
+    It returns a steerable execution handle when starting such tasks.
     """
 
     # ------------------------------------------------------------------ #
@@ -194,6 +200,10 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         Only use `update` within `execute` when the user explicitly asked to
         create a missing task or to change task fields before running.
 
+        This method is not intended to be used to materialize transient
+        conversational sessions. It should be used to create or modify durable
+        Tasks and their scheduling/ordering.
+
         Please always be explicit about the *ordering* of tasks.
         If the order *doesn't* matter please say so explicitly.
         If the order *does* matter, and the tasks are given in the correct number order,
@@ -239,6 +249,12 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         `update` as a substitute for starting tasks. If fields need adjusting
         prior to execution, perform the minimal `update` first and then call
         `execute` to actually start the task.
+
+        Notes on scope
+        --------------
+        The above rule applies to activities that are clearly Tasks (durable,
+        tracked units of work). This surface is not intended for live, ad‑hoc
+        conversational sessions that happen inside the current chat.
 
         The assistant should interpret *text* to figure out which task the user
         wants to run.  Typical workflow:
