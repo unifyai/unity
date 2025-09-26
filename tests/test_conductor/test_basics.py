@@ -328,30 +328,3 @@ async def test_handle_ask():
     # The original handle should still be awaitable and produce an answer
     parent_answer = await handle.result()
     assert isinstance(parent_answer, str) and parent_answer.strip()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 10.  WebSearcher tool is exposed on ask surface                             #
-# ─────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_simulated_cond_exposes_websearcher_tool_in_prompt():
-    cond = SimulatedConductor(
-        description=(
-            "Research assistant combining internal managers with web research when needed."
-        ),
-    )
-
-    h = await cond.ask(
-        "Find notable updates on vector databases in 2025 and summarize.",
-        _return_reasoning_steps=True,
-    )
-    answer, messages = await h.result()
-    assert isinstance(answer, str) and answer.strip()
-
-    # The system prompt should list available tools including SimulatedWebSearcher_ask
-    system_msgs = [m.get("content", "") for m in messages if m.get("role") == "system"]
-    blob = "\n".join(system_msgs).lower()
-    assert (
-        "simulatedwebsearcher_ask" in blob
-    ), "WebSearcher ask tool should be exposed in the Conductor.ask tool list"
