@@ -2,6 +2,7 @@ import asyncio
 import unify
 import json
 import inspect
+import copy
 
 from typing import Dict, Union, Callable, Tuple, Any, Set, Optional
 from contextlib import suppress
@@ -32,6 +33,7 @@ from .messages import (
 )
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
+from . import semantic_cache as sc
 
 
 class LoopLogger:
@@ -237,6 +239,8 @@ async def async_tool_use_loop_inner(
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
 
+    _initial_user_message = copy.deepcopy(message)
+
     # If structured output is expected, inform the model up-front so it can
     # plan its reasoning with the final JSON shape in mind.  Enforcement via
     # `set_response_format` still happens at the end of the loop.
@@ -318,6 +322,12 @@ async def async_tool_use_loop_inner(
     # -----------------------------------------------------------------------
 
     # Initialise loop state early so preflight backfill can schedule tasks
+    if semantic_cache and (closest_match := sc.get_tool_trajectory(message)):
+        tools["semantic_search"] = sc.semantic_search
+        msgs = sc.get_dummy_tool(message, closest_match)
+        client.append_messages(msgs)
+        client.set_system_message((client.system_message or "") + sc.get_hint())
+
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
@@ -395,6 +405,7 @@ async def async_tool_use_loop_inner(
     llm_turn_required = False
 
     # No persist mode: loop returns immediately upon final assistant message
+    last_valid_history = None
 
     try:
         while True:
@@ -607,6 +618,7 @@ async def async_tool_use_loop_inner(
                 )
                 interjection_msg = {"role": "system", "content": sys_content}
                 await _msg_dispatcher.append_msgs([interjection_msg])
+                last_valid_history = history_lines + [f"user: {extra}"]
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
@@ -1674,3 +1686,11 @@ async def async_tool_use_loop_inner(
     finally:
         with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
+
+        if semantic_cache:
+            embedding_message = await sc.construct_new_user_message(
+                _initial_user_message,
+                last_valid_history,
+            )
+            tool_trajectory = sc.clean_tool_trajectory(client.messages)
+            sc.store_tool_trajectory(embedding_message, tool_trajectory)
