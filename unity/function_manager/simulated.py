@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional
 import unify
 
 from ..common.async_tool_loop import SteerableToolHandle
-from ..common.simulated import mirror_function_manager_tools
 from .base import BaseFunctionManager
 from .types.function import Function
 
@@ -72,13 +71,6 @@ class SimulatedFunctionManager(BaseFunctionManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
-
-        # Build a system message that mirrors the real surface
-        # Fallback: mirror helper may not exist in older trees; guard usage
-        try:
-            tools_for_prompt = mirror_function_manager_tools()
-        except Exception:
-            tools_for_prompt = {}
 
         columns = [{k: str(v.annotation)} for k, v in Function.model_fields.items()]
 
