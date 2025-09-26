@@ -25,8 +25,12 @@ class WaitForNextEvent(BaseModel):
 
 class SendEmail(BaseModel):
     """Comms method to send emails"""
+
     action_name: Literal["send_email"]
-    contact_id: str = Field(..., description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations")
+    contact_id: str = Field(
+        ...,
+        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
+    )
     first_name: str
     last_name: Optional[str]
     email: str
@@ -36,8 +40,12 @@ class SendEmail(BaseModel):
 
 class SendSMS(BaseModel):
     """Comms method to send sms"""
+
     action_name: Literal["send_sms"]
-    contact_id: str = Field(..., description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations")
+    contact_id: str = Field(
+        ...,
+        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
+    )
     first_name: str
     last_name: Optional[str]
     number: str
@@ -46,8 +54,12 @@ class SendSMS(BaseModel):
 
 class MakeCall(BaseModel):
     """Comms method to make outbound calls"""
+
     action_name: Literal["make_call"]
-    contact_id: str = Field(..., description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations")
+    contact_id: str = Field(
+        ...,
+        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
+    )
     first_name: Optional[str]
     last_name: Optional[str]
     number: str
@@ -109,7 +121,7 @@ async def _send_email_via_address(
     to_email: str,
     subject: str,
     content: str,
-    message_id: str=None,
+    message_id: str = None,
 ) -> str:
     """
     Send an SMS message using the SMS provider API.
@@ -145,6 +157,7 @@ async def _send_email_via_address(
             except Exception:
                 return {"success": False}
             return await response.json()
+
 
 async def _start_call(
     from_number: str,

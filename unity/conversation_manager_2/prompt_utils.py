@@ -48,19 +48,22 @@ class ThreadMessage:
     def __str__(self):
         return f"""[{self.name} @ {self.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]: {self.content}"""
 
+
 class EmailThreadMessage:
     def __init__(self, name, subject, body, timestamp):
         self.name = name
         self.subject = subject
         self.body = body
         self.timestamp = timestamp
-    
+
     def __str__(self):
         return f"""[{self.name} @ {self.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]:
 Subject: {self.subject}
 Body:
 {self.body}
 """
+
+
 class ContactThread:
     def __init__(self, thread_name, max_len=15):
         self.thread_name = thread_name
@@ -82,7 +85,9 @@ class ContactThread:
 
 
 class ConversationContact:
-    def __init__(self, id, name, is_boss=False, number=None, email=None, on_phone=False):
+    def __init__(
+        self, id, name, is_boss=False, number=None, email=None, on_phone=False
+    ):
         self.id = id
         self.name = name
         self.is_boss = is_boss

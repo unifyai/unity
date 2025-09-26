@@ -36,7 +36,7 @@ def terminate_process(proc: subprocess.Popen) -> None:
 
         # Wait for process to terminate
         try:
-            proc.wait(timeout=0.1)
+            proc.wait(timeout=6)
             print("Process terminated gracefully")
         except subprocess.TimeoutExpired:
             # If process doesn't terminate gracefully, force kill
