@@ -109,6 +109,11 @@ def build_ask_prompt(
             "The Actor executor (Actor.act) is only available on the write surface (request).",
         )
 
+    # Single-session rule (informational)
+    guidance.append(
+        "Only one live session can run at a time – either a Task execution or an Actor session; while one is in-flight, the other surface is unavailable.",
+    )
+
     web_example = (
         (
             f'\n• Web – explain the Eisenhower Matrix\n  `{web_ask_fname}(text="What is the Eisenhower Matrix and when should it be used?")`'
@@ -226,8 +231,10 @@ def build_request_prompt(
     if actor_act_fname:
         guidance_lines.extend(
             [
-                "When you need to execute a free-form, multi-step activity outside the task scheduler:",
-                f"- Call `{actor_act_fname}(description=...)` to start it; the returned handle supports pause/resume/interject/stop/ask.",
+                "Execution entry-points:",
+                f"- Use `{task_execute_fname}` when the activity is a clear, trackable Task (name/description/status).",
+                f"- Use `{actor_act_fname}` for ad-hoc, conversational sandbox sessions (onboarding, live screen/browser guidance) that don't need task tracking.",
+                "Only one can run at a time; while one is active, the other surface is hidden.",
             ],
         )
 
@@ -266,7 +273,7 @@ def build_request_prompt(
     )
 
     if actor_act_fname:
-        usage_examples += f'\n• Execute a free-form activity\n  `{actor_act_fname}(description="Call Alice now and explain the Q3 plan")`'
+        usage_examples += f'\n• Execute a free-form activity (ad-hoc/sandbox)\n  `{actor_act_fname}(description="Open a browser and walk me through the dashboard; I\'ll guide you live")`'
 
     return "\n".join(
         [
