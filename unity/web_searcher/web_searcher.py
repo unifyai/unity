@@ -1,6 +1,7 @@
 import os
 import json
 from tavily import TavilyClient
+import functools
 from typing import List, Dict, Any, Optional
 import asyncio
 import unify
@@ -36,6 +37,7 @@ class WebSearcher(BaseWebSearcher):
             include_class_name=False,
         )
 
+    @functools.wraps(BaseWebSearcher.ask, updated=())
     @log_manager_call("WebSearcher", "ask", payload_key="question")
     async def ask(
         self,
