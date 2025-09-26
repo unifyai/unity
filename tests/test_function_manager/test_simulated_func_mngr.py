@@ -44,12 +44,18 @@ def test_sim_fm_list_functions_with_and_without_implementations():
 
     listing = fm.list_functions()
     assert isinstance(listing, dict) and listing
-    # simulated returns a deterministic example entry
-    assert "example" in listing
-    assert "implementation" not in listing["example"]
+    # pick a representative entry and verify shape without relying on specific names
+    first_name, first_entry = next(iter(listing.items()))
+    assert isinstance(first_entry, dict)
+    for key in ("function_id", "argspec", "docstring"):
+        assert key in first_entry
+    assert "implementation" not in first_entry
 
     listing_with_impl = fm.list_functions(include_implementations=True)
-    assert "implementation" in listing_with_impl["example"]
+    assert isinstance(listing_with_impl, dict) and listing_with_impl
+    # Ensure the same entry now includes an implementation when requested
+    assert first_name in listing_with_impl
+    assert "implementation" in listing_with_impl[first_name]
 
 
 # --------------------------------------------------------------------------- #
