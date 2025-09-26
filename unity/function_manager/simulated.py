@@ -91,6 +91,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         *,
         implementations: str | List[str],
         preconditions: Optional[Dict[str, Dict]] = None,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, str]:
         # No persistence – acknowledge each function name with a simulated status
         if isinstance(implementations, str):
@@ -146,6 +147,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         *,
         function_id: int,
         delete_dependents: bool = True,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, str]:
         # Acknowledge deletion without side effects
         return {f"id={function_id}": "deleted (simulated)"}
