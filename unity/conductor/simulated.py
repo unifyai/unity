@@ -23,6 +23,7 @@ from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
+from ..web_searcher.simulated import SimulatedWebSearcher
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
@@ -83,6 +84,10 @@ class SimulatedConductor:
             rolling_summary_in_prompts=rolling_summary_in_prompts,
             simulation_guidance=simulation_guidance,
         )
+        self._web_searcher = SimulatedWebSearcher(
+            description=description,
+            log_events=log_events,
+        )
 
         #  Run-time state & tool-dict helpers
         self._active_task = None  # type: ignore
@@ -98,6 +103,7 @@ class SimulatedConductor:
             self._transcript_manager.ask,
             self._knowledge_manager.ask,
             self._task_scheduler.ask,
+            self._web_searcher.ask,
             include_class_name=True,
         )
 
