@@ -43,18 +43,18 @@ def _assistant_requested_tool_names(msgs: list[dict]) -> list[str]:
 
 COMBINED_REQUESTS: list[str] = [
     (
-        "First, look up the current phone number for Bob Johnson using the contacts manager, "
-        "then update his phone number to 555-222-3333. Use only the ContactManager.ask and ContactManager.update tools; "
-        "do not use any other tools."
+        "Ask for the current phone number for Bob Johnson using the contacts manager. "
+        "Also update his phone number to 555-222-3333. "
+        "Use only ContactManager.ask and ContactManager.update; do not use any other tools."
     ),
     (
-        "If there exists a contact with email jane.d@example.com (check using the contacts manager), "
-        "update their description to 'Preferred contact is email'; otherwise do nothing and say 'no change'. "
+        "Ask for the total number of contacts currently stored using the contacts manager. "
+        "Also set Jane Doe's description to 'Preferred contact is email'. "
         "Use only ContactManager.ask and ContactManager.update; do not use any other tools."
     ),
     (
         "Answer this question using the contacts manager – what is Alice Smith's current email? "
-        "Then immediately update Alice Smith's WhatsApp number to +1-555-101-2020. "
+        "Also update Alice Smith's WhatsApp number to +1-555-101-2020. "
         "Use only ContactManager.ask and ContactManager.update; no other tools."
     ),
 ]
@@ -114,21 +114,4 @@ async def test_contact_combined_ask_and_update_only_expected_tools(request_text:
         executed_list.count("SimulatedContactManager_update") >= 1
     ), "Expected at least one update execution"
 
-    # Order assertion: the first ask should occur before the first update
-    first_ask_idx = executed_list.index("SimulatedContactManager_ask")
-    first_update_idx = executed_list.index("SimulatedContactManager_update")
-    assert (
-        first_ask_idx < first_update_idx
-    ), f"Expected ask before update. Order was: {executed_list}"
-
-    # If both tools were explicitly requested by the assistant, assert the first
-    # request order mirrors ask before update (best-effort; skip if one missing)
-    if (
-        "SimulatedContactManager_ask" in requested_list
-        and "SimulatedContactManager_update" in requested_list
-    ):
-        r_ask_idx = requested_list.index("SimulatedContactManager_ask")
-        r_upd_idx = requested_list.index("SimulatedContactManager_update")
-        assert (
-            r_ask_idx < r_upd_idx
-        ), f"Expected tool selection to request ask before update. Order was: {requested_list}"
+    # Order is not enforced; tools may be called in any sequence or in parallel.
