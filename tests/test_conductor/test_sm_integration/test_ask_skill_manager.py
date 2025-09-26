@@ -12,7 +12,7 @@ from tests.test_conductor.utils import (
 )
 
 
-MANAGER = "SimulatedSkillManager"
+MANAGER = "SkillManager"
 
 
 # Each case couples a user question with explicit simulation guidance that
@@ -73,20 +73,20 @@ async def test_skill_questions_use_only_skill_manager_tool(case: dict[str, str])
     answer, messages = await asyncio.wait_for(handle.result(), timeout=300)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
-    # The only executed tool must be SimulatedSkillManager.ask and it should run exactly once
+    # The only executed tool must be SkillManager.ask and it should run exactly once
     executed_list = tool_names_from_messages(messages, MANAGER)
     executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
     assert executed == {
-        "SimulatedSkillManager_ask",
-    }, f"Only SimulatedSkillManager_ask should run, saw: {sorted(executed)}"
+        "SkillManager_ask",
+    }, f"Only SkillManager_ask should run, saw: {sorted(executed)}"
     assert (
-        executed_list.count("SimulatedSkillManager_ask") == 1
-    ), f"Expected exactly one SimulatedSkillManager_ask call, saw order: {executed_list}"
+        executed_list.count("SkillManager_ask") == 1
+    ), f"Expected exactly one SkillManager_ask call, saw order: {executed_list}"
 
     # Additionally confirm that any assistant tool selection(s) referenced only that tool
     requested = set(assistant_requested_tool_names(messages, MANAGER))
     assert requested, "Assistant should have requested at least one tool"
     assert requested <= {
-        "SimulatedSkillManager_ask",
-    }, f"Assistant should request only SimulatedSkillManager_ask, saw: {sorted(requested)}"
+        "SkillManager_ask",
+    }, f"Assistant should request only SkillManager_ask, saw: {sorted(requested)}"
