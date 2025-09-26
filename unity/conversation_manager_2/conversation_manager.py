@@ -122,19 +122,23 @@ class ConversationManager:
             "+12697784020": ConversationContact(
                 "1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"
             ),
-            # "+13502381308": Contact(
-            #     "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
-            # ),
-            # "+16605382869": Contact("3", "Ved", False, "+16605382869", "ved@unify.ai"),
+            "+13502381308": ConversationContact(
+                "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
+            ),
+            "+16605382869": ConversationContact(
+                "3", "Ved", False, "+16605382869", "ved@unify.ai"
+            ),
         }
         self.email_contacts_map = {
             "yasser@unify.ai": ConversationContact(
                 "1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"
             ),
-            # "dan@unify.ai": Contact(
-            #     "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
-            # ),
-            # "ved@unify.ai": Contact("3", "Ved", False, "+16605382869", "ved@unify.ai"),
+            "dan@unify.ai": ConversationContact(
+                "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
+            ),
+            "ved@unify.ai": ConversationContact(
+                "3", "Ved", False, "+16605382869", "ved@unify.ai"
+            ),
         }
 
         self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
