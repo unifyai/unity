@@ -8,38 +8,8 @@ from typing import Any, Dict, List, Optional
 
 import unify
 
-from ..common.async_tool_loop import SteerableToolHandle
 from .base import BaseFunctionManager
 from .types.function import Function
-
-
-class _SimulatedFunctionHandle(SteerableToolHandle):
-    def __init__(
-        self,
-        llm: unify.Unify,
-        prompt: str,
-        *,
-        _return_reasoning_steps: bool,
-    ) -> None:
-        self._llm = llm
-        self._prompt = prompt
-        self._want_steps = _return_reasoning_steps
-        self._answer: Optional[str] = None
-        self._msgs: List[Dict[str, Any]] = []
-        self._done = False
-
-    async def result(self):
-        if not self._done:
-            answer = await self._llm.generate(self._prompt)
-            self._answer = answer
-            self._msgs = [
-                {"role": "user", "content": self._prompt},
-                {"role": "assistant", "content": answer},
-            ]
-            self._done = True
-        if self._want_steps:
-            return self._answer, self._msgs
-        return self._answer
 
 
 class SimulatedFunctionManager(BaseFunctionManager):
@@ -89,6 +59,79 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self._llm.set_system_message(sys_msg)
 
     # ------------------------------------------------------------------ #
+    #  Internal helper: run async LLM from sync contexts                  #
+    # ------------------------------------------------------------------ #
+    def _run_async_sync(self, coro) -> str:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        import concurrent.futures
+
+        def _runner() -> str:
+            return asyncio.run(coro)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(_runner).result()
+
+    def _extract_json(self, text: str):
+        """Extract JSON from an LLM response (raw, fenced, or embedded)."""
+        import re
+
+        # Direct parse
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+
+        # Fenced block
+        fenced = re.search(r"```(?:json)?\n([\s\S]*?)\n```", text)
+        if fenced:
+            candidate = fenced.group(1).strip()
+            try:
+                return json.loads(candidate)
+            except Exception:
+                pass
+
+        # First top-level JSON-looking span
+        start = min(
+            (
+                i
+                for i in [
+                    text.find("{"),
+                    text.find("[") if text.find("[") != -1 else 10**9,
+                ]
+                if i != -1
+            ),
+            default=-1,
+        )
+        if start != -1:
+            # Heuristic: grab until matching closing brace/bracket
+            stack = []
+            end = start
+            for idx, ch in enumerate(text[start:], start=start):
+                if ch in "[{":
+                    stack.append(ch)
+                elif ch in "]}":
+                    if not stack:
+                        break
+                    opening = stack.pop()
+                    if not stack:
+                        end = idx + 1
+                        break
+            if end > start:
+                candidate = text[start:end]
+                try:
+                    return json.loads(candidate)
+                except Exception:
+                    pass
+
+        raise ValueError("Could not extract JSON from LLM response")
+
+    def _guidance_hint(self) -> str:
+        return (self._simulation_guidance or "").strip()
+
+    # ------------------------------------------------------------------ #
     # Public API – mirror BaseFunctionManager                            #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseFunctionManager.add_functions, updated=())
@@ -123,19 +166,27 @@ class SimulatedFunctionManager(BaseFunctionManager):
         include_implementations: bool = False,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Dict[str, Any]]:
-        # Produce a small fabricated list deterministically
-        fake: Dict[str, Dict[str, Any]] = {
-            "example": {
-                "function_id": 1,
-                "argspec": "(x: int, y: int) -> int",
-                "docstring": "Add two integers (simulated)",
-            },
-        }
-        if include_implementations:
-            fake["example"][
-                "implementation"
-            ] = "def example(x: int, y: int) -> int:\n    return x + y\n"
-        return fake
+        # Ask the stateful LLM to produce a catalogue snapshot aligned to guidance
+        guidance = self._guidance_hint()
+        prompt = (
+            "Simulate FunctionManager.list_functions. Return ONLY a JSON object mapping "
+            "function name -> {function_id, argspec, docstring"
+            + (", implementation" if include_implementations else "")
+            + "}. "
+            "Ensure the catalogue reflects the following high-level domain guidance if provided.\n\n"
+            f"Guidance: {guidance!r}"
+        )
+
+        def _call() -> str:
+            return self._run_async_sync(self._llm.generate(prompt))
+
+        raw = _call()
+        data = self._extract_json(raw)
+        if not isinstance(data, dict):
+            raise ValueError(
+                "list_functions: expected a JSON object mapping name -> metadata",
+            )
+        return data
 
     @functools.wraps(BaseFunctionManager.get_precondition, updated=())
     def get_precondition(
@@ -167,32 +218,26 @@ class SimulatedFunctionManager(BaseFunctionManager):
         limit: int = 100,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
-        # Query the LLM to fabricate a list of functions
+        guidance = self._guidance_hint()
         prompt = (
-            "Simulate FunctionManager.search_functions. Return a JSON array of objects "
-            "with fields name, function_id, argspec, docstring. Limit to "
-            f"{limit} starting at {offset}. Filter expression (for flavor): {filter!r}."
+            "Simulate FunctionManager.search_functions. Return ONLY a JSON array of objects "
+            "with fields name, function_id, argspec, docstring. "
+            f"Limit to {limit} starting at {offset}. "
+            f"Filter expression: {filter!r}. "
+            "Ensure results reflect the high-level guidance when relevant.\n\n"
+            f"Guidance: {guidance!r}"
         )
 
-        async def _call() -> str:
-            return await self._llm.generate(prompt)
+        def _call() -> str:
+            return self._run_async_sync(self._llm.generate(prompt))
 
-        try:
-            raw = asyncio.run(_call())
-            data = json.loads(raw)
-            if isinstance(data, list):
-                return data
-        except Exception:
-            pass
-        # Fallback minimal response
-        return [
-            {
-                "name": "example",
-                "function_id": 1,
-                "argspec": "(x: int, y: int) -> int",
-                "docstring": "Add two integers (simulated)",
-            },
-        ]
+        raw = _call()
+        data = self._extract_json(raw)
+        if not isinstance(data, list):
+            raise ValueError(
+                "search_functions: expected a JSON array of function records",
+            )
+        return data
 
     @functools.wraps(BaseFunctionManager.search_functions_by_similarity, updated=())
     def search_functions_by_similarity(
@@ -202,28 +247,22 @@ class SimulatedFunctionManager(BaseFunctionManager):
         n: int = 5,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
+        guidance = self._guidance_hint()
         prompt = (
-            "Simulate FunctionManager.search_functions_by_similarity. Given the query, "
-            "invent up to n plausible functions that might be similar. Return ONLY a JSON array "
-            "of objects with keys name, function_id, argspec, score.\n\n"
-            f"query={query!r}, n={n}"
+            "Simulate FunctionManager.search_functions_by_similarity. Given the natural-language query, "
+            "invent up to n plausible functions that would exist in the current catalogue. "
+            "Return ONLY a JSON array of objects with keys name, function_id, argspec, score. "
+            "Bias the inventions to align with the high-level guidance if present.\n\n"
+            f"query={query!r}, n={n}, guidance={guidance!r}"
         )
 
-        async def _call() -> str:
-            return await self._llm.generate(prompt)
+        def _call() -> str:
+            return self._run_async_sync(self._llm.generate(prompt))
 
-        try:
-            raw = asyncio.run(_call())
-            data = json.loads(raw)
-            if isinstance(data, list):
-                return data
-        except Exception:
-            pass
-        return [
-            {
-                "name": "example",
-                "function_id": 1,
-                "argspec": "(x: int, y: int) -> int",
-                "score": 0.12,
-            },
-        ]
+        raw = _call()
+        data = self._extract_json(raw)
+        if not isinstance(data, list):
+            raise ValueError(
+                "search_functions_by_similarity: expected a JSON array of function records with scores",
+            )
+        return data
