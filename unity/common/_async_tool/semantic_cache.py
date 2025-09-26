@@ -42,29 +42,19 @@ def get_tool_trajectory(user_message):
     if not context_exist:
         unify.create_context(store_context)
 
-    logs = unify.get_logs(context=store_context, return_ids_only=True)
-    unify.create_derived_logs(
-        key="temp_score",
-        equation=f"cosine({{logs:user_message_emb}}, embed('{user_message}', model={_EMBED_MODEL}))",
-        # TODO: weird behavior?
-        # equation=f"cosine(embed('{user_message}', model={_EMBED_MODEL}), {{logs:user_message_emb}})",
-        # equation=f"cosine({{logs:user_message_emb}}, {{logs:user_message_emb}})",
-        referenced_logs={
-            "logs": logs,
-        },
-        context=store_context,
-    )
-
-    threshold = 0.4
+    threshold = 0.2
     limit = 1
     logs = unify.get_logs(
-        filter=f"temp_score <= {threshold}",
-        sorting={
-            "temp_score": "descending",
-        },
-        exclude_fields=["user_message_emb", "temp_score"],
-        limit=limit,
         context=store_context,
+        exclude_fields=["user_message_emb"],
+        filter=f"cosine(user_message, embed('{user_message}', model='{_EMBED_MODEL}')) < {threshold}",
+        sorting={
+            f"cosine(user_message, embed('{user_message}', model='{_EMBED_MODEL}'))": "descending",
+        },
+        limit=limit,
     )
 
-    return logs
+    if logs:
+        return logs[0]
+
+    return None
