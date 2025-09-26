@@ -9,6 +9,7 @@ import os
 
 import unify
 import functools
+import inspect
 
 from typing import Callable, Dict
 
@@ -140,6 +141,77 @@ class SimulatedConductor:
                 include_class_name=True,
             ),
         }
+
+        # Enforce mutual exclusion between Actor.act and TaskScheduler.execute by
+        # tracking a single active handle and masking both tools while one is active.
+        def _wrap_and_track(orig_callable):
+            @functools.wraps(orig_callable)
+            async def _wrapper(*args, **kwargs):
+                res = orig_callable(*args, **kwargs)
+                if asyncio.iscoroutine(res):
+                    res = await res
+                try:
+                    from unity.common.async_tool_loop import SteerableToolHandle  # type: ignore
+
+                    if isinstance(res, SteerableToolHandle):
+                        self._active_task = res  # type: ignore[assignment]
+
+                        async def _clear_when_done(h):
+                            try:
+                                await h.result()
+                            except Exception:
+                                pass
+                            finally:
+                                if getattr(self, "_active_task", None) is h:
+                                    self._active_task = None  # type: ignore[assignment]
+
+                        asyncio.create_task(_clear_when_done(res))
+                except Exception:
+                    # Best-effort tracking only; never break the tool call
+                    pass
+                return res
+
+            # Preserve original signature/annotations so tool schema stays accurate
+            try:
+                _wrapper.__signature__ = inspect.signature(orig_callable)
+                try:
+                    ann = dict(getattr(orig_callable, "__annotations__", {}))
+                    ann.pop("self", None)
+                    _wrapper.__annotations__ = ann
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return _wrapper
+
+        # Locate canonical keys for the two entry-points (names include class prefixes)
+        actor_key = next((k for k in active if "actor_act" in k.lower()), None)
+        exec_key = next(
+            (k for k in active if "taskscheduler_execute" in k.lower()),
+            None,
+        )
+
+        if actor_key is not None:
+            _orig = active[actor_key]
+            if isinstance(_orig, ToolSpec):
+                active[actor_key] = ToolSpec(
+                    fn=_wrap_and_track(_orig.fn),
+                    max_concurrent=_orig.max_concurrent,
+                    max_total_calls=_orig.max_total_calls,
+                )
+            else:
+                active[actor_key] = _wrap_and_track(_orig)  # type: ignore[arg-type]
+
+        if exec_key is not None:
+            _orig = active[exec_key]
+            if isinstance(_orig, ToolSpec):
+                active[exec_key] = ToolSpec(
+                    fn=_wrap_and_track(_orig.fn),
+                    max_concurrent=_orig.max_concurrent,
+                    max_total_calls=_orig.max_total_calls,
+                )
+            else:
+                active[exec_key] = _wrap_and_track(_orig)  # type: ignore[arg-type]
 
         self._active_tools = active
 
@@ -304,8 +376,10 @@ class SimulatedConductor:
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
-            # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            # Hide Actor.act and TaskScheduler.execute while a session is active
+            tool_policy=self._mask_act_execute_policy(),
+            # Ensure at most one base tool is scheduled per assistant turn
+            max_parallel_tool_calls=1,
         )
 
         if should_log and call_id is not None:
@@ -326,3 +400,39 @@ class SimulatedConductor:
             handle.result = _wrapped_result
 
         return handle
+
+    # ------------------------------------------------------------------ #
+    #  Internal policy – mask Actor.act and TaskScheduler.execute while active
+    # ------------------------------------------------------------------ #
+
+    def _mask_act_execute_policy(self):
+        def _policy(step_index: int, tools: Dict[str, Callable]):
+            mode = "required" if step_index < 1 else "auto"
+            filtered = dict(tools)
+
+            try:
+                active = getattr(self, "_active_task", None)
+                if active is not None and not active.done():
+                    # Remove both entry-points from the base toolkit; dynamic helpers remain available
+                    actor_key = next(
+                        (k for k in list(filtered) if "actor_act" in k.lower()),
+                        None,
+                    )
+                    exec_key = next(
+                        (
+                            k
+                            for k in list(filtered)
+                            if "taskscheduler_execute" in k.lower()
+                        ),
+                        None,
+                    )
+                    if actor_key:
+                        filtered.pop(actor_key, None)
+                    if exec_key:
+                        filtered.pop(exec_key, None)
+            except Exception:
+                pass
+
+            return mode, filtered
+
+        return _policy
