@@ -53,11 +53,12 @@ def build_ask_prompt(
     transcript_ask_fname = _tool_name(tools, "transcriptmanager_ask")
     knowledge_ask_fname = _tool_name(tools, "knowledgemanager_ask")
     task_ask_fname = _tool_name(tools, "taskscheduler_ask")
+    web_ask_fname = _tool_name(tools, "websearcher_ask")
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "clarification")
 
-    # Validate required tools (request_clarification is optional)
+    # Validate required tools (request_clarification and web-search are optional)
     _require_tools(
         {
             "ContactManager.ask": contact_ask_fname,
@@ -87,10 +88,18 @@ def build_ask_prompt(
 
     # High-level orchestration guidance (do not describe HOW, only orchestrate)
     guidance = [
-        "You are an assistant that answers read-only questions by orchestrating high-level managers (Contacts, Transcripts, Knowledge, Tasks).",
+        "You are an assistant that answers read-only questions by orchestrating high-level managers (Contacts, Transcripts, Knowledge, Tasks, WebSearch).",
         "Choose the most appropriate manager's `ask` tool per sub-question and compose the final answer.",
         "Do not explain HOW the question will be answered, which low-level tools will be used, or instruct the user how to phrase their question; that is handled entirely by the domain managers.",
+        "Use the WebSearcher.ask tool for general knowledge, external information, industry concepts, best practices or anything that would reasonably be found on the web (and not in your internal managers).",
+        "Use Contact/Transcript/Knowledge/Task managers for internal state about people, messages, stored facts and tasks respectively.",
     ]
+
+    web_example = (
+        f'\n• Web – explain the Eisenhower Matrix\n  `{web_ask_fname}(text="What is the Eisenhower Matrix and when should it be used?")`'
+        if web_ask_fname
+        else ""
+    )
 
     usage_examples = "\n".join(
         [
@@ -99,7 +108,7 @@ def build_ask_prompt(
             f'• People – who is the Berlin-based product designer?\n  `{contact_ask_fname}(text="Who is the Berlin-based product designer?")`',
             f'• Messages – top-3 messages about budgeting and banking\n  `{transcript_ask_fname}(text="Show the latest 3 messages about banking and budgeting")`',
             f'• Knowledge – onboarding policy summary\n  `{knowledge_ask_fname}(text="Summarise the employee onboarding policy")`',
-            f'• Tasks – list tasks due today\n  `{task_ask_fname}(text="Which tasks are due today?")`',
+            f'• Tasks – list tasks due today\n  `{task_ask_fname}(text="Which tasks are due today?")`{web_example}',
         ],
     )
 
@@ -142,11 +151,12 @@ def build_request_prompt(
     task_ask_fname = _tool_name(tools, "taskscheduler_ask")
     task_update_fname = _tool_name(tools, "taskscheduler_update")
     task_execute_fname = _tool_name(tools, "taskscheduler_execute")
+    web_ask_fname = _tool_name(tools, "websearcher_ask")
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "clarification")
 
-    # Validate required tools
+    # Validate required tools (web-search optional, but encouraged)
     _require_tools(
         {
             # Read-side helpers (should always be available)
@@ -182,6 +192,7 @@ def build_request_prompt(
     guidance_lines = [
         "You have read-write control over tasks, contacts, transcripts and the knowledge-base.",
         "Orchestrate by calling the appropriate managers' `ask` or `update` methods; do not describe or expose HOW the change will be implemented.",
+        "Use WebSearcher.ask for external information, market practices, definitions, or anything you would reasonably look up online.",
         "When the request involves tasks:",
         f"- Understand intent then check context via `{task_ask_fname}`",
         f"- Apply changes via `{task_update_fname}` if needed",
@@ -208,13 +219,19 @@ def build_request_prompt(
         "• If there is an unrelated read-only question, you may run `ask` in parallel with an `update` to save time.",
     ]
 
+    web_example = (
+        f'\n• Research before update – look up a standard practice\n  `{web_ask_fname}(text="What\'s the typical definition of high priority in agile backlogs?")`'
+        if web_ask_fname
+        else ""
+    )
+
     usage_examples = "\n".join(
         [
             "Examples",
             "--------",
             f'• Create a task and start it\n  1) `{task_update_fname}(text="Create a task: Call Alice about the Q3 budget")`\n  2) `{task_execute_fname}(text="Start the call task now")`',
             f'• Update knowledge and verify\n  1) `{knowledge_update_fname}(text="Store: Office hours are 9–5 PT")`\n  2) `{knowledge_ask_fname}(text="What are our office hours?")`',
-            f'• Create or update a contact then confirm via read\n  1) `{contact_update_fname}(text="Create Jane Doe with email jane@example.com")`\n  2) `{contact_ask_fname}(text="Show Jane Doe\'s contact details")`',
+            f'• Create or update a contact then confirm via read\n  1) `{contact_update_fname}(text="Create Jane Doe with email jane@example.com")`\n  2) `{contact_ask_fname}(text="Show Jane Doe\'s contact details")`{web_example}',
         ],
     )
 
