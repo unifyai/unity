@@ -24,6 +24,7 @@ from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
 from ..web_searcher.simulated import SimulatedWebSearcher
+from ..actor.simulated import SimulatedActor
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
@@ -89,6 +90,11 @@ class SimulatedConductor:
             log_events=log_events,
         )
 
+        # Actor – simulation-only executor for free-form activities
+        self._actor = SimulatedActor(
+            simulation_guidance=simulation_guidance,
+        )
+
         #  Run-time state & tool-dict helpers
         self._active_task = None  # type: ignore
 
@@ -127,6 +133,7 @@ class SimulatedConductor:
                 self._contact_manager.update,
                 self._knowledge_manager.update,
                 self._task_scheduler.update,
+                self._actor.act,
                 ToolSpec(self._task_scheduler.execute, max_concurrent=1),
                 include_class_name=True,
             ),
