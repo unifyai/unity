@@ -232,6 +232,14 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         want to run in natural language and allow the `execute` method to
         determine the best method and steps.
 
+        Mandatory execution rule
+        ------------------------
+        Requests to "run", "start", "execute", "begin", or "launch" a task
+        MUST be fulfilled via this `execute` method (exactly once). Do not use
+        `update` as a substitute for starting tasks. If fields need adjusting
+        prior to execution, perform the minimal `update` first and then call
+        `execute` to actually start the task.
+
         The assistant should interpret *text* to figure out which task the user
         wants to run.  Typical workflow:
 
