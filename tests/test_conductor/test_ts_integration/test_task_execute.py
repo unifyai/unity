@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 
 import pytest
 
@@ -34,6 +35,7 @@ async def test_task_like_requests_use_taskscheduler_execute_not_actor(
 
     _orig_sim_actor = _actor_sim.SimulatedActor
 
+    @functools.wraps(_orig_sim_actor)
     def _patched_sim_actor(*args, **kwargs):  # type: ignore
         kw = dict(kwargs)
         kw.setdefault("steps", 0)
