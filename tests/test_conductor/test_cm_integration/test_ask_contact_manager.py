@@ -57,20 +57,20 @@ async def test_contact_questions_use_only_contact_manager_tool(question: str):
     answer, messages = await asyncio.wait_for(handle.result(), timeout=300)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
-    # Verify that the only executed tool is SimulatedContactManager.ask and it ran exactly once
+    # Verify that the only executed tool is ContactManager.ask and it ran exactly once
     executed_list = _tool_names_from_messages(messages)
     executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
     assert executed == {
-        "SimulatedContactManager_ask",
-    }, f"Only SimulatedContactManager_ask should run, saw: {sorted(executed)}"
+        "ContactManager_ask",
+    }, f"Only ContactManager_ask should run, saw: {sorted(executed)}"
     assert (
-        executed_list.count("SimulatedContactManager_ask") == 1
-    ), f"Expected exactly one SimulatedContactManager_ask call, saw order: {executed_list}"
+        executed_list.count("ContactManager_ask") == 1
+    ), f"Expected exactly one ContactManager_ask call, saw order: {executed_list}"
 
     # Additionally confirm that any assistant tool selection(s) referenced only that tool
     requested = set(_assistant_requested_tool_names(messages))
     assert requested, "Assistant should have requested at least one tool"
     assert requested <= {
-        "SimulatedContactManager_ask",
-    }, f"Assistant should request only SimulatedContactManager_ask, saw: {sorted(requested)}"
+        "ContactManager_ask",
+    }, f"Assistant should request only ContactManager_ask, saw: {sorted(requested)}"

@@ -58,28 +58,28 @@ async def test_task_like_requests_use_taskscheduler_execute_not_actor(
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
     # TaskScheduler.execute should be invoked at least once
-    executed_ts_list = tool_names_from_messages(messages, "SimulatedTaskScheduler")
+    executed_ts_list = tool_names_from_messages(messages, "TaskScheduler")
     executed_ts = set(executed_ts_list)
     assert executed_ts, "Expected at least one tool call"
     assert (
-        executed_ts_list.count("SimulatedTaskScheduler_execute") >= 1
-    ), f"Expected SimulatedTaskScheduler_execute to run at least once, saw order: {executed_ts_list}"
+        executed_ts_list.count("TaskScheduler_execute") >= 1
+    ), f"Expected TaskScheduler_execute to run at least once, saw order: {executed_ts_list}"
 
     # Actor.act must NOT be called for task-execution requests
-    executed_actor_list = tool_names_from_messages(messages, "SimulatedActor")
+    executed_actor_list = tool_names_from_messages(messages, "Actor")
     executed_actor = set(executed_actor_list)
     assert (
-        "SimulatedActor_act" not in executed_actor
+        "Actor_act" not in executed_actor
     ), f"Actor.act must not run for execute scenarios, saw: {sorted(executed_actor)}"
 
     # If the assistant explicitly requested tools, they should reference execute here
     requested_ts = set(
-        assistant_requested_tool_names(messages, "SimulatedTaskScheduler"),
+        assistant_requested_tool_names(messages, "TaskScheduler"),
     )
     if requested_ts:
         assert requested_ts <= {
-            "SimulatedTaskScheduler_execute",
-        }, f"Assistant should only request SimulatedTaskScheduler_execute here, saw: {sorted(requested_ts)}"
+            "TaskScheduler_execute",
+        }, f"Assistant should only request TaskScheduler_execute here, saw: {sorted(requested_ts)}"
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,7 @@ from tests.test_conductor.utils import (
 )
 
 
-MANAGER = "SimulatedContactManager"
+MANAGER = "ContactManager"
 
 
 COMBINED_REQUESTS: list[str] = [
@@ -61,31 +61,31 @@ async def test_contact_combined_ask_and_update_only_expected_tools(request_text:
     # Must include both ask and update in the executed tools
     assert executed, "Expected at least some tool activity"
     assert {
-        "SimulatedContactManager_ask",
-        "SimulatedContactManager_update",
+        "ContactManager_ask",
+        "ContactManager_update",
     }.issubset(
         executed,
-    ), f"Expected both SimulatedContactManager_ask and SimulatedContactManager_update to run; saw: {sorted(executed)}"
+    ), f"Expected both ContactManager_ask and ContactManager_update to run; saw: {sorted(executed)}"
 
     # Strictly no other tools should have been executed
     assert executed <= {
-        "SimulatedContactManager_ask",
-        "SimulatedContactManager_update",
-    }, f"Unexpected tools executed: {sorted(executed - {'SimulatedContactManager_ask', 'SimulatedContactManager_update'})}"
+        "ContactManager_ask",
+        "ContactManager_update",
+    }, f"Unexpected tools executed: {sorted(executed - {'ContactManager_ask', 'ContactManager_update'})}"
 
     # Assistant's requested tools should also be only these two (order/duplicates allowed)
     assert requested, "Assistant should have requested tools"
     assert requested <= {
-        "SimulatedContactManager_ask",
-        "SimulatedContactManager_update",
-    }, f"Unexpected tool requests: {sorted(requested - {'SimulatedContactManager_ask', 'SimulatedContactManager_update'})}"
+        "ContactManager_ask",
+        "ContactManager_update",
+    }, f"Unexpected tool requests: {sorted(requested - {'ContactManager_ask', 'ContactManager_update'})}"
 
     # Tighter checks: at least one ask and at least one update call were executed
     assert (
-        executed_list.count("SimulatedContactManager_ask") >= 1
+        executed_list.count("ContactManager_ask") >= 1
     ), "Expected at least one ask execution"
     assert (
-        executed_list.count("SimulatedContactManager_update") >= 1
+        executed_list.count("ContactManager_update") >= 1
     ), "Expected at least one update execution"
 
     # Order is not enforced; tools may be called in any sequence or in parallel.

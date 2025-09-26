@@ -12,7 +12,7 @@ from tests.test_conductor.utils import (
 )
 
 
-MANAGER = "SimulatedKnowledgeManager"
+MANAGER = "KnowledgeManager"
 
 
 # Each query intentionally contains an unrelated read (ask) and write (update)
@@ -53,16 +53,16 @@ async def test_combined_queries_call_both_ask_and_update_once_each(combined_text
 
     # Must include both at least once (dynamic continue tools permitted)
     assert (
-        executed_list.count("SimulatedKnowledgeManager_ask") >= 1
-    ), f"Expected at least one SimulatedKnowledgeManager_ask call, saw order: {executed_list}"
+        executed_list.count("KnowledgeManager_ask") >= 1
+    ), f"Expected at least one KnowledgeManager_ask call, saw order: {executed_list}"
     assert (
-        executed_list.count("SimulatedKnowledgeManager_update") >= 1
-    ), f"Expected at least one SimulatedKnowledgeManager_update call, saw order: {executed_list}"
+        executed_list.count("KnowledgeManager_update") >= 1
+    ), f"Expected at least one KnowledgeManager_update call, saw order: {executed_list}"
 
     # Order is not strictly enforced, but both must appear
     assert {
-        "SimulatedKnowledgeManager_ask",
-        "SimulatedKnowledgeManager_update",
+        "KnowledgeManager_ask",
+        "KnowledgeManager_update",
     }.issubset(
         executed,
     ), f"Both ask and update must be executed, saw: {sorted(executed)}"
@@ -71,6 +71,6 @@ async def test_combined_queries_call_both_ask_and_update_once_each(combined_text
     requested = set(assistant_requested_tool_names(messages, MANAGER))
     assert requested, "Assistant should have requested at least one tool"
     assert requested <= {
-        "SimulatedKnowledgeManager_ask",
-        "SimulatedKnowledgeManager_update",
+        "KnowledgeManager_ask",
+        "KnowledgeManager_update",
     }, f"Assistant should only request ask/update for KnowledgeManager, saw: {sorted(requested)}"

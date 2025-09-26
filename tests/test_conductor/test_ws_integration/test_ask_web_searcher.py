@@ -12,7 +12,7 @@ from tests.test_conductor.utils import (
 )
 
 
-MANAGER = "SimulatedWebSearcher"
+MANAGER = "WebSearcher"
 
 
 # Live-event, time-sensitive questions that must route to WebSearcher
@@ -44,20 +44,20 @@ async def test_live_events_use_only_web_searcher_tool(question: str):
     answer, messages = await asyncio.wait_for(handle.result(), timeout=300)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
-    # The only executed tool must be SimulatedWebSearcher.ask and it should run exactly once
+    # The only executed tool must be WebSearcher.ask and it should run exactly once
     executed_list = tool_names_from_messages(messages, MANAGER)
     executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
     assert executed == {
-        "SimulatedWebSearcher_ask",
-    }, f"Only SimulatedWebSearcher_ask should run, saw: {sorted(executed)}"
+        "WebSearcher_ask",
+    }, f"Only WebSearcher_ask should run, saw: {sorted(executed)}"
     assert (
-        executed_list.count("SimulatedWebSearcher_ask") == 1
-    ), f"Expected exactly one SimulatedWebSearcher_ask call, saw order: {executed_list}"
+        executed_list.count("WebSearcher_ask") == 1
+    ), f"Expected exactly one WebSearcher_ask call, saw order: {executed_list}"
 
     # Additionally confirm that any assistant tool selection(s) referenced only that tool
     requested = set(assistant_requested_tool_names(messages, MANAGER))
     assert requested, "Assistant should have requested at least one tool"
     assert requested <= {
-        "SimulatedWebSearcher_ask",
-    }, f"Assistant should request only SimulatedWebSearcher_ask, saw: {sorted(requested)}"
+        "WebSearcher_ask",
+    }, f"Assistant should request only WebSearcher_ask, saw: {sorted(requested)}"
