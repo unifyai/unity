@@ -82,6 +82,13 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
 
     Implementations choose their storage and execution strategy; this base
     class defines the required behavior and method signatures.
+
+    Intended use
+    ------------
+    The TaskScheduler is responsible for activities that should be represented
+    as first‑class Tasks – with names, descriptions, scheduling fields and a
+    completion status – and for returning a live, steerable execution handle
+    when starting such tasks.
     """
 
     # ------------------------------------------------------------------ #
