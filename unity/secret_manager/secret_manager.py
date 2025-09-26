@@ -4,18 +4,22 @@ import asyncio
 import functools
 import json
 import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from dotenv import load_dotenv
 
 import unify
 from ..common.llm_helpers import (
-    SteerableToolHandle,
-    start_async_tool_use_loop,
     methods_to_tool_dict,
     inject_broader_context,
+    make_request_clarification_tool,
+)
+from ..common.async_tool_loop import (
+    start_async_tool_use_loop,
+    SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
+from ..events.event_bus import EVENT_BUS, Event
 from ..events.manager_event_logging import log_manager_call
 from ..common.tool_outcome import ToolOutcome
 from ..common.embed_utils import ensure_vector_column
@@ -23,6 +27,7 @@ from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from .types import Secret
 from .base import BaseSecretManager
+from .prompt_builders import build_ask_prompt, build_update_prompt
 
 
 def _ensure_env_loaded() -> None:
@@ -107,12 +112,37 @@ class SecretManager(BaseSecretManager):
         )
         self._store.ensure_context()
 
+        # Track expected keys (names) – seed from env var and existing rows
+        self._expected_keys: Set[str] = set()
+        try:
+            raw = os.environ.get("SECRET_EXPECTED_KEYS", "")
+            if raw:
+                for part in raw.replace(";", ",").split(","):
+                    nm = part.strip()
+                    if nm:
+                        self._expected_keys.add(nm)
+        except Exception:
+            pass
+
+        # Add names from existing logs to expected set (best-effort)
+        try:
+            rows = unify.get_logs(context=self._ctx, from_fields=["name"], limit=1000)
+            for lg in rows:
+                nm = (lg.entries or {}).get("name")
+                if isinstance(nm, str) and nm:
+                    self._expected_keys.add(nm)
+        except Exception:
+            pass
+
         # Public tools
         self._ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
                 self._filter_secrets,
                 self._search_secrets,
+                self._list_known_keys,
+                self._list_available_env_keys,
+                self._missing_keys,
                 include_class_name=False,
             ),
         }
@@ -122,6 +152,10 @@ class SecretManager(BaseSecretManager):
                 self._create_secret,
                 self._update_secret,
                 self._delete_secret,
+                self._register_expected_keys,
+                self._list_known_keys,
+                self._list_available_env_keys,
+                self._missing_keys,
                 include_class_name=False,
             ),
         }
@@ -163,14 +197,46 @@ class SecretManager(BaseSecretManager):
 
         # Build tools for read-only inspection
         tools = dict(self._ask_tools)
+        if clarification_up_q is not None and clarification_down_q is not None:
 
-        # System message: strictly prohibit revealing raw values
+            async def _on_request(q: str):
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ManagerMethod",
+                        calling_id=_call_id,
+                        payload={
+                            "manager": "SecretManager",
+                            "method": "ask",
+                            "action": "clarification_request",
+                            "question": q,
+                        },
+                    ),
+                )
+
+            async def _on_answer(ans: str):
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ManagerMethod",
+                        calling_id=_call_id,
+                        payload={
+                            "manager": "SecretManager",
+                            "method": "ask",
+                            "action": "clarification_answer",
+                            "answer": ans,
+                        },
+                    ),
+                )
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
+
+        # System message via prompt builder
         client.set_system_message(
-            (
-                "You are a SecretManager.ask tool. You can look up secrets by name or description, "
-                "but MUST NEVER reveal raw secret values. Refer to secrets using their placeholder, e.g. ${name}. "
-                "Use tools provided to list/search/filter."
-            ),
+            build_ask_prompt(tools=tools),
         )
 
         handle = start_async_tool_use_loop(
@@ -215,14 +281,45 @@ class SecretManager(BaseSecretManager):
         )
 
         tools = dict(self._update_tools)
+        if clarification_up_q is not None and clarification_down_q is not None:
+
+            async def _on_request(q: str):
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ManagerMethod",
+                        calling_id=_call_id,
+                        payload={
+                            "manager": "SecretManager",
+                            "method": "update",
+                            "action": "clarification_request",
+                            "question": q,
+                        },
+                    ),
+                )
+
+            async def _on_answer(ans: str):
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ManagerMethod",
+                        calling_id=_call_id,
+                        payload={
+                            "manager": "SecretManager",
+                            "method": "update",
+                            "action": "clarification_answer",
+                            "answer": ans,
+                        },
+                    ),
+                )
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                clarification_up_q,
+                clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
 
         client.set_system_message(
-            (
-                "You are a SecretManager.update tool. You can create, update, or delete secrets. "
-                "NEVER echo raw secret values in responses. When a user provides a value, write it, "
-                "persist to .env with KEY derived from the name (upper snake), and always reference "
-                "secrets via ${name} in messages."
-            ),
+            build_update_prompt(tools=tools),
         )
 
         handle = start_async_tool_use_loop(
@@ -326,6 +423,47 @@ class SecretManager(BaseSecretManager):
             for lg in logs
         ]
 
+    def _list_known_keys(self) -> List[str]:
+        """Return the set of known/expected secret names (sorted)."""
+        return sorted(self._expected_keys)
+
+    def _list_available_env_keys(self) -> List[str]:
+        """Return names whose corresponding env var is present."""
+        available: List[str] = []
+        for name in sorted(self._expected_keys):
+            key = self._env_key_from_name(name)
+            if os.environ.get(key):
+                available.append(name)
+        return available
+
+    def _missing_keys(self, *, required: Optional[List[str]] = None) -> List[str]:
+        """Return names from 'required' (or expected) that lack a value in env/store."""
+        names = list(required or sorted(self._expected_keys))
+        missing: List[str] = []
+        for nm in names:
+            try:
+                # Present if env has it
+                env_key = self._env_key_from_name(nm)
+                if os.environ.get(env_key):
+                    continue
+                # Or present if store has non-empty value
+                rows = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"name == {nm!r}",
+                    limit=1,
+                )
+                has_value = False
+                for lg in rows:
+                    val = (lg.entries or {}).get("value")
+                    if isinstance(val, str) and val.strip():
+                        has_value = True
+                        break
+                if not has_value:
+                    missing.append(nm)
+            except Exception:
+                missing.append(nm)
+        return missing
+
     # --------------------- Tools (mutations) --------------------- #
     def _create_secret(
         self,
@@ -355,6 +493,12 @@ class SecretManager(BaseSecretManager):
         # Persist to .env using upper snake key derived from name
         env_key = self._env_key_from_name(name)
         _write_env_var(env_key, value)
+
+        # Track in expected set
+        try:
+            self._expected_keys.add(name)
+        except Exception:
+            pass
 
         return {"outcome": "secret created", "details": {"name": name}}
 
@@ -398,6 +542,12 @@ class SecretManager(BaseSecretManager):
             env_key = self._env_key_from_name(name)
             _write_env_var(env_key, value)
 
+        # Track in expected set
+        try:
+            self._expected_keys.add(name)
+        except Exception:
+            pass
+
         return {"outcome": "secret updated", "details": {"name": name}}
 
     def _delete_secret(self, *, name: str) -> ToolOutcome:
@@ -412,7 +562,23 @@ class SecretManager(BaseSecretManager):
         if len(ids) > 1:
             raise RuntimeError(f"Multiple secrets found with name '{name}'.")
         unify.delete_logs(context=self._ctx, logs=ids[0])
+        try:
+            if name in self._expected_keys:
+                self._expected_keys.discard(name)
+        except Exception:
+            pass
         return {"outcome": "secret deleted", "details": {"name": name}}
+
+    def _register_expected_keys(self, *, names: List[str]) -> ToolOutcome:
+        """Register additional expected secret names for availability checks."""
+        added: List[str] = []
+        for nm in names or []:
+            if isinstance(nm, str) and nm.strip():
+                nm_s = nm.strip()
+                if nm_s not in self._expected_keys:
+                    self._expected_keys.add(nm_s)
+                    added.append(nm_s)
+        return {"outcome": "expected keys registered", "details": {"added": added}}
 
     # --------------------- Runtime helpers --------------------- #
     @staticmethod
