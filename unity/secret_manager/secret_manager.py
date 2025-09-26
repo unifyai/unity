@@ -18,7 +18,11 @@ from ..common.async_tool_loop import (
     TOOL_LOOP_LINEAGE,
 )
 from ..events.event_bus import EVENT_BUS, Event
-from ..events.manager_event_logging import log_manager_call
+from ..events.manager_event_logging import (
+    log_manager_call,
+    new_call_id,
+    publish_manager_method_event,
+)
 from ..common.tool_outcome import ToolOutcome
 from ..common.embed_utils import ensure_vector_column
 from ..common.context_store import TableStore
@@ -111,6 +115,56 @@ class SecretManager(BaseSecretManager):
         # Unify storage is the single source of truth for secrets
 
     # --------------------- Public API --------------------- #
+    async def resolve(self, text: str) -> str:
+        """Resolve ${name} placeholders in text to raw secret values (no LLM).
+
+        Notes
+        -----
+        - Logs a single incoming ManagerMethod event and returns the resolved
+          string without publishing any outgoing event to avoid leaking values.
+        - Never persists or logs secret values.
+
+        Parameters
+        ----------
+        text : str
+            Input string that may contain placeholders like "${api_key}".
+
+        Returns
+        -------
+        str
+            String with placeholders substituted with their secret values.
+        """
+        call_id: str | None = None
+        try:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "SecretManager",
+                "resolve",
+                phase="incoming",
+                query=text,
+            )
+        except Exception:
+            # Logging is best-effort – failures must not impact resolution
+            pass
+
+        resolved = self._resolve_placeholders(text)
+
+        # Publish an outgoing event that does NOT include sensitive data
+        try:
+            if call_id is not None:
+                await publish_manager_method_event(
+                    call_id,
+                    "SecretManager",
+                    "resolve",
+                    phase="outgoing",
+                    status="resolved",
+                )
+        except Exception:
+            pass
+
+        return resolved
+
     @functools.wraps(BaseSecretManager.ask, updated=())
     @log_manager_call("SecretManager", "ask", payload_key="question")
     async def ask(
@@ -280,6 +334,32 @@ class SecretManager(BaseSecretManager):
         return handle
 
     # --------------------- Tools (read-only) --------------------- #
+    def _resolve_placeholders(self, text: str) -> str:
+        """Return a copy of text with ${name} placeholders replaced by values.
+
+        This helper performs direct Unify reads and never emits logs/events.
+        Unknown names are left unchanged.
+        """
+        import re
+
+        def repl(match: "re.Match[str]") -> str:
+            name = match.group(1)
+            try:
+                rows = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"name == {name!r}",
+                    limit=1,
+                )
+                if rows:
+                    val = (rows[0].entries or {}).get("value")
+                    if isinstance(val, str):
+                        return val
+            except Exception:
+                pass
+            return match.group(0)  # leave placeholder as-is when missing
+
+        return re.sub(r"\$\{([^}]+)\}", repl, text)
+
     def _list_columns(
         self,
         *,
@@ -414,7 +494,7 @@ class SecretManager(BaseSecretManager):
             Sorted, unique list of secret names currently present in storage.
         """
         try:
-            rows = unify.get_logs(context=self._ctx, from_fields=["name"], limit=100000)
+            rows = unify.get_logs(context=self._ctx)
         except Exception:
             rows = []
         names: set[str] = set()
