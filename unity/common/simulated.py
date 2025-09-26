@@ -195,6 +195,61 @@ def mirror_contact_manager_tools(kind: str) -> Dict[str, Any]:
         )
 
 
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SecretManager mirroring
+# ─────────────────────────────────────────────────────────────────────────────
+#
+
+
+def mirror_secret_manager_tools(kind: str) -> Dict[str, Any]:
+    """Build a tool-dict mirroring the real SecretManager's tool lists.
+
+    kind: "ask" or "update". Uses AST reflection with a static fallback.
+    """
+    from unity.secret_manager.secret_manager import SecretManager
+    from unity.common.llm_helpers import methods_to_tool_dict
+
+    target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
+
+    try:
+        pairs = _extract_owner_method_pairs(
+            SecretManager,
+            target_attr,
+            self_external_map=None,
+            extra_class_names={"SecretManager": SecretManager},
+        )
+        if pairs:
+            # All SecretManager-owned methods; never include class name
+            tools = _build_tool_dict(pairs)
+            if tools:
+                return tools
+    except Exception:
+        pass
+
+    # Fallback – keep in sync with SecretManager.__init__
+    if kind == "ask":
+        return methods_to_tool_dict(
+            SecretManager._create_secret,
+            SecretManager._update_secret,
+            SecretManager._delete_secret,
+            SecretManager._list_secret_keys,
+            SecretManager._list_columns,
+            SecretManager._filter_secrets,
+            SecretManager._search_secrets,
+            include_class_name=False,
+        )
+    else:
+        return methods_to_tool_dict(
+            SecretManager.ask,
+            SecretManager._create_secret,
+            SecretManager._update_secret,
+            SecretManager._delete_secret,
+            SecretManager._list_secret_keys,
+            include_class_name=False,
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TranscriptManager mirroring
 # ─────────────────────────────────────────────────────────────────────────────
