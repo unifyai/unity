@@ -190,6 +190,24 @@ def build_request_prompt(
         f"`{contact_ask_fname}` and then proceed.",
     ]
 
+    # Core philosophy for update tools: they are cautious, state-aware, and avoid duplication.
+    update_philosophy_lines = [
+        "",
+        "Update tools – cautious, state-aware, and preferable to ask+update chains",
+        "--------------------------------------------------------------------------------",
+        "• All `update` methods (Contacts, Knowledge, Tasks) first inspect existing state and avoid duplications.",
+        "• Prefer calling `update` directly with conditional logic instead of performing a preliminary `ask`.",
+        "  - Example (Contacts):",
+        f"    Prefer `{contact_update_fname}(text=\"Add David's number as {{number}} if it's not already stored\")`",
+        "    over asking for David's current number first and then updating.",
+        "  - Example (Knowledge):",
+        f'    Prefer `{knowledge_update_fname}(text="Record that exchanges are allowed within 45 days if not already recorded")`.',
+        "  - Example (Tasks):",
+        f'    Prefer `{task_update_fname}(text="Create or update: Follow up with Contoso tomorrow at 09:00; if it exists, adjust start time")`.',
+        "• Do not route update-related verification through `ask`; `update` handles conditional checks safely.",
+        "• If there is an unrelated read-only question, you may run `ask` in parallel with an `update` to save time.",
+    ]
+
     usage_examples = "\n".join(
         [
             "Examples",
@@ -204,6 +222,7 @@ def build_request_prompt(
         [
             activity_block,
             *guidance_lines,
+            *update_philosophy_lines,
             "",
             "Tools (name → argspec):",
             sig_json,
