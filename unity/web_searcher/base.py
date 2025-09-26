@@ -33,9 +33,18 @@ class BaseWebSearcher(ABC, metaclass=SingletonABCMeta):
 
         Purpose
         -------
-        Use this to research topics on the web. The implementation chooses among
-        available tools (e.g., search, extract, crawl, map) and stops when
-        sufficient evidence is gathered to provide a concise final answer.
+        Use this for external or web-based information needs. This includes:
+        - General knowledge or best practices not stored in internal managers
+        - Live or time-sensitive facts (e.g., "today", "yesterday", "this week",
+          "latest", "current", "now") that cannot be reliably answered from an
+          offline model snapshot
+
+        When to prefer WebSearcher
+        --------------------------
+        - The user asks about current events, weather, market moves, news, or
+          anything likely to have changed recently
+        - The question calls for examples or sources from the broader web
+        - The answer should cite or be grounded in external references
 
         Clarifications
         --------------
