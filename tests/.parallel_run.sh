@@ -42,8 +42,8 @@ if (( $# == 0 )); then
 else
   for arg in "$@"; do
     if [[ -f "$arg" ]]; then
-      # only include python files directly, ignoring any conftest.py
-      if [[ "$arg" == *.py && "${arg##*/}" != "conftest.py" ]]; then
+      # only include Python test files directly (names starting with test_)
+      if [[ "${arg##*/}" == test_*.py ]]; then
         direct_files+=( "$arg" )
       fi
     elif [[ -d "$arg" ]]; then
@@ -59,7 +59,7 @@ else
 fi
 
 # Build a safe find pipeline:
-# find <roots> \( -type d \( -name EX1 -o EX2 ... \) -prune \) -o \( -type f -name "*.py" -print0 \)
+# find <roots> \( -type d \( -name EX1 -o EX2 ... \) -prune \) -o \( -type f -name "test_*.py" -print0 \)
 build_find_cmd() {
   local -a cmd=( find )
   if (( ${#roots[@]} )); then
@@ -78,7 +78,7 @@ build_find_cmd() {
       cmd+=( -o -name "$d" )
     fi
   done
-  cmd+=( ")" -prune ")" -o "(" -type f -name "*.py" ! -name "conftest.py" -print0 ")" )
+  cmd+=( ")" -prune ")" -o "(" -type f -name "test_*.py" -print0 ")" )
 
   printf '%q ' "${cmd[@]}"
 }
@@ -108,7 +108,7 @@ while IFS= read -r -d '' f; do
 done < <(tr '\0' '\n' < "$tmp" | LC_ALL=C sort | tr '\n' '\0')
 
 if (( ${#files[@]} == 0 )); then
-  echo "No *.py files found."
+  echo "No test_*.py files found."
   exit 0
 fi
 
@@ -141,7 +141,7 @@ echo "Trigger:"
 echo "  • Run everything under current dir:     ./\\.parallel_run.sh"
 echo "  • Only a folder:                         ./\\.parallel_run.sh test_cats"
 echo "  • Multiple roots:                        ./\\.parallel_run.sh tests/unit tests/integration"
-echo "  • Specific files:                        ./\\.parallel_run.sh tests/foo.py tests/bar.py"
+echo "  • Specific files:                        ./\\.parallel_run.sh tests/test_foo.py tests/test_bar.py"
 echo
 echo "Observe:"
 echo "  • Watch sessions: watch -n 0.5 'tmux ls'"
