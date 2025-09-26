@@ -285,6 +285,19 @@ class SecretManager(BaseSecretManager):
         *,
         include_types: bool = True,
     ) -> Dict[str, Any] | List[str]:
+        """Return available columns for the secrets table.
+
+        Parameters
+        ----------
+        include_types : bool, default True
+            When True, returns a mapping ``{column_name: column_type}``.
+            When False, returns a list of column names only.
+
+        Returns
+        -------
+        Dict[str, Any] | List[str]
+            Column map when ``include_types=True``; otherwise a list of names.
+        """
         cols = self._store.get_columns()
         return cols if include_types else list(cols)
 
@@ -294,6 +307,22 @@ class SecretManager(BaseSecretManager):
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Secret]:
+        """Semantic search over secrets using the description embedding.
+
+        Parameters
+        ----------
+        references : Dict[str, str] | None, default None
+            Mapping of source expressions to reference text. For this manager
+            use a column name like ``"description"`` to search over secret descriptions.
+            When None or empty, returns most-recent rows.
+        k : int, default 10
+            Maximum number of results to return.
+
+        Returns
+        -------
+        List[Secret]
+            Up to ``k`` redacted Secret models (``value`` is never populated).
+        """
         # Simple implementation: prefer description vector; fallback to recent
         try:
             from ..common.semantic_search import (
@@ -342,6 +371,23 @@ class SecretManager(BaseSecretManager):
         offset: int = 0,
         limit: int = 100,
     ) -> List[Secret]:
+        """Filter secrets using a boolean expression evaluated per row.
+
+        Parameters
+        ----------
+        filter : str | None, default None
+            A Python expression evaluated with column names in scope (e.g.,
+            ``"name == 'unify_key'"``). When None, returns all rows.
+        offset : int, default 0
+            Zero-based index of the first result to include.
+        limit : int, default 100
+            Maximum number of rows to return.
+
+        Returns
+        -------
+        List[Secret]
+            Matching Secret models with ``value`` redacted.
+        """
         logs = unify.get_logs(
             context=self._ctx,
             filter=filter,
@@ -360,7 +406,13 @@ class SecretManager(BaseSecretManager):
         ]
 
     def _list_secret_keys(self) -> List[str]:
-        """Return all available secret names (keys) stored in Unify (sorted, unique)."""
+        """Return all available secret names (keys) stored in Unify.
+
+        Returns
+        -------
+        List[str]
+            Sorted, unique list of secret names currently present in storage.
+        """
         try:
             rows = unify.get_logs(context=self._ctx, from_fields=["name"], limit=100000)
         except Exception:
@@ -380,6 +432,22 @@ class SecretManager(BaseSecretManager):
         value: str,
         description: Optional[str] = None,
     ) -> ToolOutcome:
+        """Create and persist a new secret.
+
+        Parameters
+        ----------
+        name : str
+            Unique identifier for the secret. Used as the placeholder name.
+        value : str
+            Raw secret value to store (never exposed to LLMs).
+        description : str | None, default None
+            Optional human-readable description.
+
+        Returns
+        -------
+        ToolOutcome
+            A standard outcome dict: ``{"outcome": "secret created", "details": {"name": <str>}}``.
+        """
         assert name and value, "Both name and value are required."
         # Enforce uniqueness of name
         existing = unify.get_logs(
@@ -407,6 +475,22 @@ class SecretManager(BaseSecretManager):
         value: Optional[str] = None,
         description: Optional[str] = None,
     ) -> ToolOutcome:
+        """Update fields of an existing secret.
+
+        Parameters
+        ----------
+        name : str
+            Secret name to update.
+        value : str | None, default None
+            New raw value (optional). When provided it overwrites the existing value.
+        description : str | None, default None
+            New description (optional).
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome dict: ``{"outcome": "secret updated", "details": {"name": <str>}}``.
+        """
         # Find target log id
         ids = unify.get_logs(
             context=self._ctx,
@@ -439,6 +523,18 @@ class SecretManager(BaseSecretManager):
         return {"outcome": "secret updated", "details": {"name": name}}
 
     def _delete_secret(self, *, name: str) -> ToolOutcome:
+        """Delete a secret by name.
+
+        Parameters
+        ----------
+        name : str
+            The secret name to remove.
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome dict: ``{"outcome": "secret deleted", "details": {"name": <str>}}``.
+        """
         ids = unify.get_logs(
             context=self._ctx,
             filter=f"name == {name!r}",
