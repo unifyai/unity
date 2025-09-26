@@ -226,6 +226,10 @@ def build_request_prompt(
         f"- Start immediately via `{task_execute_fname}` when explicitly requested; otherwise schedule appropriately",
         "When tasks involve people (e.g. triggers referencing contacts), first resolve the relevant contact_id(s) via",
         f"`{contact_ask_fname}` and then proceed.",
+        "Task execution policy — mandatory execute when asked to run/start:",
+        f"- If the user says 'run', 'start', 'execute', 'begin', or 'launch' a task, you MUST call `{task_execute_fname}` exactly once.",
+        f"- Do NOT use `{task_update_fname}` as a substitute for starting a task. Only use `{task_update_fname}` to create a missing task or to adjust fields prior to execution, then call `{task_execute_fname}`.",
+        f"- If a start time is mentioned (e.g., 'today at 16:00'), still route through `{task_execute_fname}` and shape queues/order as needed before calling it; do not replace execution with an update-only flow.",
     ]
 
     if actor_act_fname:
@@ -269,6 +273,8 @@ def build_request_prompt(
             f'• Create a task and start it\n  1) `{task_update_fname}(text="Create a task: Call Alice about the Q3 budget")`\n  2) `{task_execute_fname}(text="Start the call task now")`',
             f'• Update knowledge and verify\n  1) `{knowledge_update_fname}(text="Store: Office hours are 9–5 PT")`\n  2) `{knowledge_ask_fname}(text="What are our office hours?")`',
             f'• Create or update a contact then confirm via read\n  1) `{contact_update_fname}(text="Create Jane Doe with email jane@example.com")`\n  2) `{contact_ask_fname}(text="Show Jane Doe\'s contact details")`{web_example}',
+            f"• Run an existing task immediately\n  `{task_execute_fname}(text=\"Run the task named 'Email Contoso about invoices' now\")`",
+            f"• Run a task at a specific time\n  `{task_execute_fname}(text=\"Start 'Prepare slides for kickoff' today at 16:00\")`",
         ],
     )
 
