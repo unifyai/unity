@@ -66,6 +66,40 @@ class BaseSecretManager(ABC, metaclass=SingletonABCMeta):
     # Private helpers that concrete managers must implement              #
     # ------------------------------------------------------------------ #
     @abstractmethod
+    def _list_secret_keys(self) -> List[str]:
+        """Return all available secret names (keys) stored by the manager.
+
+        Returns
+        -------
+        list[str]
+            Sorted, unique list of secret names.
+        """
+
+    @abstractmethod
+    def _search_secrets(
+        self,
+        *,
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+    ) -> List["Secret"]:
+        """Semantic search over secrets (typically by description).
+
+        Parameters
+        ----------
+        references : dict[str, str] | None, default None
+            Mapping from a source expression (e.g., "description") to the
+            reference text used for similarity ranking. ``None`` or empty
+            disables semantic search and should fall back to recency.
+        k : int, default 10
+            Maximum number of results.
+
+        Returns
+        -------
+        list[Secret]
+            Up to ``k`` redacted Secret models (must not expose raw values).
+        """
+
+    @abstractmethod
     def _filter_secrets(
         self,
         *,

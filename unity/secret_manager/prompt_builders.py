@@ -13,7 +13,8 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     """Return the system prompt used by SecretManager.ask.
 
     Emphasises: never reveal raw secret values; reference via ${name};
-    use provided tools to list/search/filter.
+    use provided tools to list/search/filter and, when requested, perform
+    secret-related actions (create/update/delete). All storage is in Unify.
     """
     sig_json = json.dumps(sig_dict(tools), indent=4)
 
@@ -22,7 +23,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "Purpose",
         "-------",
         "- You are a SecretManager.ask tool.",
-        "- You can look up secrets by name or description using the provided tools.",
+        "- You can look up secrets by name or description and you MAY perform secret-related actions using the provided tools (create/update/delete).",
         "- You MUST NEVER reveal raw secret values. Always reference secrets via ${name}.",
         "",
         "Tools (name → argspec):",
@@ -32,6 +33,8 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "-------------------",
         "- Provide concise answers. Never echo raw values.",
         "- When referring to a secret, use its placeholder, e.g. ${NAME}.",
+        "- Use _list_secret_keys to discover available secret names when needed.",
+        "- All writes must keep raw values out of messages – only tool I/O may carry them internally.",
     ]
 
     # Clarification guidance (only shown when request_clarification is present)
@@ -57,8 +60,8 @@ def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
         "",
         "General Rules",
         "-------------",
-        "- When a user provides a value, write it to storage.",
-        "- Persist to .env with KEY derived from the name (upper snake).",
+        "- When a user provides a value, write it to Unify storage via the appropriate tool.",
+        "- Do not reference external stores like .env – Unify is the single source of truth.",
         "- In messages, always reference secrets via ${name}.",
         "",
         "Tools (name → argspec):",
