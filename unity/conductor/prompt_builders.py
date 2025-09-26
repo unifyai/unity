@@ -92,11 +92,17 @@ def build_ask_prompt(
         "Choose the most appropriate manager's `ask` tool per sub-question and compose the final answer.",
         "Do not explain HOW the question will be answered, which low-level tools will be used, or instruct the user how to phrase their question; that is handled entirely by the domain managers.",
         "Use the WebSearcher.ask tool for general knowledge, external information, industry concepts, best practices or anything that would reasonably be found on the web (and not in your internal managers).",
+        "For live or time-sensitive facts (e.g., questions containing 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must use WebSearcher.ask – do not rely on internal memory for these.",
         "Use Contact/Transcript/Knowledge/Task managers for internal state about people, messages, stored facts and tasks respectively.",
     ]
 
     web_example = (
-        f'\n• Web – explain the Eisenhower Matrix\n  `{web_ask_fname}(text="What is the Eisenhower Matrix and when should it be used?")`'
+        (
+            f'\n• Web – explain the Eisenhower Matrix\n  `{web_ask_fname}(text="What is the Eisenhower Matrix and when should it be used?")`'
+            f'\n• Web – live facts (weather today)\n  `{web_ask_fname}(text="What\'s the weather in Berlin today?")`'
+            f'\n• Web – live facts (headlines this week)\n  `{web_ask_fname}(text="What are the major world news headlines this week?")`'
+            f'\n• Web – live facts (yesterday\'s decision)\n  `{web_ask_fname}(text="Did the UN Security Council approve the resolution yesterday?")`'
+        )
         if web_ask_fname
         else ""
     )
@@ -193,6 +199,7 @@ def build_request_prompt(
         "You have read-write control over tasks, contacts, transcripts and the knowledge-base.",
         "Orchestrate by calling the appropriate managers' `ask` or `update` methods; do not describe or expose HOW the change will be implemented.",
         "Use WebSearcher.ask for external information, market practices, definitions, or anything you would reasonably look up online.",
+        "For live or time-sensitive facts (e.g., 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must call WebSearcher.ask rather than relying on internal memory.",
         "When the request involves tasks:",
         f"- Understand intent then check context via `{task_ask_fname}`",
         f"- Apply changes via `{task_update_fname}` if needed",
