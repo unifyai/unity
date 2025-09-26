@@ -32,18 +32,6 @@ from .base import BaseSecretManager
 from .prompt_builders import build_ask_prompt, build_update_prompt
 
 
-def _mask_value_for_llm(value: str) -> str:
-    """Return a short, safe mask when the LLM would otherwise see a raw secret."""
-    if not value:
-        return "<redacted>"
-    # Show only type/length for debugging, but not content
-    return f"<secret:{len(value)} chars>"
-
-
-def _placeholder(name: str) -> str:
-    return f"${{{name}}}"
-
-
 class SecretManager(BaseSecretManager):
     """
     Manages a fixed-schema table of secrets. Ensures secrets are never exposed
