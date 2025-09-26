@@ -242,7 +242,6 @@ def mirror_secret_manager_tools(kind: str) -> Dict[str, Any]:
             SecretManager._create_secret,
             SecretManager._update_secret,
             SecretManager._delete_secret,
-            SecretManager._list_secret_keys,
             include_class_name=False,
         )
 
