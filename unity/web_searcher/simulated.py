@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import unify
 from .prompt_builders import build_ask_prompt, build_simulated_method_prompt
 from ..common.simulated import mirror_web_searcher_tools
+from .base import BaseWebSearcher
 from ..common.async_tool_loop import SteerableToolHandle
 from ..events.manager_event_logging import (
     new_call_id,
@@ -142,7 +143,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle):
         )
 
 
-class SimulatedWebSearcher:
+class SimulatedWebSearcher(BaseWebSearcher):
     """Drop-in simulated WebSearcher with imaginary results and stateful memory."""
 
     def __init__(
