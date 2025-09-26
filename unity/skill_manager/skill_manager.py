@@ -36,26 +36,51 @@ class SkillManager(BaseSkillManager):
         self._function_manager = FunctionManager()
 
         # Expose read-only tools to the LLM
-        def _list_functions(*, include_implementations: bool = False) -> Dict[str, Dict[str, Any]]:  # type: ignore[override]
+        def _list_functions(
+            *,
+            include_implementations: bool = False,
+            parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        ) -> Dict[str, Dict[str, Any]]:  # type: ignore[override]
             return self._function_manager.list_functions(
                 include_implementations=include_implementations,
+                parent_chat_context=parent_chat_context,
             )
 
-        def _search_functions(*, filter: Optional[str] = None, offset: int = 0, limit: int = 100) -> List[Dict[str, Any]]:  # type: ignore[override]
+        def _search_functions(
+            *,
+            filter: Optional[str] = None,
+            offset: int = 0,
+            limit: int = 100,
+            parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        ) -> List[Dict[str, Any]]:  # type: ignore[override]
             return self._function_manager.search_functions(
                 filter=filter,
                 offset=offset,
                 limit=limit,
+                parent_chat_context=parent_chat_context,
             )
 
-        def _search_functions_by_similarity(*, query: str, n: int = 5) -> List[Dict[str, Any]]:  # type: ignore[override]
+        def _search_functions_by_similarity(
+            *,
+            query: str,
+            n: int = 5,
+            parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        ) -> List[Dict[str, Any]]:  # type: ignore[override]
             return self._function_manager.search_functions_by_similarity(
                 query=query,
                 n=n,
+                parent_chat_context=parent_chat_context,
             )
 
-        def _get_precondition(*, function_name: str) -> Optional[Dict[str, Any]]:  # type: ignore[override]
-            return self._function_manager.get_precondition(function_name=function_name)
+        def _get_precondition(
+            *,
+            function_name: str,
+            parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        ) -> Optional[Dict[str, Any]]:  # type: ignore[override]
+            return self._function_manager.get_precondition(
+                function_name=function_name,
+                parent_chat_context=parent_chat_context,
+            )
 
         self._tools: Dict[str, Callable] = {
             **methods_to_tool_dict(

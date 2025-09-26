@@ -114,6 +114,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self,
         *,
         include_implementations: bool = False,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         # Produce a small fabricated list deterministically
         fake: Dict[str, Dict[str, Any]] = {
@@ -130,7 +131,12 @@ class SimulatedFunctionManager(BaseFunctionManager):
         return fake
 
     @functools.wraps(BaseFunctionManager.get_precondition, updated=())
-    def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
+    def get_precondition(
+        self,
+        *,
+        function_name: str,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[Dict[str, Any]]:
         # Simulate that no explicit preconditions are stored
         return None
 
@@ -151,6 +157,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         # Query the LLM to fabricate a list of functions
         prompt = (
@@ -185,6 +192,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         *,
         query: str,
         n: int = 5,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         prompt = (
             "Simulate FunctionManager.search_functions_by_similarity. Given the query, "
