@@ -35,6 +35,7 @@ from ..common.semantic_search import (
 )
 from ..common.context_store import TableStore
 from ..events.event_bus import EVENT_BUS, Event
+from ..common.grouping_helpers import maybe_group_rows
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -44,6 +45,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         file_manager: Optional[BaseFileManager] = None,
         rolling_summary_in_prompts: bool = True,
         include_contacts: bool = True,
+        grouped: bool = False,
     ) -> None:
         """
         Initialise the KnowledgeManager.
@@ -121,6 +123,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         }
 
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+
+        # When enabled, results returned by table tools are grouped client-side
+        # into a nested structure to reduce duplication and token usage.
+        self._group_results: bool = grouped
 
         # ------------------------------------------------------------------
         # Optional Contacts-table linkage
@@ -1474,9 +1480,14 @@ class KnowledgeManager(BaseKnowledgeManager):
                     if doc_filters:
                         filter_expr = " or ".join(f"({f})" for f in doc_filters)
                         try:
-                            # Check how many records will be deleted
-                            existing = self._filter(tables=[table], filter=filter_expr)
-                            deleted_count = len(existing.get(table, []))
+                            # Count records to be deleted using IDs-only
+                            target_ctx = self._ctx_for_table(table)
+                            ids_to_delete = unify.get_logs(
+                                context=target_ctx,
+                                filter=filter_expr,
+                                return_ids_only=True,
+                            )
+                            deleted_count = len(ids_to_delete)
 
                             if deleted_count > 0:
                                 self._delete_rows(tables=[table], filter=filter_expr)
@@ -1663,7 +1674,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             k=k,
             row_filter=filter,
         )
-        return backfill_rows(context, rows, k)
+        rows = backfill_rows(context, rows, k)
+        return maybe_group_rows(
+            rows=rows,
+            exclude_fields=list_private_fields(context),
+            enabled=self._group_results,
+        )
 
     def _search_join(
         self,
@@ -1748,7 +1764,12 @@ class KnowledgeManager(BaseKnowledgeManager):
                 k=k,
                 row_filter=filter,
             )
-            return backfill_rows(dest_ctx, rows, k)
+            rows = backfill_rows(dest_ctx, rows, k)
+            return maybe_group_rows(
+                rows=rows,
+                exclude_fields=list_private_fields(dest_ctx),
+                enabled=self._group_results,
+            )
         finally:
             # 4️⃣  Clean up the temporary context best-effort
             try:
@@ -1885,7 +1906,12 @@ class KnowledgeManager(BaseKnowledgeManager):
                 k=k,
                 row_filter=filter,
             )
-            return backfill_rows(final_ctx, rows, k)
+            rows = backfill_rows(final_ctx, rows, k)
+            return maybe_group_rows(
+                rows=rows,
+                exclude_fields=list_private_fields(final_ctx),
+                enabled=self._group_results,
+            )
         finally:
             # Clean up temporary contexts (best-effort)
             try:
@@ -2072,7 +2098,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         if len(resolved_tables) <= 1:
             # Avoid thread-pool overhead for the common single-table case
             name, rows = _fetch_one(resolved_tables[0])
-            results[name] = rows
+            ctx = self._ctx_for_table(name)
+            results[name] = maybe_group_rows(
+                rows=rows,
+                exclude_fields=list_private_fields(ctx),
+                enabled=self._group_results,
+            )
             return results
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -2082,7 +2113,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             }
             for fut in as_completed(futures):
                 name, rows = fut.result()
-                results[name] = rows
+                ctx = self._ctx_for_table(name)
+                results[name] = maybe_group_rows(
+                    rows=rows,
+                    exclude_fields=list_private_fields(ctx),
+                    enabled=self._group_results,
+                )
 
         return results
 
@@ -2193,7 +2229,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             # Best-effort – if it fails the tmp context will age-out later.
             pass
 
-        return rows
+        return maybe_group_rows(
+            rows=rows,
+            exclude_fields=list_private_fields(dest_ctx),
+            enabled=self._group_results,
+        )
 
     def _filter_multi_join(
         self,
@@ -2330,7 +2370,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             # best-effort — leave garbage collection to Unify if this fails
             pass
 
-        return rows
+        return maybe_group_rows(
+            rows=rows,
+            exclude_fields=list_private_fields(final_ctx),
+            enabled=self._group_results,
+        )
 
     # ────────────────────────────────────────────────────────────────────
     # Broader context helper
