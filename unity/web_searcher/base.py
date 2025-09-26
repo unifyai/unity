@@ -39,12 +39,12 @@ class BaseWebSearcher(ABC, metaclass=SingletonABCMeta):
           "latest", "current", "now") that cannot be reliably answered from an
           offline model snapshot
 
-        When to prefer WebSearcher
-        --------------------------
-        - The user asks about current events, weather, market moves, news, or
-          anything likely to have changed recently
-        - The question calls for examples or sources from the broader web
-        - The answer should cite or be grounded in external references
+        Orchestration contract
+        ----------------------
+        - Callers must send a single high-level, natural-language question.
+        - Do NOT fan-out multiple `ask` calls with provider/site hints (e.g., "site:").
+        - The WebSearcher itself will perform source selection, parallel search,
+          extraction, and aggregation. It may ask for clarification if needed.
 
         Clarifications
         --------------
