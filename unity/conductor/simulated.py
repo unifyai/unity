@@ -92,6 +92,8 @@ class SimulatedConductor:
 
         # Actor – simulation-only executor for free-form activities
         self._actor = SimulatedActor(
+            steps=0,
+            duration=None,
             simulation_guidance=simulation_guidance,
         )
 

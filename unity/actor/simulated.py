@@ -8,9 +8,10 @@ import unify
 import logging
 from .base import BaseActor
 from typing import Optional
+from unity.common.async_tool_loop import SteerableToolHandle
 
 
-class SimulatedActorHandle:
+class SimulatedActorHandle(SteerableToolHandle):
     """
     A lightweight, actor-scoped handle for simulating execution of a series of actions.
 
