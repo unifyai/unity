@@ -60,12 +60,17 @@ async def test_contact_updates_call_contact_manager_update(request_text: str):
     answer, messages = await asyncio.wait_for(handle.result(), timeout=300)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
-    # Verify that the SimulatedContactManager.update tool was executed at least once.
-    executed = set(_tool_names_from_messages(messages))
+    # Verify that only contact ask/update tools executed, and update ran at least once.
+    executed_list = _tool_names_from_messages(messages)
+    executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
     assert (
         "SimulatedContactManager_update" in executed
     ), f"Expected SimulatedContactManager_update to run, saw: {sorted(executed)}"
+    assert executed <= {
+        "SimulatedContactManager_ask",
+        "SimulatedContactManager_update",
+    }, f"Unexpected tools executed: {sorted(executed - {'SimulatedContactManager_ask', 'SimulatedContactManager_update'})}"
 
     # It's fine if the assistant also requested SimulatedContactManager.ask; no assertion needed.
     _ = _assistant_requested_tool_names(messages)
