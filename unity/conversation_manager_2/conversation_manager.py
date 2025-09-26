@@ -11,7 +11,6 @@ from pathlib import Path
 from pydantic_core import from_json
 
 from unity.conversation_manager_2.debug_logger import log_job_startup, mark_job_done
-from unity.events.event_bus import EVENT_BUS
 from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager_2.actions import (
     RESPONSES_MODEL,
@@ -120,7 +119,11 @@ class ConversationManager:
         # its hardcoded atm (obviously)
         self.phone_contacts_map = {
             "+12697784020": ConversationContact(
-                "1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"
+                "1",
+                "Yasser Ahmed",
+                True,
+                "+12697784020",
+                "yasser@unify.ai",
             ),
             "+13502381308": ConversationContact(
                 "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
@@ -131,7 +134,11 @@ class ConversationManager:
         }
         self.email_contacts_map = {
             "yasser@unify.ai": ConversationContact(
-                "1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"
+                "1",
+                "Yasser Ahmed",
+                True,
+                "+12697784020",
+                "yasser@unify.ai",
             ),
             "dan@unify.ai": ConversationContact(
                 "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
@@ -143,7 +150,9 @@ class ConversationManager:
 
         self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
         self.state = ConversationManagerState(
-            self.phone_contacts_map, self.email_contacts_map, self.inverted_contacts_map
+            self.phone_contacts_map,
+            self.email_contacts_map,
+            self.inverted_contacts_map,
         )
         self.chat_history = []
         self.call_proc = None
@@ -167,7 +176,8 @@ class ConversationManager:
             async with self.openai_client.responses.stream(
                 model="gpt-4.1",
                 instructions=Template(SYS).render(
-                    name=self.user_name, number=self.user_number
+                    name=self.user_name,
+                    number=self.user_number,
                 ),
                 # input=self.chat_history + input_message,
                 input=input_message,
@@ -190,7 +200,7 @@ class ConversationManager:
                                 )
                                 first_chunk = False
                             if len(last_phone_utterance) != len(
-                                parsed_out["phone_utterance"]
+                                parsed_out["phone_utterance"],
                             ):
                                 await self.event_broker.publish(
                                     "app:call:response_gen",
@@ -200,23 +210,26 @@ class ConversationManager:
                                             "chunk": parsed_out["phone_utterance"][
                                                 len(last_phone_utterance) :
                                             ],
-                                        }
+                                        },
                                     ),
                                 )
                             last_phone_utterance = parsed_out["phone_utterance"]
             await self.event_broker.publish(
-                "app:call:response_gen", json.dumps({"type": "end_gen"})
+                "app:call:response_gen",
+                json.dumps({"type": "end_gen"}),
             )
             # print(parsed_out)
             self.state.active_conversations[self.call_contact.id].push_message(
-                "phone", ThreadMessage("You", last_phone_utterance, datetime.now())
+                "phone",
+                ThreadMessage("You", last_phone_utterance, datetime.now()),
             )
 
         else:
             out = await self.openai_client.responses.parse(
                 model="gpt-4.1",
                 instructions=Template(SYS).render(
-                    name=self.user_name, number=self.user_number
+                    name=self.user_name,
+                    number=self.user_number,
                 ),
                 # input=self.chat_history + input_message,
                 input=input_message,
@@ -238,7 +251,7 @@ class ConversationManager:
                     )
                     # check if contact exists if not create a new contact
                     contact = self.phone_contacts_map.get(
-                        contact_num_id
+                        contact_num_id,
                     ) or self.inverted_contacts_map.get(contact_num_id)
                     print(self.inverted_contacts_map)
                     print("contact", contact)
@@ -270,24 +283,27 @@ class ConversationManager:
                         )
 
                     res = await _send_sms_message_via_number(
-                        contact.number, action["message"]
+                        contact.number,
+                        action["message"],
                     )
                     if not res["success"]:
                         # self.state.push_notif("comms", f"Attempted to send an SMS to an invalid number {contact.number}", datetime.now())
                         await self.event_broker.publish(
                             "app:comms:error",
                             Error(
-                                f"Attempted to send an SMS to an invalid number {contact.number}. Make sure the number is correct."
+                                f"Attempted to send an SMS to an invalid number {contact.number}. Make sure the number is correct.",
                             ).to_json(),
                         )
 
                     else:
                         event = SMSSent(
-                            contact=contact.number, content=action["message"]
+                            contact=contact.number,
+                            content=action["message"],
                         )
                         # self.state.push_event(event)
                         await self.event_broker.publish(
-                            "app:comms:sms_sent", event.to_json()
+                            "app:comms:sms_sent",
+                            event.to_json(),
                         )
                 elif action["action_name"] == "send_email":
                     print("sending email")
@@ -297,7 +313,7 @@ class ConversationManager:
                         else action["email"]
                     )
                     contact = self.email_contacts_map.get(
-                        contact_email_id
+                        contact_email_id,
                     ) or self.inverted_contacts_map.get(contact_email_id)
                     print(self.inverted_contacts_map)
                     print("contact", contact)
@@ -340,7 +356,8 @@ class ConversationManager:
                     )
                     # self.state.push_event(event)
                     await self.event_broker.publish(
-                        "app:comms:email_sent", event.to_json()
+                        "app:comms:email_sent",
+                        event.to_json(),
                     )
                 elif action["action_name"] == "make_call":
                     print("calling...")
@@ -350,7 +367,7 @@ class ConversationManager:
                         else action["number"]
                     )
                     contact = self.phone_contacts_map.get(
-                        contact_num_id
+                        contact_num_id,
                     ) or self.inverted_contacts_map.get(contact_num_id)
                     print(self.inverted_contacts_map)
                     print("contact", contact)
@@ -420,7 +437,8 @@ class ConversationManager:
             await pubsub.psubscribe("app:comms:*", "app:conductor:*")
             while True:
                 msg = await pubsub.get_message(
-                    timeout=2, ignore_subscribe_messages=True
+                    timeout=2,
+                    ignore_subscribe_messages=True,
                 )
 
                 if msg is not None:
@@ -460,7 +478,7 @@ class ConversationManager:
                             "assistant_email": self.assistant_email,
                         }
                         asyncio.create_task(
-                            asyncio.to_thread(log_job_startup, **kwargs)
+                            asyncio.to_thread(log_job_startup, **kwargs),
                         )
                     await self.handle_event(event)
 

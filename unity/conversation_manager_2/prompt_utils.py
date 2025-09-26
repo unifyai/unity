@@ -86,7 +86,13 @@ class ContactThread:
 
 class ConversationContact:
     def __init__(
-        self, id, name, is_boss=False, number=None, email=None, on_phone=False
+        self,
+        id,
+        name,
+        is_boss=False,
+        number=None,
+        email=None,
+        on_phone=False,
     ):
         self.id = id
         self.name = name
