@@ -6,39 +6,13 @@ import pytest
 
 from unity.conductor.simulated import SimulatedConductor
 from tests.helpers import _handle_project
+from tests.test_conductor.utils import (
+    tool_names_from_messages,
+    assistant_requested_tool_names,
+)
 
 
-def _normalise_tool_name(name: str) -> str:
-    if not name:
-        return name
-    s = str(name)
-    if s.startswith("continue_SimulatedKnowledgeManager_update"):
-        return "SimulatedKnowledgeManager_update"
-    if s.startswith("continue_SimulatedKnowledgeManager_ask"):
-        return "SimulatedKnowledgeManager_ask"
-    return s
-
-
-def _tool_names_from_messages(msgs: list[dict]) -> list[str]:
-    names: list[str] = []
-    for m in msgs:
-        if m.get("role") == "tool":
-            name = m.get("name") or ""
-            if name and not str(name).startswith("check_status_"):
-                names.append(_normalise_tool_name(str(name)))
-    return names
-
-
-def _assistant_requested_tool_names(msgs: list[dict]) -> list[str]:
-    names: list[str] = []
-    for m in msgs:
-        if m.get("role") == "assistant" and m.get("tool_calls"):
-            for tc in m.get("tool_calls") or []:
-                fn = (tc or {}).get("function", {}) or {}
-                name = fn.get("name") or ""
-                if name and not str(name).startswith("check_status_"):
-                    names.append(_normalise_tool_name(str(name)))
-    return names
+MANAGER = "SimulatedKnowledgeManager"
 
 
 UPDATE_QUERIES: list[str] = [
@@ -69,7 +43,7 @@ async def test_update_only_queries_call_only_update_and_not_ask_first(
     answer, messages = await asyncio.wait_for(handle.result(), timeout=300)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
-    executed_list = _tool_names_from_messages(messages)
+    executed_list = tool_names_from_messages(messages, MANAGER)
     executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
 
@@ -85,7 +59,7 @@ async def test_update_only_queries_call_only_update_and_not_ask_first(
     ), f"Expected at least one SimulatedKnowledgeManager_update call, saw order: {executed_list}"
 
     # Additionally ensure no ask() calls were requested by the assistant
-    requested = set(_assistant_requested_tool_names(messages))
+    requested = set(assistant_requested_tool_names(messages, MANAGER))
     assert requested, "Assistant should have requested at least one tool"
     assert (
         "SimulatedKnowledgeManager_ask" not in requested
