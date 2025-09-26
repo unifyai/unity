@@ -241,8 +241,23 @@ def build_simulated_method_prompt(
     preamble = f"On this turn you are simulating the '{method}' method."
     if method.lower() == "ask":
         behaviour = (
-            "Please always *answer* the question (inventing a plausible response) – "
-            "do **not** ask for clarification or explain your steps."
+            "Please always *answer* the question (inventing a plausible yet self‑consistent response) – "
+            "do **not** ask for clarification or explain your steps.\n\n"
+            "Output must contain the actual transcript message(s), not just a summary. "
+            "By default, include the full content and key metadata so that no follow‑up call is needed.\n\n"
+            "When the user asks for a single or the 'most recent' item, return exactly one message. "
+            "When they ask to list or show multiple, return the requested number (or a small number if unspecified).\n\n"
+            "For each message, include at minimum:\n"
+            "- Timestamp (UTC ISO)\n"
+            "- Channel (e.g., Email, WhatsApp, SMS, Call)\n"
+            "- Subject (if applicable)\n"
+            "- Sender (name and role if known)\n"
+            "- Recipients (list or 'N/A')\n"
+            "- Message ID (integer)\n"
+            "- Exchange ID (integer)\n"
+            "- Content (the body text, quoted verbatim)\n\n"
+            "Format as concise bullet points or compact JSON‑like blocks. "
+            "Avoid hedging language and avoid meta‑commentary about the process."
         )
     elif method.lower() == "summarize":
         behaviour = (
