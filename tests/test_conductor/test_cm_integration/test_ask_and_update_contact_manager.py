@@ -8,13 +8,24 @@ from unity.conductor.simulated import SimulatedConductor
 from tests.helpers import _handle_project
 
 
+def _normalise_tool_name(name: str) -> str:
+    if not name:
+        return name
+    s = str(name)
+    if s.startswith("continue_SimulatedContactManager_ask"):
+        return "SimulatedContactManager_ask"
+    if s.startswith("continue_SimulatedContactManager_update"):
+        return "SimulatedContactManager_update"
+    return s
+
+
 def _tool_names_from_messages(msgs: list[dict]) -> list[str]:
     names: list[str] = []
     for m in msgs:
         if m.get("role") == "tool":
             name = m.get("name") or ""
             if name and not str(name).startswith("check_status_"):
-                names.append(str(name))
+                names.append(_normalise_tool_name(str(name)))
     return names
 
 
@@ -26,7 +37,7 @@ def _assistant_requested_tool_names(msgs: list[dict]) -> list[str]:
                 fn = (tc or {}).get("function", {}) or {}
                 name = fn.get("name") or ""
                 if name and not str(name).startswith("check_status_"):
-                    names.append(str(name))
+                    names.append(_normalise_tool_name(str(name)))
     return names
 
 
