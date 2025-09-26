@@ -80,13 +80,10 @@ class SecretManager(BaseSecretManager):
         # Public tools
         self._ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
-                self._create_secret,
-                self._update_secret,
-                self._delete_secret,
-                self._list_secret_keys,
                 self._list_columns,
                 self._filter_secrets,
                 self._search_secrets,
+                self._list_secret_keys,
                 include_class_name=False,
             ),
         }
@@ -96,7 +93,6 @@ class SecretManager(BaseSecretManager):
                 self._create_secret,
                 self._update_secret,
                 self._delete_secret,
-                self._list_secret_keys,
                 include_class_name=False,
             ),
         }

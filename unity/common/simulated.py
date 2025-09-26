@@ -230,13 +230,10 @@ def mirror_secret_manager_tools(kind: str) -> Dict[str, Any]:
     # Fallback – keep in sync with SecretManager.__init__
     if kind == "ask":
         return methods_to_tool_dict(
-            SecretManager._create_secret,
-            SecretManager._update_secret,
-            SecretManager._delete_secret,
-            SecretManager._list_secret_keys,
             SecretManager._list_columns,
             SecretManager._filter_secrets,
             SecretManager._search_secrets,
+            SecretManager._list_secret_keys,
             include_class_name=False,
         )
     else:
