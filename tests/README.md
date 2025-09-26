@@ -79,7 +79,7 @@ How it interprets arguments:
 
 ## Defaults & conventions
 
-- **Environment**: Exports `UNIFY_TESTS_RAND_PROJ=True` inside each session so it works whether or not a tmux server is already running.
+- **Environment**: Exports `UNIFY_TESTS_RAND_PROJ=True` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True` inside each session so it works whether or not a tmux server is already running.
 - **Virtualenv**: Assumes `~/unity/.unity/bin/activate`.
 - **Excludes**: Skips directories: `.git`, `.hg`, `.svn`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `__pycache__`, `.idea`, `.vscode`.
   - You can edit the `EXCLUDE_DIRS` array in the script to add/remove entries.
