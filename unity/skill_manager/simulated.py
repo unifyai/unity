@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import functools
@@ -47,34 +48,13 @@ class SimulatedSkillManager(BaseSkillManager):
 
         self._function_manager = SimulatedFunctionManager(description=description)
 
-        # Expose the simulated FunctionManager's read-only tools
-        def _list_functions(*, include_implementations: bool = False) -> Dict[str, Dict[str, Any]]:  # type: ignore[override]
-            return self._function_manager.list_functions(
-                include_implementations=include_implementations,
-            )
-
-        def _search_functions(*, filter: Optional[str] = None, offset: int = 0, limit: int = 100) -> List[Dict[str, Any]]:  # type: ignore[override]
-            return self._function_manager.search_functions(
-                filter=filter,
-                offset=offset,
-                limit=limit,
-            )
-
-        def _search_functions_by_similarity(*, query: str, n: int = 5) -> List[Dict[str, Any]]:  # type: ignore[override]
-            return self._function_manager.search_functions_by_similarity(
-                query=query,
-                n=n,
-            )
-
-        def _get_precondition(*, function_name: str) -> Optional[Dict[str, Any]]:  # type: ignore[override]
-            return self._function_manager.get_precondition(function_name=function_name)
-
+        # Expose the simulated FunctionManager's read-only tools directly (no wrappers)
         self._tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
-                _list_functions,
-                _search_functions,
-                _search_functions_by_similarity,
-                _get_precondition,
+                self._function_manager.list_functions,
+                self._function_manager.search_functions,
+                self._function_manager.search_functions_by_similarity,
+                self._function_manager.get_precondition,
                 include_class_name=False,
             ),
         }
@@ -112,7 +92,6 @@ class SimulatedSkillManager(BaseSkillManager):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        import asyncio  # local import
 
         tools = dict(self._tools)
 

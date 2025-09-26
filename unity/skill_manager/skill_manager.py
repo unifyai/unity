@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import functools
@@ -35,59 +36,13 @@ class SkillManager(BaseSkillManager):
         # Ensure the FunctionManager context exists to allow column/schema access
         self._function_manager = FunctionManager()
 
-        # Expose read-only tools to the LLM
-        def _list_functions(
-            *,
-            include_implementations: bool = False,
-            parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        ) -> Dict[str, Dict[str, Any]]:  # type: ignore[override]
-            return self._function_manager.list_functions(
-                include_implementations=include_implementations,
-                parent_chat_context=parent_chat_context,
-            )
-
-        def _search_functions(
-            *,
-            filter: Optional[str] = None,
-            offset: int = 0,
-            limit: int = 100,
-            parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        ) -> List[Dict[str, Any]]:  # type: ignore[override]
-            return self._function_manager.search_functions(
-                filter=filter,
-                offset=offset,
-                limit=limit,
-                parent_chat_context=parent_chat_context,
-            )
-
-        def _search_functions_by_similarity(
-            *,
-            query: str,
-            n: int = 5,
-            parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        ) -> List[Dict[str, Any]]:  # type: ignore[override]
-            return self._function_manager.search_functions_by_similarity(
-                query=query,
-                n=n,
-                parent_chat_context=parent_chat_context,
-            )
-
-        def _get_precondition(
-            *,
-            function_name: str,
-            parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        ) -> Optional[Dict[str, Any]]:  # type: ignore[override]
-            return self._function_manager.get_precondition(
-                function_name=function_name,
-                parent_chat_context=parent_chat_context,
-            )
-
+        # Expose read-only FunctionManager methods directly (no wrappers)
         self._tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
-                _list_functions,
-                _search_functions,
-                _search_functions_by_similarity,
-                _get_precondition,
+                self._function_manager.list_functions,
+                self._function_manager.search_functions,
+                self._function_manager.search_functions_by_similarity,
+                self._function_manager.get_precondition,
                 include_class_name=False,
             ),
         }
