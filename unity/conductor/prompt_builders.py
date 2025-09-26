@@ -100,13 +100,17 @@ def build_ask_prompt(
     ]
 
     # Mention Actor availability (read-only surface cannot invoke it)
+    # Also steer routing intent: live ad-hoc walkthroughs are Actor territory
     if actor_act_fname:
-        guidance.append(
-            f"The Actor is an executor available on the write surface as `{actor_act_fname}`; it is not available here on ask.",
+        guidance.extend(
+            [
+                f"The Actor is an executor available on the write surface as `{actor_act_fname}`; it is not available here on ask.",
+                "If the user's question implicitly asks for a live walkthrough (e.g., 'can you open a browser and show me?'), steer the conversation to the write surface and use the Actor there instead of tasks.",
+            ],
         )
     else:
         guidance.append(
-            "The Actor executor (Actor.act) is only available on the write surface (request).",
+            "The Actor executor (Actor.act) is only available on the write surface (request). For live walkthroughs, defer answering here and suggest switching to request mode to use the Actor.",
         )
 
     # Single-session rule (informational)
@@ -238,6 +242,7 @@ def build_request_prompt(
                 "Execution entry-points:",
                 f"- Use `{task_execute_fname}` when the activity is a clear, trackable Task (name/description/status).",
                 f"- Use `{actor_act_fname}` for ad-hoc, conversational sandbox sessions (onboarding, live screen/browser guidance) that don't need task tracking.",
+                "Routing rule (important): If the user requests a live walkthrough or immediate interactive guidance — phrases like 'open a browser', 'walk me through', 'let's set this up together', 'troubleshoot with me now' — call the Actor immediately. Do NOT create or update a task first.",
                 "Only one can run at a time; while one is active, the other surface is hidden.",
             ],
         )
@@ -279,7 +284,10 @@ def build_request_prompt(
     )
 
     if actor_act_fname:
-        usage_examples += f'\n• Execute a free-form activity (ad-hoc/sandbox)\n  `{actor_act_fname}(description="Open a browser and walk me through the dashboard; I\'ll guide you live")`'
+        usage_examples += (
+            f"\n• Execute a free-form activity (ad-hoc/sandbox; live now)\n  "
+            f'`{actor_act_fname}(description="Open a browser window so we can walk through the setup together")`'
+        )
 
     return "\n".join(
         [
