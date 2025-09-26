@@ -114,7 +114,11 @@ def methods_to_tool_dict(
                 "__class__",
             )
         ):
-            key = f"{fn.__self__.__class__.__name__}_{fn.__name__}".replace("__", "_")
+            cls_name = fn.__self__.__class__.__name__
+            # Normalise simulated class names so they appear identical to real ones
+            if cls_name.startswith("Simulated"):
+                cls_name = cls_name[len("Simulated") :]
+            key = f"{cls_name}_{fn.__name__}".replace("__", "_")
         else:
             key = fn.__name__.lstrip("_")
 
@@ -432,7 +436,10 @@ def method_to_schema(
         bound_method.__self__,
         "__class__",
     ):
-        prefix = f"{bound_method.__self__.__class__.__name__}_"
+        _cls_name = bound_method.__self__.__class__.__name__
+        if _cls_name.startswith("Simulated"):
+            _cls_name = _cls_name[len("Simulated") :]
+        prefix = f"{_cls_name}_"
     elif hasattr(bound_method, "__qualname__"):
         parts = bound_method.__qualname__.split(".")
         prefix = f"{parts[-2]}_" if len(parts) > 1 else ""
