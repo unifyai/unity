@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-from ..common.llm_helpers import SteerableToolHandle
+from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 
 
@@ -104,6 +104,6 @@ class BaseSecretManager(ABC, metaclass=SingletonABCMeta):
         """Permanently remove a secret by name."""
 
 
-if False:  # TYPE_CHECKING without import at runtime
+if TYPE_CHECKING:
     from .types import Secret
     from ..common.tool_outcome import ToolOutcome
