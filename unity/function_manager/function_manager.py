@@ -1,16 +1,17 @@
 import ast
 import inspect
-import threading
+import functools
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column, list_private_fields
 from ..common.sandbox_utils import create_sandbox_globals
 from .types.function import Function
+from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
 
 
-class FunctionManager(threading.Thread):
+class FunctionManager(BaseFunctionManager):
     """
     Keeps a catalogue of user-supplied Python functions that can reference
     one another.  Each function is stored in the `unify` backend so that it
@@ -24,7 +25,8 @@ class FunctionManager(threading.Thread):
     _FUNC_EMB = "_function_embedding"
 
     def __init__(self, *, daemon: bool = True, traced: bool = False) -> None:
-        super().__init__(daemon=daemon)
+        # No thread behavior; keep parameter for backward compatibility
+        self._daemon = daemon
         # ToDo: expose tools to LLM once needed
         self._tools: Dict[str, callable] = {}
 
@@ -227,19 +229,14 @@ class FunctionManager(threading.Thread):
 
     # 1. Add / register ------------------------------------------------- #
 
+    @functools.wraps(BaseFunctionManager.add_functions, updated=())
     def add_functions(
         self,
         *,
         implementations: Union[str, List[str]],
         preconditions: Optional[Dict[str, Dict]] = None,
     ) -> Dict[str, str]:
-        """
-        Validate, compile and persist one or more function implementations.
 
-        Returns
-        -------
-        Dict[str, str]  –  ``{<name>: "added" | "error: <msg>"}``
-        """
         if preconditions is None:
             preconditions = {}
         if isinstance(implementations, str):
@@ -291,22 +288,13 @@ class FunctionManager(threading.Thread):
 
     # 2. Listing -------------------------------------------------------- #
 
+    @functools.wraps(BaseFunctionManager.list_functions, updated=())
     def list_functions(
         self,
         *,
         include_implementations: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
-        """
-        Return a dictionary keyed by *function name*.
 
-        Each value contains:
-
-        * **function_id** – unique identifier for the function
-        * **argspec** – full signature, e.g. ``(x: int, y: int) -> int``
-        * **docstring** – cleaned docstring or empty string
-        * **implementation** – full source code (only when
-          ``include_implementations=True``)
-        """
         entries: Dict[str, Dict[str, Any]] = {}
         for log in unify.get_logs(
             context=self._ctx,
@@ -322,16 +310,8 @@ class FunctionManager(threading.Thread):
             entries[log.entries["name"]] = data
         return entries
 
+    @functools.wraps(BaseFunctionManager.get_precondition, updated=())
     def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieves the stored precondition for a given function.
-
-        Args:
-            function_name: The name of the function.
-
-        Returns:
-            The precondition dictionary or None if not found or not applicable.
-        """
         logs = unify.get_logs(
             context=self._ctx,
             filter=f"name == '{function_name}'",
@@ -345,17 +325,14 @@ class FunctionManager(threading.Thread):
 
     # 3. Deletion ------------------------------------------------------- #
 
+    @functools.wraps(BaseFunctionManager.delete_function, updated=())
     def delete_function(
         self,
         *,
         function_id: int,
         delete_dependents: bool = True,
     ) -> Dict[str, str]:
-        """
-        Delete a function by *id*.  If `delete_dependents` is ``True`` (the
-        default) then every function that calls the target is recursively
-        removed as well.
-        """
+
         log = self._get_log_by_function_id(function_id=function_id)
         target_name = log.entries["name"]
 
@@ -381,6 +358,7 @@ class FunctionManager(threading.Thread):
 
     # 4. Search --------------------------------------------------------- #
 
+    @functools.wraps(BaseFunctionManager.search_functions, updated=())
     def search_functions(
         self,
         *,
@@ -388,15 +366,7 @@ class FunctionManager(threading.Thread):
         offset: int = 0,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """
-        Flexible, *Python-expression* filtering over every stored column
-        (`name`, `argspec`, `docstring`, `calls`, …).
 
-        Examples
-        --------
-        >>> mgr.search_functions(filter="'price' in docstring and 'sum' in calls")
-        >>> mgr.search_functions(filter="name.startswith('get_')")
-        """
         logs = unify.get_logs(
             context=self._ctx,
             filter=filter,
@@ -417,27 +387,14 @@ class FunctionManager(threading.Thread):
             source_column="embedding_text",
         )
 
+    @functools.wraps(BaseFunctionManager.search_functions_by_similarity, updated=())
     def search_functions_by_similarity(
         self,
         *,
         query: str,
         n: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Search for functions by semantic similarity.
 
-        Parameters
-        ----------
-        query : str
-            The natural language query to search for.
-        n : int, default 5
-            The number of similar functions to return.
-
-        Returns
-        -------
-        List[Dict[str, Any]]
-            A list of the n most similar functions.
-        """
         self._ensure_function_embedding()
         escaped_query = query.replace("'", "\\'")
         logs = unify.get_logs(
