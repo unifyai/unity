@@ -41,6 +41,20 @@ class BaseActor(ABC):
     Use the Actor for interactive, ephemeral sessions within a live
     conversation (onboarding, guided walkthroughs, ad‑hoc demonstrations).
     It returns a steerable handle suitable for pause/resume/interject/stop.
+
+    Usage guidance (LLM‑facing)
+    ---------------------------
+    Prefer calling ``Actor.act`` when the user's instruction implies a live,
+    ad‑hoc, conversational session that should happen "now" inside the current
+    chat, especially when the activity involves controlling tools or a UI in
+    short iterative steps. Typical phrasings include:
+
+    - "open a browser", "open a window", "navigate/click/show me"
+    - "walk me through", "let's set this up together", "guide me live"
+    - "troubleshoot together", "pair on this", "step‑by‑step now"
+
+    This interface starts a live session and returns a steerable handle; it does
+    not create durable records or schedules.
     """
 
     # ─────────────────────────── Work management ────────────────────────── #
