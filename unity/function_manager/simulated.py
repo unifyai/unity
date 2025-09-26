@@ -74,10 +74,16 @@ class SimulatedFunctionManager(BaseFunctionManager):
 
         columns = [{k: str(v.annotation)} for k, v in Function.model_fields.items()]
 
+        guidance = (
+            f"\n\nSimulation guidance – prioritise hallucinating functions like these:\n{self._simulation_guidance}"
+            if self._simulation_guidance
+            else ""
+        )
+
         sys_msg = (
             "You are a simulated function-catalogue assistant. There is no real "
             "storage; invent plausible functions and keep answers self-consistent.\n\n"
-            f"Back-story: {self._description}\n\n"
+            f"Back-story: {self._description}{guidance}\n\n"
             "Function columns available (simulated):\n" + json.dumps(columns)
         )
         self._llm.set_system_message(sys_msg)
