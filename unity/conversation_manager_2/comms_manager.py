@@ -151,7 +151,8 @@ class CommsManager:
                             "app:comms:call_recieved",
                             PhoneCallRecieved(
                                 contact=event.get(
-                                    "caller_number", event.get("user_number")
+                                    "caller_number",
+                                    event.get("user_number"),
                                 ),
                                 # voice_id=event.get("voice_id", None),
                                 # voice_provider=event.get("voice_provider", None),

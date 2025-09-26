@@ -121,7 +121,10 @@ class ConversationManagerState:
             active_c.push_message(
                 "email",
                 message=EmailThreadMessage(
-                    contact.name, event.subject, event.body, event.timestamp
+                    contact.name,
+                    event.subject,
+                    event.body,
+                    event.timestamp,
                 ),
             )
             self.notifications.push_notif(
@@ -155,11 +158,16 @@ class ConversationManagerState:
             active_c.push_message(
                 "email",
                 message=EmailThreadMessage(
-                    "You", event.subject, event.body, event.timestamp
+                    "You",
+                    event.subject,
+                    event.body,
+                    event.timestamp,
                 ),
             )
             self.notifications.push_notif(
-                "comms", f"Email sent to '{contact.name}'", event.timestamp
+                "comms",
+                f"Email sent to '{contact.name}'",
+                event.timestamp,
             )
 
         elif isinstance(event, Error):
