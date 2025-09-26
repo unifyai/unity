@@ -17,9 +17,10 @@ from unity.common.llm_helpers import (
 from unity.events.manager_event_logging import log_manager_call
 from unity.events.event_bus import EVENT_BUS, Event
 from unity.web_searcher import prompt_builders
+from .base import BaseWebSearcher
 
 
-class WebSearcher:
+class WebSearcher(BaseWebSearcher):
     """
     Manages web search and extraction.
     """
