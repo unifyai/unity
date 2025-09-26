@@ -54,6 +54,7 @@ def build_ask_prompt(
     knowledge_ask_fname = _tool_name(tools, "knowledgemanager_ask")
     task_ask_fname = _tool_name(tools, "taskscheduler_ask")
     web_ask_fname = _tool_name(tools, "websearcher_ask")
+    actor_act_fname = _tool_name(tools, "actor_act")
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "clarification")
@@ -97,6 +98,16 @@ def build_ask_prompt(
         "When choosing WebSearch: send exactly one high-level, natural-language question to WebSearcher.ask. Do NOT fan-out multiple WebSearcher.ask calls, do NOT include engine-specific operators (e.g., 'site:'), and do NOT hard-code provider choices. The WebSearcher internally selects sources, parallelizes searches, extracts, and composes references.",
         "If refinement is needed, prefer a single follow-up via clarification rather than issuing multiple WebSearcher.ask calls in parallel.",
     ]
+
+    # Mention Actor availability (read-only surface cannot invoke it)
+    if actor_act_fname:
+        guidance.append(
+            f"The Actor is an executor available on the write surface as `{actor_act_fname}`; it is not available here on ask.",
+        )
+    else:
+        guidance.append(
+            "The Actor executor (Actor.act) is only available on the write surface (request).",
+        )
 
     web_example = (
         (
@@ -160,6 +171,7 @@ def build_request_prompt(
     task_update_fname = _tool_name(tools, "taskscheduler_update")
     task_execute_fname = _tool_name(tools, "taskscheduler_execute")
     web_ask_fname = _tool_name(tools, "websearcher_ask")
+    actor_act_fname = _tool_name(tools, "actor_act")
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "clarification")
@@ -211,6 +223,14 @@ def build_request_prompt(
         f"`{contact_ask_fname}` and then proceed.",
     ]
 
+    if actor_act_fname:
+        guidance_lines.extend(
+            [
+                "When you need to execute a free-form, multi-step activity outside the task scheduler:",
+                f"- Call `{actor_act_fname}(description=...)` to start it; the returned handle supports pause/resume/interject/stop/ask.",
+            ],
+        )
+
     # Core philosophy for update tools: they are cautious, state-aware, and avoid duplication.
     update_philosophy_lines = [
         "",
@@ -244,6 +264,9 @@ def build_request_prompt(
             f'• Create or update a contact then confirm via read\n  1) `{contact_update_fname}(text="Create Jane Doe with email jane@example.com")`\n  2) `{contact_ask_fname}(text="Show Jane Doe\'s contact details")`{web_example}',
         ],
     )
+
+    if actor_act_fname:
+        usage_examples += f'\n• Execute a free-form activity\n  `{actor_act_fname}(description="Call Alice now and explain the Q3 plan")`'
 
     return "\n".join(
         [
