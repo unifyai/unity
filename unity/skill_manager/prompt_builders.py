@@ -97,6 +97,8 @@ def build_ask_prompt(
 
         Anti‑patterns to avoid
         ----------------------
+        • Do not expose raw function names or signatures as the final skill label – translate into human, anthropomorphic capabilities.
+        • Do not present code blocks or argspecs unless the user explicitly asks for underlying functions.
         • Do not invent function signatures – consult the tools and quote real `argspec`.
         • Avoid listing raw implementations unless explicitly asked; prefer names, signatures and docstrings.
         • Do not call mutation endpoints (adding/deleting functions) from SkillManager.ask – it is read‑only.
@@ -112,6 +114,23 @@ def build_ask_prompt(
         )
     )
     clar_section = clarification_guidance(tools)
+
+    # CRITICAL phrasing guidance: translate functions → human skills
+    phrasing_block = textwrap.dedent(
+        """
+        Skill phrasing (CRITICAL)
+        ------------------------
+        • Present answers as high‑level, anthropomorphic skills, not code.
+        • Translate function names and docstrings into natural skill descriptors.
+        • Default: do not show raw function names or signatures.
+        • Only include the underlying function name in parentheses if explicitly requested by the user.
+
+        Examples of phrasing
+        • add_integers() → "good at mental arithmetic"
+        • search_google() → "experienced at web browsing and finding information quickly"
+        • summarise_text() → "skilled at concise summarisation of long documents"
+        """,
+    ).strip()
 
     counts_block = (
         f"There are currently {num_functions} stored functions (skills catalogue)."
@@ -132,6 +151,7 @@ def build_ask_prompt(
             "You are an assistant specialised in describing the assistant's high‑level skills.",
             "Work strictly through the tools provided to discover skills and their details.",
             clar_sentence,
+            phrasing_block,
             counts_block,
             columns_block,
             "",
