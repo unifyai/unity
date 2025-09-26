@@ -33,9 +33,18 @@ class SimulatedSkillManager(BaseSkillManager):
 
     def __init__(
         self,
-        *,
         description: str = "nothing fixed, make up some imaginary scenario",
+        *,
+        log_events: bool = False,
+        rolling_summary_in_prompts: bool = True,
+        simulation_guidance: Optional[str] = None,
     ) -> None:
+        # Store settings for parity with other simulated managers
+        self._description = description
+        self._log_events = log_events
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self._simulation_guidance = simulation_guidance
+
         self._function_manager = SimulatedFunctionManager(description=description)
 
         # Expose the simulated FunctionManager's read-only tools
@@ -158,7 +167,7 @@ class SimulatedSkillManager(BaseSkillManager):
         client.set_system_message(
             build_ask_prompt(
                 tools,
-                include_activity=True,
+                include_activity=self._rolling_summary_in_prompts,
                 num_functions=self._num_functions(),
                 function_columns=self._function_columns,
             ),
