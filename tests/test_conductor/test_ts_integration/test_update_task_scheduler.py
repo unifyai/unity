@@ -12,7 +12,7 @@ from tests.test_conductor.utils import (
 )
 
 
-MANAGER = "SimulatedTaskScheduler"
+MANAGER = "TaskScheduler"
 
 
 UPDATE_QUERIES: list[str] = [
@@ -47,20 +47,20 @@ async def test_update_only_queries_call_only_update_and_not_ask_first(
     executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
 
-    # Must only be SimulatedTaskScheduler_update (dynamic continue permitted)
+    # Must only be TaskScheduler_update (dynamic continue permitted)
     assert executed <= {
-        "SimulatedTaskScheduler_update",
-    }, f"Only SimulatedTaskScheduler_update should run, saw: {sorted(executed)}"
+        "TaskScheduler_update",
+    }, f"Only TaskScheduler_update should run, saw: {sorted(executed)}"
     assert (
-        executed_list[0] == "SimulatedTaskScheduler_update"
-    ), f"The first call must be SimulatedTaskScheduler_update, saw order: {executed_list}"
+        executed_list[0] == "TaskScheduler_update"
+    ), f"The first call must be TaskScheduler_update, saw order: {executed_list}"
     assert (
-        executed_list.count("SimulatedTaskScheduler_update") >= 1
-    ), f"Expected at least one SimulatedTaskScheduler_update call, saw order: {executed_list}"
+        executed_list.count("TaskScheduler_update") >= 1
+    ), f"Expected at least one TaskScheduler_update call, saw order: {executed_list}"
 
     # Additionally ensure no ask() calls were requested by the assistant
     requested = set(assistant_requested_tool_names(messages, MANAGER))
     assert requested, "Assistant should have requested at least one tool"
     assert (
-        "SimulatedTaskScheduler_ask" not in requested
-    ), f"Assistant must not request SimulatedTaskScheduler_ask, saw: {sorted(requested)}"
+        "TaskScheduler_ask" not in requested
+    ), f"Assistant must not request TaskScheduler_ask, saw: {sorted(requested)}"

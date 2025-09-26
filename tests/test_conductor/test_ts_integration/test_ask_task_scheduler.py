@@ -12,7 +12,7 @@ from tests.test_conductor.utils import (
 )
 
 
-MANAGER = "SimulatedTaskScheduler"
+MANAGER = "TaskScheduler"
 
 
 TASK_QUESTIONS: list[str] = [
@@ -42,20 +42,20 @@ async def test_task_questions_use_only_task_scheduler_tool(question: str):
     answer, messages = await asyncio.wait_for(handle.result(), timeout=300)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
-    # The only executed tool must be SimulatedTaskScheduler.ask and it should run exactly once
+    # The only executed tool must be TaskScheduler.ask and it should run exactly once
     executed_list = tool_names_from_messages(messages, MANAGER)
     executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
     assert executed == {
-        "SimulatedTaskScheduler_ask",
-    }, f"Only SimulatedTaskScheduler_ask should run, saw: {sorted(executed)}"
+        "TaskScheduler_ask",
+    }, f"Only TaskScheduler_ask should run, saw: {sorted(executed)}"
     assert (
-        executed_list.count("SimulatedTaskScheduler_ask") == 1
-    ), f"Expected exactly one SimulatedTaskScheduler_ask call, saw order: {executed_list}"
+        executed_list.count("TaskScheduler_ask") == 1
+    ), f"Expected exactly one TaskScheduler_ask call, saw order: {executed_list}"
 
     # Additionally confirm that any assistant tool selection(s) referenced only that tool
     requested = set(assistant_requested_tool_names(messages, MANAGER))
     assert requested, "Assistant should have requested at least one tool"
     assert requested <= {
-        "SimulatedTaskScheduler_ask",
-    }, f"Assistant should request only SimulatedTaskScheduler_ask, saw: {sorted(requested)}"
+        "TaskScheduler_ask",
+    }, f"Assistant should request only TaskScheduler_ask, saw: {sorted(requested)}"

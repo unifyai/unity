@@ -12,7 +12,7 @@ from tests.test_conductor.utils import (
 )
 
 
-MANAGER = "SimulatedKnowledgeManager"
+MANAGER = "KnowledgeManager"
 
 
 UPDATE_QUERIES: list[str] = [
@@ -47,20 +47,20 @@ async def test_update_only_queries_call_only_update_and_not_ask_first(
     executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
 
-    # Must only be SimulatedKnowledgeManager_update (dynamic continue permitted)
+    # Must only be KnowledgeManager_update (dynamic continue permitted)
     assert executed <= {
-        "SimulatedKnowledgeManager_update",
-    }, f"Only SimulatedKnowledgeManager_update should run, saw: {sorted(executed)}"
+        "KnowledgeManager_update",
+    }, f"Only KnowledgeManager_update should run, saw: {sorted(executed)}"
     assert (
-        executed_list[0] == "SimulatedKnowledgeManager_update"
-    ), f"The first call must be SimulatedKnowledgeManager_update, saw order: {executed_list}"
+        executed_list[0] == "KnowledgeManager_update"
+    ), f"The first call must be KnowledgeManager_update, saw order: {executed_list}"
     assert (
-        executed_list.count("SimulatedKnowledgeManager_update") >= 1
-    ), f"Expected at least one SimulatedKnowledgeManager_update call, saw order: {executed_list}"
+        executed_list.count("KnowledgeManager_update") >= 1
+    ), f"Expected at least one KnowledgeManager_update call, saw order: {executed_list}"
 
     # Additionally ensure no ask() calls were requested by the assistant
     requested = set(assistant_requested_tool_names(messages, MANAGER))
     assert requested, "Assistant should have requested at least one tool"
     assert (
-        "SimulatedKnowledgeManager_ask" not in requested
-    ), f"Assistant must not request SimulatedKnowledgeManager_ask, saw: {sorted(requested)}"
+        "KnowledgeManager_ask" not in requested
+    ), f"Assistant must not request KnowledgeManager_ask, saw: {sorted(requested)}"

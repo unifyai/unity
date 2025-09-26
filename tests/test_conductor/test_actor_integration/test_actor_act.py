@@ -42,7 +42,7 @@ async def test_actor_sandbox_requests_use_actor_not_task_execute(request_text: s
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
     # Actor should be invoked at least once
-    executed_actor_list = tool_names_from_messages(messages, "SimulatedActor")
+    executed_actor_list = tool_names_from_messages(messages, "Actor")
     executed_actor = set(executed_actor_list)
     assert executed_actor, "Expected at least one tool call"
     assert (
@@ -50,7 +50,7 @@ async def test_actor_sandbox_requests_use_actor_not_task_execute(request_text: s
     ), f"Expected SimulatedActor_act to run at least once, saw order: {executed_actor_list}"
 
     # TaskScheduler.execute must NOT be called for sandbox-style requests
-    executed_ts_list = tool_names_from_messages(messages, "SimulatedTaskScheduler")
+    executed_ts_list = tool_names_from_messages(messages, "TaskScheduler")
     executed_ts = set(executed_ts_list)
     assert (
         "SimulatedTaskScheduler_execute" not in executed_ts
@@ -60,8 +60,8 @@ async def test_actor_sandbox_requests_use_actor_not_task_execute(request_text: s
     requested_actor = set(assistant_requested_tool_names(messages, "SimulatedActor"))
     if requested_actor:
         assert requested_actor <= {
-            "SimulatedActor_act",
-        }, f"Assistant should only request SimulatedActor_act here, saw: {sorted(requested_actor)}"
+            "Actor_act",
+        }, f"Assistant should only request Actor_act here, saw: {sorted(requested_actor)}"
 
 
 @pytest.mark.asyncio
@@ -155,7 +155,7 @@ async def test_both_executors_hidden_while_actor_running(monkeypatch):
             for tc in m.get("tool_calls") or []:
                 fn = (tc or {}).get("function", {}) or {}
                 name = fn.get("name") or ""
-                if name.startswith("interject_SimulatedActor_act"):
+                if name.startswith("interject_Actor_act"):
                     interject_asst_idx = i
                     break
         if interject_asst_idx is not None:
@@ -167,9 +167,9 @@ async def test_both_executors_hidden_while_actor_running(monkeypatch):
     ), "Expected the assistant to call interject_SimulatedActor_act when processing the interjection"
 
     asst = messages[interject_asst_idx]
-    requested = set(assistant_requested_tool_names([asst], "SimulatedTaskScheduler"))
+    requested = set(assistant_requested_tool_names([asst], "TaskScheduler"))
     assert (
-        "SimulatedTaskScheduler_execute" not in requested
+        "TaskScheduler_execute" not in requested
     ), "TaskScheduler.execute should not be available on the same assistant turn that processes the interjection"
 
     # Helper: map message index → assistant turn number
@@ -191,11 +191,11 @@ async def test_both_executors_hidden_while_actor_running(monkeypatch):
         ),
     )
     assert (
-        "SimulatedTaskScheduler_execute" not in exposed_on_interject
-    ), f"Tool exposure should hide SimulatedTaskScheduler_execute on interjection turn; exposed: {sorted(exposed_on_interject)}"
+        "TaskScheduler_execute" not in exposed_on_interject
+    ), f"Tool exposure should hide TaskScheduler_execute on interjection turn; exposed: {sorted(exposed_on_interject)}"
     assert (
-        "SimulatedActor_act" not in exposed_on_interject
-    ), f"Tool exposure should hide SimulatedActor_act itself on interjection turn; exposed: {sorted(exposed_on_interject)}"
+        "Actor_act" not in exposed_on_interject
+    ), f"Tool exposure should hide Actor_act itself on interjection turn; exposed: {sorted(exposed_on_interject)}"
 
     # Additionally ensure that while the Actor session is in-flight, the assistant never
     # requests TaskScheduler.execute on any assistant turn between the initial Actor.act
@@ -223,8 +223,8 @@ async def test_both_executors_hidden_while_actor_running(monkeypatch):
         m = messages[i]
         if m.get("role") != "assistant":
             continue
-        req = set(assistant_requested_tool_names([m], "SimulatedTaskScheduler"))
-        if "SimulatedTaskScheduler_execute" in req:
+        req = set(assistant_requested_tool_names([m], "TaskScheduler"))
+        if "TaskScheduler_execute" in req:
             violations.append(i)
 
     assert (
@@ -238,9 +238,9 @@ async def test_both_executors_hidden_while_actor_running(monkeypatch):
         exposed = set(
             exposed_tools_per_turn[t] if t < len(exposed_tools_per_turn) else [],
         )
-        if "SimulatedTaskScheduler_execute" in exposed:
+        if "TaskScheduler_execute" in exposed:
             exposure_violations_other.append(t)
-        if "SimulatedActor_act" in exposed:
+        if "Actor_act" in exposed:
             exposure_violations_self.append(t)
 
     assert (

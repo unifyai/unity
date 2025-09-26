@@ -12,7 +12,7 @@ from tests.test_conductor.utils import (
 )
 
 
-MANAGER = "SimulatedTaskScheduler"
+MANAGER = "TaskScheduler"
 
 
 # Each query intentionally contains an unrelated read (ask) and write (update)
@@ -58,28 +58,28 @@ async def test_combined_task_queries_call_both_ask_and_update_once_each(
 
     # Must include both at least once (dynamic continue tools permitted)
     assert (
-        executed_list.count("SimulatedTaskScheduler_ask") >= 1
-    ), f"Expected at least one SimulatedTaskScheduler_ask call, saw order: {executed_list}"
+        executed_list.count("TaskScheduler_ask") >= 1
+    ), f"Expected at least one TaskScheduler_ask call, saw order: {executed_list}"
     assert (
-        executed_list.count("SimulatedTaskScheduler_update") >= 1
-    ), f"Expected at least one SimulatedTaskScheduler_update call, saw order: {executed_list}"
+        executed_list.count("TaskScheduler_update") >= 1
+    ), f"Expected at least one TaskScheduler_update call, saw order: {executed_list}"
 
     # Only these two should have executed
     assert {
-        "SimulatedTaskScheduler_ask",
-        "SimulatedTaskScheduler_update",
+        "TaskScheduler_ask",
+        "TaskScheduler_update",
     }.issubset(
         executed,
     ), f"Both ask and update must be executed, saw: {sorted(executed)}"
     assert executed <= {
-        "SimulatedTaskScheduler_ask",
-        "SimulatedTaskScheduler_update",
-    }, f"Unexpected tools executed: {sorted(executed - {'SimulatedTaskScheduler_ask', 'SimulatedTaskScheduler_update'})}"
+        "TaskScheduler_ask",
+        "TaskScheduler_update",
+    }, f"Unexpected tools executed: {sorted(executed - {'TaskScheduler_ask', 'TaskScheduler_update'})}"
 
     # Assistant tool requests should reference only ask/update (dynamic continues normalised)
     requested = set(assistant_requested_tool_names(messages, MANAGER))
     assert requested, "Assistant should have requested at least one tool"
     assert requested <= {
-        "SimulatedTaskScheduler_ask",
-        "SimulatedTaskScheduler_update",
+        "TaskScheduler_ask",
+        "TaskScheduler_update",
     }, f"Assistant should only request ask/update for TaskScheduler, saw: {sorted(requested)}"
