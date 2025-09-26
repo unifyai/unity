@@ -12,23 +12,27 @@ from unity.conversation_manager_2.event_broker import get_event_broker
 
 
 stop = None
+conversation_manager = None
 
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
+    global conversation_manager
+
     print(
         datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         + " - [MAIN.PY] Received signal "
         + str(signum)
         + ", shutting down gracefully...",
     )
-    global stop
-    if stop:
-        stop.set()
+    if conversation_manager:
+        print("Cleaning up conversation manager...")
+        conversation_manager.cleanup()
+        print("Cleanup finished")
 
 
 async def main(local: bool = False, project_name: str = "Assistants"):
-    global stop
+    global stop, conversation_manager
 
     # Set up signal handlers
     signal.signal(signal.SIGTERM, signal_handler)
@@ -71,7 +75,9 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     print("Server is Running...")
     await stop.wait()
 
+    print("Cleaning up conversation manager...")
     conversation_manager.cleanup()
+    print("Cleanup finished")
 
 
 if __name__ == "__main__":

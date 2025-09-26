@@ -83,9 +83,11 @@ class SMSRecieved(Event):
     contact: str
     content: str
 
+
 @dataclass
 class PhoneCallSent(Event):
     contact: str
+
 
 @dataclass
 class EmailRecieved(Event):
@@ -100,6 +102,7 @@ class EmailRecieved(Event):
 class SMSSent(Event):
     contact: str
     content: str
+
 
 @dataclass
 class EmailSent(Event):
@@ -132,6 +135,7 @@ class StartupEvent(Event):
 @dataclass
 class Ping(Event):
     kind: str
+
 
 @dataclass
 class Error(Event):

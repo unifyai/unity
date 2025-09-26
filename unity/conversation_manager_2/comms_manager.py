@@ -111,17 +111,17 @@ class CommsManager:
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     topic = event["from"].split("<")[1][:-1]
                     task = asyncio.run_coroutine_threadsafe(
-                    self.message_queue.publish(
-                        f"app:comms:{thread}_message",
-                        events_map[thread](
-                            subject=event["subject"],
-                            body=event["body"],
-                            contact=topic,
-                            message_id=event["message_id"]
-                        ).to_json(),
-                    ),
-                    self.loop,
-                )
+                        self.message_queue.publish(
+                            f"app:comms:{thread}_message",
+                            events_map[thread](
+                                subject=event["subject"],
+                                body=event["body"],
+                                contact=topic,
+                                message_id=event["message_id"],
+                            ).to_json(),
+                        ),
+                        self.loop,
+                    )
                 else:
                     topic = event["from_number"].replace("whatsapp:", "").strip()
                     # Put the message in the queue instead of creating a task
@@ -150,7 +150,9 @@ class CommsManager:
                         self.message_queue.publish(
                             "app:comms:call_recieved",
                             PhoneCallRecieved(
-                                contact=event.get("caller_number", event.get("user_number")),
+                                contact=event.get(
+                                    "caller_number", event.get("user_number")
+                                ),
                                 # voice_id=event.get("voice_id", None),
                                 # voice_provider=event.get("voice_provider", None),
                             ).to_json(),

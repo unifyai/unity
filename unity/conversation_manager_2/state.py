@@ -7,8 +7,14 @@ from .prompt_utils import (
 )
 from .new_events import *
 
+
 class ConversationManagerState:
-    def __init__(self, phone_contacts_map: dict, email_contacts_map: dict, inverted_contacts_map: dict):
+    def __init__(
+        self,
+        phone_contacts_map: dict,
+        email_contacts_map: dict,
+        inverted_contacts_map: dict,
+    ):
         self.phone_contacts_map = phone_contacts_map
         self.email_contacts_map = email_contacts_map
         self.inverted_contacts_map = inverted_contacts_map
@@ -114,16 +120,20 @@ class ConversationManagerState:
         elif isinstance(event, EmailRecieved):
             active_c.push_message(
                 "email",
-                message=EmailThreadMessage(contact.name, event.subject, event.body, event.timestamp),
+                message=EmailThreadMessage(
+                    contact.name, event.subject, event.body, event.timestamp
+                ),
             )
             self.notifications.push_notif(
-                "comms", f"Email recieved recieved from '{contact.name}'", event.timestamp
+                "comms",
+                f"Email recieved recieved from '{contact.name}'",
+                event.timestamp,
             )
         # assistant events
         elif isinstance(event, PhoneCallSent):
             active_c.push_message(
                 "phone",
-                message=ThreadMessage("You", "<Phone Call Sent...>", event.timestamp)
+                message=ThreadMessage("You", "<Phone Call Sent...>", event.timestamp),
             )
             self.notifications.push_notif(
                 "comms",
@@ -140,15 +150,18 @@ class ConversationManagerState:
                 f"SMS sent to '{contact.name}'",
                 event.timestamp,
             )
-        
+
         elif isinstance(event, EmailSent):
             active_c.push_message(
-                "email", message=EmailThreadMessage("You", event.subject, event.body, event.timestamp)
+                "email",
+                message=EmailThreadMessage(
+                    "You", event.subject, event.body, event.timestamp
+                ),
             )
             self.notifications.push_notif(
                 "comms", f"Email sent to '{contact.name}'", event.timestamp
             )
-        
+
         elif isinstance(event, Error):
             self.push_notif("comms error", event.message, event.timestamp)
 
