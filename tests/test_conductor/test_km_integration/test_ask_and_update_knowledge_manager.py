@@ -44,13 +44,13 @@ def _assistant_requested_tool_names(msgs: list[dict]) -> list[str]:
 # Each query intentionally contains an unrelated read (ask) and write (update)
 COMBINED_QUERIES: list[str] = [
     (
-        "First: What are our office hours? Then: Store that the support inbox is monitored 7 days a week."
+        "What are our office hours? Also store that the support inbox is monitored 7 days a week."
     ),
     (
-        "Question: Summarise the onboarding policy for engineers. Next: Add that a security review occurs in week two."
+        "Summarise the onboarding policy for engineers. Also add that a security review occurs in week two."
     ),
     (
-        "Please tell me the refund policy for ACME by date, and also record that exchanges are allowed within 45 days."
+        "Tell me the refund policy for ACME by date; also record that exchanges are allowed within 45 days."
     ),
 ]
 
