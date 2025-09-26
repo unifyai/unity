@@ -6,39 +6,13 @@ import pytest
 
 from unity.conductor.simulated import SimulatedConductor
 from tests.helpers import _handle_project
+from tests.test_conductor.utils import (
+    tool_names_from_messages,
+    assistant_requested_tool_names,
+)
 
 
-def _normalise_tool_name(name: str) -> str:
-    if not name:
-        return name
-    s = str(name)
-    if s.startswith("continue_SimulatedContactManager_ask"):
-        return "SimulatedContactManager_ask"
-    if s.startswith("continue_SimulatedContactManager_update"):
-        return "SimulatedContactManager_update"
-    return s
-
-
-def _tool_names_from_messages(msgs: list[dict]) -> list[str]:
-    names: list[str] = []
-    for m in msgs:
-        if m.get("role") == "tool":
-            name = m.get("name") or ""
-            if name and not str(name).startswith("check_status_"):
-                names.append(_normalise_tool_name(str(name)))
-    return names
-
-
-def _assistant_requested_tool_names(msgs: list[dict]) -> list[str]:
-    names: list[str] = []
-    for m in msgs:
-        if m.get("role") == "assistant" and m.get("tool_calls"):
-            for tc in m.get("tool_calls") or []:
-                fn = (tc or {}).get("function", {}) or {}
-                name = fn.get("name") or ""
-                if name and not str(name).startswith("check_status_"):
-                    names.append(_normalise_tool_name(str(name)))
-    return names
+MANAGER = "SimulatedContactManager"
 
 
 COMBINED_REQUESTS: list[str] = [
@@ -79,8 +53,8 @@ async def test_contact_combined_ask_and_update_only_expected_tools(request_text:
     answer, messages = await asyncio.wait_for(handle.result(), timeout=300)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
-    executed_list = _tool_names_from_messages(messages)
-    requested_list = _assistant_requested_tool_names(messages)
+    executed_list = tool_names_from_messages(messages, MANAGER)
+    requested_list = assistant_requested_tool_names(messages, MANAGER)
     executed = set(executed_list)
     requested = set(requested_list)
 

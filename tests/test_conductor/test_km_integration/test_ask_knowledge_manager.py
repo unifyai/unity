@@ -6,28 +6,13 @@ import pytest
 
 from unity.conductor.simulated import SimulatedConductor
 from tests.helpers import _handle_project
+from tests.test_conductor.utils import (
+    tool_names_from_messages,
+    assistant_requested_tool_names,
+)
 
 
-def _tool_names_from_messages(msgs: list[dict]) -> list[str]:
-    names: list[str] = []
-    for m in msgs:
-        if m.get("role") == "tool":
-            name = m.get("name") or ""
-            if name and not str(name).startswith("check_status_"):
-                names.append(str(name))
-    return names
-
-
-def _assistant_requested_tool_names(msgs: list[dict]) -> list[str]:
-    names: list[str] = []
-    for m in msgs:
-        if m.get("role") == "assistant" and m.get("tool_calls"):
-            for tc in m.get("tool_calls") or []:
-                fn = (tc or {}).get("function", {}) or {}
-                name = fn.get("name") or ""
-                if name and not str(name).startswith("check_status_"):
-                    names.append(str(name))
-    return names
+MANAGER = "SimulatedKnowledgeManager"
 
 
 KNOWLEDGE_QUESTIONS: list[str] = [
@@ -58,7 +43,7 @@ async def test_knowledge_questions_use_only_knowledge_manager_tool(question: str
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
     # The only executed tool must be SimulatedKnowledgeManager.ask and it should run exactly once
-    executed_list = _tool_names_from_messages(messages)
+    executed_list = tool_names_from_messages(messages, MANAGER)
     executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
     assert executed == {
@@ -69,7 +54,7 @@ async def test_knowledge_questions_use_only_knowledge_manager_tool(question: str
     ), f"Expected exactly one SimulatedKnowledgeManager_ask call, saw order: {executed_list}"
 
     # Additionally confirm that any assistant tool selection(s) referenced only that tool
-    requested = set(_assistant_requested_tool_names(messages))
+    requested = set(assistant_requested_tool_names(messages, MANAGER))
     assert requested, "Assistant should have requested at least one tool"
     assert requested <= {
         "SimulatedKnowledgeManager_ask",
