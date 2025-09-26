@@ -16,6 +16,7 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
+import functools
 
 
 class _SimulatedWebSearcherHandle(SteerableToolHandle):
@@ -174,6 +175,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
             f"\n\n{ask_msg}\n\nBack-story: {self._description}",
         )
 
+    @functools.wraps(BaseWebSearcher.ask, updated=())
     async def ask(
         self,
         text: str,
