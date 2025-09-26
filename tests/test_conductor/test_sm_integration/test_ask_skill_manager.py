@@ -54,7 +54,7 @@ CASES: list[dict[str, str]] = [
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", CASES)
+@pytest.mark.parametrize("case", CASES, ids=[c["question"] for c in CASES])
 @_handle_project
 async def test_skill_questions_use_only_skill_manager_tool(case: dict[str, str]):
     cond = SimulatedConductor(
