@@ -4,9 +4,7 @@ import asyncio
 import functools
 import json
 import os
-from typing import Any, Callable, Dict, List, Optional, Set
-
-from dotenv import load_dotenv
+from typing import Any, Callable, Dict, List, Optional
 
 import unify
 from ..common.llm_helpers import (
@@ -28,43 +26,6 @@ from ..common.model_to_fields import model_to_fields
 from .types import Secret
 from .base import BaseSecretManager
 from .prompt_builders import build_ask_prompt, build_update_prompt
-
-
-def _ensure_env_loaded() -> None:
-    """Load .env once (no-op on subsequent calls)."""
-    # dotenv is idempotent; safe to call repeatedly
-    try:
-        load_dotenv(override=False)
-    except Exception:
-        pass
-
-
-def _write_env_var(key: str, value: str) -> None:
-    """Persist a secret into the local .env file without leaking to logs."""
-    try:
-        _ensure_env_loaded()
-        env_path = os.path.join(os.getcwd(), ".env")
-        # Append or replace the key in-memory
-        existing: Dict[str, str] = {}
-        if os.path.exists(env_path):
-            try:
-                with open(env_path, "r", encoding="utf-8") as fp:
-                    for line in fp:
-                        line = line.rstrip("\n")
-                        if not line or line.strip().startswith("#"):
-                            continue
-                        if "=" in line:
-                            k, v = line.split("=", 1)
-                            existing[k] = v
-            except Exception:
-                pass
-        existing[key] = value
-        with open(env_path, "w", encoding="utf-8") as fp:
-            for k, v in existing.items():
-                fp.write(f"{k}={v}\n")
-    except Exception:
-        # Never fail writes catastrophically – storage may be ephemeral
-        pass
 
 
 def _mask_value_for_llm(value: str) -> str:
@@ -112,37 +73,16 @@ class SecretManager(BaseSecretManager):
         )
         self._store.ensure_context()
 
-        # Track expected keys (names) – seed from env var and existing rows
-        self._expected_keys: Set[str] = set()
-        try:
-            raw = os.environ.get("SECRET_EXPECTED_KEYS", "")
-            if raw:
-                for part in raw.replace(";", ",").split(","):
-                    nm = part.strip()
-                    if nm:
-                        self._expected_keys.add(nm)
-        except Exception:
-            pass
-
-        # Add names from existing logs to expected set (best-effort)
-        try:
-            rows = unify.get_logs(context=self._ctx, from_fields=["name"], limit=1000)
-            for lg in rows:
-                nm = (lg.entries or {}).get("name")
-                if isinstance(nm, str) and nm:
-                    self._expected_keys.add(nm)
-        except Exception:
-            pass
-
         # Public tools
         self._ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
+                self._create_secret,
+                self._update_secret,
+                self._delete_secret,
+                self._list_secret_keys,
                 self._list_columns,
                 self._filter_secrets,
                 self._search_secrets,
-                self._list_known_keys,
-                self._list_available_env_keys,
-                self._missing_keys,
                 include_class_name=False,
             ),
         }
@@ -152,10 +92,7 @@ class SecretManager(BaseSecretManager):
                 self._create_secret,
                 self._update_secret,
                 self._delete_secret,
-                self._register_expected_keys,
-                self._list_known_keys,
-                self._list_available_env_keys,
-                self._missing_keys,
+                self._list_secret_keys,
                 include_class_name=False,
             ),
         }
@@ -171,8 +108,7 @@ class SecretManager(BaseSecretManager):
         except Exception:
             pass
 
-        # Load .env so env vars are available for substitution
-        _ensure_env_loaded()
+        # Unify storage is the single source of truth for secrets
 
     # --------------------- Public API --------------------- #
     @functools.wraps(BaseSecretManager.ask, updated=())
@@ -423,46 +359,18 @@ class SecretManager(BaseSecretManager):
             for lg in logs
         ]
 
-    def _list_known_keys(self) -> List[str]:
-        """Return the set of known/expected secret names (sorted)."""
-        return sorted(self._expected_keys)
-
-    def _list_available_env_keys(self) -> List[str]:
-        """Return names whose corresponding env var is present."""
-        available: List[str] = []
-        for name in sorted(self._expected_keys):
-            key = self._env_key_from_name(name)
-            if os.environ.get(key):
-                available.append(name)
-        return available
-
-    def _missing_keys(self, *, required: Optional[List[str]] = None) -> List[str]:
-        """Return names from 'required' (or expected) that lack a value in env/store."""
-        names = list(required or sorted(self._expected_keys))
-        missing: List[str] = []
-        for nm in names:
-            try:
-                # Present if env has it
-                env_key = self._env_key_from_name(nm)
-                if os.environ.get(env_key):
-                    continue
-                # Or present if store has non-empty value
-                rows = unify.get_logs(
-                    context=self._ctx,
-                    filter=f"name == {nm!r}",
-                    limit=1,
-                )
-                has_value = False
-                for lg in rows:
-                    val = (lg.entries or {}).get("value")
-                    if isinstance(val, str) and val.strip():
-                        has_value = True
-                        break
-                if not has_value:
-                    missing.append(nm)
-            except Exception:
-                missing.append(nm)
-        return missing
+    def _list_secret_keys(self) -> List[str]:
+        """Return all available secret names (keys) stored in Unify (sorted, unique)."""
+        try:
+            rows = unify.get_logs(context=self._ctx, from_fields=["name"], limit=100000)
+        except Exception:
+            rows = []
+        names: set[str] = set()
+        for lg in rows:
+            nm = (lg.entries or {}).get("name")
+            if isinstance(nm, str) and nm:
+                names.add(nm)
+        return sorted(names)
 
     # --------------------- Tools (mutations) --------------------- #
     def _create_secret(
@@ -489,16 +397,6 @@ class SecretManager(BaseSecretManager):
             "description": description or "",
         }
         log = unify.log(context=self._ctx, **entries, new=True, mutable=True)
-
-        # Persist to .env using upper snake key derived from name
-        env_key = self._env_key_from_name(name)
-        _write_env_var(env_key, value)
-
-        # Track in expected set
-        try:
-            self._expected_keys.add(name)
-        except Exception:
-            pass
 
         return {"outcome": "secret created", "details": {"name": name}}
 
@@ -538,16 +436,6 @@ class SecretManager(BaseSecretManager):
             overwrite=True,
         )
 
-        if value is not None:
-            env_key = self._env_key_from_name(name)
-            _write_env_var(env_key, value)
-
-        # Track in expected set
-        try:
-            self._expected_keys.add(name)
-        except Exception:
-            pass
-
         return {"outcome": "secret updated", "details": {"name": name}}
 
     def _delete_secret(self, *, name: str) -> ToolOutcome:
@@ -562,63 +450,4 @@ class SecretManager(BaseSecretManager):
         if len(ids) > 1:
             raise RuntimeError(f"Multiple secrets found with name '{name}'.")
         unify.delete_logs(context=self._ctx, logs=ids[0])
-        try:
-            if name in self._expected_keys:
-                self._expected_keys.discard(name)
-        except Exception:
-            pass
         return {"outcome": "secret deleted", "details": {"name": name}}
-
-    def _register_expected_keys(self, *, names: List[str]) -> ToolOutcome:
-        """Register additional expected secret names for availability checks."""
-        added: List[str] = []
-        for nm in names or []:
-            if isinstance(nm, str) and nm.strip():
-                nm_s = nm.strip()
-                if nm_s not in self._expected_keys:
-                    self._expected_keys.add(nm_s)
-                    added.append(nm_s)
-        return {"outcome": "expected keys registered", "details": {"added": added}}
-
-    # --------------------- Runtime helpers --------------------- #
-    @staticmethod
-    def _env_key_from_name(name: str) -> str:
-        # Convert arbitrary name to ENV_KEY format (upper snake)
-        key = []
-        for ch in name:
-            if ch.isalnum():
-                key.append(ch.upper())
-            else:
-                key.append("_")
-        # Collapse multiple underscores
-        import re as _re
-
-        env_key = _re.sub(r"_+", "_", "".join(key)).strip("_")
-        if not env_key:
-            env_key = "SECRET"
-        return env_key
-
-    @staticmethod
-    def mask_placeholders(text: str) -> str:
-        """Replace any resolved values in text with placeholders for LLM consumption.
-
-        This function expects that callers supply messages already using ${name}.
-        It serves as a defensive utility and does not perform substitution here.
-        """
-        return text
-
-    @staticmethod
-    def resolve_placeholders(text: str) -> str:
-        """Resolve ${name} placeholders to real values from environment.
-
-        Only use this for non-LLM sinks (e.g., browser input). LLM-bound text
-        must retain placeholders.
-        """
-        import re
-
-        def repl(match: "re.Match[str]") -> str:
-            name = match.group(1)
-            key = SecretManager._env_key_from_name(name)
-            return os.environ.get(key, "")
-
-        return re.sub(r"\$\{([^}]+)\}", repl, text)
