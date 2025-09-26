@@ -137,13 +137,14 @@ for s in "${made_sessions[@]}"; do
 done
 
 echo
-echo "Usage examples:"
+echo "Trigger:"
 echo "  • Run everything under current dir:     ./\\.parallel_run.sh"
 echo "  • Only a folder:                         ./\\.parallel_run.sh test_cats"
 echo "  • Multiple roots:                        ./\\.parallel_run.sh tests/unit tests/integration"
 echo "  • Specific files:                        ./\\.parallel_run.sh tests/foo.py tests/bar.py"
 echo
-echo "Tips:"
+echo "Observe:"
+echo "  • Watch sessions: watch -n 0.5 'tmux ls'"
 echo "  • List sessions: tmux ls"
 echo "  • Attach:       tmux attach -t <session>"
 echo "  • Inside tmux:  tmux switch-client -t <session>"
