@@ -813,7 +813,7 @@ async def async_tool_use_loop_inner(
                         call_id = tools_data.info[src_task].call_id
                         tool_name = tools_data.info[src_task].name
 
-                        # 1️⃣ append a tool message acknowledging progress (do not force LLM turn)
+                        # 1️⃣ append a tool message acknowledging progress and REQUIRE an LLM turn
                         try:
                             content_payload = (
                                 payload
@@ -831,7 +831,7 @@ async def async_tool_use_loop_inner(
                             )
 
                         tool_msg = create_tool_call_message(
-                            name=f"progress_update_{call_id}",
+                            name=tool_name,
                             call_id=call_id,
                             content=pretty,
                         )
@@ -867,9 +867,12 @@ async def async_tool_use_loop_inner(
                                 )
                         except Exception:
                             pass
+                    # Mirror clarification behaviour: let the assistant react immediately
+                    llm_turn_required = True
 
                 needs_turn = False
-                for task in done:  # finished tool(s)
+                # Only process completion for actual tool tasks; exclude helper waiters
+                for task in done & tools_data.pending:  # finished tool(s)
                     if await tools_data.process_completed_task(
                         task=task,
                         consecutive_failures=consecutive_failures,

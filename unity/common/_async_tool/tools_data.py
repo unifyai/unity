@@ -521,11 +521,25 @@ class ToolsData:
                 tool_reply_msg["content"] = result
                 tool_msg = tool_reply_msg
             else:
-                tool_msg = await self._emit_completion_pair(
-                    result,
-                    call_id,
-                    msg_dispatcher,
-                )
+                # Try to update the most recent tool message for this call_id (e.g. a progress ack)
+                try:
+                    recent_candidates = [
+                        m
+                        for m in self._client.messages
+                        if m.get("role") == "tool" and m.get("tool_call_id") == call_id
+                    ]
+                except Exception:
+                    recent_candidates = []
+
+                if recent_candidates and _at_tail(recent_candidates[-1]):
+                    recent_candidates[-1]["content"] = result
+                    tool_msg = recent_candidates[-1]
+                else:
+                    tool_msg = await self._emit_completion_pair(
+                        result,
+                        call_id,
+                        msg_dispatcher,
+                    )
 
         else:
             tool_msg = create_tool_call_message(name, call_id, result)
