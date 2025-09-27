@@ -187,14 +187,14 @@ async def test_stop_stops_gracefully():
 @_handle_project
 async def test_backfills_missing_tool_reply_for_helper_call() -> None:
     """
-    Pre-seed transcript with an assistant helper tool_call (e.g. continue_…)
+    Pre-seed transcript with an assistant helper tool_call (e.g. wait)
     but no tool reply. The loop must backfill an acknowledgement tool message
     directly after that assistant turn so API ordering is satisfied.
     """
     client = new_client()
 
     helper_call_id = "call_TEST_HELPER"
-    helper_name = "continue_slow_call_TESTSLOW"
+    helper_name = "wait"
     assistant_msg = {
         "role": "assistant",
         "content": None,

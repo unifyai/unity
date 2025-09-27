@@ -182,7 +182,7 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
         "1️⃣  Call `outer_tool` with no arguments.\n"
         "2️⃣  If the *user* later says **stop**, call the appropriate "
         "`_stop_…` helper to stop that running call.\n"
-        "2️⃣b Immediately after that, call the corresponding `continue_…` helper to keep waiting if needed.\n"
+        "2️⃣b Immediately after that, call the `wait` helper to keep waiting if needed.\n"
         "3️⃣  Do not produce any other reply until the stop has taken effect; then reply exactly the single line 'outer stopped'.",
     )
 
@@ -291,7 +291,7 @@ async def test_interject_nested_handle(monkeypatch):
         "1️⃣  Call `outer_tool`.\n"
         "2️⃣  When the *user* says 'switch to dogs', call the helper whose "
         'name starts with `_interject_` and pass `{ "content": "dogs" }`.\n'
-        "2️⃣b Immediately call the corresponding `continue_…` helper to keep waiting.\n"
+        "2️⃣b Immediately call the `wait` helper to keep waiting.\n"
         "3️⃣  Do not produce any other reply until the work completes.\n"
         "4️⃣  Finally, reply with 'outer done'.",
     )
@@ -497,7 +497,7 @@ async def test_clarification_nested_handle():
     )
     client.set_system_message(
         "Call `outer_tool`.  When the tool asks a question, answer **only** with 'blue' via the provided helper.\n"
-        "Immediately call the corresponding `continue_…` helper to keep waiting and do not reply to the user yet.\n"
+        "Immediately call the `wait` helper to keep waiting and do not reply to the user yet.\n"
         "Finally say 'all done'.",
     )
 
@@ -656,7 +656,7 @@ async def test_handle_interject_method_appears_late():
         "the helper whose name starts with `_interject_` *exactly once*, "
         'passing `{ "content": "ping" }`.\n'
         "3️⃣  Do **NOT** reply 'done' until after the helper returns.\n"
-        "3️⃣b After calling the interject helper, call the corresponding `continue_…` helper to keep waiting if the tool is still running.\n"
+        "3️⃣b After calling the interject helper, call the `wait` helper to keep waiting if the tool is still running.\n"
         "4️⃣  Finally, respond with the single word **done**.",
     )
 
@@ -721,7 +721,7 @@ async def test_pause_nested_loop_calls_pause():
         "1️⃣  Call `dummy_long_job`.\n"
         "2️⃣  When the *user* says **pause**, call the helper whose name "
         "starts with `_pause_`.\n"
-        "2️⃣b Immediately call the corresponding `continue_…` helper to keep waiting.\n"
+        "2️⃣b Immediately call the `wait` helper to keep waiting.\n"
         "3️⃣  Keep waiting for the job to finish and do not produce any other reply; then reply with 'paused done'.",
     )
 
@@ -888,7 +888,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     )
     client.set_system_message(
         "1️⃣ Call `long_tool`.\n"
-        "2️⃣ Wait for completion (use a `continue_…` helper if exposed) and do not produce any other reply.\n"
+        "2️⃣ Wait for completion (use the `wait` helper if exposed) and do not produce any other reply.\n"
         "3️⃣ Reply with exactly **finished**.",
     )
 
@@ -1024,7 +1024,7 @@ async def test_dynamic_handle_public_method():
         "2️⃣  When the *user* asks **progress?**, call the helper whose name "
         "starts with `ask_` exactly once.\n"
         "3️⃣  After calling the `ask_…` helper, do not reply to the user yet. "
-        "Immediately call the helper whose name starts with `continue_` to keep waiting.\n"
+        "Immediately call the `wait` helper to keep waiting.\n"
         "4️⃣  Only once the computation finishes, answer **only** with 'all done'",
     )
 
