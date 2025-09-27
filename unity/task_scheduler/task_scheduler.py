@@ -3470,7 +3470,7 @@ class TaskScheduler(BaseTaskScheduler):
     #  Public lifecycle helpers                                           #
     # ------------------------------------------------------------------ #
 
-    def reinstate_to_previous_queue(
+    def _reinstate_to_previous_queue(
         self,
         *,
         task_id: int,
