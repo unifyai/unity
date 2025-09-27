@@ -363,13 +363,13 @@ class ActiveTask(BaseActiveTask):
             return
         try:
             # Prefer public API when available
-            if hasattr(sched, "reinstate_to_previous_queue"):
+            if hasattr(sched, "_reinstate_to_previous_queue"):
                 try:
                     # Try with allow_active=True
-                    sched.reinstate_to_previous_queue(task_id=task_id, allow_active=True)  # type: ignore[attr-defined]
+                    sched._reinstate_to_previous_queue(task_id=task_id, allow_active=True)  # type: ignore[attr-defined]
                 except TypeError:
                     # Fallback without allow_active (defensive)
-                    sched.reinstate_to_previous_queue(task_id=task_id)  # type: ignore[attr-defined]
+                    sched._reinstate_to_previous_queue(task_id=task_id)  # type: ignore[attr-defined]
                 return
         except Exception:
             pass
