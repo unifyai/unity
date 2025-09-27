@@ -12,7 +12,12 @@ from tests.helpers import SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
+    _wait_for_assistant_call_prefix,
+    _wait_for_tool_message_prefix,
 )
+
+
+# (prefix-based wait helpers moved to tests/test_async_tool_loop/async_helpers.py)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -682,16 +687,20 @@ async def test_resume_nested_loop_calls_resume():
             stop_event=asyncio.Event(),
         )
 
-        # ── public pause / resume on the handle ──────────────────────────────
-        async def _pause(self):
-            if gate.is_set():  # already running → switch to paused
-                gate.clear()
-                counts["pause"] += 1
+        # Drive both the runner and dynamic-tool exposure from the same event
+        handle._pause_event = gate  # let default .pause/.resume toggle the same gate
 
-        async def _resume(self):
-            if not gate.is_set():  # currently paused → resume
-                gate.set()
-                counts["resume"] += 1
+        # Count calls but preserve default semantics that flip _pause_event
+        orig_pause = handle.pause
+        orig_resume = handle.resume
+
+        def _pause(self):
+            counts["pause"] += 1
+            return orig_pause()
+
+        def _resume(self):
+            counts["resume"] += 1
+            return orig_resume()
 
         setattr(handle, "pause", _pause.__get__(handle, AsyncToolUseLoopHandle))
         setattr(handle, "resume", _resume.__get__(handle, AsyncToolUseLoopHandle))
@@ -708,8 +717,7 @@ async def test_resume_nested_loop_calls_resume():
     client.set_system_message(
         "1️⃣  Call `dummy_job`.\n"
         "2️⃣  When the *user* says **hold on**, call the `_pause_…` helper.\n"
-        "3️⃣  When the *user* then says **continue**, call the `_resume_…` helper.\n"
-        "3️⃣b Use the appropriate `continue_…` helper to keep waiting while the job runs.\n"
+        "3️⃣  When the *user* then says **resume**, call the `_resume_…` helper.\n"
         "4️⃣  Finally reply **only** with 'all done' once the job completes.",
     )
 
@@ -721,10 +729,18 @@ async def test_resume_nested_loop_calls_resume():
         timeout=300,
     )
 
-    await asyncio.sleep(4)
+    # Ensure the tool has been scheduled so helpers exist
+    await _wait_for_tool_request(client, "dummy_job")
+
+    # Pause deterministically
     await h.interject("hold on")
-    await asyncio.sleep(4)
-    await h.interject("continue")
+    await _wait_for_assistant_call_prefix(client, "pause")
+    await _wait_for_tool_message_prefix(client, "pause ")
+
+    # Resume deterministically
+    await h.interject("resume")
+    await _wait_for_assistant_call_prefix(client, "resume")
+    await _wait_for_tool_message_prefix(client, "resume ")
 
     final = await h.result()
 
