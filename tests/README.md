@@ -155,3 +155,30 @@ Open `.parallel_run.sh` and tweak as needed:
 - Kill: `tmux kill-session -t <name>`
 
 That’s it! Run it, list sessions, and jump into whichever test you want to watch.
+
+## Cleanup stray Unify test projects
+
+If tests are aborted (e.g., `tmux kill-server`), temporary Unify projects prefixed with `UnityTests_` may remain on the backend. Use the cleanup helper to remove them:
+
+```bash
+# first time only, ensure it's executable
+chmod +x tests/.project_cleanup.sh
+
+# show what would be deleted (no changes)
+tests/.project_cleanup.sh --dry-run
+
+# delete interactively (prompts for confirmation)
+tests/.project_cleanup.sh
+
+# delete without prompts
+tests/.project_cleanup.sh -y
+
+# use a custom prefix
+tests/.project_cleanup.sh --prefix UnityTests_
+```
+
+Requirements:
+
+- `UNIFY_KEY` must be set in your environment
+- `jq` and `curl` must be installed
+- Optional: set `UNIFY_API` to override the default `https://api.unify.ai/v0`
