@@ -30,16 +30,19 @@ from unity.common.async_tool_loop import start_async_tool_use_loop, SteerableToo
 
 # Shared helpers
 from tests.helpers import _handle_project, SETTINGS
-from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_tool_request,
+    _wait_for_assistant_call_prefix,
+    _wait_for_tool_message_prefix,
+)
 
 
 # --------------------------------------------------------------------------- #
 #  GLOBALS                                                                    #
 # --------------------------------------------------------------------------- #
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
-# Track last-seen counts per (client,prefix) so waits detect fresh events
-_ASSISTANT_PREFIX_COUNTS: dict[tuple[int, str], int] = {}
-_TOOL_PREFIX_COUNTS: dict[tuple[int, str], int] = {}
+# (prefix-based wait helpers and their counters are now shared in
+#  tests/test_async_tool_loop/async_helpers.py)
 
 
 # --------------------------------------------------------------------------- #
@@ -86,114 +89,6 @@ def _assistant_calls_prefix(msgs: List[dict], prefix: str) -> int:
 def _tool_results(msgs: List[dict], tool_name: str) -> int:
     """Count tool-result messages for `tool_name`."""
     return sum(1 for m in msgs if m["role"] == "tool" and m["name"] == tool_name)
-
-
-@unify.traced
-async def _wait_for_assistant_call_prefix(
-    client: "unify.AsyncUnify",
-    prefix: str,
-    *,
-    timeout: float = 15.0,
-    poll: float = 0.05,
-) -> None:
-    """Poll for a NEW assistant tool-call whose function name starts with
-    ``prefix``.
-
-    Unlike the previous implementation which returned upon finding *any* match
-    (including historical entries), this version snapshots the current count of
-    matching calls and only returns when a new matching call appears.
-
-    Useful for helpers such as ``pause_…`` / ``resume_…`` where the test may
-    cycle multiple times and must not be satisfied by a prior occurrence.
-    """
-    import time as _time
-
-    start_ts = _time.perf_counter()
-    key = (id(client), prefix)
-    try:
-        current = _assistant_calls_prefix(client.messages or [], prefix)
-    except Exception:
-        current = 0
-    baseline = _ASSISTANT_PREFIX_COUNTS.get(key)
-    # First-time call for this (client,prefix): if an event already exists, accept it
-    if baseline is None:
-        _ASSISTANT_PREFIX_COUNTS[key] = current
-        if current > 0:
-            return
-    while _time.perf_counter() - start_ts < timeout:
-        msgs = client.messages or []  # unify may return None initially
-        cnt = _assistant_calls_prefix(msgs, prefix)
-        if baseline is None:
-            if cnt > 0:
-                _ASSISTANT_PREFIX_COUNTS[key] = cnt
-                return
-        else:
-            if cnt > baseline:
-                _ASSISTANT_PREFIX_COUNTS[key] = cnt
-                return  # observed a new matching assistant tool-call
-        await asyncio.sleep(poll)
-
-    raise TimeoutError(
-        f"Timed out after {timeout}s waiting for assistant to request a helper starting with {prefix!r}.",
-    )
-
-
-@unify.traced
-async def _wait_for_tool_message_prefix(
-    client: "unify.AsyncUnify",
-    prefix: str,
-    *,
-    timeout: float = 15.0,
-    poll: float = 0.05,
-) -> None:
-    """Poll until a NEW tool message whose ``name`` starts with ``prefix``
-    appears.
-
-    We snapshot the current number of matching tool messages and only return
-    when that count increases, ensuring we observe a fresh acknowledgement for
-    the current cycle rather than a prior one.
-    """
-    import time as _time
-
-    start_ts = _time.perf_counter()
-    key = (id(client), prefix)
-
-    def _count_tool_msgs(_msgs, _pref):
-        return sum(
-            1
-            for m in (_msgs or [])
-            if (m.get("role") == "tool")
-            and isinstance(m.get("name"), str)
-            and m["name"].startswith(_pref)
-        )
-
-    try:
-        current = _count_tool_msgs(client.messages or [], prefix)
-    except Exception:
-        current = 0
-    baseline = _TOOL_PREFIX_COUNTS.get(key)
-    # First-time call for this (client,prefix): if an event already exists, accept it
-    if baseline is None:
-        _TOOL_PREFIX_COUNTS[key] = current
-        if current > 0:
-            return
-    while _time.perf_counter() - start_ts < timeout:
-        msgs = client.messages or []
-        cnt = _count_tool_msgs(msgs, prefix)
-        # Wait for an increase over the baseline (or any match on first use)
-        if baseline is None:
-            if cnt > 0:
-                _TOOL_PREFIX_COUNTS[key] = cnt
-                return
-        else:
-            if cnt > baseline:
-                _TOOL_PREFIX_COUNTS[key] = cnt
-                return
-        await asyncio.sleep(poll)
-
-    raise TimeoutError(
-        f"Timed out after {timeout}s waiting for a tool message with name starting with {prefix!r}.",
-    )
 
 
 # --------------------------------------------------------------------------- #
