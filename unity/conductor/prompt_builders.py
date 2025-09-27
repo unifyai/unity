@@ -96,6 +96,9 @@ def build_ask_prompt(
         "For live or time-sensitive facts (e.g., questions containing 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must use WebSearcher.ask – do not rely on internal memory for these.",
         "Use Contact/Transcript/Knowledge/Task managers for internal state about people, messages, stored facts and tasks respectively.",
         "When choosing WebSearch: send exactly one high-level, natural-language question to WebSearcher.ask. Do NOT fan-out multiple WebSearcher.ask calls, do NOT include engine-specific operators (e.g., 'site:'), and do NOT hard-code provider choices. The WebSearcher internally selects sources, parallelizes searches, extracts, and composes references.",
+        "Include any citation/link needs, time window, and scope in that single call. Do not immediately re-query just to 'confirm' the same thing.",
+        "Issue a second WebSearcher.ask only if the first response clearly indicates missing coverage or ambiguity that requires a new targeted fetch.",
+        "Use multiple WebSearcher.ask calls in parallel only when the user asks genuinely unrelated sub-questions; otherwise keep to one call and let WebSearcher fan-out internally.",
         "If refinement is needed, prefer a single follow-up via clarification rather than issuing multiple WebSearcher.ask calls in parallel.",
     ]
 
@@ -224,6 +227,9 @@ def build_request_prompt(
         "Use WebSearcher.ask for external information, market practices, definitions, or anything you would reasonably look up online.",
         "For live or time-sensitive facts (e.g., 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must call WebSearcher.ask rather than relying on internal memory.",
         "When routing to WebSearch, send a single high-level natural-language question; do NOT issue multiple WebSearcher.ask calls with different sites or providers. The WebSearcher will fan-out, search, and aggregate internally.",
+        "Include citation/link needs, time window, and scope in that single call. Do not immediately re-query just to 'confirm' the same thing.",
+        "Issue a second WebSearcher.ask only if the first response clearly indicates missing coverage or ambiguity that requires a new targeted fetch.",
+        "Use multiple WebSearcher.ask calls in parallel only for genuinely unrelated sub-questions; otherwise keep to one call and let WebSearcher fan-out internally.",
         "When the request involves tasks:",
         f"- Understand intent then check context via `{task_ask_fname}`",
         f"- Apply changes via `{task_update_fname}` if needed",

@@ -46,6 +46,19 @@ class BaseWebSearcher(ABC, metaclass=SingletonABCMeta):
         - The WebSearcher itself will perform source selection, parallel search,
           extraction, and aggregation. It may ask for clarification if needed.
 
+        Query ergonomics (important)
+        ----------------------------
+        - Avoid redundant serial re-queries. If you need citations/links, ask for
+          them in the initial question.
+        - Only issue a second `ask` when the first response clearly indicates
+          missing coverage or ambiguity that cannot be resolved without another
+          targeted fetch.
+        - Use multiple `ask` calls in parallel only when the user's message
+          contains genuinely unrelated sub-questions; otherwise keep to a single
+          `ask` and let this manager fan-out to sources internally.
+        - Do not re-query just to "confirm" a previous `ask`; perform that
+          validation within the initial request.
+
         Clarifications
         --------------
         Do not ask the user questions in the final answer. When a clarification
