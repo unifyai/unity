@@ -19,7 +19,6 @@ class ToolCallMetadata:
     raw_arguments_json: str
     waiting_for_clarification: bool = False
     tool_reply_msg: dict | None = None
-    continue_msg: dict | None = None
     clarify_placeholder: dict | None = None
     handle: Any | None = None
     interject_queue: asyncio.Queue[str] | None = None
