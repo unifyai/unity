@@ -635,6 +635,7 @@ def start_async_tool_use_loop(
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
     handle_cls: Optional[Type[AsyncToolUseLoopHandle]] = None,
+    progress_up_q: Optional[asyncio.Queue] = None,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -693,6 +694,7 @@ def start_async_tool_use_loop(
             outer_handle_container=outer_handle_container,
             response_format=response_format,
             max_parallel_tool_calls=max_parallel_tool_calls,
+            progress_up_q=progress_up_q,
         ),
         name="ToolUseLoop",
     )
