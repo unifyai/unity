@@ -11,7 +11,7 @@ the scheduler.
 
 import functools
 import asyncio
-from typing import Optional, Dict, Callable, TYPE_CHECKING, List, Any
+from typing import Optional, Dict, TYPE_CHECKING, List, Any
 
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
@@ -379,18 +379,3 @@ class ActiveTask(BaseActiveTask):
             sched._reinstate_task_to_previous_queue(task_id=task_id, _allow_active=True)  # type: ignore[attr-defined]
         except TypeError:
             sched._reinstate_task_to_previous_queue(task_id=task_id)  # type: ignore[attr-defined]
-
-    @property
-    @functools.wraps(BaseActiveTask.valid_tools, updated=())
-    def valid_tools(self) -> Dict[str, Callable]:
-        tools = {
-            self.interject.__name__: self.interject,
-            self.stop.__name__: self.stop,
-        }
-        # Reflect paused state from the underlying task handle when available.
-        paused_flag = getattr(self._actor_handle, "_paused", False)
-        if paused_flag:
-            tools[self.resume.__name__] = self.resume
-        else:
-            tools[self.pause.__name__] = self.pause
-        return tools

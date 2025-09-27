@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
@@ -21,36 +21,11 @@ from ..singleton_registry import SingletonABCMeta
 
 class BaseActiveTask(SteerableToolHandle, ABC):
     """
-    Abstract interface for a live, steerable long‑running activity.
+    Abstract interface for a live, steerable task.
 
     The activity can be paused, resumed, interjected, queried (ask), or
     stopped, and ultimately resolves to a single result string.
-
-    Concrete implementations must implement the abstract members and expose the
-    currently available controls via ``valid_tools``.
     """
-
-    # Public API
-    @abstractmethod
-    async def ask(
-        self,
-        question: str,
-        *,
-        _return_reasoning_steps: bool = False,
-    ) -> SteerableToolHandle:
-        """Ask a read-only question about the live activity and return a handle.
-
-        Implementations should return a lightweight handle whose ``result()``
-        yields the answer string (and may optionally include reasoning when
-        ``_return_reasoning_steps`` is True)."""
-
-    @property
-    @abstractmethod
-    def valid_tools(self) -> Dict[str, Callable]:
-        """
-        Map of public‑name → callable for the user‑accessible controls that are
-        currently valid in the activity's lifecycle state.
-        """
 
     @abstractmethod
     def stop(
