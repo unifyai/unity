@@ -458,23 +458,47 @@ class DynamicToolFactory:
         if info.clar_up_queue is not None:
             self._create_clarify_tool(create_tool_ctx)
 
-        can_pause = (handle_available and hasattr(handle, "pause")) or task_pause_event
-        if can_pause:
-            self._create_pause_tool(
-                create_tool_ctx,
-                handle,
-                task_pause_event,
-            )
+        # Determine capability and current pause state; expose only one helper at a time
+        cap_pause = (handle_available and hasattr(handle, "pause")) or (
+            task_pause_event is not None
+        )
+        cap_resume = (handle_available and hasattr(handle, "resume")) or (
+            task_pause_event is not None
+        )
 
-        can_resume = (
-            handle_available and hasattr(handle, "resume")
-        ) or task_pause_event
-        if can_resume:
-            self._create_resume_tool(
-                create_tool_ctx,
-                handle,
-                task_pause_event,
-            )
+        paused_state = None
+        try:
+            # Prefer downstream handle's pause event if available
+            pev = getattr(handle, "_pause_event", None) if handle_available else None
+            if pev is not None and hasattr(pev, "is_set"):
+                paused_state = not pev.is_set()  # running ⇢ set, paused ⇢ cleared
+        except Exception:
+            pass
+        if (
+            paused_state is None
+            and task_pause_event is not None
+            and hasattr(task_pause_event, "is_set")
+        ):
+            try:
+                paused_state = not task_pause_event.is_set()
+            except Exception:
+                paused_state = None
+
+        # Default to "running" when unknown → expose pause first
+        if paused_state is True:
+            if cap_resume:
+                self._create_resume_tool(
+                    create_tool_ctx,
+                    handle,
+                    task_pause_event,
+                )
+        else:
+            if cap_pause:
+                self._create_pause_tool(
+                    create_tool_ctx,
+                    handle,
+                    task_pause_event,
+                )
 
         # 7.  expose *all* other public methods of the handle
         if handle_available:
