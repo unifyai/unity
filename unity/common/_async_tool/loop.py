@@ -334,6 +334,13 @@ async def async_tool_use_loop_inner(
         _self_task = asyncio.current_task()
         if _self_task is not None:
             setattr(_self_task, "task_info", tools_data.info)  # type: ignore[attr-defined]
+            # Also expose the map of clarification channels so handle-level methods
+            # can route answers programmatically without involving the LLM.
+            setattr(
+                _self_task,
+                "clarification_channels",
+                tools_data.clarification_channels,
+            )
 
     # Ensure we forward stop to nested handles at most once, even if multiple
     # branches detect cancellation/stop around the same time.
@@ -643,6 +650,7 @@ async def async_tool_use_loop_inner(
                     name="CancelEventWait",
                 )
                 clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
+                prog_waiters: Dict[asyncio.Task, asyncio.Task] = {}
                 for _t in tools_data.pending:
                     # Only listen for *new* clarification questions.
                     # If the task is already awaiting an answer,
@@ -654,9 +662,16 @@ async def async_tool_use_loop_inner(
                     if cuq is not None:
                         w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
                         clar_waiters[w] = _t
+                    # Progress updates are non-blocking one-way signals; we always
+                    # listen for them, independent of clarification state.
+                    pq = tools_data.info[_t].progress_queue
+                    if pq is not None:
+                        pw = asyncio.create_task(pq.get(), name="ProgressQueueGet")
+                        prog_waiters[pw] = _t
                 waiters = (
                     tools_data.pending
                     | set(clar_waiters)
+                    | set(prog_waiters)
                     | {cancel_waiter, interject_w}
                 )
 
@@ -691,6 +706,7 @@ async def async_tool_use_loop_inner(
                     interject_w,
                     cancel_waiter,
                     *clar_waiters.keys(),
+                    *prog_waiters.keys(),
                 ):
                     if aux not in done and not aux.done():
                         aux.cancel()
@@ -717,6 +733,7 @@ async def async_tool_use_loop_inner(
                         question = cw.result()  # the text from the child
                         src_task = clar_waiters[cw]
                         call_id = tools_data.info[src_task].call_id
+                        tool_name = tools_data.info[src_task].name
 
                         # 1️⃣ mark the task as waiting
                         tools_data.info[src_task].waiting_for_clarification = True
@@ -747,9 +764,91 @@ async def async_tool_use_loop_inner(
                         )
                         tool_msg = ph  # for event_bus
 
+                        # 4️⃣ forward event to the outer handle (programmatic consumption)
+                        try:
+                            outer = (
+                                outer_handle_container[0]
+                                if outer_handle_container
+                                else None
+                            )
+                            if outer is not None and hasattr(outer, "_clar_q"):
+                                await outer._clar_q.put(
+                                    {
+                                        "type": "clarification",
+                                        "call_id": call_id,
+                                        "tool_name": tool_name,
+                                        "question": question,
+                                    },
+                                )
+                        except Exception:
+                            pass
+
                     # let the assistant answer immediately
                     llm_turn_required = True
                     continue
+
+                # ── progress update bubbled up from a child tool (non-blocking) ─────
+                if done & prog_waiters.keys():
+                    for pw in done & prog_waiters.keys():
+                        payload = pw.result()
+                        src_task = prog_waiters[pw]
+                        call_id = tools_data.info[src_task].call_id
+                        tool_name = tools_data.info[src_task].name
+
+                        # 1️⃣ append a tool message acknowledging progress (do not force LLM turn)
+                        try:
+                            content_payload = (
+                                payload
+                                if isinstance(payload, dict)
+                                else {"message": str(payload)}
+                            )
+                            pretty = _dumps(
+                                {"tool": tool_name, **content_payload},
+                                indent=4,
+                            )
+                        except Exception:
+                            pretty = _dumps(
+                                {"tool": tool_name, "message": str(payload)},
+                                indent=4,
+                            )
+
+                        tool_msg = create_tool_call_message(
+                            name=f"progress_update_{call_id}",
+                            call_id=call_id,
+                            content=pretty,
+                        )
+                        await insert_tool_message_after_assistant(
+                            assistant_meta,
+                            tools_data.info[src_task].assistant_msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
+
+                        # 2️⃣ forward event to the outer handle stream
+                        try:
+                            outer = (
+                                outer_handle_container[0]
+                                if outer_handle_container
+                                else None
+                            )
+                            if outer is not None and hasattr(outer, "_progress_q"):
+                                # Prefer dict payload, else wrap string
+                                event_payload = (
+                                    payload
+                                    if isinstance(payload, dict)
+                                    else {"message": str(payload)}
+                                )
+                                await outer._progress_q.put(
+                                    {
+                                        "type": "progress",
+                                        "call_id": call_id,
+                                        "tool_name": tool_name,
+                                        **event_payload,
+                                    },
+                                )
+                        except Exception:
+                            pass
 
                 needs_turn = False
                 for task in done:  # finished tool(s)
