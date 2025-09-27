@@ -5,5 +5,6 @@
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "python.testing.cwd": "${workspaceFolder}",
-    "workbench.editor.enablePreview": false
+    "workbench.editor.enablePreview": false,
+    "python.envFile": "${workspaceFolder}/.env"
 }
