@@ -500,3 +500,37 @@ class DynamicToolFactory:
     def generate(self):
         for task in list(self.tools_data.pending):
             self._process_task(task)
+
+        # Global, non-blocking progress tool – exposed only when at least one
+        # progress queue exists for a pending task. This mirrors the pattern of
+        # exposing `request_clarification` only when queues are available.
+        try:
+            has_progress_channel = any(
+                (getattr(inf, "progress_queue", None) is not None)
+                for inf in self.tools_data.info.values()
+            )
+        except Exception:
+            has_progress_channel = False
+
+        if has_progress_channel and "send_progress_update" not in self.dynamic_tools:
+
+            async def _send_progress_update(update: str) -> str:
+                # Route to the first available progress queue; if multiple tools are
+                # running this still delivers the update upwards (the loop merges).
+                try:
+                    for _t, _inf in self.tools_data.info.items():
+                        pq = getattr(_inf, "progress_queue", None)
+                        if pq is not None:
+                            await pq.put(update)
+                            break
+                except Exception:
+                    pass
+                return "progress update sent"
+
+            self._register_tool(
+                func_name="send_progress_update",
+                fallback_doc=(
+                    "Send a non-blocking progress update upstream. Returns immediately with an acknowledgement."
+                ),
+                fn=_send_progress_update,
+            )

@@ -496,6 +496,37 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         """Await the next progress event pushed by a running tool."""
         return await self._progress_q.get()
 
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        """Programmatically answer a clarification for a pending tool call.
+
+        This looks up the down-queue for the given call and pushes the answer.
+        Falls through silently if the mapping is missing (tool may have finished).
+        """
+        try:
+            task_info = getattr(self._task, "task_info", {})
+            clar_map = getattr(self._task, "clarification_channels", {})
+        except Exception:
+            task_info, clar_map = {}, {}
+
+        # Direct lookup by full ID; if not present, try suffix matching
+        down_q = None
+        try:
+            if call_id in clar_map:
+                down_q = clar_map[call_id][1]
+            else:
+                for k, (_up, _down) in list(clar_map.items()):
+                    if str(k).endswith(str(call_id)):
+                        down_q = _down
+                        break
+        except Exception:
+            down_q = None
+
+        try:
+            if down_q is not None:
+                await down_q.put(answer)
+        except Exception:
+            pass
+
     # ── internal helper ──────────────────────────────────────────────────────
     def _adopt(self, new_handle: "SteerableToolHandle") -> None:
         """Switch all steering methods to *new_handle* (in-process only).
