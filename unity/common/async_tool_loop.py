@@ -113,6 +113,10 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                 {"role": "user", "content": initial_user_message},
             )
 
+        # Event streams for bottom-up signals
+        self._clar_q: asyncio.Queue[dict] = asyncio.Queue()
+        self._progress_q: asyncio.Queue[dict] = asyncio.Queue()
+
     async def ask(
         self,
         question: str,
@@ -482,6 +486,15 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         except asyncio.CancelledError:
             # When callers cancel the OUTER loop without a delegate, return a stable notice.
             return _stopped_notice
+
+    # ── bottom-up event APIs ---------------------------------------------------
+    async def next_clarification(self) -> dict:
+        """Await the next clarification event pushed by a running tool."""
+        return await self._clar_q.get()
+
+    async def next_progress(self) -> dict:
+        """Await the next progress event pushed by a running tool."""
+        return await self._progress_q.get()
 
     # ── internal helper ──────────────────────────────────────────────────────
     def _adopt(self, new_handle: "SteerableToolHandle") -> None:
