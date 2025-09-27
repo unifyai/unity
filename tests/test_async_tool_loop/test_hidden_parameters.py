@@ -13,7 +13,7 @@ import unity.common.llm_helpers as llmh
 # --------------------------------------------------------------------------- #
 def _assert_internal_queues_hidden(fn) -> None:
     """
-    Verify that *clarification_up_q* and *clarification_down_q* never show up
+    Verify that *clarification_up_q*, *clarification_down_q*, and *progress_up_q* never show up
     in the generated schema nor in the docstring description that is forwarded
     to the LLM.
     """
@@ -22,7 +22,7 @@ def _assert_internal_queues_hidden(fn) -> None:
     required = schema["function"]["parameters"]["required"]
     desc = schema["function"]["description"]
 
-    for name in ("clarification_up_q", "clarification_down_q"):
+    for name in ("clarification_up_q", "clarification_down_q", "progress_up_q"):
         # ––– must be absent from JSON schema –––
         assert name not in props
         assert name not in required
@@ -38,6 +38,7 @@ def tool_google_style(
     a: int,
     clarification_up_q: asyncio.Queue[str],
     clarification_down_q: asyncio.Queue[str],
+    progress_up_q: asyncio.Queue | None = None,
 ) -> int:
     """
     Google-style.
@@ -46,6 +47,7 @@ def tool_google_style(
         a: Some value.
         clarification_up_q: internal.
         clarification_down_q: internal.
+        progress_up_q: internal.
     """
     return a
 
@@ -58,6 +60,7 @@ def tool_numpy_slash(
     a: int,
     clarification_up_q: asyncio.Queue[str] | None = None,
     clarification_down_q: asyncio.Queue[str] | None = None,
+    progress_up_q: asyncio.Queue | None = None,
 ) -> int:
     """
     NumPy style — slash-separated synonyms.
@@ -66,7 +69,7 @@ def tool_numpy_slash(
     ----------
     a : int
         Some value.
-    clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+    clarification_up_q / clarification_down_q / progress_up_q : asyncio.Queue | None
         Internal queues.
     """
     return a
@@ -80,6 +83,7 @@ def tool_numpy_commas(
     a: int,
     clarification_up_q: asyncio.Queue[str] | None = None,
     clarification_down_q: asyncio.Queue[str] | None = None,
+    progress_up_q: asyncio.Queue | None = None,
 ) -> int:
     """
     NumPy style — comma-separated, no type / no colon.
@@ -89,7 +93,7 @@ def tool_numpy_commas(
     a : int
         Some value.
 
-    clarification_up_q, clarification_down_q
+    clarification_up_q, clarification_down_q, progress_up_q
         Internal queues.
     """
     return a
