@@ -517,6 +517,94 @@ async def test_clarification_nested_handle():
 
 
 @pytest.mark.asyncio
+async def test_progress_nested_handle():
+    """
+    Inner tool emits progress updates via ``progress_up_q``; the outer loop must
+    surface these as progress events while continuing to completion.
+
+    We assert that a progress event is observed via ``handle.next_progress()`` and
+    that the conversation completes with the instructed final reply.
+    """
+
+    # ── inner tool that emits progress updates ───────────────────────────
+    async def inner_progress(
+        *,
+        progress_up_q: asyncio.Queue | None = None,
+    ) -> str:
+        if progress_up_q is None:
+            raise RuntimeError("progress queue missing")
+        await progress_up_q.put({"message": "Inner loop: preparing widget"})
+        await asyncio.sleep(0)
+        await progress_up_q.put({"message": "Inner loop: halfway"})
+        return "✅ inner finished"
+
+    inner_progress.__name__ = "inner_progress"
+    inner_progress.__qualname__ = "inner_progress"
+
+    # ── outer tool launches a nested loop and bridges progress via parent's queue ──
+    async def outer_tool(
+        *,
+        progress_up_q: asyncio.Queue | None = None,
+    ) -> AsyncToolUseLoopHandle:
+        inner_client = unify.AsyncUnify(
+            "gpt-4o@openai",
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
+        )
+        inner_client.set_system_message(
+            "1️⃣  Call `inner_progress`.\n"
+            "2️⃣  Surface any internal progress updates as they occur.\n"
+            "3️⃣  Reply with exactly 'done'.",
+        )
+
+        async def inner_bridge() -> str:
+            return await inner_progress(progress_up_q=progress_up_q)
+
+        return start_async_tool_use_loop(
+            client=inner_client,
+            message="start",
+            tools={"inner_progress": inner_bridge},
+            log_steps=False,
+        )
+
+    outer_tool.__name__ = "outer_tool"
+    outer_tool.__qualname__ = "outer_tool"
+
+    # ── top-level loop – must surface progress then finish ─────────────────
+    client = unify.AsyncUnify(
+        "gpt-4o@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. Perform the steps exactly:\n"
+        "1️⃣  Call `outer_tool` with no arguments.\n"
+        "2️⃣  If any internal work makes progress, you may acknowledge it briefly but continue to completion.\n"
+        "3️⃣  Once it is completed, respond with exactly 'outer done'.",
+    )
+
+    handle = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        log_steps=False,
+        max_steps=10,
+        timeout=240,
+    )
+
+    # Receive a bubbled progress event from the INNER loop via the outer tool
+    event = await asyncio.wait_for(handle.next_progress(), timeout=60)
+    assert event["type"] == "progress"
+    assert event["tool_name"] == "outer_tool"
+    if isinstance(event.get("message"), str):
+        assert any(k in event["message"].lower() for k in ["prepar", "halfway", "inner loop"])  # type: ignore[arg-type]
+
+    # Finish
+    final = await asyncio.wait_for(handle.result(), timeout=120)
+    assert final.strip().lower() == "outer done"
+
+
+@pytest.mark.asyncio
 async def test_handle_interject_method_appears_late():
     """
     Handle initially exposes no `.interject`, then adds it after 1 s.
