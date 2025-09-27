@@ -671,7 +671,7 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
     """
 
     async def pausable_fn(*, pause_event: asyncio.Event) -> str:
-        for _ in range(15):
+        for _ in range(60):
             await pause_event.wait()
             await asyncio.sleep(0.1)
         return "done"
