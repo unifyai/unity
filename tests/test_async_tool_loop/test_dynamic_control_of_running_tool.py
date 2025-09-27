@@ -116,6 +116,32 @@ async def _wait_for_assistant_call_prefix(
 
 
 @unify.traced
+async def _assert_no_assistant_call_prefix_within(
+    client: "unify.AsyncUnify",
+    prefix: str,
+    *,
+    timeout: float = 2.0,
+    poll: float = 0.05,
+) -> None:
+    """Assert that within `timeout` seconds there is NO assistant tool-call
+    whose function name starts with `prefix`.
+
+    This is the inverse of `_wait_for_assistant_call_prefix` and is useful to
+    verify that a helper (e.g., `resume_…`) is not exposed in the current state.
+    """
+    import time as _time
+
+    start_ts = _time.perf_counter()
+    while _time.perf_counter() - start_ts < timeout:
+        msgs = client.messages or []
+        if _assistant_calls_prefix(msgs, prefix) >= 1:
+            raise AssertionError(
+                f"Unexpected assistant tool-call with prefix {prefix!r} while asserting absence.",
+            )
+        await asyncio.sleep(poll)
+
+
+@unify.traced
 async def _wait_for_tool_message_prefix(
     client: "unify.AsyncUnify",
     prefix: str,
@@ -631,3 +657,58 @@ async def test_resume_when_no_pending_tools_allows_llm_turn(client):
     h.resume()
     final = await h.result()
     assert final.strip().upper().startswith("OK")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_only_one_of_pause_or_resume_is_exposed(client):
+    """
+    Before pausing, `resume_…` must NOT be exposed; after pausing, `pause_…`
+    appears and only then `resume_…` becomes available.
+
+    This would have failed before the gating change because both helpers were
+    exposed concurrently, allowing a premature `resume_…` call while running.
+    """
+
+    async def pausable_fn(*, pause_event: asyncio.Event) -> str:
+        for _ in range(15):
+            await pause_event.wait()
+            await asyncio.sleep(0.1)
+        return "done"
+
+    pausable_fn.__name__ = "pausable_fn"
+    pausable_fn.__qualname__ = "pausable_fn"
+
+    client.set_system_message(
+        "1️⃣ Call `pausable_fn`.\n"
+        "2️⃣ When the user says 'go', immediately call the helper whose name starts with `resume_`.\n"
+        "3️⃣ When the user says 'hold', call the helper whose name starts with `pause_`.\n"
+        "4️⃣ After the tool completes, reply with 'done'.",
+    )
+
+    h = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"pausable_fn": pausable_fn},
+        timeout=300,
+        max_steps=60,
+    )
+
+    # Ensure the tool is running before issuing commands
+    await _wait_for_tool_request(client, "pausable_fn")
+
+    # While running, 'resume_…' must NOT be exposed; assert no such call appears
+    await h.interject("go")
+    await _assert_no_assistant_call_prefix_within(client, "resume")
+
+    # Now pause; expect a pause helper call and acknowledgement
+    await h.interject("hold")
+    await _wait_for_assistant_call_prefix(client, "pause")
+    await _wait_for_tool_message_prefix(client, "pause ")
+
+    # After paused, 'resume_…' should become available and be called on 'go'
+    await h.interject("go")
+    await _wait_for_assistant_call_prefix(client, "resume")
+
+    final = await h.result()
+    assert final.strip().lower() == "done"
