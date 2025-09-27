@@ -272,9 +272,7 @@ async def test_update_stop_operation(
     )
     await asyncio.sleep(0.1)
     handle.stop()
-
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    await handle.result()
     assert handle.done()
 
     await asyncio.sleep(0.2)

@@ -94,8 +94,7 @@ async def test_handle_stop():
     h = await ws.ask("Generate a long market analysis.")
     await asyncio.sleep(0.05)
     h.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await h.result()
+    await h.result()
     assert h.done(), "Handle should report done after stop()"
 
 

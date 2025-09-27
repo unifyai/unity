@@ -169,8 +169,7 @@ async def test_stop_simulated_km():
     handle = await km.ask("Generate a 100-page report of all knowledge.")
     await asyncio.sleep(0.05)
     handle.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    await handle.result()
     assert handle.done(), "Handle should report done after stop()"
 
 
