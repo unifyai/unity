@@ -14,7 +14,7 @@ steerable handle in turn. It:
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, Callable, Optional, List, Any, TYPE_CHECKING
+from typing import Dict, Optional, List, Any, TYPE_CHECKING
 import json
 import os
 
@@ -942,16 +942,3 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 return self
 
         return _AnswerHandle(answer)
-
-    @property
-    def valid_tools(self) -> Dict[str, Callable]:  # type: ignore[override]
-        tools = {
-            self.interject.__name__: self.interject,
-            self.stop.__name__: self.stop,
-        }
-        paused_flag = getattr(self._current_handle, "_paused", False)
-        if paused_flag:
-            tools[self.resume.__name__] = self.resume
-        else:
-            tools[self.pause.__name__] = self.pause
-        return tools
