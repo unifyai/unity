@@ -227,10 +227,10 @@ async def forward_handle_call(
         return None
 
 
-# Helper: detect helper-tool names (continue_/stop_/pause_/resume_/clarify_/interject_)
+# Helper: detect helper-tool names (wait/stop_/pause_/resume_/clarify_/interject_)
 def _is_helper_tool(name: str) -> bool:
     return (
-        name.startswith("continue_")
+        name == "wait"
         or name.startswith("stop_")
         or name.startswith("pause_")
         or name.startswith("resume_")
@@ -251,8 +251,8 @@ def build_helper_ack_content(name: str, args_json: Any) -> str:
     except Exception:
         payload = {}
 
-    if name.startswith("continue_"):
-        ack_content = "Continue request acknowledged. Still waiting for the original tool call to finish."
+    if name == "wait":
+        ack_content = "Waiting acknowledged. Keeping current tool calls in flight."
     elif name.startswith("stop_"):
         ack_content = "Stop request acknowledged. If the underlying call is still running, it will be stopped."
     elif name.startswith("pause_"):
@@ -388,7 +388,7 @@ async def ensure_placeholders_for_pending(
             continue
         if assistant_msg is not None and _inf.assistant_msg is not assistant_msg:
             continue
-        if _inf.tool_reply_msg or _inf.continue_msg or _inf.clarify_placeholder:
+        if _inf.tool_reply_msg or _inf.clarify_placeholder:
             continue
 
         placeholder = create_tool_call_message(

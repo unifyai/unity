@@ -322,8 +322,7 @@ class ToolsData:
         3.  Patch or insert the correct **tool** message so the transcript
             stays perfectly chronological.
         4.  Emit the event-bus hook (if configured).
-        5.  Record the payload in ``completed_results`` for later
-            `_continue_<id>` helpers.
+        5.  Record the payload in ``completed_results`` for potential post-hoc lookups.
         6.  Enforce the *max_consecutive_failures* safety valve.
         """
 
@@ -477,31 +476,15 @@ class ToolsData:
                 except Exception:
                     pass
 
-        # 3️⃣  remember so later `_continue_*` helpers can answer instantly
+        # 3️⃣  remember so later lookups can answer instantly
         self.completed_results[call_id] = result
 
         # 4️⃣  update / insert tool-result message --------------------------
         asst_msg = info.assistant_msg
-        continue_msg = info.continue_msg
         clarify_ph = info.clarify_placeholder
         tool_reply_msg = info.tool_reply_msg
 
-        if continue_msg is not None:
-            if _at_tail(continue_msg):  # ✅ safe to overwrite
-                continue_msg["content"] = result
-                continue_msg["name"] = (
-                    f"{fn}({arg}) completed successfully, "
-                    "the return values are in the `content` field below."
-                )
-                tool_msg = continue_msg
-            else:  # 🆕 keep history stable
-                tool_msg = await self._emit_completion_pair(
-                    result,
-                    call_id,
-                    msg_dispatcher,
-                )
-
-        elif clarify_ph is not None:
+        if clarify_ph is not None:
             if _at_tail(clarify_ph):
                 clarify_ph["content"] = result
                 tool_msg = clarify_ph

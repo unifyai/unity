@@ -1222,84 +1222,44 @@ async def async_tool_use_loop_inner(
                             continue
 
                     # ── Special-case dynamic helpers ──────────────────────
-                    # • continue_* → acknowledge, no scheduling
-                    # • cancel_*   → cancel underlying task & purge metadata
-                    if name.startswith("continue_"):
-                        # Helper names are of the form: continue_{toolName}_{safeId}
-                        call_id_suffix = name.split("_")[-1]
+                    # • wait        → acknowledge, list running tasks, no scheduling
+                    # • cancel_*    → cancel underlying task & purge metadata
+                    if name == "wait":
+                        # Build a compact summary of everything currently pending
+                        if tools_data.pending:
+                            lines = []
+                            for t in list(tools_data.pending):
+                                _inf = tools_data.info.get(t)
+                                if not _inf:
+                                    continue
+                                try:
+                                    fnm = _inf.name
+                                    args_json = _inf.call_dict["function"]["arguments"]
+                                except Exception:
+                                    fnm, args_json = "unknown", "{}"
+                                lines.append(f"• {fnm}({args_json})")
 
-                        tgt_task = next(
-                            (
-                                t
-                                for t, inf in tools_data.info.items()
-                                if str(inf.call_id).endswith(call_id_suffix)
-                            ),
-                            None,
-                        )
+                            content = (
+                                "Still running… keeping current tool calls in flight. "
+                                "You can choose to stop, pause, resume, interject, or wait again.\n"
+                                + "\n".join(lines)
+                            )
+                        else:
+                            content = "No tool calls are currently running."
 
-                        orig_fn = (
-                            tools_data.info[tgt_task].name if tgt_task else "unknown"
+                        tool_msg = create_tool_call_message(
+                            name="wait",
+                            call_id=call["id"],
+                            content=content,
                         )
-                        arg_json = (
-                            tools_data.info[tgt_task].call_dict["function"]["arguments"]
-                            if tgt_task
-                            else "{}"
+                        await insert_tool_message_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
                         )
-                        pretty_name = f"continue {orig_fn}({arg_json})"
-
-                        if tgt_task:  # still running → insert generated placeholder now
-                            info = tools_data.info[tgt_task]
-                            name = info.name
-                            arg_json = info.call_dict["function"]["arguments"]
-                            tool_reply_msg = create_tool_call_message(
-                                name=name,
-                                call_id=call["id"],
-                                content=(
-                                    "The following tool calls are still running. If any of them are no longer "
-                                    "relevant to the sequence of user requests, then you can call their "
-                                    f"`_cancel_*` helper, otherwise feel free to call the corresponding "
-                                    f"`_continue_*` helper to keep waiting:\n"
-                                    f" • {name}({arg_json}) → cancel_{call['id']} / continue_{call['id']}"
-                                ),
-                            )
-                            await insert_tool_message_after_assistant(
-                                assistant_meta,
-                                msg,
-                                tool_reply_msg,
-                                client,
-                                _msg_dispatcher,
-                            )
-                            info.continue_msg = tool_reply_msg
-                        else:  # the original tool already finished
-                            # Lookup finished result by matching call-id suffix
-                            _full_id = next(
-                                (
-                                    k
-                                    for k in tools_data.completed_results.keys()
-                                    if k.endswith(call_id_suffix)
-                                ),
-                                None,
-                            )
-                            finished = tools_data.completed_results.get(
-                                _full_id,
-                                _dumps(
-                                    {"status": "not-found", "call_id": call_id_suffix},
-                                    indent=4,
-                                ),
-                            )
-                            tool_msg = create_tool_call_message(
-                                name=pretty_name,
-                                call_id=call["id"],
-                                content=finished,
-                            )
-                            await insert_tool_message_after_assistant(
-                                assistant_meta,
-                                msg,
-                                tool_msg,
-                                client,
-                                _msg_dispatcher,
-                            )
-                        continue  # completed handling of this _continue
+                        continue
 
                     if name.startswith("stop_") and not name.startswith(
                         "_stop_tasks",

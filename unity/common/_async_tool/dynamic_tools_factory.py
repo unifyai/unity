@@ -87,17 +87,30 @@ class DynamicToolFactory:
         fn.__qualname__ = func_name[:64]
         self.dynamic_tools[func_name.lstrip("_")] = fn
 
-    def _create_continue_tool(
-        self,
-        tool_context: _ToolContext,
-    ) -> None:
-        async def _continue() -> Dict[str, str]:
-            return {"status": "continue", "call_id": tool_context.call_id}
+    def _create_wait_tool(self) -> None:
+        """
+        Expose a single global helper tool `wait` that performs a no-op.
+
+        Purpose
+        -------
+        Use this when you do not want to take any new action at this time.
+        Calling `wait` explicitly instructs the agent to keep waiting for
+        any currently running tool calls to finish (or for an interjection
+        to arrive) before deciding whether to act next. It does not start,
+        stop, pause, resume, or modify any in-flight work.
+        """
+
+        async def _wait() -> Dict[str, str]:
+            return {"status": "waiting"}
 
         self._register_tool(
-            func_name=f"continue_{tool_context.fn_name}_{tool_context.safe_call_id}",
-            fallback_doc=f"Continue waiting for {tool_context.fn_name}({tool_context.arg_repr}).",
-            fn=_continue,
+            func_name="wait",
+            fallback_doc=(
+                "No-op: keep waiting on the currently running tool calls. "
+                "Use this when you don't need to start/stop/pause/resume anything right now; "
+                "decide what to do after the next tool completes or a new interjection arrives."
+            ),
+            fn=_wait,
         )
 
     def _create_stop_tool(
@@ -432,9 +445,6 @@ class DynamicToolFactory:
             safe_call_id=_safe_call_id,
         )
 
-        if not info.waiting_for_clarification:
-            self._create_continue_tool(create_tool_ctx)
-
         self._create_stop_tool(
             create_tool_ctx,
             task,
@@ -500,3 +510,6 @@ class DynamicToolFactory:
     def generate(self):
         for task in list(self.tools_data.pending):
             self._process_task(task)
+        # Expose a single global `wait` helper when anything is in flight
+        if self.tools_data.pending:
+            self._create_wait_tool()
