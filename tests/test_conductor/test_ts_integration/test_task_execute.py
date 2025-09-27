@@ -42,7 +42,7 @@ async def test_task_like_requests_use_taskscheduler_execute_not_actor(
         kw.setdefault("duration", None)
         return _orig_sim_actor(*args, **kw)
 
-    monkeypatch.setattr(_actor_sim, "Actor", _patched_sim_actor, raising=True)
+    monkeypatch.setattr(_actor_sim, "SimulatedActor", _patched_sim_actor, raising=True)
     cond = SimulatedConductor(
         description=(
             "Assistant that executes clearly-defined tasks when asked to start or run a task."
@@ -106,7 +106,7 @@ async def test_both_executors_hidden_while_taskscheduler_execute_running(monkeyp
         kw.setdefault("duration", None)
         return _orig_sim_actor(*args, **kw)
 
-    monkeypatch.setattr(_actor_sim, "Actor", _patched_sim_actor, raising=True)
+    monkeypatch.setattr(_actor_sim, "SimulatedActor", _patched_sim_actor, raising=True)
 
     # Trigger once SimulatedTaskScheduler.execute is actually called so we interject at the right time
     import unity.task_scheduler.simulated as ts_sim
