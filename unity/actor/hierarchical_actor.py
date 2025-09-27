@@ -3009,27 +3009,6 @@ class HierarchicalPlan(BaseActiveTask):
             )
         return False
 
-    @property
-    def valid_tools(self) -> Dict[str, Callable]:
-        """
-        Gets a dictionary of currently valid user-accessible controls.
-
-        Returns:
-            A mapping of public tool names to their callable methods.
-        """
-        tools = {}
-        potential_tools = [
-            "stop",
-            "pause",
-            "resume",
-            "ask",
-            "interject",
-        ]
-        for method_name in potential_tools:
-            if self._is_valid_method(method_name):
-                tools[method_name] = getattr(self, method_name)
-        return tools
-
 
 class HierarchicalActor(BaseActor):
     """

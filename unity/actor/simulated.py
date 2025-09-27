@@ -22,7 +22,6 @@ class SimulatedActorHandle(SteerableToolHandle):
     - stop(reason) -> str
     - result() -> str (async)
     - done() -> bool
-    - valid_tools (property)
     """
 
     def __init__(
@@ -244,21 +243,6 @@ class SimulatedActorHandle(SteerableToolHandle):
 
     def done(self) -> bool:
         return self._done_event.is_set()
-
-    @property
-    def valid_tools(self):
-        if self._description is None:
-            return {}
-        available = {
-            self.stop.__name__: self.stop,
-            self.interject.__name__: self.interject,
-            self.ask.__name__: self.ask,
-        }
-        if self._paused:
-            available[self.resume.__name__] = self.resume
-        else:
-            available[self.pause.__name__] = self.pause
-        return available
 
     # ------------------------
     # Status query helpers

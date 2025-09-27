@@ -187,14 +187,13 @@ async def test_ts_requests_clarification():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 8.  Pause → Resume round-trip + valid_tools                                #
+# 8.  Pause → Resume round-trip                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
 async def test_pause_and_resume_simulated_ts(monkeypatch):
     """
-    Verify that a `_SimulatedTaskScheduleHandle` may be paused and resumed and
-    that `valid_tools` updates correspondingly.
+    Verify that a `_SimulatedTaskScheduleHandle` may be paused and resumed.
     """
     counts = {"pause": 0, "resume": 0}
 
@@ -231,14 +230,8 @@ async def test_pause_and_resume_simulated_ts(monkeypatch):
     ts = SimulatedTaskScheduler()
     handle = await ts.ask("List tomorrow's tasks.")
 
-    tools_initial = handle.valid_tools
-    assert "pause" in tools_initial and "resume" not in tools_initial
-
     pause_reply = handle.pause()
     assert "pause" in pause_reply.lower()
-
-    tools_paused = handle.valid_tools
-    assert "resume" in tools_paused and "pause" not in tools_paused
 
     res_task = asyncio.create_task(handle.result())
     await asyncio.sleep(0.1)
@@ -246,9 +239,6 @@ async def test_pause_and_resume_simulated_ts(monkeypatch):
 
     resume_reply = handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
-
-    tools_running = handle.valid_tools
-    assert "pause" in tools_running and "resume" not in tools_running
 
     answer = await asyncio.wait_for(res_task, timeout=300)
     assert isinstance(answer, str) and answer.strip()

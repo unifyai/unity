@@ -212,19 +212,9 @@ async def test_handle_pause_and_resume(monkeypatch):
     cm = SimulatedContactManager()
     handle = await cm.ask("Generate a short summary of all open opportunities.")
 
-    # valid_tools should start with *pause* (since the handle is running)
-    tools_initial = handle.valid_tools
-    assert "pause" in tools_initial, "pause should be offered before pausing"
-    assert "resume" not in tools_initial, "resume should NOT be offered before pausing"
-
     # 1️⃣ Pause before awaiting the result
     pause_msg = handle.pause()
     assert "pause" in pause_msg.lower()
-
-    # After pausing, tools should flip: resume available, pause hidden
-    tools_after_pause = handle.valid_tools
-    assert "resume" in tools_after_pause, "resume should be offered while paused"
-    assert "pause" not in tools_after_pause, "pause should NOT be offered while paused"
 
     # 2️⃣ Kick off result() – it should block while paused
     res_task = asyncio.create_task(handle.result())
@@ -234,13 +224,6 @@ async def test_handle_pause_and_resume(monkeypatch):
     # 3️⃣ Resume and ensure the task now completes
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
-
-    # After resuming, we should again expose pause and hide resume
-    tools_after_resume = handle.valid_tools
-    assert "pause" in tools_after_resume, "pause should be offered after resuming"
-    assert (
-        "resume" not in tools_after_resume
-    ), "resume should NOT be offered after resuming"
 
     answer = await asyncio.wait_for(res_task, timeout=60)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"

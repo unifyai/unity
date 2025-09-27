@@ -110,18 +110,6 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle):
     def done(self) -> bool:  # type: ignore[override]
         return self._done.is_set()
 
-    @property
-    def valid_tools(self):
-        tools = {
-            self.interject.__name__: self.interject,
-            self.stop.__name__: self.stop,
-        }
-        if self._paused:
-            tools[self.resume.__name__] = self.resume
-        else:
-            tools[self.pause.__name__] = self.pause
-        return tools
-
     async def ask(self, question: str) -> "SteerableToolHandle":
         q_msg = (
             f"Your only task is to simulate an answer to the following question: {question}\n\n"

@@ -156,14 +156,13 @@ async def test_handle_requests_clarification():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 7.  Pause → Resume round-trip + valid_tools                                #
+# 7.  Pause → Resume round-trip                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
 async def test_handle_pause_and_resume(monkeypatch):
     """
-    Ensure a `_SimulatedTranscriptHandle` can be paused and resumed and that
-    `valid_tools` flips correctly between the two states.
+    Ensure a `_SimulatedTranscriptHandle` can be paused and resumed.
     """
     counts = {"pause": 0, "resume": 0}
 
@@ -200,16 +199,9 @@ async def test_handle_pause_and_resume(monkeypatch):
     tm = SimulatedTranscriptManager()
     handle = await tm.ask("List unread DMs.")
 
-    # Initially, pause should be available and resume absent.
-    tools_initial = handle.valid_tools
-    assert "pause" in tools_initial and "resume" not in tools_initial
-
     # Pause the handle.
     pause_reply = handle.pause()
     assert "pause" in pause_reply.lower()
-
-    tools_paused = handle.valid_tools
-    assert "resume" in tools_paused and "pause" not in tools_paused
 
     # Start result() – it should block while paused.
     res_task = asyncio.create_task(handle.result())
@@ -219,9 +211,6 @@ async def test_handle_pause_and_resume(monkeypatch):
     # Resume and ensure execution proceeds.
     resume_reply = handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
-
-    tools_running = handle.valid_tools
-    assert "pause" in tools_running and "resume" not in tools_running
 
     answer = await asyncio.wait_for(res_task, timeout=60)
     assert isinstance(answer, str) and answer.strip()

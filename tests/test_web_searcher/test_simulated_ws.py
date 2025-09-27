@@ -165,16 +165,8 @@ async def test_handle_pause_and_resume(monkeypatch):
     ws = SimulatedWebSearcher()
     handle = await ws.ask("Give a concise overview of Q1 trends.")
 
-    tools_initial = handle.valid_tools
-    assert "pause" in tools_initial
-    assert "resume" not in tools_initial
-
     pause_msg = handle.pause()
     assert "pause" in pause_msg.lower()
-
-    tools_after_pause = handle.valid_tools
-    assert "resume" in tools_after_pause
-    assert "pause" not in tools_after_pause
 
     res_task = asyncio.create_task(handle.result())
     await asyncio.sleep(0.1)
@@ -182,10 +174,6 @@ async def test_handle_pause_and_resume(monkeypatch):
 
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
-
-    tools_after_resume = handle.valid_tools
-    assert "pause" in tools_after_resume
-    assert "resume" not in tools_after_resume
 
     answer = await asyncio.wait_for(res_task, timeout=60)
     assert isinstance(answer, str) and answer.strip()
