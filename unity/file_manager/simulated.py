@@ -76,7 +76,7 @@ class _SimulatedFileHandle(SteerableToolHandle):
     # --------------------------------------------------------------------- #
     async def result(self):
         if self._cancelled:
-            raise asyncio.CancelledError()
+            return "processed stopped early, no result"
 
         # honour pauses injected by an outer loop
         while self._paused and not self._cancelled:

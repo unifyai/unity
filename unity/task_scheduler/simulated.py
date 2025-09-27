@@ -83,7 +83,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
     async def result(self):
         """Return the LLM answer (or raise if stopped)."""
         if self._cancelled:
-            raise asyncio.CancelledError()
+            return "processed stopped early, no result"
 
         while self._paused and not self._cancelled:
             await asyncio.sleep(0.05)

@@ -77,7 +77,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
     # ──  API expected by SteerableToolHandle  ──────────────────────────────
     async def result(self):
         if self._cancelled:
-            raise asyncio.CancelledError()
+            return "processed stopped early, no result"
 
         while self._paused and not self._cancelled:
             await asyncio.sleep(0.05)
