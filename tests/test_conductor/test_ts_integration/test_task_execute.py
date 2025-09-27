@@ -42,7 +42,7 @@ async def test_task_like_requests_use_taskscheduler_execute_not_actor(
         kw.setdefault("duration", None)
         return _orig_sim_actor(*args, **kw)
 
-    monkeypatch.setattr(_actor_sim, "SimulatedActor", _patched_sim_actor, raising=True)
+    monkeypatch.setattr(_actor_sim, "Actor", _patched_sim_actor, raising=True)
     cond = SimulatedConductor(
         description=(
             "Assistant that executes clearly-defined tasks when asked to start or run a task."
@@ -106,7 +106,7 @@ async def test_both_executors_hidden_while_taskscheduler_execute_running(monkeyp
         kw.setdefault("duration", None)
         return _orig_sim_actor(*args, **kw)
 
-    monkeypatch.setattr(_actor_sim, "SimulatedActor", _patched_sim_actor, raising=True)
+    monkeypatch.setattr(_actor_sim, "Actor", _patched_sim_actor, raising=True)
 
     # Trigger once SimulatedTaskScheduler.execute is actually called so we interject at the right time
     import unity.task_scheduler.simulated as ts_sim
@@ -196,9 +196,9 @@ async def test_both_executors_hidden_while_taskscheduler_execute_running(monkeyp
     ), "Expected the assistant to call interject_SimulatedTaskScheduler_execute when processing the interjection"
 
     asst = messages[interject_asst_idx]
-    requested_actor = set(assistant_requested_tool_names([asst], "SimulatedActor"))
+    requested_actor = set(assistant_requested_tool_names([asst], "Actor"))
     assert (
-        "SimulatedActor_act" not in requested_actor
+        "Actor_act" not in requested_actor
     ), "Actor.act should not be available on the same assistant turn that processes the interjection"
 
     # Helper: map message index → assistant turn number
@@ -220,10 +220,10 @@ async def test_both_executors_hidden_while_taskscheduler_execute_running(monkeyp
         ),
     )
     assert (
-        "SimulatedActor_act" not in exposed_on_interject
+        "Actor_act" not in exposed_on_interject
     ), f"Tool exposure should hide SimulatedActor_act on interjection turn; exposed: {sorted(exposed_on_interject)}"
     assert (
-        "SimulatedTaskScheduler_execute" not in exposed_on_interject
+        "TaskScheduler_execute" not in exposed_on_interject
     ), f"Tool exposure should hide SimulatedTaskScheduler_execute itself on interjection turn; exposed: {sorted(exposed_on_interject)}"
 
     # Additionally ensure that while the Task execution is in-flight, the assistant never
@@ -235,7 +235,7 @@ async def test_both_executors_hidden_while_taskscheduler_execute_running(monkeyp
             for tc in m.get("tool_calls") or []:
                 fn = (tc or {}).get("function", {}) or {}
                 name = fn.get("name") or ""
-                if name == "SimulatedTaskScheduler_execute":
+                if name == "TaskScheduler_execute":
                     ts_start_asst_idx = i
                     break
         if ts_start_asst_idx is not None:
@@ -252,8 +252,8 @@ async def test_both_executors_hidden_while_taskscheduler_execute_running(monkeyp
         m = messages[i]
         if m.get("role") != "assistant":
             continue
-        req = set(assistant_requested_tool_names([m], "SimulatedActor"))
-        if "SimulatedActor_act" in req:
+        req = set(assistant_requested_tool_names([m], "Actor"))
+        if "Actor_act" in req:
             violations.append(i)
 
     assert (
@@ -267,9 +267,9 @@ async def test_both_executors_hidden_while_taskscheduler_execute_running(monkeyp
         exposed = set(
             exposed_tools_per_turn[t] if t < len(exposed_tools_per_turn) else [],
         )
-        if "SimulatedActor_act" in exposed:
+        if "Actor_act" in exposed:
             exposure_violations_other.append(t)
-        if "SimulatedTaskScheduler_execute" in exposed:
+        if "TaskScheduler_execute" in exposed:
             exposure_violations_self.append(t)
 
     assert (

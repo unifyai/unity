@@ -65,12 +65,12 @@ async def test_contact_updates_call_contact_manager_update(request_text: str):
     executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
     assert (
-        "SimulatedContactManager_update" in executed
+        "ContactManager_update" in executed
     ), f"Expected SimulatedContactManager_update to run, saw: {sorted(executed)}"
     assert executed <= {
-        "SimulatedContactManager_ask",
-        "SimulatedContactManager_update",
-    }, f"Unexpected tools executed: {sorted(executed - {'SimulatedContactManager_ask', 'SimulatedContactManager_update'})}"
+        "ContactManager_ask",
+        "ContactManager_update",
+    }, f"Unexpected tools executed: {sorted(executed - {'ContactManager_ask', 'ContactManager_update'})}"
 
     # It's fine if the assistant also requested SimulatedContactManager.ask; no assertion needed.
     _ = _assistant_requested_tool_names(messages)

@@ -63,15 +63,15 @@ async def test_transcript_questions_use_only_transcript_manager_tool(question: s
     executed = set(executed_list)
     assert executed, "Expected at least one tool call to occur"
     assert executed == {
-        "SimulatedTranscriptManager_ask",
+        "TranscriptManager_ask",
     }, f"Only SimulatedTranscriptManager_ask should run, saw: {sorted(executed)}"
     assert (
-        executed_list.count("SimulatedTranscriptManager_ask") == 1
+        executed_list.count("TranscriptManager_ask") == 1
     ), f"Expected exactly one SimulatedTranscriptManager_ask call, saw order: {executed_list}"
 
     # Additionally confirm that any assistant tool selection(s) referenced only that tool
     requested = set(_assistant_requested_tool_names(messages))
     assert requested, "Assistant should have requested at least one tool"
     assert requested <= {
-        "SimulatedTranscriptManager_ask",
+        "TranscriptManager_ask",
     }, f"Assistant should request only SimulatedTranscriptManager_ask, saw: {sorted(requested)}"
