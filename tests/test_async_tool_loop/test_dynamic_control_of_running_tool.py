@@ -108,7 +108,7 @@ def client():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_continue_does_not_duplicate_tool(client):
+async def test_wait_does_not_duplicate_tool(client):
     """
     Scenario
     --------
@@ -133,7 +133,7 @@ async def test_continue_does_not_duplicate_tool(client):
     # Wait deterministically until the `slow` tool has been requested.
     await _wait_for_tool_request(client, "slow")
     await handle.interject(
-        "Make sure you're still continuing to run the `slow` tool",
+        "Make sure you use the `wait` helper and keep the existing `slow` tool running",
     )
 
     final = await handle.result()
@@ -609,7 +609,7 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
         "2️⃣ When the user says 'hold', call the helper whose name starts with `pause_`.\n"
         "3️⃣ When the user says 'go',   call the helper whose name starts with `resume_`.\n"
         "4️⃣ Repeat the pause→resume cycle twice.\n"
-        "5️⃣ Do NOT call any helper whose name starts with `continue_` at any time.\n"
+        "5️⃣ Prefer the `wait` helper if you need to keep waiting; do NOT call any legacy `continue_` helper.\n"
         "6️⃣ After the second resume, wait for completion and reply with 'done'.",
     )
 
