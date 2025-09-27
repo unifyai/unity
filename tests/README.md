@@ -164,10 +164,10 @@ If tests are aborted (e.g., `tmux kill-server`), temporary Unify projects prefix
 # first time only, ensure it's executable
 chmod +x tests/.project_cleanup.sh
 
-# show what would be deleted (no changes)
+# show what would be deleted (no changes), prompt env if needed
 tests/.project_cleanup.sh --dry-run
 
-# delete interactively (prompts for confirmation)
+# delete interactively (prompts for environment and confirmation)
 tests/.project_cleanup.sh
 
 # delete without prompts
@@ -175,10 +175,16 @@ tests/.project_cleanup.sh -y
 
 # use a custom prefix
 tests/.project_cleanup.sh --prefix UnityTests_
+
+# force environment without prompt
+tests/.project_cleanup.sh -s   # staging
+tests/.project_cleanup.sh -p   # production
 ```
 
 Requirements:
 
 - `UNIFY_KEY` must be set in your environment
 - `jq` and `curl` must be installed
-- Optional: set `UNIFY_API` to override the default `https://api.unify.ai/v0`
+- To skip the environment prompt, either pass `-s/--staging` or `-p/--production`,
+  or set `UNIFY_BASE_URL` (e.g., `https://api.unify.ai/v0` for production or
+  `https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0` for staging).

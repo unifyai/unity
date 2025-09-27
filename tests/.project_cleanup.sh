@@ -4,24 +4,27 @@ set -euo pipefail
 # Delete Unify projects whose names start with a given prefix (default: "UnityTests_").
 # Useful after abrupt test termination (e.g., `tmux kill-server`) leaving temp projects behind.
 
-UNIFY_API_BASE="${UNIFY_API:-https://api.unify.ai/v0}"
+API_BASE=""
 PREFIX="UnityTests_"
 ASSUME_YES=0
 DRY_RUN=0
+EXPLICIT_ENV=""
 
 usage() {
   cat <<'USAGE'
-Usage: .project_cleanup.sh [--dry-run] [-y|--yes] [--prefix PREFIX]
+Usage: .project_cleanup.sh [--dry-run] [-y|--yes] [--prefix PREFIX] [--staging|-s|--production|-p]
 
 Options:
   --dry-run           Show matching projects without deleting
   -y, --yes           Do not prompt for confirmation
   --prefix PREFIX     Name prefix to match (default: UnityTests_)
+  -s, --staging       Use staging environment (skips prompt)
+  -p, --production    Use production environment (skips prompt)
   -h, --help          Show this help
 
 Environment:
   UNIFY_KEY           Required. API key for https://api.unify.ai
-  UNIFY_API           Optional. Override API base (default: https://api.unify.ai/v0)
+  UNIFY_BASE_URL      Optional. Full base URL including /v0; if set, skips env prompt
 USAGE
 }
 
@@ -40,6 +43,12 @@ while (( "$#" )); do
         exit 2
       fi
       PREFIX="$1"
+      ;;
+    -s|--staging)
+      EXPLICIT_ENV="staging"
+      ;;
+    -p|--production)
+      EXPLICIT_ENV="production"
       ;;
     -h|--help)
       usage
@@ -69,27 +78,53 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Listing projects from $UNIFY_API_BASE ..." >&2
+# Resolve API base URL
+if [[ -n "${UNIFY_BASE_URL:-}" ]]; then
+  API_BASE="$UNIFY_BASE_URL"
+else
+  if [[ -z "$EXPLICIT_ENV" ]]; then
+    read -r -p "Select Unify environment: [s]taging or [p]roduction? (default: p) " env_ans
+    env_ans_lc=$(printf '%s' "$env_ans" | tr '[:upper:]' '[:lower:]')
+    case "$env_ans_lc" in
+      s|staging) EXPLICIT_ENV="staging" ;;
+      p|production|"") EXPLICIT_ENV="production" ;;
+      *) EXPLICIT_ENV="production" ;;
+    esac
+  fi
+  if [[ "$EXPLICIT_ENV" == "staging" ]]; then
+    API_BASE="https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0"
+  else
+    API_BASE="https://api.unify.ai/v0"
+  fi
+fi
+
+echo "Listing projects from $API_BASE ..." >&2
 resp="$(
   curl -sS -f \
     -H "Authorization: Bearer $UNIFY_KEY" \
-    "$UNIFY_API_BASE/projects"
+    "$API_BASE/projects"
 )" || {
   echo "Error: Failed to list projects" >&2
   exit 1
 }
 
 # Extract matching (id, name) pairs. Support both top-level array and {projects: [...]} shapes.
-mapfile -t matches < <(
-  jq -r --arg pfx "$PREFIX" '
-    (if type=="array" then . else (.projects // []) end)
-    | .[]
-    | select(.name? and (.name | type=="string") and (.name | startswith($pfx)))
-    | {id: (.id // .project_id // .projectId // .projectID // .uuid // empty), name}
-    | select(.id != null and .id != "")
-    | [.id, .name] | @tsv
-  ' <<<"$resp"
-)
+matches=()
+tmp_matches="$(mktemp)"
+trap 'rm -f "$tmp_matches"' EXIT
+jq -r --arg pfx "$PREFIX" '
+  (if type=="array" then . else (.projects // []) end)
+  | .[]
+  | select(.name? and (.name | type=="string") and (.name | startswith($pfx)))
+  | {id: (.id // .project_id // .projectId // .projectID // .uuid // empty), name}
+  | select(.id != null and .id != "")
+  | [.id, .name] | @tsv
+' <<<"$resp" > "$tmp_matches" || true
+
+while IFS= read -r line; do
+  [[ -n "$line" ]] || continue
+  matches+=( "$line" )
+done < "$tmp_matches"
 
 if (( ${#matches[@]} == 0 )); then
   echo "No projects found with prefix '$PREFIX'. Nothing to do." >&2
@@ -106,7 +141,8 @@ fi
 
 if (( ! ASSUME_YES )); then
   read -r -p "Proceed to delete ${#matches[@]} project(s)? [y/N] " ans
-  case "${ans,,}" in
+  ans_lc=$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')
+  case "$ans_lc" in
     y|yes) ;;
     *) echo "Aborted." >&2; exit 1 ;;
   esac
@@ -118,7 +154,7 @@ for m in "${matches[@]}"; do
   IFS=$'\t' read -r proj_id proj_name <<<"$m"
   if curl -sS -f -X DELETE \
        -H "Authorization: Bearer $UNIFY_KEY" \
-       "$UNIFY_API_BASE/project/$proj_id" >/dev/null; then
+       "$API_BASE/project/$proj_id" >/dev/null; then
     echo "Deleted: $proj_id ($proj_name)"
     ((deleted++))
   else
