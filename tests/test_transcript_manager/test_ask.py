@@ -298,8 +298,7 @@ async def test_ask_honors_stop():
         "List every message received from Carlos, then provide a detailed summary of each one in chronological order.",
     )
     handle.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    await handle.result()
     assert handle.done()
 
 

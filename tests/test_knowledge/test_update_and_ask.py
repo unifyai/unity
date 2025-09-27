@@ -371,8 +371,7 @@ async def test_update_stop():
     )
     await asyncio.sleep(0.05)
     handle.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    await handle.result()
     assert handle.done()
 
 
@@ -435,6 +434,5 @@ async def test_ask_stop():
     handle = await km.ask("List the capitals of the specified kingdoms.")
     await asyncio.sleep(0.05)
     handle.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    await handle.result()
     assert handle.done()

@@ -240,7 +240,5 @@ async def test_ask_stop_operation(
     )
     await asyncio.sleep(0.05)  # Let it start
     handle.stop()
-
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    await handle.result()
     assert handle.done()

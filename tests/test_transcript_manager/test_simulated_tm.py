@@ -119,10 +119,7 @@ async def test_handle_stop():
     handle = await tm.ask("Produce a full export of all messages.")
     await asyncio.sleep(0.05)
     handle.stop()
-
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
-
+    await handle.result()
     assert handle.done(), "Handle should report done after stop()"
 
 

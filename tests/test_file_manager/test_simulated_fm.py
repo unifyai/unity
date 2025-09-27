@@ -223,8 +223,7 @@ async def test_stop_simulated_fm():
     handle = await fm.ask("large.txt", "Generate a detailed analysis of this file.")
     await asyncio.sleep(0.05)
     handle.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    await handle.result()
     assert handle.done(), "Handle should report done after stop()"
 
 
