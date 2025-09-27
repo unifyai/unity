@@ -43,8 +43,6 @@ class ToolsData:
         # and stop doing any further work. We record the delegate here so the main
         # loop can immediately await it and return, without emitting extra messages.
         self.handover_delegate = None
-        # Optional global progress channel for the loop (independent of tool tasks)
-        self.global_progress_queue: Optional[asyncio.Queue] = None
 
     def _quota_count(self, task_name: str) -> int:
         return self.call_counts.get(task_name, 0)
@@ -375,8 +373,6 @@ class ToolsData:
 
                 h_up_q = getattr(raw, "clarification_up_q", info.clar_up_queue)
                 h_down_q = getattr(raw, "clarification_down_q", info.clar_down_queue)
-                # Adopt progress channel from nested handle if present (up-only)
-                h_prog_q = getattr(raw, "progress_up_q", info.progress_queue)
 
                 if (h_up_q is not None) ^ (h_down_q is not None):
                     raise AttributeError(
@@ -422,7 +418,7 @@ class ToolsData:
                     tool_reply_msg=ph,
                     clar_up_queue=h_up_q,
                     clar_down_queue=h_down_q,
-                    progress_queue=h_prog_q,
+                    progress_queue=info.progress_queue,
                 )
                 self.save_task(nested_task, metadata)
                 if h_up_q is not None:
@@ -578,8 +574,4 @@ class ToolsData:
             )
 
         # successful (or failed) *final* result → LLM may need to react
-        # Special case: progress updates are fire-and-forget; do NOT trigger
-        # another LLM turn after acknowledging the update.
-        if name == "send_progress_update":
-            return False
         return True

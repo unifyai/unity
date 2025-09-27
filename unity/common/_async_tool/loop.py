@@ -18,7 +18,7 @@ from .messages import (
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import ToolCallMetadata, create_tool_call_message
-from ..llm_helpers import method_to_schema, _dumps, make_send_progress_update_tool
+from ..llm_helpers import method_to_schema, _dumps
 from .loop_config import LoopConfig, TOOL_LOOP_LINEAGE
 from .tools_utils import ToolCallMetadata, create_tool_call_message
 from .timeout_timer import TimeoutTimer
@@ -120,7 +120,6 @@ async def async_tool_use_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    progress_up_q: Optional[asyncio.Queue] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -325,24 +324,7 @@ async def async_tool_use_loop_inner(
     # -----------------------------------------------------------------------
 
     # Initialise loop state early so preflight backfill can schedule tasks
-    # Augment base tools with a global progress tool when a loop-wide progress queue is present
-    try:
-        _base_tools = dict(tools)
-    except Exception:
-        _base_tools = tools
-    if progress_up_q is not None:
-        try:
-            _base_tools = dict(_base_tools)
-            _base_tools["send_progress_update"] = make_send_progress_update_tool(
-                progress_up_q,
-            )
-        except Exception:
-            pass
-
-    tools_data: ToolsData = ToolsData(_base_tools, client=client, logger=logger)
-    # Attach global progress queue (if any) so dynamic tool factory can expose
-    # a global `send_progress_update` tool independent of pending tasks.
-    # (Global progress queue no longer needed for dynamic exposure; base tool injected above.)
+    tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
@@ -1007,9 +989,6 @@ async def async_tool_use_loop_inner(
             )
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
-            # Globally expose send_progress_update when a global queue is present,
-            # regardless of pending tasks. DynamicToolFactory.generate() will add it
-            # to dynamic_tools in that case.
             tmp_tools = visible_base_tools_schema + [
                 method_to_schema(
                     fn,

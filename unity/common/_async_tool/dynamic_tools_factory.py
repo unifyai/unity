@@ -500,6 +500,3 @@ class DynamicToolFactory:
     def generate(self):
         for task in list(self.tools_data.pending):
             self._process_task(task)
-        # Note: Global `send_progress_update` is now injected as a base tool by the loop
-        # (see async_tool_loop.start_async_tool_use_loop) whenever a loop-wide progress
-        # queue is present. No dynamic exposure necessary here.

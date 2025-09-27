@@ -437,7 +437,6 @@ def method_to_schema(
             "parent_chat_context",
             "clarification_up_q",
             "clarification_down_q",
-            "progress_up_q",
         )
 
         if is_hidden:
@@ -572,45 +571,3 @@ def make_request_clarification_tool(
         return answer
 
     return _request
-
-
-def make_send_progress_update_tool(
-    up_q: "asyncio.Queue[object]" | None,
-    *,
-    on_send: Optional[Callable[[str], Awaitable[None] | None]] = None,
-):
-    """Return an async tool that emits a non-blocking progress update upstream.
-
-    Behaviour
-    ---------
-    - Only available when a progress-up queue is provided by the outer loop.
-    - Returns immediately with a small acknowledgement string; it never waits
-      for any downstream processing.
-    - If provided, invokes `on_send(update)` (async or sync) after enqueueing.
-    """
-
-    async def _send(update: str) -> str:
-        if up_q is None:
-            raise RuntimeError(
-                "Progress queue not supplied – cannot send progress updates in this context.",
-            )
-
-        await up_q.put(update)
-
-        if on_send is not None:
-            maybe = on_send(update)
-            if asyncio.iscoroutine(maybe):
-                await maybe
-
-        return "progress update sent"
-
-    # Ensure schema/tool name is stable
-    try:
-        _send.__name__ = "send_progress_update"
-        _send.__qualname__ = "send_progress_update"
-        if not _send.__doc__:
-            _send.__doc__ = "Send a non-blocking progress update upstream."
-    except Exception:
-        pass
-
-    return _send
