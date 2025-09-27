@@ -46,18 +46,18 @@ async def test_actor_sandbox_requests_use_actor_not_task_execute(request_text: s
     executed_actor = set(executed_actor_list)
     assert executed_actor, "Expected at least one tool call"
     assert (
-        executed_actor_list.count("SimulatedActor_act") >= 1
+        executed_actor_list.count("Actor_act") >= 1
     ), f"Expected SimulatedActor_act to run at least once, saw order: {executed_actor_list}"
 
     # TaskScheduler.execute must NOT be called for sandbox-style requests
     executed_ts_list = tool_names_from_messages(messages, "TaskScheduler")
     executed_ts = set(executed_ts_list)
     assert (
-        "SimulatedTaskScheduler_execute" not in executed_ts
+        "TaskScheduler_execute" not in executed_ts
     ), f"TaskScheduler.execute must not run for sandbox scenarios, saw: {sorted(executed_ts)}"
 
     # If the assistant explicitly requested tools, they should reference Actor.act for this scenario
-    requested_actor = set(assistant_requested_tool_names(messages, "SimulatedActor"))
+    requested_actor = set(assistant_requested_tool_names(messages, "Actor"))
     if requested_actor:
         assert requested_actor <= {
             "Actor_act",
@@ -206,7 +206,7 @@ async def test_both_executors_hidden_while_actor_running(monkeypatch):
             for tc in m.get("tool_calls") or []:
                 fn = (tc or {}).get("function", {}) or {}
                 name = fn.get("name") or ""
-                if name == "SimulatedActor_act":
+                if name == "Actor_act":
                     actor_start_asst_idx = i
                     break
         if actor_start_asst_idx is not None:
