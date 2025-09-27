@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Optionally source environment from ../.env (relative to tests directory)
+# This allows storing secrets/config like UNIFY_KEY in ~/unity/.env
+if [ -f "../.env" ]; then
+  # shellcheck disable=SC1091
+  set -a
+  . "../.env"
+  set +a
+fi
+
 # ---- Configurable directory excludes (by name) ----
 EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .idea .vscode )
 

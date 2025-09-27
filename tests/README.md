@@ -30,6 +30,7 @@ chmod +x .parallel_run.sh
 
 - **tmux** and **pytest** must be installed (e.g., `brew install tmux`).
 - **Virtualenv** is assumed to live at `~/unity/.unity/`. If yours differs, update the `source ~/unity/.unity/bin/activate` line inside the script.
+- Optional: create an `.env` file at the repository root (i.e., `~/unity/.env`). Both helper scripts will auto-load it if present via `tests/../.env`.
 
 ## Basic usage
 
@@ -79,7 +80,9 @@ How it interprets arguments:
 
 ## Defaults & conventions
 
-- **Environment**: Exports `UNIFY_TESTS_RAND_PROJ=True` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True` inside each session so it works whether or not a tmux server is already running.
+- **Environment**:
+  - If `../.env` exists relative to the `tests` directory (i.e., `~/unity/.env`), it will be sourced automatically so you can define `UNIFY_KEY`, `UNIFY_BASE_URL`, or other variables once.
+  - Exports `UNIFY_TESTS_RAND_PROJ=True` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True` inside each session so it works whether or not a tmux server is already running.
 - **Virtualenv**: Assumes `~/unity/.unity/bin/activate`.
 - **Excludes**: Skips directories: `.git`, `.hg`, `.svn`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `__pycache__`, `.idea`, `.vscode`.
   - You can edit the `EXCLUDE_DIRS` array in the script to add/remove entries.
@@ -183,7 +186,7 @@ tests/.project_cleanup.sh -p   # production
 
 Requirements:
 
-- `UNIFY_KEY` must be set in your environment
+- `UNIFY_KEY` must be set in your environment (you can place it in `~/unity/.env` which is auto-sourced by the script)
 - `jq` and `curl` must be installed
 - To skip the environment prompt, either pass `-s/--staging` or `-p/--production`,
   or set `UNIFY_BASE_URL` (e.g., `https://api.unify.ai/v0` for production or

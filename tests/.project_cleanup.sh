@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Optionally source environment from ../.env (relative to tests directory)
+# Useful to provide UNIFY_KEY, UNIFY_BASE_URL, etc. from ~/unity/.env
+if [ -f "../.env" ]; then
+  # shellcheck disable=SC1091
+  set -a
+  . "../.env"
+  set +a
+fi
+
 # Delete Unify projects whose names start with a given prefix (default: "UnityTests_").
 # Useful after abrupt test termination (e.g., `tmux kill-server`) leaving temp projects behind.
 
