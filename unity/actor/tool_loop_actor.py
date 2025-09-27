@@ -649,16 +649,6 @@ class ToolLoopPlan(BaseActiveTask):
             timeout=60,
         )
 
-    @property
-    @functools.wraps(BaseActiveTask.valid_tools, updated=())
-    def valid_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
-        tools = {}
-        potential_tools = ["stop", "pause", "resume", "interject", "ask"]
-        for method_name in potential_tools:
-            if self._is_valid_method(method_name):
-                tools[method_name] = getattr(self, method_name)
-        return tools
-
 
 class ToolLoopActor(BaseActor):
     def __init__(

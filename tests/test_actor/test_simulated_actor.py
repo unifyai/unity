@@ -116,7 +116,7 @@ async def test_handle_requests_clarification():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 6.  Pause → Resume round-trip + valid_tools                                  #
+# 6.  Pause → Resume round-trip                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
@@ -154,14 +154,8 @@ async def test_handle_pause_and_resume(monkeypatch):
     actor = SimulatedActor(steps=2)
     handle = await actor.act("Summarise all open opportunities.")
 
-    tools_initial = handle.valid_tools
-    assert "pause" in tools_initial and "resume" not in tools_initial
-
     pause_reply = handle.pause()
     assert "pause" in pause_reply.lower()
-
-    tools_paused = handle.valid_tools
-    assert "resume" in tools_paused and "pause" not in tools_paused
 
     res = asyncio.create_task(handle.result())
     await asyncio.sleep(0.1)
@@ -169,9 +163,6 @@ async def test_handle_pause_and_resume(monkeypatch):
 
     resume_reply = handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
-
-    tools_running = handle.valid_tools
-    assert "pause" in tools_running and "resume" not in tools_running
 
     answer = await asyncio.wait_for(res, timeout=60)
     assert isinstance(answer, str) and answer.strip()

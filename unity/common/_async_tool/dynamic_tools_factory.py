@@ -289,13 +289,6 @@ class DynamicToolFactory:
     def _expose_public_methods(self, tool_context: _ToolContext, handle: Any):
         public_methods = self._discover_custom_public_methods(handle)
 
-        # ── honour handle.valid_tools, if present ──────────────
-        if hasattr(handle, "valid_tools"):
-            allowed: set[str] = set(getattr(handle, "valid_tools", []))
-            public_methods = {
-                name: bound for name, bound in public_methods.items() if name in allowed
-            }
-
         # Identify write-only helpers declared by the handle
         write_only_set: set[str] = set()
         with suppress(Exception):

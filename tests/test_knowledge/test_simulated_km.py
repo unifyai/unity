@@ -202,14 +202,13 @@ async def test_km_requests_clarification():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 9.  Pause → Resume round-trip + valid_tools                                #
+# 9.  Pause → Resume round-trip                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
 async def test_pause_and_resume_simulated_km(monkeypatch):
     """
-    Ensure a `_SimulatedKnowledgeHandle` can be paused and resumed and that
-    its `valid_tools` property flips appropriately.
+    Ensure a `_SimulatedKnowledgeHandle` can be paused and resumed.
     """
     counts = {"pause": 0, "resume": 0}
 
@@ -246,17 +245,9 @@ async def test_pause_and_resume_simulated_km(monkeypatch):
     km = SimulatedKnowledgeManager()
     handle = await km.ask("Summarise everything we know about quantum gravity.")
 
-    # Before pausing: pause should be available, resume not.
-    tools_initial = handle.valid_tools
-    assert "pause" in tools_initial and "resume" not in tools_initial
-
     # Pause the handle
     pause_msg = handle.pause()
     assert "pause" in pause_msg.lower() or "paused" in pause_msg.lower()
-
-    # After pausing: resume should be available, pause not.
-    tools_paused = handle.valid_tools
-    assert "resume" in tools_paused and "pause" not in tools_paused
 
     # Start result() while still paused – it should await
     res_task = asyncio.create_task(handle.result())
@@ -266,10 +257,6 @@ async def test_pause_and_resume_simulated_km(monkeypatch):
     # Resume execution
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
-
-    # After resuming: pause available again, resume gone.
-    tools_running = handle.valid_tools
-    assert "pause" in tools_running and "resume" not in tools_running
 
     # Now result() should finish
     answer = await asyncio.wait_for(res_task, timeout=60)
