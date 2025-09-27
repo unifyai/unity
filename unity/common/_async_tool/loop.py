@@ -813,7 +813,7 @@ async def async_tool_use_loop_inner(
                         call_id = tools_data.info[src_task].call_id
                         tool_name = tools_data.info[src_task].name
 
-                        # 1️⃣ append a tool message acknowledging progress and REQUIRE an LLM turn
+                        # Acknowledge bottom‑up progress for this call_id; keep one tool reply per call_id
                         try:
                             content_payload = (
                                 payload
@@ -830,18 +830,24 @@ async def async_tool_use_loop_inner(
                                 indent=4,
                             )
 
-                        tool_msg = create_tool_call_message(
-                            name=tool_name,
-                            call_id=call_id,
-                            content=pretty,
-                        )
-                        await insert_tool_message_after_assistant(
-                            assistant_meta,
-                            tools_data.info[src_task].assistant_msg,
-                            tool_msg,
-                            client,
-                            _msg_dispatcher,
-                        )
+                        # Update existing tool reply if present, else create one
+                        placeholder = tools_data.info[src_task].tool_reply_msg
+                        if placeholder is None:
+                            placeholder = create_tool_call_message(
+                                name=tool_name,
+                                call_id=call_id,
+                                content=pretty,
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                tools_data.info[src_task].assistant_msg,
+                                placeholder,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            tools_data.info[src_task].tool_reply_msg = placeholder
+                        else:
+                            placeholder["content"] = pretty
 
                         # 2️⃣ forward event to the outer handle stream
                         try:
@@ -867,7 +873,7 @@ async def async_tool_use_loop_inner(
                                 )
                         except Exception:
                             pass
-                    # Mirror clarification behaviour: let the assistant react immediately
+                    # Require an immediate LLM turn (same behaviour as clarification)
                     llm_turn_required = True
 
                 needs_turn = False

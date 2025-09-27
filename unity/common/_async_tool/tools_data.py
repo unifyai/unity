@@ -518,28 +518,29 @@ class ToolsData:
 
         elif tool_reply_msg is not None:
             if _at_tail(tool_reply_msg):
-                tool_reply_msg["content"] = result
-                tool_msg = tool_reply_msg
-            else:
-                # Try to update the most recent tool message for this call_id (e.g. a progress ack)
+                # If the current tail tool message looks like a progress payload,
+                # do NOT emit another tool reply for the same call_id – instead
+                # create a synthetic assistant→tool pair to carry the final result.
                 try:
-                    recent_candidates = [
-                        m
-                        for m in self._client.messages
-                        if m.get("role") == "tool" and m.get("tool_call_id") == call_id
-                    ]
+                    _content_str = tool_reply_msg.get("content") or ""
                 except Exception:
-                    recent_candidates = []
-
-                if recent_candidates and _at_tail(recent_candidates[-1]):
-                    recent_candidates[-1]["content"] = result
-                    tool_msg = recent_candidates[-1]
-                else:
+                    _content_str = ""
+                if isinstance(_content_str, str) and '"tool"' in _content_str:
                     tool_msg = await self._emit_completion_pair(
                         result,
                         call_id,
                         msg_dispatcher,
                     )
+                else:
+                    tool_reply_msg["content"] = result
+                    tool_msg = tool_reply_msg
+            else:
+                # Not at tail: emit a synthetic assistant→tool pair to carry the result
+                tool_msg = await self._emit_completion_pair(
+                    result,
+                    call_id,
+                    msg_dispatcher,
+                )
 
         else:
             tool_msg = create_tool_call_message(name, call_id, result)
