@@ -114,10 +114,14 @@ tmp_matches="$(mktemp)"
 trap 'rm -f "$tmp_matches"' EXIT
 jq -r --arg pfx "$PREFIX" '
   (if type=="array" then . else (.projects // []) end)
+  | map(
+      if type=="string" then {id: ., name: .}
+      else {id: (.id // .project_id // .projectId // .projectID // .uuid // .name // empty), name: (.name // .id // empty)}
+      end
+    )
   | .[]
   | select(.name? and (.name | type=="string") and (.name | startswith($pfx)))
-  | {id: (.id // .project_id // .projectId // .projectID // .uuid // empty), name}
-  | select(.id != null and .id != "")
+  | select(.id != null and (.id | tostring) != "")
   | [.id, .name] | @tsv
 ' <<<"$resp" > "$tmp_matches" || true
 
