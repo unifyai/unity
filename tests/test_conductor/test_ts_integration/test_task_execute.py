@@ -94,22 +94,31 @@ async def test_both_executors_hidden_while_taskscheduler_execute_running(monkeyp
     completion the assistant did not request `SimulatedActor_act`.
     """
 
-    # Ensure the underlying SimulatedActor used by TaskScheduler completes after a single step
-    import unity.actor.simulated as _actor_sim
+    # Configure the SimulatedTaskScheduler to use a SimulatedActor that
+    # completes deterministically after a single interjection step and
+    # does not auto-complete by wall-clock duration.
+    import unity.task_scheduler.simulated as ts_sim
+    import unity.conductor.simulated as cond_sim
 
-    _orig_sim_actor = _actor_sim.SimulatedActor
+    _orig_ts_cls = ts_sim.SimulatedTaskScheduler
 
-    @functools.wraps(_orig_sim_actor)
-    def _patched_sim_actor(*args, **kwargs):  # type: ignore
+    # Minimal factory to inject actor configuration without subclassing
+    def _scheduler_factory(*args, **kwargs):  # type: ignore[no-untyped-def]
         kw = dict(kwargs)
-        kw.setdefault("steps", 1)
-        kw.setdefault("duration", None)
-        return _orig_sim_actor(*args, **kw)
+        kw.setdefault("actor_steps", 1)
+        kw.setdefault("actor_duration", None)
+        return _orig_ts_cls(*args, **kw)
 
-    monkeypatch.setattr(_actor_sim, "SimulatedActor", _patched_sim_actor, raising=True)
+    # Patch the Conductor's reference to the scheduler so it uses our
+    # configured subclass when constructing its internal managers.
+    monkeypatch.setattr(
+        cond_sim,
+        "SimulatedTaskScheduler",
+        _scheduler_factory,
+        raising=True,
+    )
 
     # Trigger once SimulatedTaskScheduler.execute is actually called so we interject at the right time
-    import unity.task_scheduler.simulated as ts_sim
 
     tool_started_evt = asyncio.Event()
 
@@ -184,7 +193,9 @@ async def test_both_executors_hidden_while_taskscheduler_execute_running(monkeyp
             for tc in m.get("tool_calls") or []:
                 fn = (tc or {}).get("function", {}) or {}
                 name = fn.get("name") or ""
-                if name.startswith("interject_SimulatedTaskScheduler_execute"):
+                if name.startswith(
+                    "interject_TaskScheduler_execute",
+                ) or name.startswith("interject_SimulatedTaskScheduler_execute"):
                     interject_asst_idx = i
                     break
         if interject_asst_idx is not None:
@@ -193,7 +204,7 @@ async def test_both_executors_hidden_while_taskscheduler_execute_running(monkeyp
     # Require that the interjection was processed via the dynamic helper on the same turn
     assert (
         interject_asst_idx is not None
-    ), "Expected the assistant to call interject_SimulatedTaskScheduler_execute when processing the interjection"
+    ), "Expected the assistant to call interject_TaskScheduler_execute when processing the interjection"
 
     asst = messages[interject_asst_idx]
     requested_actor = set(assistant_requested_tool_names([asst], "Actor"))
