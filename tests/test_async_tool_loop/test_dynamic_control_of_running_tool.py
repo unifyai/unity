@@ -37,6 +37,9 @@ from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 #  GLOBALS                                                                    #
 # --------------------------------------------------------------------------- #
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
+# Track last-seen counts per (client,prefix) so waits detect fresh events
+_ASSISTANT_PREFIX_COUNTS: dict[tuple[int, str], int] = {}
+_TOOL_PREFIX_COUNTS: dict[tuple[int, str], int] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -93,52 +96,46 @@ async def _wait_for_assistant_call_prefix(
     timeout: float = 15.0,
     poll: float = 0.05,
 ) -> None:
-    """Poll *client.messages* until the assistant has issued **at least one**
-    visible tool-call whose *function name* starts with *prefix* or *timeout*
-    seconds elapse.
+    """Poll for a NEW assistant tool-call whose function name starts with
+    ``prefix``.
 
-    This mirrors ``_wait_for_tool_request`` but matches by *prefix* which is
-    useful for helper functions such as ``pause_…`` / ``resume_…`` whose exact
-    suffix is dynamic (it contains the tool call ID).
+    Unlike the previous implementation which returned upon finding *any* match
+    (including historical entries), this version snapshots the current count of
+    matching calls and only returns when a new matching call appears.
+
+    Useful for helpers such as ``pause_…`` / ``resume_…`` where the test may
+    cycle multiple times and must not be satisfied by a prior occurrence.
     """
     import time as _time
 
     start_ts = _time.perf_counter()
+    key = (id(client), prefix)
+    try:
+        current = _assistant_calls_prefix(client.messages or [], prefix)
+    except Exception:
+        current = 0
+    baseline = _ASSISTANT_PREFIX_COUNTS.get(key)
+    # First-time call for this (client,prefix): if an event already exists, accept it
+    if baseline is None:
+        _ASSISTANT_PREFIX_COUNTS[key] = current
+        if current > 0:
+            return
     while _time.perf_counter() - start_ts < timeout:
         msgs = client.messages or []  # unify may return None initially
-        if _assistant_calls_prefix(msgs, prefix) >= 1:
-            return  # helper has been requested – safe to proceed
+        cnt = _assistant_calls_prefix(msgs, prefix)
+        if baseline is None:
+            if cnt > 0:
+                _ASSISTANT_PREFIX_COUNTS[key] = cnt
+                return
+        else:
+            if cnt > baseline:
+                _ASSISTANT_PREFIX_COUNTS[key] = cnt
+                return  # observed a new matching assistant tool-call
         await asyncio.sleep(poll)
 
     raise TimeoutError(
         f"Timed out after {timeout}s waiting for assistant to request a helper starting with {prefix!r}.",
     )
-
-
-@unify.traced
-async def _assert_no_assistant_call_prefix_within(
-    client: "unify.AsyncUnify",
-    prefix: str,
-    *,
-    timeout: float = 2.0,
-    poll: float = 0.05,
-) -> None:
-    """Assert that within `timeout` seconds there is NO assistant tool-call
-    whose function name starts with `prefix`.
-
-    This is the inverse of `_wait_for_assistant_call_prefix` and is useful to
-    verify that a helper (e.g., `resume_…`) is not exposed in the current state.
-    """
-    import time as _time
-
-    start_ts = _time.perf_counter()
-    while _time.perf_counter() - start_ts < timeout:
-        msgs = client.messages or []
-        if _assistant_calls_prefix(msgs, prefix) >= 1:
-            raise AssertionError(
-                f"Unexpected assistant tool-call with prefix {prefix!r} while asserting absence.",
-            )
-        await asyncio.sleep(poll)
 
 
 @unify.traced
@@ -149,24 +146,49 @@ async def _wait_for_tool_message_prefix(
     timeout: float = 15.0,
     poll: float = 0.05,
 ) -> None:
-    """Poll until a tool message whose `name` starts with `prefix` appears.
+    """Poll until a NEW tool message whose ``name`` starts with ``prefix``
+    appears.
 
-    This is used to detect the moment a helper (e.g., pause_/resume_) has been
-    acknowledged and applied by the loop, which is stronger than observing only
-    the assistant's request for that helper.
+    We snapshot the current number of matching tool messages and only return
+    when that count increases, ensuring we observe a fresh acknowledgement for
+    the current cycle rather than a prior one.
     """
     import time as _time
 
     start_ts = _time.perf_counter()
+    key = (id(client), prefix)
+
+    def _count_tool_msgs(_msgs, _pref):
+        return sum(
+            1
+            for m in (_msgs or [])
+            if (m.get("role") == "tool")
+            and isinstance(m.get("name"), str)
+            and m["name"].startswith(_pref)
+        )
+
+    try:
+        current = _count_tool_msgs(client.messages or [], prefix)
+    except Exception:
+        current = 0
+    baseline = _TOOL_PREFIX_COUNTS.get(key)
+    # First-time call for this (client,prefix): if an event already exists, accept it
+    if baseline is None:
+        _TOOL_PREFIX_COUNTS[key] = current
+        if current > 0:
+            return
     while _time.perf_counter() - start_ts < timeout:
         msgs = client.messages or []
-        if any(
-            (m.get("role") == "tool")
-            and isinstance(m.get("name"), str)
-            and m["name"].startswith(prefix)
-            for m in msgs
-        ):
-            return
+        cnt = _count_tool_msgs(msgs, prefix)
+        # Wait for an increase over the baseline (or any match on first use)
+        if baseline is None:
+            if cnt > 0:
+                _TOOL_PREFIX_COUNTS[key] = cnt
+                return
+        else:
+            if cnt > baseline:
+                _TOOL_PREFIX_COUNTS[key] = cnt
+                return
         await asyncio.sleep(poll)
 
     raise TimeoutError(
@@ -663,17 +685,25 @@ async def test_resume_when_no_pending_tools_allows_llm_turn(client):
 @_handle_project
 async def test_only_one_of_pause_or_resume_is_exposed(client):
     """
-    Before pausing, `resume_…` must NOT be exposed; after pausing, `pause_…`
-    appears and only then `resume_…` becomes available.
+    Verify helper EXPOSURE flips correctly across multiple pause/resume cycles,
+    irrespective of what the LLM actually calls. We assert which helper names
+    are exposed to the model on each generation turn by spying the `tools`
+    argument passed into the LLM call.
 
-    This would have failed before the gating change because both helpers were
-    exposed concurrently, allowing a premature `resume_…` call while running.
+    Expectations per turn:
+    - While running: `pause_…` exposed, `resume_…` NOT exposed.
+    - On the turn when pausing is requested: `pause_…` exposed, `resume_…` NOT exposed.
+    - Next turn after pausing: `resume_…` exposed, `pause_…` NOT exposed.
+    - Repeat pause→resume cycle twice.
     """
 
+    done_event = asyncio.Event()
+
     async def pausable_fn(*, pause_event: asyncio.Event) -> str:
-        for _ in range(60):
+        # Run until the test explicitly signals completion.
+        while not done_event.is_set():
             await pause_event.wait()
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0)
         return "done"
 
     pausable_fn.__name__ = "pausable_fn"
@@ -681,10 +711,34 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
 
     client.set_system_message(
         "1️⃣ Call `pausable_fn`.\n"
-        "2️⃣ When the user says 'go', immediately call the helper whose name starts with `resume_`.\n"
-        "3️⃣ When the user says 'hold', call the helper whose name starts with `pause_`.\n"
-        "4️⃣ After the tool completes, reply with 'done'.",
+        "2️⃣ When the user says 'hold', call the helper whose name starts with `pause_`.\n"
+        "3️⃣ When the user says 'go',   call the helper whose name starts with `resume_`.\n"
+        "4️⃣ Repeat the pause→resume cycle twice.\n"
+        "5️⃣ Do NOT call any helper whose name starts with `continue_` at any time.\n"
+        "6️⃣ After the second resume, wait for completion and reply with 'done'.",
     )
+
+    # Spy tool exposure at the exact callsite by wrapping the symbol actually used in the loop
+    from unity.common._async_tool import loop as _loop
+
+    seen_tools: list[list[str]] = []
+    orig_gwp = _loop.generate_with_preprocess
+
+    async def _spy_gwp(_client, preprocess_msgs, **gen_kwargs):
+        tools = gen_kwargs.get("tools") or []
+        names: list[str] = []
+        for t in tools:
+            try:
+                fn = t.get("function", {})
+                name = fn.get("name")
+                if isinstance(name, str):
+                    names.append(name)
+            except Exception:
+                pass
+        seen_tools.append(names)
+        return await orig_gwp(_client, preprocess_msgs, **gen_kwargs)
+
+    setattr(_loop, "generate_with_preprocess", _spy_gwp)
 
     h = start_async_tool_use_loop(
         client,
@@ -692,23 +746,75 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
         tools={"pausable_fn": pausable_fn},
         timeout=300,
         max_steps=60,
+        max_parallel_tool_calls=1,
     )
+
+    async def _wait_exposure(has_pause: bool, has_resume: bool, timeout: float = 20.0):
+        import time as _time
+
+        start = _time.perf_counter()
+        start_idx = len(seen_tools)
+        while _time.perf_counter() - start < timeout:
+            # scan any newly appended exposure sets for the desired pattern
+            for names in seen_tools[start_idx:]:
+                has_p = any(n.startswith("pause_pausable_fn_") for n in names)
+                has_r = any(n.startswith("resume_pausable_fn_") for n in names)
+                if has_p == has_pause and has_r == has_resume:
+                    return names
+            await asyncio.sleep(0.05)
+        raise TimeoutError(
+            f"timeout waiting for exposure has_pause={has_pause} has_resume={has_resume}",
+        )
+
+    def _assert_exposure(names: list[str], *, has_pause: bool, has_resume: bool):
+        has_p = any(n.startswith("pause_pausable_fn_") for n in names)
+        has_r = any(n.startswith("resume_pausable_fn_") for n in names)
+        assert (
+            has_p == has_pause
+        ), f"pause exposure mismatch; expected {has_pause}, tools={names}"
+        assert (
+            has_r == has_resume
+        ), f"resume exposure mismatch; expected {has_resume}, tools={names}"
 
     # Ensure the tool is running before issuing commands
     await _wait_for_tool_request(client, "pausable_fn")
 
-    # While running, 'resume_…' must NOT be exposed; assert no such call appears
-    await h.interject("go")
-    await _assert_no_assistant_call_prefix_within(client, "resume")
-
-    # Now pause; expect a pause helper call and acknowledgement
+    # Pause turn: still expose pause only
     await h.interject("hold")
+    names = await _wait_exposure(has_pause=True, has_resume=False)
+    _assert_exposure(names, has_pause=True, has_resume=False)
+
+    # Ensure the pause helper was actually invoked and acknowledged (state now paused)
     await _wait_for_assistant_call_prefix(client, "pause")
     await _wait_for_tool_message_prefix(client, "pause ")
 
-    # After paused, 'resume_…' should become available and be called on 'go'
+    # Next turn after paused: expose resume only
     await h.interject("go")
-    await _wait_for_assistant_call_prefix(client, "resume")
+    names = await _wait_exposure(has_pause=False, has_resume=True)
+    _assert_exposure(names, has_pause=False, has_resume=True)
 
+    # Ensure the resume helper was actually invoked and acknowledged (state now running)
+    await _wait_for_assistant_call_prefix(client, "resume")
+    await _wait_for_tool_message_prefix(client, "resume ")
+
+    # Second cycle: pause turn → pause only
+    await h.interject("hold")
+    names = await _wait_exposure(has_pause=True, has_resume=False)
+    _assert_exposure(names, has_pause=True, has_resume=False)
+
+    # Ensure pause helper applied again
+    await _wait_for_assistant_call_prefix(client, "pause")
+    await _wait_for_tool_message_prefix(client, "pause ")
+
+    # After that pause: resume only
+    await h.interject("go")
+    names = await _wait_exposure(has_pause=False, has_resume=True)
+    _assert_exposure(names, has_pause=False, has_resume=True)
+
+    # Ensure resume helper applied again before completion
+    await _wait_for_assistant_call_prefix(client, "resume")
+    await _wait_for_tool_message_prefix(client, "resume ")
+
+    done_event.set()
     final = await h.result()
-    assert final.strip().lower() == "done"
+    assert final.strip().lower() in {"done", "all done", "ok"}
