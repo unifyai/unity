@@ -208,6 +208,7 @@ class ToolsData:
         sig_accepts_clar_qs = (
             "clarification_up_q" in params and "clarification_down_q" in params
         ) or has_varkw
+        sig_accepts_progress = "progress_up_q" in params or has_varkw
 
         pause_ev: Optional[asyncio.Event] = None
         if sig_accepts_pause_event:
@@ -222,6 +223,11 @@ class ToolsData:
             clar_down_q = asyncio.Queue()
             extra_kwargs["clarification_up_q"] = clar_up_q
             extra_kwargs["clarification_down_q"] = clar_down_q
+
+        progress_q: Optional[asyncio.Queue[dict]] = None
+        if sig_accepts_progress:
+            progress_q = asyncio.Queue()
+            extra_kwargs["progress_up_q"] = progress_q
 
         sub_q: Optional[asyncio.Queue[str]] = None
         if sig_accepts_interject_q:
@@ -271,6 +277,7 @@ class ToolsData:
             chat_context=extra_kwargs.get("parent_chat_context"),
             clar_up_queue=clar_up_q,
             clar_down_queue=clar_down_q,
+            progress_queue=progress_q,
             pause_event=pause_ev,
             # Debug helpers for failure logging
             tool_schema=method_to_schema(fn, name),

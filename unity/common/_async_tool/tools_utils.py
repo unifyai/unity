@@ -25,6 +25,8 @@ class ToolCallMetadata:
     interject_queue: asyncio.Queue[str] | None = None
     clar_up_queue: asyncio.Queue[str] | None = None
     clar_down_queue: asyncio.Queue[str] | None = None
+    # Optional progress stream emitted by tools; payload is a dict with arbitrary fields
+    progress_queue: asyncio.Queue[dict] | None = None
     pause_event: asyncio.Event | None = None
     scheduled_time: float = field(default_factory=time.perf_counter)
 
@@ -43,3 +45,20 @@ def create_tool_call_message(name: str, call_id: str, content: str) -> ToolCallM
         "name": name,
         "content": content,
     }
+
+
+# Optional typed event payloads exposed via the outer handle
+class ClarificationEvent(TypedDict):
+    type: Literal["clarification"]
+    call_id: str
+    tool_name: str
+    question: str
+
+
+class ProgressEvent(TypedDict, total=False):
+    type: Literal["progress"]
+    call_id: str
+    tool_name: str
+    message: str
+    percent: float
+    meta: Any
