@@ -11,7 +11,7 @@ import json
 import os
 import threading
 import functools
-from typing import List, Optional
+from typing import List, Optional, Callable, Any
 
 import unify
 
@@ -189,11 +189,19 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        # Optional: customise how the SimulatedActor is constructed per execute()
+        actor_factory: Optional[Callable[..., Any]] = None,
+        actor_steps: Optional[int] = None,
+        actor_duration: Optional[float] = None,
     ) -> None:
         self._description = description
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
+        # Actor configuration (optional)
+        self._actor_factory: Optional[Callable[..., Any]] = actor_factory
+        self._actor_steps: Optional[int] = actor_steps
+        self._actor_duration: Optional[float] = actor_duration
 
         # One shared, *stateful* LLM for *everything*
         self._llm = unify.AsyncUnify(
@@ -398,13 +406,24 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             )
 
         task_description = f"{text} (simulated)"
-        from ..actor.simulated import SimulatedActor
 
-        actor = SimulatedActor(
-            duration=10,
-            _requests_clarification=_requests_clarification,
-            simulation_guidance=self._simulation_guidance,
-        )
+        # Build actor with configured defaults or via a custom factory
+        actor_kwargs = {
+            # Respect scheduler-level defaults when provided
+            "steps": self._actor_steps,
+            "duration": self._actor_duration,
+            "_requests_clarification": _requests_clarification,
+            "simulation_guidance": self._simulation_guidance,
+        }
+        # Drop None values so defaults are not forced
+        actor_kwargs = {k: v for k, v in actor_kwargs.items() if v is not None}
+
+        if self._actor_factory is not None:
+            actor = self._actor_factory(**actor_kwargs)
+        else:
+            from ..actor.simulated import SimulatedActor
+
+            actor = SimulatedActor(**actor_kwargs)
         handle = await actor.act(
             task_description,
             parent_chat_context=parent_chat_context,
