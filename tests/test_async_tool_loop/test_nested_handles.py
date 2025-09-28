@@ -291,7 +291,7 @@ async def test_interject_nested_handle(monkeypatch):
         "1️⃣  Call `outer_tool`.\n"
         "2️⃣  When the *user* says 'switch to dogs', call the helper whose "
         'name starts with `_interject_` and pass `{ "content": "dogs" }`.\n'
-        "2️⃣b Immediately call the `wait` helper to keep waiting.\n"
+        "2️⃣b If waiting is still needed, call the `wait` helper; otherwise continue.\n"
         "3️⃣  Do not produce any other reply until the work completes.\n"
         "4️⃣  Finally, reply with 'outer done'.",
     )
@@ -497,7 +497,7 @@ async def test_clarification_nested_handle():
     )
     client.set_system_message(
         "Call `outer_tool`.  When the tool asks a question, answer **only** with 'blue' via the provided helper.\n"
-        "Immediately call the `wait` helper to keep waiting and do not reply to the user yet.\n"
+        "If waiting is still needed, call the `wait` helper; do not reply to the user yet.\n"
         "Finally say 'all done'.",
     )
 
@@ -721,7 +721,7 @@ async def test_pause_nested_loop_calls_pause():
         "1️⃣  Call `dummy_long_job`.\n"
         "2️⃣  When the *user* says **pause**, call the helper whose name "
         "starts with `_pause_`.\n"
-        "2️⃣b Immediately call the `wait` helper to keep waiting.\n"
+        "2️⃣b If waiting is still needed, call the `wait` helper.\n"
         "3️⃣  Keep waiting for the job to finish and do not produce any other reply; then reply with 'paused done'.",
     )
 
@@ -1024,7 +1024,7 @@ async def test_dynamic_handle_public_method():
         "2️⃣  When the *user* asks **progress?**, call the helper whose name "
         "starts with `ask_` exactly once.\n"
         "3️⃣  After calling the `ask_…` helper, do not reply to the user yet. "
-        "Immediately call the `wait` helper to keep waiting.\n"
+        "If waiting is still needed, call the `wait` helper.\n"
         "4️⃣  Only once the computation finishes, answer **only** with 'all done'",
     )
 
