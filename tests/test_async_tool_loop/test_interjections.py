@@ -187,9 +187,9 @@ async def test_stop_stops_gracefully():
 @_handle_project
 async def test_backfills_missing_tool_reply_for_helper_call() -> None:
     """
-    Pre-seed transcript with an assistant helper tool_call (e.g. wait)
-    but no tool reply. The loop must backfill an acknowledgement tool message
-    directly after that assistant turn so API ordering is satisfied.
+    Pre-seed transcript with an assistant helper tool_call (e.g. wait).
+    New behaviour: helper `wait` is pruned (no backfilled tool reply, no chat clutter).
+    The pre-seeded assistant helper turn should be removed, and no tool reply should appear.
     """
     client = new_client()
 
@@ -214,34 +214,28 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
         tools={},  # helpers are acknowledged during backfill without execution
     )
 
-    # Wait until the assistant turn is present and a backfilled tool reply appears after it
-    assistant_idx: int | None = None
+    # Allow the loop to process backfill/pruning
     for _ in range(60):
         await asyncio.sleep(0.05)
-        for i, m in enumerate(client.messages or []):
-            if (
-                m.get("role") == "assistant"
-                and m.get("tool_calls")
-                and any(tc.get("id") == helper_call_id for tc in m["tool_calls"])
-            ):
-                assistant_idx = i
-                break
-        if assistant_idx is not None and len(client.messages) > assistant_idx + 1:
+        if client.messages:
             break
 
-    assert assistant_idx is not None, "helper assistant turn not found in transcript"
-    assert (assistant_idx + 1) < len(client.messages)
+    # The pre-seeded helper assistant turn should be pruned
+    assert assistant_msg not in client.messages
 
-    next_msg = client.messages[assistant_idx + 1]
-    assert (
-        next_msg.get("role") == "tool"
-    ), "expected a backfilled tool reply after helper call"
-    assert (
-        next_msg.get("tool_call_id") == helper_call_id
-    ), "backfilled tool reply must match helper tool_call_id"
-    assert (
-        next_msg.get("name") == helper_name
-    ), "ack tool message should use the helper tool name"
+    # No assistant message should contain the helper tool_call id
+    assert not any(
+        m.get("role") == "assistant"
+        and m.get("tool_calls")
+        and any(tc.get("id") == helper_call_id for tc in m["tool_calls"])
+        for m in client.messages
+    )
+
+    # No tool reply should reference the helper call id
+    assert not any(
+        m.get("role") == "tool" and m.get("tool_call_id") == helper_call_id
+        for m in client.messages
+    )
 
     # Cleanly stop the loop
     handle.stop()
