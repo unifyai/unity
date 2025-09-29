@@ -99,7 +99,7 @@ class SecretManager(BaseSecretManager):
         # Unify storage is the single source of truth for secrets
 
     # --------------------- Public API --------------------- #
-    async def resolve(self, text: str) -> str:
+    async def from_placeholder(self, text: str) -> str:
         """Resolve ${name} placeholders in text to raw secret values (no LLM).
 
         Notes
@@ -124,7 +124,7 @@ class SecretManager(BaseSecretManager):
             await publish_manager_method_event(
                 call_id,
                 "SecretManager",
-                "resolve",
+                "from_placeholder",
                 phase="incoming",
                 query=text,
             )
@@ -140,7 +140,7 @@ class SecretManager(BaseSecretManager):
                 await publish_manager_method_event(
                     call_id,
                     "SecretManager",
-                    "resolve",
+                    "from_placeholder",
                     phase="outgoing",
                     status="resolved",
                 )
@@ -148,6 +148,91 @@ class SecretManager(BaseSecretManager):
             pass
 
         return resolved
+
+    async def to_placeholder(self, text: str) -> str:
+        """Convert a secret values in text to a placeholder.
+
+        Parameters
+        ----------
+        text : str
+            The text to convert secret values to placeholders.
+
+        Returns
+        -------
+        str
+            The text with secret values converted to placeholders.
+        """
+        # Best-effort metadata-only logging; never include raw text or values
+        call_id: str | None = None
+        try:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "SecretManager",
+                "to_placeholder",
+                phase="incoming",
+                info="start",
+            )
+        except Exception:
+            pass
+
+        # Build a mapping from raw value → name using current storage
+        try:
+            rows = unify.get_logs(
+                context=self._ctx,
+                from_fields=["name", "value"],
+            )
+            if not rows:
+                rows = unify.get_logs(context=self._ctx)
+        except Exception:
+            rows = []
+
+        value_to_name: Dict[str, str] = {}
+        for lg in rows:
+            try:
+                nm = (lg.entries or {}).get("name")
+                val = (lg.entries or {}).get("value")
+                if isinstance(nm, str) and nm and isinstance(val, str) and val:
+                    # If duplicate values exist, prefer lexicographically smallest name
+                    if val in value_to_name:
+                        if nm < value_to_name[val]:
+                            value_to_name[val] = nm
+                    else:
+                        value_to_name[val] = nm
+            except Exception:
+                continue
+
+        # Replace longer values first to avoid partial overlaps
+        import re
+
+        ordered_values = sorted(value_to_name.keys(), key=len, reverse=True)
+        replaced_names: set[str] = set()
+        result = text
+        total_replacements = 0
+        for val in ordered_values:
+            name = value_to_name[val]
+            pattern = re.escape(val)
+            placeholder = f"${{{name}}}"
+            result, count = re.subn(pattern, placeholder, result)
+            if count:
+                total_replacements += count
+                replaced_names.add(name)
+
+        try:
+            if call_id is not None:
+                await publish_manager_method_event(
+                    call_id,
+                    "SecretManager",
+                    "to_placeholder",
+                    phase="outgoing",
+                    status="converted",
+                    replacements=total_replacements,
+                    names=sorted(replaced_names),
+                )
+        except Exception:
+            pass
+
+        return result
 
     @functools.wraps(BaseSecretManager.ask, updated=())
     @log_manager_call("SecretManager", "ask", payload_key="question")
@@ -161,6 +246,12 @@ class SecretManager(BaseSecretManager):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
+        # First, replace any known raw secret values with placeholders
+        try:
+            text = await self.to_placeholder(text)
+        except Exception:
+            pass
+
         client = unify.AsyncUnify(
             "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -246,6 +337,12 @@ class SecretManager(BaseSecretManager):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
+        # First, replace any known raw secret values with placeholders
+        try:
+            text = await self.to_placeholder(text)
+        except Exception:
+            pass
+
         client = unify.AsyncUnify(
             "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
