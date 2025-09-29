@@ -158,7 +158,10 @@ jobs:
         # 6) Install spaCy model
         uv pip install $(spacy info en_core_web_sm --url)
 
-        # 7) cleanup
+        # 7) install pytest-xdist
+        uv pip install pytest-xdist
+
+        # 8) cleanup
         rm temp_requirements.txt
 
     - name: Restore .cache.ndjson
@@ -176,6 +179,8 @@ jobs:
           --timeout=${{ inputs.test_timeout || 240 }} \
           -p no:warnings \
           -vv \
+          -n auto \
+          --dist=loadfile \
           --durations=${{ inputs.test_show_slowest || 20 }} \
           --log-cli-level=${{ inputs.test_cli_log_level || 'ERROR' }} \
           --log-file-level=${{ inputs.test_log_file_level || 'INFO' }} \
@@ -197,7 +202,7 @@ jobs:
         UNIFY_DELETE_CONTEXT_ON_EXIT: false
         UNIFY_OVERWRITE_PROJECT: true
         UNIFY_CACHE_BENCHMARK: true
-        UNIFY_PRETEST_CONTEXT_CREATE: true
+        UNIFY_PRETEST_CONTEXT_CREATE: false
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
         FIRST_NAME: Rick
