@@ -147,6 +147,8 @@ def clean_tool_trajectory(msgs):
             for tool_call in msg.get("tool_calls"):
                 if (id := tool_call.get("id")) in _flatten_tools.keys():
                     tool_call_content = _flatten_tools[id].get("content")
+                    if _flatten_tools[id].get("name") == "semantic_search":
+                        continue
                     new_tool_call = {
                         "name": _flatten_tools[id].get("name"),
                         "arguments": tool_call.get("function", {}).get("arguments"),
