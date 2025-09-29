@@ -1,7 +1,8 @@
 import unify
 import json
-
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
 
 if TYPE_CHECKING:
     from unity.common._async_tool.tools_data import ToolsData
@@ -11,6 +12,13 @@ from ..semantic_search import escape_single_quotes
 
 _USER_MESSAGE_EMBEDDING_FIELD_NAME = "user_message_emb"
 _EMBED_MODEL = "text-embedding-3-small"
+
+
+@dataclass
+class SemanticCacheResult:
+    original_user_message: str
+    closest_match: str
+    tool_trajectory: list[dict]
 
 
 # Dummy tool placeholder (used by async_tool_loop_inner)
@@ -28,8 +36,8 @@ def get_hint():
     """
 
 
-def get_dummy_tool(user_query, closest_match, tools: "ToolsData"):
-    history = json.loads(closest_match.entries["tool_trajectory"])
+def get_dummy_tool(semantic_cache_result: SemanticCacheResult, tools: "ToolsData"):
+    history = semantic_cache_result.tool_trajectory
     for tool_call in history:
         if (tool_name := tool_call.get("name")) in tools.normalized:
             try:
@@ -50,7 +58,7 @@ def get_dummy_tool(user_query, closest_match, tools: "ToolsData"):
             {
                 "id": call_id,
                 "function": {
-                    "arguments": f"{user_query}",
+                    "arguments": f"{semantic_cache_result.original_user_message}",
                     "name": "semantic_search",
                 },
                 "type": "function",
@@ -184,6 +192,10 @@ def get_tool_trajectory(user_message):
     )
 
     if logs:
-        return logs[0]
+        return SemanticCacheResult(
+            original_user_message=user_message,
+            closest_match=logs[0].entries["user_message"],
+            tool_trajectory=json.loads(logs[0].entries["tool_trajectory"]),
+        )
 
     return None
