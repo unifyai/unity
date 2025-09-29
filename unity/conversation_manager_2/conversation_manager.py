@@ -396,11 +396,17 @@ class ConversationManager:
                             datetime.now(),
                         )
 
-                    await self.event_broker.publish(
-                        "app:comms:call_initiated",
-                        PhoneCallSent(contact=contact.number).to_json(),
-                    )
-                    await _start_call(self.assistant_number, contact.number)
+                    res = await _start_call(self.assistant_number, contact.number)
+                    if not res["success"]:
+                        await self.event_broker.publish(
+                            "app:comms:error",
+                            Error(res["error"]).to_json(),
+                        )
+                    else:
+                        await self.event_broker.publish(
+                            "app:comms:call_initiated",
+                            PhoneCallSent(contact=contact.number).to_json(),
+                        )
 
         self.chat_history.append(input_message[0])
         self.chat_history.append({"role": "assistant", "content": out})
