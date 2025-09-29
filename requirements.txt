@@ -24,7 +24,6 @@ pydantic-core>=2.0.0
 pygments
 pytest
 pytest-html
-pytest-xdist
 python-dotenv>=1.0.0
 redis
 requests>=2.31.0

@@ -158,7 +158,10 @@ jobs:
         # 6) Install spaCy model
         uv pip install $(spacy info en_core_web_sm --url)
 
-        # 7) cleanup
+        # 7) install pytest-xdist
+        uv pip install pytest-xdist
+
+        # 8) cleanup
         rm temp_requirements.txt
 
     - name: Restore .cache.ndjson

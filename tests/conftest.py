@@ -317,6 +317,11 @@ def pytest_configure(config):
         config.option.showcapture = "no"
         config.option.capture = "no"
 
+    # Enable xdist only on CI
+    if os.environ.get("CI"):
+        setattr(config.option, "numprocesses", "auto")
+        setattr(config.option, "dist", "loadfile")
+
     config.stash[metadata_key]["Settings"] = SETTINGS.model_dump()
 
 
