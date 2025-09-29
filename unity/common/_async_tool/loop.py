@@ -323,12 +323,18 @@ async def async_tool_use_loop_inner(
 
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     # Initialise loop state early so preflight backfill can schedule tasks
-    if semantic_cache and (closest_match := sc.get_tool_trajectory(message)):
-        logger.info(f"Semantic cache hit: {closest_match}", prefix="🔍")
-        msgs = sc.get_dummy_tool(closest_match, tools_data)
-        client.append_messages(msgs)
-        client.set_system_message((client.system_message or "") + sc.get_hint())
-        tools_data.normalized["semantic_search"] = ToolSpec(fn=sc.semantic_search)
+    if semantic_cache:
+        if closest_match := sc.get_tool_trajectory(message):
+            logger.info(f"Semantic cache hit: {closest_match}", prefix="🔍")
+            msgs = sc.get_dummy_tool(closest_match, tools_data)
+            client.append_messages(msgs)
+            client.set_system_message((client.system_message or "") + sc.get_hint())
+            tools_data.normalized["semantic_search"] = ToolSpec(fn=sc.semantic_search)
+        else:
+            logger.info(
+                "Semantic cache miss, no entry for the user message",
+                prefix="🔍",
+            )
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
