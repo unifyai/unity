@@ -321,14 +321,14 @@ async def async_tool_use_loop_inner(
     #   by comparing the live count with max_concurrent.
     # -----------------------------------------------------------------------
 
+    tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     # Initialise loop state early so preflight backfill can schedule tasks
     if semantic_cache and (closest_match := sc.get_tool_trajectory(message)):
-        tools["semantic_search"] = sc.semantic_search
-        msgs = sc.get_dummy_tool(message, closest_match)
+        msgs = sc.get_dummy_tool(message, closest_match, tools_data)
         client.append_messages(msgs)
         client.set_system_message((client.system_message or "") + sc.get_hint())
+        tools_data.normalized["semantic_search"] = ToolSpec(fn=sc.semantic_search)
 
-    tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn

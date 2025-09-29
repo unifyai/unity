@@ -1,5 +1,11 @@
 import unify
 import json
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from unity.common._async_tool.tools_data import ToolsData
+
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
 
@@ -22,8 +28,16 @@ def get_hint():
     """
 
 
-def get_dummy_tool(user_query, closest_match):
+def get_dummy_tool(user_query, closest_match, tools: "ToolsData"):
     history = json.loads(closest_match.entries["tool_trajectory"])
+    for tool_call in history:
+        if (tool_name := tool_call.get("name")) in tools.normalized:
+            try:
+                args = json.loads(tool_call.get("arguments"))
+                tool_call["result"] = tools.normalized[tool_name].fn(**args)
+            except Exception as e:
+                continue
+
     call_id = f"call_MyCall"
     dummy_tool_call = {
         "content": None,
