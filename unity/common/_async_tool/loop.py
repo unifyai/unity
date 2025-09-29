@@ -787,8 +787,9 @@ async def async_tool_use_loop_inner(
                         except Exception:
                             pass
 
-                    # let the assistant answer immediately
+                    # let the assistant answer immediately; clear suppression
                     llm_turn_required = True
+                    suppress_llm_until_event = False
                     continue
 
                 # ── progress update bubbled up from a child tool (non-blocking) ─────
@@ -861,6 +862,7 @@ async def async_tool_use_loop_inner(
                             pass
                     # Require an immediate LLM turn (same behaviour as clarification)
                     llm_turn_required = True
+                    suppress_llm_until_event = False
 
                 needs_turn = False
                 # Only process completion for actual tool tasks; exclude helper waiters
@@ -875,9 +877,10 @@ async def async_tool_use_loop_inner(
                         needs_turn = True
 
                 # Other tools may still be running.
+                if needs_turn:
+                    llm_turn_required = True
+                    suppress_llm_until_event = False
                 if tools_data.pending:
-                    if needs_turn:  # only when something new
-                        llm_turn_required = True
                     continue  # jump to top-of-loop
 
             # ── B: wait for remaining tools before asking the LLM again,
@@ -1298,12 +1301,13 @@ async def async_tool_use_loop_inner(
                                 for c in calls
                                 if c.get("function", {}).get("name") != "wait"
                             ]
-                            if (
-                                not remaining_calls
-                                and not (msg.get("content") or "").strip()
-                            ):
-                                if client.messages and client.messages[-1] is msg:
-                                    client.messages.pop()
+                            content_present = bool((msg.get("content") or "").strip())
+                            if not remaining_calls:
+                                if not content_present:
+                                    if client.messages and client.messages[-1] is msg:
+                                        client.messages.pop()
+                                else:
+                                    msg.pop("tool_calls", None)
                             else:
                                 msg["tool_calls"] = remaining_calls
                         except Exception:
@@ -1757,27 +1761,11 @@ async def async_tool_use_loop_inner(
             #     flight; loop back to wait for them.
             #   • `pending` empty        → the model just produced a plain
             #     assistant message; nothing more to do – return it.
-            if tools_data.pending:  # still running – stop them proactively, then finish
-                try:
-                    for t in list(tools_data.pending):
-                        with suppress(Exception):
-                            info_t = tools_data.info.get(t)
-                            if (
-                                info_t is not None
-                                and (nested_handle := info_t.handle) is not None
-                                and hasattr(
-                                    nested_handle,
-                                    "stop",
-                                )
-                            ):
-                                await maybe_await(nested_handle.stop())
-                        if not t.done():
-                            t.cancel()
-                    await asyncio.gather(*tools_data.pending, return_exceptions=True)
-                except Exception:
-                    pass
-                finally:
-                    tools_data.pending.clear()
+            if tools_data.pending:  # still running
+                suppress_llm_until_event = (
+                    False  # allow a new turn once something finishes
+                )
+                continue  # wait for completions, then prompt LLM
 
             # ── timeout guard (final turn) ──────────────────────────────────
             if timer.has_exceeded_time():
