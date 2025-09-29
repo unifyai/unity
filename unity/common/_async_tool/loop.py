@@ -1313,8 +1313,10 @@ async def async_tool_use_loop_inner(
                         except Exception:
                             pass
 
-                        # Avoid immediately asking the LLM again when nothing is running.
-                        suppress_llm_until_event = True
+                        # Avoid immediately asking the LLM again only when there are
+                        # still pending tasks to wait on. If nothing is pending, do
+                        # not suppress – the LLM should produce the next response.
+                        suppress_llm_until_event = bool(tools_data.pending)
                         continue
 
                     if name.startswith("stop_") and not name.startswith(
