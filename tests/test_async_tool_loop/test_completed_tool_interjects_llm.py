@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import pytest
 import unify
 
@@ -40,23 +41,18 @@ async def very_slow_task() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_llm_keeps_intermediate_reasoning_when_other_tool_is_very_slow() -> None:
+async def test_wait_called_and_pruned_when_other_tool_is_very_slow(caplog) -> None:
     """
-    Both tools are requested in the same assistant turn. The fast task typically
-    completes first and can trigger an intermediate assistant reasoning turn, and
-    once the very slow task completes the final assistant reply is produced.
+    When two tools are requested in one turn and only the fast one completes,
+    the model will choose the `wait` helper to no-op until the very slow tool
+    finishes. We assert that:
 
-    Expected role shape (excluding any synthetic check_status_* status stubs):
+    - `wait` was indeed called (via log capture), and
+    - `wait` does not appear in the final transcript (pruned from messages).
 
-        0 user
-        1 assistant  (tool_calls: fast & very_slow)
-        2 tool       (fast_task)
-        3 assistant  (intermediate reasoning)
-        4 tool       (very_slow_task)
-        5 assistant  (final answer)
-
-    The test asserts three tool messages and requires three assistant turns,
-    while also checking there is an assistant message between the two tool results.
+    We still expect at least the initial assistant turn and final answer, and at
+    least two tool messages (placeholder + fast result), but do not require an
+    intermediate assistant message as it may be pruned when using `wait`.
     """
 
     system_prompt = (
@@ -80,9 +76,9 @@ async def test_llm_keeps_intermediate_reasoning_when_other_tool_is_very_slow() -
         interrupt_llm_with_interjections=True,
     )
 
+    caplog.set_level(logging.INFO)
+    caplog.clear()
     await handle.result()
-
-    roles = [m["role"] for m in client.messages]
 
     # ── Assertions ───────────────────────────────────────────────────────
 
@@ -109,26 +105,31 @@ async def test_llm_keeps_intermediate_reasoning_when_other_tool_is_very_slow() -
         m for m in client.messages if m.get("role") == "tool" and not is_status_tool(m)
     ]
 
-    # Counts (excluding status stubs): with pre-emption disabled, we expect an
-    # intermediate reasoning turn: three assistants and three tools.
-    assert len(non_stub_tools) == 3
-    assert len(non_stub_assistants) == 3
-
-    # Ensure at least one assistant message lies *between* the two tool results
-    # (exclude status stubs) – this validates the intermediate reasoning turn.
-    tool_indices = [
-        i
-        for i, m in enumerate(client.messages)
-        if m.get("role") == "tool" and not is_status_tool(m)
-    ]
-    assert len(tool_indices) == 3
-    fast_tool, pending_slow_tool, completed_slow_tool = sorted(tool_indices)
-
-    # There must be an assistant index strictly between them
+    # 1) Assert that `wait` was called (via loop logger)
     assert any(
-        m.get("role") == "assistant" and not is_status_assistant(m)
-        for m in client.messages[fast_tool + 1 : completed_slow_tool]
+        "Assistant chose `wait` – no-op; not persisting to transcript."
+        in r.getMessage()
+        for r in caplog.records
     )
+
+    # 2) Assert that `wait` is not persisted in the transcript
+    #    - no assistant tool_call with function name 'wait'
+    assert all(
+        all(
+            tc.get("function", {}).get("name") != "wait"
+            for tc in (m.get("tool_calls") or [])
+        )
+        for m in client.messages
+        if m.get("role") == "assistant"
+    )
+    #    - no tool message named 'wait'
+    assert all(
+        m.get("name") != "wait" for m in client.messages if m.get("role") == "tool"
+    )
+
+    # Basic health checks (non‑strict): initial + final assistants and at least two tools
+    assert len(non_stub_assistants) >= 2
+    assert len(non_stub_tools) >= 2
 
     # Tool names include fast & very_slow; placeholder duplicates don't hurt
     tool_names = {m["name"] for m in client.messages if m["role"] == "tool"}
