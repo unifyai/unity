@@ -24,8 +24,23 @@ class SemanticCacheResult:
 # Dummy tool placeholder (used by async_tool_loop_inner)
 def semantic_search(user_message: str):
     """
-    Retrieve and return a closest match of the user request if any, this includes tools called and their newly computed results,
-    Prefer using tool results instead of creating new tool calls
+    Search a semantic cache for prior solutions relevant to the given user_message.
+
+    Workflow:
+    1. Performs a semantic search over cached user messages using embeddings keyed by the
+       provided user_message.
+    2. Returns the ordered tool trajectory previously used to answer a similar message.
+       For each step, the tool is re-executed with the stored arguments to compute
+       fresh results (avoiding stale data), and the original order is preserved.
+
+    Usage guidance:
+    - Prefer these returned results over issuing new tool calls for the same purpose.
+    - The tools may or may not fully resolve the request; use judgment to synthesize an
+      answer from these results before deciding to call additional tools.
+
+    Input: user_message (str)
+    Output: List[dict] with entries of the form {"name", "arguments", "result"},
+            in execution order.
     """
 
 
