@@ -104,7 +104,7 @@ jobs:
 
   pytest:
     name: pytest (${{ matrix.test_path }})
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest-8-cores
     environment: unity-testing
     timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 130 }}
     needs: discover
