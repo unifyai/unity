@@ -3,6 +3,7 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
 )
 from unity.actor.tool_loop_actor import ToolLoopActor
+from unity.secret_manager.secret_manager import SecretManager
 from .browser_backends import (
     BrowserBackend,
     LegacyBrowserBackend,
@@ -21,6 +22,7 @@ class Browser:
     def __init__(
         self,
         mode: str = "legacy",
+        secret_manager: SecretManager = None,
         **kwargs,
     ):
         """
@@ -40,12 +42,18 @@ class Browser:
                 f"Unknown browser mode: '{mode}'. Must be 'legacy' or 'magnitude'.",
             )
 
+        self._secret_manager = (
+            SecretManager() if secret_manager is None else secret_manager
+        )
+
     async def act(self, instruction: str, expectation: str = "") -> str:
         """Executes a single, high-level action by delegating to the active backend."""
+        instruction = self._secret_manager.from_placeholder(instruction)
         return await self.backend.act(instruction, expectation)
 
     async def observe(self, query: str, response_format: Type = str) -> Any:
         """Asks a question by delegating to the active backend."""
+        query = self._secret_manager.from_placeholder(query)
         return await self.backend.observe(query, response_format)
 
     async def navigate(self, url: str) -> str:
