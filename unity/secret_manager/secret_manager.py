@@ -96,7 +96,12 @@ class SecretManager(BaseSecretManager):
         except Exception:
             pass
 
-        # Unify storage is the single source of truth for secrets
+        # .env sync: create file if missing and backfill existing secrets as KEY=VALUE
+        try:
+            self._ensure_dotenv_synced_on_init()
+        except Exception:
+            # Best-effort – local file sync must never break construction
+            pass
 
     # --------------------- Internal helpers (LLM client/policies) --------------------- #
     def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
@@ -124,6 +129,105 @@ class SecretManager(BaseSecretManager):
     ) -> tuple[str, Dict[str, Any]]:
         """Default update-side tool policy (no-op, retain current tools)."""
         return ("auto", current_tools)
+
+    # --------------------- Internal helpers (.env sync) --------------------- #
+    def _dotenv_path(self) -> str:
+        """Return the path to the .env file used for local sync.
+
+        Honors SECRET_DOTENV_PATH for tests/overrides; defaults to ".env" in CWD.
+        """
+        return os.environ.get("SECRET_DOTENV_PATH") or os.path.join(os.getcwd(), ".env")
+
+    def _ensure_dotenv_synced_on_init(self) -> None:
+        """Create .env if missing and merge existing Unify secrets into it."""
+        path = self._dotenv_path()
+        # Ensure directory exists
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        except Exception:
+            pass
+        # Ensure file exists
+        if not os.path.exists(path):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("")
+
+        # Build name->value map from current storage
+        try:
+            rows = unify.get_logs(context=self._ctx)
+        except Exception:
+            rows = []
+        existing: Dict[str, str] = {}
+        for lg in rows:
+            try:
+                nm = (lg.entries or {}).get("name")
+                val = (lg.entries or {}).get("value")
+                if isinstance(nm, str) and nm and isinstance(val, str):
+                    existing[nm] = val
+            except Exception:
+                continue
+
+        if existing:
+            self._env_merge_and_write(add_or_update=existing, remove_keys=None)
+
+    @staticmethod
+    def _parse_env_lines(lines: List[str]) -> Dict[str, int]:
+        """Return mapping of existing KEY -> line index for a simple .env file."""
+        import re
+
+        key_to_idx: Dict[str, int] = {}
+        for idx, raw in enumerate(lines):
+            m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", raw)
+            if m:
+                key_to_idx[m.group(1)] = idx
+        return key_to_idx
+
+    def _env_merge_and_write(
+        self,
+        add_or_update: Dict[str, str] | None,
+        remove_keys: List[str] | None,
+    ) -> None:
+        """Merge provided updates/removals into the .env file atomically."""
+        path = self._dotenv_path()
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+        except FileNotFoundError:
+            lines = []
+
+        key_to_idx = self._parse_env_lines(lines)
+
+        # Remove keys first
+        if remove_keys:
+            rm = set(remove_keys)
+
+            def _keep(i: int, s: str) -> bool:
+                for k, j in key_to_idx.items():
+                    if j == i and k in rm:
+                        return False
+                return True
+
+            lines = [s for i, s in enumerate(lines) if _keep(i, s)]
+            key_to_idx = self._parse_env_lines(lines)
+
+        # Add or update keys
+        if add_or_update:
+            for key, value in add_or_update.items():
+                line = f"{key}={value}"
+                if key in key_to_idx:
+                    lines[key_to_idx[key]] = line
+                else:
+                    lines.append(line)
+
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + ("\n" if lines else ""))
+
+    def _env_set(self, name: str, value: str) -> None:
+        """Set or update one KEY=VALUE line in .env."""
+        self._env_merge_and_write({name: value}, remove_keys=None)
+
+    def _env_remove(self, name: str) -> None:
+        """Remove one KEY from .env (if present)."""
+        self._env_merge_and_write(add_or_update=None, remove_keys=[name])
 
     # --------------------- Public API --------------------- #
     async def from_placeholder(self, text: str) -> str:
@@ -644,6 +748,12 @@ class SecretManager(BaseSecretManager):
         }
         log = unify.log(context=self._ctx, **entries, new=True, mutable=True)
 
+        # .env sync (best-effort)
+        try:
+            self._env_set(name, value)
+        except Exception:
+            pass
+
         return {"outcome": "secret created", "details": {"name": name}}
 
     def _update_secret(
@@ -698,6 +808,13 @@ class SecretManager(BaseSecretManager):
             overwrite=True,
         )
 
+        # .env sync when value provided (best-effort)
+        try:
+            if value is not None:
+                self._env_set(name, value)
+        except Exception:
+            pass
+
         return {"outcome": "secret updated", "details": {"name": name}}
 
     def _delete_secret(self, *, name: str) -> ToolOutcome:
@@ -724,4 +841,9 @@ class SecretManager(BaseSecretManager):
         if len(ids) > 1:
             raise RuntimeError(f"Multiple secrets found with name '{name}'.")
         unify.delete_logs(context=self._ctx, logs=ids[0])
+        # .env sync (best-effort)
+        try:
+            self._env_remove(name)
+        except Exception:
+            pass
         return {"outcome": "secret deleted", "details": {"name": name}}
