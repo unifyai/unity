@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import functools
 import pytest
 
@@ -47,16 +48,18 @@ async def test_sm_stateful_memory_serial_asks():
     sm = SimulatedSecretManager()
 
     h1 = await sm.ask(
-        "Please propose a safe placeholder, output only the placeholder name like ${token_name}, without extra words.",
+        "Please propose a safe placeholder, output only the placeholder name like ${token_name}.",
     )
     placeholder = (await h1.result()).strip()
     assert placeholder, "Placeholder should not be empty"
+    # Extract a single ${key} token from the first answer
+    m = re.search(r"\$\{[^}]+\}", placeholder)
+    assert m, "Response should contain a ${name} placeholder token"
+    token = m.group(0).lower()
 
     h2 = await sm.ask("What placeholder did you just propose?")
     answer2 = (await h2.result()).lower()
-    assert (
-        placeholder.lower() in answer2
-    ), "LLM should recall the placeholder it generated"
+    assert token in answer2, "LLM should recall the placeholder token it generated"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
