@@ -47,7 +47,7 @@ async def test_sm_stateful_memory_serial_asks():
     sm = SimulatedSecretManager()
 
     h1 = await sm.ask(
-        "Please propose a safe placeholder, reply with only the placeholder like ${token_name}.",
+        "Please propose a safe placeholder, output only the placeholder name like ${token_name}, without extra words.",
     )
     placeholder = (await h1.result()).strip()
     assert placeholder, "Placeholder should not be empty"
