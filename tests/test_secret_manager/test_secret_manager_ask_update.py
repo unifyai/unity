@@ -58,3 +58,21 @@ async def test_ask_with_clarification(secret_manager_context):
     # We expect the model to reference placeholder; if the model fabricates text
     # this check is permissive to avoid flakiness in simulated/real LLMs.
     assert ("${db_password_staging}" in ans) or ("staging" in ans.lower())
+
+
+@pytest.mark.asyncio
+@pytest.mark.eval
+async def test_update_creates_two_secrets(secret_manager_context):
+    sm = SecretManager()
+
+    # Ask the model to create two different secrets in a single turn
+    req = (
+        "Create two secrets in one go: "
+        "name alpha_token with value a1; and name beta_token with value b2."
+    )
+    handle = await sm.update(req)
+    await handle.result()
+
+    # Verify both were created
+    keys = sm._list_secret_keys()  # type: ignore[attr-defined]
+    assert "alpha_token" in keys and "beta_token" in keys
