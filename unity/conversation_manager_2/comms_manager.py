@@ -166,8 +166,8 @@ class CommsManager:
                     #     from_number,
                     #     to_number,
                     # )
-                    task.result()
                     message.ack()
+                    task.result()
                 except json.JSONDecodeError:
                     print("Invalid message format for call event")
                     message.nack()
