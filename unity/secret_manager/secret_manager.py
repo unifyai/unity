@@ -98,6 +98,33 @@ class SecretManager(BaseSecretManager):
 
         # Unify storage is the single source of truth for secrets
 
+    # --------------------- Internal helpers (LLM client/policies) --------------------- #
+    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
+        """Construct a configured AsyncUnify client for the given model."""
+        return unify.AsyncUnify(
+            model,
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
+        )
+
+    @staticmethod
+    def _default_ask_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Default ask-side tool policy (no-op, retain current tools)."""
+        return ("auto", current_tools)
+
+    @staticmethod
+    def _default_update_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Default update-side tool policy (no-op, retain current tools)."""
+        return ("auto", current_tools)
+
     # --------------------- Public API --------------------- #
     async def from_placeholder(self, text: str) -> str:
         """Resolve ${name} placeholders in text to raw secret values (no LLM).
@@ -252,13 +279,7 @@ class SecretManager(BaseSecretManager):
         except Exception:
             pass
 
-        client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        client = self._new_llm_client("gpt-5@openai")
 
         # Build tools for read-only inspection
         tools = dict(self._ask_tools)
@@ -308,9 +329,10 @@ class SecretManager(BaseSecretManager):
             client,
             text,
             tools,
-            loop_id=f"{self.__class__.__name__}.ask",
+            loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
+            tool_policy=self._default_ask_tool_policy,
             preprocess_msgs=inject_broader_context,
         )
 
@@ -343,13 +365,7 @@ class SecretManager(BaseSecretManager):
         except Exception:
             pass
 
-        client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        client = self._new_llm_client("gpt-5@openai")
 
         tools = dict(self._update_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
@@ -397,9 +413,10 @@ class SecretManager(BaseSecretManager):
             client,
             text,
             tools,
-            loop_id=f"{self.__class__.__name__}.update",
+            loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
+            tool_policy=self._default_update_tool_policy,
             preprocess_msgs=inject_broader_context,
         )
 

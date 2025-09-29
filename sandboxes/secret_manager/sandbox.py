@@ -18,6 +18,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
+from datetime import datetime
 
 # Always enable detailed request logging for sandbox runs BEFORE importing unify
 os.environ["UNIFY_REQUESTS_DEBUG"] = "true"
@@ -128,6 +129,20 @@ async def _main_async() -> None:
     # ─────────────────── Unify context ────────────────────
     activate_project(args.project_name, args.overwrite)
 
+    # ─────────────────── project version handling ────────────────────
+    if getattr(args, "project_version", -1) != -1:
+        commits = unify.get_project_commits(args.project_name)
+        if commits:
+            try:
+                target = commits[args.project_version]
+                unify.rollback_project(args.project_name, target["commit_hash"])
+                LG.info("[version] Rolled back to commit %s", target["commit_hash"])
+            except IndexError:
+                LG.warning(
+                    "[version] project_version index %s out of range, ignoring",
+                    args.project_version,
+                )
+
     # logging via shared helper
     configure_sandbox_logging(
         log_in_terminal=args.log_in_terminal,
@@ -202,7 +217,7 @@ async def _main_async() -> None:
             if raw.lower() in {"save_project", "sp"}:
                 commit_hash = unify.commit_project(
                     args.project_name,
-                    commit_message="Secret sandbox save",
+                    commit_message=f"Secret sandbox save {datetime.utcnow().isoformat()}",
                 ).get("commit_hash")
                 print(f"💾 Project saved at commit {commit_hash}")
                 if args.voice:
