@@ -406,6 +406,10 @@ async def async_tool_use_loop_inner(
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
     llm_turn_required = False
+    # After the assistant chooses the no-op `wait` tool, avoid immediately
+    # asking the LLM again when nothing is pending. Idle until an interjection
+    # or cancellation.
+    suppress_llm_until_event = False
 
     # No persist mode: loop returns immediately upon final assistant message
 
@@ -899,6 +903,57 @@ async def async_tool_use_loop_inner(
             if _delegate is not None:
                 continue
 
+            # Honor `wait`: if previously chosen and nothing is pending, idle until
+            # an interjection or cancellation (do not ask the LLM again).
+            if suppress_llm_until_event and not tools_data.pending:
+                # timeout guard while idling
+                if timer.has_exceeded_time():
+                    return await _handle_limit_reached(
+                        f"timeout ({timeout}s) exceeded",
+                    )
+
+                interject_w = asyncio.create_task(
+                    interject_queue.get(),
+                    name="InterjectQueueGet",
+                )
+                cancel_waiter = asyncio.create_task(
+                    cancel_event.wait(),
+                    name="CancelEventWait",
+                )
+
+                done, _ = await asyncio.wait(
+                    {interject_w, cancel_waiter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                    timeout=timer.remaining_time(),
+                )
+
+                # cleanup
+                for aux in (interject_w, cancel_waiter):
+                    if aux not in done and not aux.done():
+                        aux.cancel()
+                await asyncio.gather(interject_w, cancel_waiter, return_exceptions=True)
+
+                if not done:
+                    # idle timeout reached
+                    if timer.has_exceeded_time():
+                        return await _handle_limit_reached(
+                            f"timeout ({timeout}s) exceeded",
+                        )
+
+                if interject_w in done:
+                    await interject_queue.put(interject_w.result())
+                    suppress_llm_until_event = False
+                    continue
+
+                if cancel_waiter in done:
+                    with suppress(Exception):
+                        _stop_forwarded_once = await propagate_stop_once(
+                            tools_data.info,
+                            _stop_forwarded_once,
+                            "outer-loop cancelled",
+                        )
+                    raise asyncio.CancelledError
+
             # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
             #       any still‑running tool calls ────────────────────────────────
             #
@@ -1225,40 +1280,37 @@ async def async_tool_use_loop_inner(
                     # • wait        → acknowledge, list running tasks, no scheduling
                     # • cancel_*    → cancel underlying task & purge metadata
                     if name == "wait":
-                        # Build a compact summary of everything currently pending
-                        if tools_data.pending:
-                            lines = []
-                            for t in list(tools_data.pending):
-                                _inf = tools_data.info.get(t)
-                                if not _inf:
-                                    continue
-                                try:
-                                    fnm = _inf.name
-                                    args_json = _inf.call_dict["function"]["arguments"]
-                                except Exception:
-                                    fnm, args_json = "unknown", "{}"
-                                lines.append(f"• {fnm}({args_json})")
-
-                            content = (
-                                "Still running… keeping current tool calls in flight. "
-                                "You can choose to stop, pause, resume, interject, or wait again.\n"
-                                + "\n".join(lines)
+                        # Log the no-op and prune it from the transcript to avoid clutter.
+                        try:
+                            logger.info(
+                                "Assistant chose `wait` – no-op; not persisting to transcript.",
+                                prefix="🕒",
                             )
-                        else:
-                            content = "No tool calls are currently running."
+                        except Exception:
+                            pass
 
-                        tool_msg = create_tool_call_message(
-                            name="wait",
-                            call_id=call["id"],
-                            content=content,
-                        )
-                        await insert_tool_message_after_assistant(
-                            assistant_meta,
-                            msg,
-                            tool_msg,
-                            client,
-                            _msg_dispatcher,
-                        )
+                        # Remove this `wait` tool call from the assistant message. If it
+                        # was the only call and there is no content, drop the assistant msg.
+                        try:
+                            calls = msg.get("tool_calls") or []
+                            remaining_calls = [
+                                c
+                                for c in calls
+                                if c.get("function", {}).get("name") != "wait"
+                            ]
+                            if (
+                                not remaining_calls
+                                and not (msg.get("content") or "").strip()
+                            ):
+                                if client.messages and client.messages[-1] is msg:
+                                    client.messages.pop()
+                            else:
+                                msg["tool_calls"] = remaining_calls
+                        except Exception:
+                            pass
+
+                        # Avoid immediately asking the LLM again when nothing is running.
+                        suppress_llm_until_event = True
                         continue
 
                     if name.startswith("stop_") and not name.startswith(
