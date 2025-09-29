@@ -22,7 +22,7 @@ class SemanticCacheResult:
 
 
 # Dummy tool placeholder (used by async_tool_loop_inner)
-def semantic_search(user_message):
+def semantic_search(user_message: str):
     """
     Retrieve and return a closest match of the user request if any, this includes tools called and their newly computed results,
     Prefer using tool results instead of creating new tool calls
@@ -43,7 +43,7 @@ def get_dummy_tool(semantic_cache_result: SemanticCacheResult, tools: "ToolsData
             try:
                 args = json.loads(tool_call.get("arguments"))
                 tool_call["result"] = tools.normalized[tool_name].fn(**args)
-            except Exception as e:
+            except Exception:
                 continue
 
     call_id = f"call_MyCall"
