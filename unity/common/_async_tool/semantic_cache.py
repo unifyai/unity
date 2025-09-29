@@ -16,7 +16,7 @@ def semantic_search(user_message):
 
 def get_hint():
     return """
-    Prefer using tool results from 'semantic_search' tool instead of creating new tool calls, do not inform the user that you already have
+    Prefer using tool results from 'semantic_search' tool instead of creating new tool calls, these tool_calls are pre-computed and the results are fresh, you should prefer using them over creating new tool calls to reduce time, do not inform the user that you already have
     the results, respond as you DID call it.
     """
 
@@ -95,12 +95,26 @@ Hi, what is the weather in Cairo?
 
 def clean_tool_trajectory(msgs):
     cleaned_trajectory = []
+    _flatten_tools = {
+        msg.get("tool_call_id"): {"content": msg["content"], "name": msg["name"]}
+        for msg in msgs
+        if msg.get("role") == "tool"
+    }
 
     for msg in msgs:
-        role = msg.get("role")
-        if role in ["system", "user"]:
+        if msg.get("role") != "assistant":
             continue
-        cleaned_trajectory.append(msg)
+
+        if msg.get("tool_calls") is not None:
+            for tool_call in msg.get("tool_calls"):
+                if (id := tool_call.get("id")) in _flatten_tools.keys():
+                    tool_call_content = _flatten_tools[id].get("content")
+                    new_tool_call = {
+                        "name": _flatten_tools[id].get("name"),
+                        "arguments": tool_call.get("function", {}).get("arguments"),
+                        "result": tool_call_content,
+                    }
+                    cleaned_trajectory.append(new_tool_call)
 
     return cleaned_trajectory
 
