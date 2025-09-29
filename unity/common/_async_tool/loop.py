@@ -1033,6 +1033,19 @@ async def async_tool_use_loop_inner(
             dynamic_tool_factory.generate()
             dynamic_tools = dynamic_tool_factory.dynamic_tools
 
+            # If any task is currently waiting for clarification, hide the
+            # global `wait` helper to ensure the model proceeds to request
+            # clarification rather than idling. This avoids deadlocks where
+            # no interjection arrives and a tool is blocked awaiting input.
+            try:
+                if any(
+                    getattr(_inf, "waiting_for_clarification", False)
+                    for _inf in tools_data.info.values()
+                ):
+                    dynamic_tools.pop("wait", None)
+            except Exception:
+                pass
+
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
             await ensure_placeholders_for_pending(
