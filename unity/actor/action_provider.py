@@ -14,6 +14,7 @@ from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.common.llm_helpers import methods_to_tool_dict
+from unity.secret_manager.secret_manager import SecretManager
 
 
 class ActionProvider:
@@ -45,7 +46,12 @@ class ActionProvider:
             },
         }
 
-        self.browser = Browser(mode=browser_mode, **browser_kwargs[browser_mode])
+        self._secret_manager = None
+        self.browser = Browser(
+            mode=browser_mode,
+            secret_manager=self.secret_manager,
+            **browser_kwargs[browser_mode],
+        )
         self._setup_browser_methods()
 
         self._contact_manager = None
@@ -84,6 +90,13 @@ class ActionProvider:
 
             self._task_scheduler = TaskScheduler()
         return self._task_scheduler
+
+    @property
+    def secret_manager(self):
+        """Lazily initialize and return the SecretManager."""
+        if self._secret_manager is None:
+            self._secret_manager = SecretManager()
+        return self._secret_manager
 
     def _setup_browser_methods(self):
         """Dynamically create tool methods and assign backend docstrings."""
