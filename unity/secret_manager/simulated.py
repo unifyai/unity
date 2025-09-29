@@ -243,6 +243,82 @@ class SimulatedSecretManager(BaseSecretManager):
 
         return handle
 
+    async def from_placeholder(self, text: str) -> str:
+        """Simulate resolving ${name} placeholders to opaque values (no LLM)."""
+        call_id = None
+        try:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "SecretManager",
+                "from_placeholder",
+                phase="incoming",
+                query=text,
+            )
+        except Exception:
+            pass
+
+        import re
+
+        def _repl(m: "re.Match[str]") -> str:
+            name = m.group(1)
+            return f"<value:{name}>"
+
+        result = re.sub(r"\$\{([^}]+)\}", _repl, text)
+
+        try:
+            if call_id is not None:
+                await publish_manager_method_event(
+                    call_id,
+                    "SecretManager",
+                    "from_placeholder",
+                    phase="outgoing",
+                    status="resolved",
+                )
+        except Exception:
+            pass
+
+        return result
+
+    async def to_placeholder(self, text: str) -> str:
+        """Simulate redacting known raw values back to ${name} placeholders (no LLM)."""
+        call_id = None
+        try:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "SecretManager",
+                "to_placeholder",
+                phase="incoming",
+                info="start",
+            )
+        except Exception:
+            pass
+
+        result = text
+        replaced: list[str] = []
+        for name in self._list_secret_keys():
+            token = f"<value:{name}>"
+            placeholder = f"${{{name}}}"
+            if token in result:
+                result = result.replace(token, placeholder)
+                replaced.append(name)
+
+        try:
+            if call_id is not None:
+                await publish_manager_method_event(
+                    call_id,
+                    "SecretManager",
+                    "to_placeholder",
+                    phase="outgoing",
+                    status="converted",
+                    names=replaced,
+                )
+        except Exception:
+            pass
+
+        return result
+
     @functools.wraps(BaseSecretManager.update, updated=())
     async def update(
         self,
