@@ -182,5 +182,8 @@ async def _start_call(
             try:
                 response.raise_for_status()
             except Exception:
-                return {"success": False}
+                return {
+                    "success": False,
+                    "error": f"Failed to initiate call to {to_number}",
+                }
             return await response.json()
