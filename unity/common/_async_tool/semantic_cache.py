@@ -1,6 +1,7 @@
 import unify
 import json
 from .tools_data import create_tool_call_message
+from ..semantic_search import escape_single_quotes
 
 _USER_MESSAGE_EMBEDDING_FIELD_NAME = "user_message_emb"
 _EMBED_MODEL = "text-embedding-3-small"
@@ -161,9 +162,9 @@ def get_tool_trajectory(user_message):
     logs = unify.get_logs(
         context=store_context,
         exclude_fields=["user_message_emb"],
-        filter=f"cosine(user_message, embed('{user_message}', model='{_EMBED_MODEL}')) < {threshold}",
+        filter=f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_EMBED_MODEL}')) < {threshold}",
         sorting={
-            f"cosine(user_message, embed('{user_message}', model='{_EMBED_MODEL}'))": "descending",
+            f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_EMBED_MODEL}'))": "descending",
         },
         limit=limit,
     )
