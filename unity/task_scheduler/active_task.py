@@ -340,6 +340,30 @@ class ActiveTask(BaseActiveTask):
         return ret
 
     # ------------------------------------------------------------------ #
+    # Bottom-up event APIs (delegate to underlying actor handle)         #
+    # ------------------------------------------------------------------ #
+    @functools.wraps(SteerableToolHandle.next_clarification, updated=())
+    async def next_clarification(self) -> dict:
+        try:
+            return await self._actor_handle.next_clarification()  # type: ignore[attr-defined]
+        except Exception:
+            return {}
+
+    @functools.wraps(SteerableToolHandle.next_notification, updated=())
+    async def next_notification(self) -> dict:
+        try:
+            return await self._actor_handle.next_notification()  # type: ignore[attr-defined]
+        except Exception:
+            return {}
+
+    @functools.wraps(SteerableToolHandle.answer_clarification, updated=())
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        try:
+            await self._actor_handle.answer_clarification(call_id, answer)  # type: ignore[attr-defined]
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------ #
     # Internal helpers                                                   #
     # ------------------------------------------------------------------ #
 
