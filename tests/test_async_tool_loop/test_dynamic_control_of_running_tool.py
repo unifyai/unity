@@ -473,6 +473,16 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
             await self._done.wait()
             return "inner_done"
 
+        # New abstract event APIs stubs
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_progress(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
     inner_handle = MockPassthroughHandle()
 
     @unify.traced
