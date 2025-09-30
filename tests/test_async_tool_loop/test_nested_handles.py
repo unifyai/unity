@@ -855,11 +855,15 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     original_resume = AsyncToolUseLoopHandle.resume
 
     def patched_pause(self):
-        counts["pause"] += 1
+        # Count only pauses invoked on the root outer handle; nested handles are propagated and should not increment here
+        if getattr(self, "_is_root_handle", False):
+            counts["pause"] += 1
         return original_pause(self)
 
     def patched_resume(self):
-        counts["resume"] += 1
+        # Count only resumes invoked on the root outer handle; nested handles are propagated and should not increment here
+        if getattr(self, "_is_root_handle", False):
+            counts["resume"] += 1
         return original_resume(self)
 
     monkeypatch.setattr(AsyncToolUseLoopHandle, "pause", patched_pause, raising=True)
