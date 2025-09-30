@@ -417,40 +417,7 @@ async def async_tool_use_loop_inner(
             # set, the outer loop must stop doing any further work and simply
             # await the delegate's result. This guarantees no extra assistant
             # turns, tools, or events are emitted by the outer loop.
-            try:
-                _delegate = getattr(tools_data, "handover_delegate", None)
-            except Exception:
-                _delegate = None
-            if _delegate is not None:
-                if log_steps:
-                    logger.info(
-                        "Handing over to passthrough delegate – outer loop exiting.",
-                        prefix="↪️",
-                    )
-                # Proactively stop any remaining outer pending tasks, and also ask the
-                # delegated handle to stop if the outer loop has been cancelled already.
-                try:
-                    if tools_data.pending:
-                        # Forward a stop to any nested steerable handles first to allow graceful shutdown
-                        with suppress(Exception):
-                            _stop_forwarded_once = await propagate_stop_once(
-                                tools_data.info,
-                                _stop_forwarded_once,
-                                "outer-loop handover",
-                            )
-                        await tools_data.cancel_pending_tasks()
-                    # If the outer loop has been cancelled already, we will not await the delegate here;
-                    # result() will return immediately in the outer handle when cancel is set.
-                except Exception:
-                    pass
-                # Await the delegate and return its answer as the final reply for the outer loop.
-                # Use asyncio.shield so that cancelling the OUTER loop task does not cancel
-                # the delegated inner handle – the inner should continue and produce its result.
-                try:
-                    return await asyncio.shield(_delegate.result())
-                finally:
-                    # Ensure lineage contextvar is reset even on early return
-                    pass
+            # Passthrough mode no longer hands over control; outer loop continues.
 
             # ── 0-α-P. Global *pause* gate  ────────────────────────────
             # Keep handling tool completions & cancellation, but *never*
@@ -713,13 +680,22 @@ async def async_tool_use_loop_inner(
                         continue
 
                     cuq = tools_data.info[_t].clar_up_queue
-                    if cuq is not None:
+                    # Upward bubbling only for tasks running in passthrough mode
+                    if cuq is not None and getattr(
+                        tools_data.info[_t],
+                        "is_passthrough",
+                        False,
+                    ):
                         w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
                         clar_waiters[w] = _t
                     # Notification updates are non-blocking one-way signals; we always
                     # listen for them, independent of clarification state.
                     pq = tools_data.info[_t].notification_queue
-                    if pq is not None:
+                    if pq is not None and getattr(
+                        tools_data.info[_t],
+                        "is_passthrough",
+                        False,
+                    ):
                         pw = asyncio.create_task(pq.get(), name="NotificationQueueGet")
                         notif_waiters[pw] = _t
                 waiters = (
@@ -1322,6 +1298,8 @@ async def async_tool_use_loop_inner(
                         except Exception:
                             pass
 
+                        # After acknowledging a wait, still let the assistant think next turn
+                        llm_turn_required = True
                         continue
 
                     if name.startswith("stop_") and not name.startswith(
@@ -1390,6 +1368,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
 
                         continue  # nothing else to schedule
 
@@ -1442,6 +1422,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
@@ -1493,6 +1475,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
                         continue  # helper handled
 
                     if name.startswith("clarify_"):
@@ -1530,25 +1514,32 @@ async def async_tool_use_loop_inner(
                                 ):
                                     _inf.waiting_for_clarification = False
                                     break
-                        tool_reply_msg = create_tool_call_message(
-                            name=name,
-                            call_id=call["id"],
-                            content=(
-                                f"Clarification answer sent upstream: {ans!r}\n"
-                                "⏳ Waiting for the original tool to finish…"
-                            ),
-                        )
-                        await insert_tool_message_after_assistant(
-                            assistant_meta,
-                            msg,
-                            tool_reply_msg,
-                            client,
-                            _msg_dispatcher,
-                        )
-                        if tgt_task is not None:
+                        # Only publish clarify acknowledgement to outer transcript for passthrough tasks
+                        if tgt_task is not None and getattr(
+                            tools_data.info[tgt_task],
+                            "is_passthrough",
+                            False,
+                        ):
+                            tool_reply_msg = create_tool_call_message(
+                                name=name,
+                                call_id=call["id"],
+                                content=(
+                                    f"Clarification answer sent upstream: {ans!r}\n"
+                                    "⏳ Waiting for the original tool to finish…"
+                                ),
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_reply_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
                             tools_data.info[tgt_task].clarify_placeholder = (
                                 tool_reply_msg
                             )
+                            # Trigger an immediate LLM turn after helper action
+                            llm_turn_required = True
                         continue
 
                     if name.startswith("interject_"):
@@ -1609,6 +1600,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
 
                         continue  # nothing else to schedule
 
