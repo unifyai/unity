@@ -3,7 +3,7 @@ import json
 import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, TypedDict
-
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from unity.common._async_tool.tools_data import ToolsData
@@ -157,7 +157,7 @@ Hi, what is the weather in Cairo?
     return res
 
 
-def clean_tool_trajectory(msgs):
+async def clean_tool_trajectory(msgs):
     # TODO:
     # 1. Do the cleaning in the dummy tool call, store the raw tool calls
     # 2. Use LLM to prune the tool calls
@@ -165,6 +165,9 @@ def clean_tool_trajectory(msgs):
     class ToolRequestPair(TypedDict):
         request: Mapping[str, Any]
         response: Mapping[str, Any]
+
+    class PruneToolsResponseFormat(BaseModel):
+        indices: list[int]
 
     cleaned_trajectory = []
     _flatten_tools = {
@@ -185,6 +188,26 @@ def clean_tool_trajectory(msgs):
                         response=_flatten_tools[id],
                     )
                     cleaned_trajectory.append(pair)
+
+    client = unify.AsyncUnify("gpt-4o@openai")
+    client.set_system_message(
+        """
+        You are a helpful assistant that cleans redundant tool calls, given a user message and a list of tool calls,
+        you should return indicies of the tool calls to prune, that are redundant/duplicate or not relevant to the user message.
+        """,
+    )
+    res = await client.generate(
+        user_message=f"Tool trajectory: {json.dumps(cleaned_trajectory, indent=4)}",
+        response_format=PruneToolsResponseFormat,
+    )
+
+    res = PruneToolsResponseFormat.model_validate_json(res)
+
+    cleaned_trajectory = [
+        tool_call_pair
+        for idx, tool_call_pair in enumerate(cleaned_trajectory)
+        if idx not in res.indices
+    ]
 
     return cleaned_trajectory
 
