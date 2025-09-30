@@ -800,6 +800,41 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except Exception:
             return str(payload)
 
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:  # pass-through when supported
+        try:
+            if hasattr(self._current_handle, "next_clarification"):
+                return await self._current_handle.next_clarification()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        return {}
+
+    async def next_progress(self) -> dict:  # pass-through when supported
+        try:
+            if hasattr(self._current_handle, "next_progress"):
+                return await self._current_handle.next_progress()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        return {}
+
+    async def answer_clarification(
+        self,
+        call_id: str,
+        answer: str,
+    ) -> None:  # pass-through or use queue channel
+        try:
+            if hasattr(self._current_handle, "answer_clarification"):
+                await self._current_handle.answer_clarification(call_id, answer)  # type: ignore[attr-defined]
+                return
+        except Exception:
+            pass
+        # Fallback: if we have a queue-level clarification channel, push there
+        try:
+            if self._clar_down is not None:
+                await self._clar_down.put(answer)
+        except Exception:
+            pass
+
     async def ask(
         self,
         question: str,
@@ -940,5 +975,15 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
 
             async def ask(self, q: str) -> "SteerableToolHandle":  # type: ignore[override]
                 return self
+
+            # New abstract event APIs – provide harmless stubs for the static handle
+            async def next_clarification(self) -> dict:
+                return {}
+
+            async def next_progress(self) -> dict:
+                return {}
+
+            async def answer_clarification(self, call_id: str, answer: str) -> None:
+                return None
 
         return _AnswerHandle(answer)

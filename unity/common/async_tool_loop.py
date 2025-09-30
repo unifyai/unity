@@ -60,6 +60,23 @@ class SteerableToolHandle(SteerableHandle):
     def result(self) -> Awaitable[str] | str:
         """Wait for the assistant's *final* reply."""
 
+    # ── bottom-up event APIs (abstract surface) -------------------------------
+    @abstractmethod
+    async def next_clarification(self) -> dict:
+        """Await the next clarification event pushed by a running tool."""
+
+    @abstractmethod
+    async def next_progress(self) -> dict:
+        """Await the next progress event pushed by a running tool."""
+
+    @abstractmethod
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        """Programmatically answer a clarification for a pending tool call.
+
+        This looks up the down-queue for the given call and pushes the answer.
+        Falls through silently if the mapping is missing (tool may have finished).
+        """
+
 
 class AsyncToolUseLoopHandle(SteerableToolHandle):
     """
@@ -495,14 +512,17 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             return _stopped_notice
 
     # ── bottom-up event APIs ---------------------------------------------------
+    @functools.wraps(SteerableToolHandle.next_clarification, updated=())
     async def next_clarification(self) -> dict:
         """Await the next clarification event pushed by a running tool."""
         return await self._clar_q.get()
 
+    @functools.wraps(SteerableToolHandle.next_progress, updated=())
     async def next_progress(self) -> dict:
         """Await the next progress event pushed by a running tool."""
         return await self._progress_q.get()
 
+    @functools.wraps(SteerableToolHandle.answer_clarification, updated=())
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         """Programmatically answer a clarification for a pending tool call.
 

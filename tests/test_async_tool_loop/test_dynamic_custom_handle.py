@@ -117,6 +117,16 @@ class CustomArgsHandle(SteerableToolHandle):
         await self._done_ev.wait()
         return self._result_text
 
+    # New abstract event APIs – simple stubs for tests
+    async def next_clarification(self) -> dict:
+        return {}
+
+    async def next_progress(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        return None
+
 
 @unify.traced
 async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-defined]

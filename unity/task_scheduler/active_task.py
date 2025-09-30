@@ -182,6 +182,16 @@ class ActiveTask(BaseActiveTask):
             async def ask(self, question: str) -> "SteerableToolHandle":  # type: ignore[override]
                 return self
 
+            # New abstract event APIs – provide inert stubs for static answer handle
+            async def next_clarification(self) -> dict:
+                return {}
+
+            async def next_progress(self) -> dict:
+                return {}
+
+            async def answer_clarification(self, call_id: str, answer: str) -> None:
+                return None
+
         return _AnswerHandle()
 
     @functools.wraps(BaseActiveTask.interject, updated=())
