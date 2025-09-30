@@ -437,7 +437,7 @@ def method_to_schema(
             "parent_chat_context",
             "clarification_up_q",
             "clarification_down_q",
-            "progress_up_q",
+            "notification_up_q",
         )
 
         if is_hidden:

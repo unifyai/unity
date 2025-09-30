@@ -158,7 +158,7 @@ class _SimulatedContactHandle(SteerableToolHandle):
             pass
         return {}
 
-    async def next_progress(self) -> dict:
+    async def next_notification(self) -> dict:
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:

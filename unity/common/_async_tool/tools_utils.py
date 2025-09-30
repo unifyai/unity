@@ -24,8 +24,8 @@ class ToolCallMetadata:
     interject_queue: asyncio.Queue[str] | None = None
     clar_up_queue: asyncio.Queue[str] | None = None
     clar_down_queue: asyncio.Queue[str] | None = None
-    # Optional progress stream emitted by tools; payload is a dict with arbitrary fields
-    progress_queue: asyncio.Queue[dict] | None = None
+    # Optional notification stream emitted by tools; payload is a dict with arbitrary fields
+    notification_queue: asyncio.Queue[dict] | None = None
     pause_event: asyncio.Event | None = None
     scheduled_time: float = field(default_factory=time.perf_counter)
 
@@ -54,8 +54,8 @@ class ClarificationEvent(TypedDict):
     question: str
 
 
-class ProgressEvent(TypedDict, total=False):
-    type: Literal["progress"]
+class NotificationEvent(TypedDict, total=False):
+    type: Literal["notification"]
     call_id: str
     tool_name: str
     message: str

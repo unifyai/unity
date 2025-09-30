@@ -809,10 +809,10 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             pass
         return {}
 
-    async def next_progress(self) -> dict:  # pass-through when supported
+    async def next_notification(self) -> dict:  # pass-through when supported
         try:
-            if hasattr(self._current_handle, "next_progress"):
-                return await self._current_handle.next_progress()  # type: ignore[attr-defined]
+            if hasattr(self._current_handle, "next_notification"):
+                return await self._current_handle.next_notification()  # type: ignore[attr-defined]
         except Exception:
             pass
         return {}
@@ -980,7 +980,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             async def next_clarification(self) -> dict:
                 return {}
 
-            async def next_progress(self) -> dict:
+            async def next_notification(self) -> dict:
                 return {}
 
             async def answer_clarification(self, call_id: str, answer: str) -> None:

@@ -25,23 +25,23 @@ def make_llm(system_message: Optional[str] = None) -> unify.AsyncUnify:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 1.  DUMMY TOOLS – send_email emits progress updates
+# 1.  DUMMY TOOLS – send_email emits notifications
 # ──────────────────────────────────────────────────────────────────────────
 @unify.traced
 async def send_email(
     address: str,
     description: str,
     *,
-    progress_up_q: asyncio.Queue | None = None,
+    notification_up_q: asyncio.Queue | None = None,
 ) -> str:
-    """Send an email, emitting progress updates along the way."""
-    if progress_up_q is None:
-        raise RuntimeError("progress queue missing")
+    """Send an email, emitting notifications along the way."""
+    if notification_up_q is None:
+        raise RuntimeError("notification queue missing")
 
-    # Emit progress updates; loop will surface them and allow the assistant to react
-    await progress_up_q.put({"message": "Composing email…"})
+    # Emit notifications; loop will surface them and allow the assistant to react
+    await notification_up_q.put({"message": "Composing email…"})
     await asyncio.sleep(0)  # allow the loop to surface the first update
-    await progress_up_q.put({"message": "Sending email…"})
+    await notification_up_q.put({"message": "Sending email…"})
     return "Email sent!"
 
 
@@ -50,7 +50,7 @@ async def send_text(
     number: str,
     description: str,
     *,
-    progress_up_q: asyncio.Queue | None = None,
+    notification_up_q: asyncio.Queue | None = None,
 ) -> str:
     """Send a text message (unused in this test)."""
     # Silently do nothing; this tool is present only to mirror the clarifying test shape
@@ -85,9 +85,12 @@ async def test_progress_bubbles_up_two_tiers() -> None:
         log_steps=False,
     )
 
-    # Await the first bubbled progress update (fire-and-forget)
-    progress_event = await asyncio.wait_for(outer_handle.next_progress(), timeout=60)
-    assert progress_event["type"] == "progress"
+    # Await the first bubbled notification (fire-and-forget)
+    progress_event = await asyncio.wait_for(
+        outer_handle.next_notification(),
+        timeout=60,
+    )
+    assert progress_event["type"] == "notification"
     assert progress_event["tool_name"] == "send_email"
     # The payload may contain 'message' (string) or richer fields – check message when present
     if "message" in progress_event and isinstance(progress_event["message"], str):
@@ -143,36 +146,36 @@ async def test_progress_bubbles_up_two_tiers() -> None:
 
 
 # ---------------------------------------------------------------------------
-# inner tool  ➟  emits progress updates (fire-and-forget) and completes
+# inner tool  ➟  emits notifications (fire-and-forget) and completes
 # ---------------------------------------------------------------------------
 async def inner_tool(
     *,
-    progress_up_q: asyncio.Queue | None = None,
+    notification_up_q: asyncio.Queue | None = None,
 ) -> str:
-    if progress_up_q is None:
-        raise RuntimeError("progress queue missing")
+    if notification_up_q is None:
+        raise RuntimeError("notification queue missing")
 
-    await progress_up_q.put({"message": "Inner loop: preparing widget"})
+    await notification_up_q.put({"message": "Inner loop: preparing widget"})
     await asyncio.sleep(0)
-    await progress_up_q.put({"message": "Inner loop: halfway"})
+    await notification_up_q.put({"message": "Inner loop: halfway"})
     return "✅ inner finished"
 
 
 # ---------------------------------------------------------------------------
 # outer tool  ➟  immediately spawns an async-tool loop and RETURNS its handle
-#               progress events from the inner loop bubble via the parent's queue
+#               notification events from the inner loop bubble via the parent's queue
 # ---------------------------------------------------------------------------
 async def delegating_tool(
     *,
-    progress_up_q: asyncio.Queue | None = None,
+    notification_up_q: asyncio.Queue | None = None,
 ) -> str:  # return type misleading on purpose
     inner_llm = make_llm(
         "Surface any internal progress updates as they occur; continue to completion.",
     )
 
-    # Bridge progress events by closing over the parent progress queue
+    # Bridge notifications by closing over the parent notification queue
     async def inner_tool_bridge() -> str:
-        return await inner_tool(progress_up_q=progress_up_q)
+        return await inner_tool(notification_up_q=notification_up_q)
 
     handle = start_async_tool_use_loop(  # <-- returns AsyncToolUseLoopHandle
         inner_llm,
@@ -205,9 +208,9 @@ async def test_progress_bubbles_through_returned_handle() -> None:
         log_steps=False,
     )
 
-    # ── satisfy: we should receive a bubbled progress event from the INNER loop ──
-    event = await asyncio.wait_for(handle.next_progress(), timeout=60)
-    assert event["type"] == "progress"
+    # ── satisfy: we should receive a bubbled notification event from the INNER loop ──
+    event = await asyncio.wait_for(handle.next_notification(), timeout=60)
+    assert event["type"] == "notification"
     assert event["tool_name"] == "delegating_tool"
     assert "widget" in (event.get("message") or "").lower()
 
