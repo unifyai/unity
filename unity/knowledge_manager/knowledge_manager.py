@@ -7,9 +7,14 @@ from typing import Any, Dict, List, Optional, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import json
+import time
+import logging
 
 from unity.file_manager.base import BaseFileManager
 from unity.file_manager.file_manager import FileManager
+from unity.common.token_utils import count_tokens_per_utf_byte
+from unity.common import token_utils as _tok
+from unity.common.grouping_helpers import build_grouped_dump_payload
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from .types import ColumnType
 from ..common.llm_helpers import (
@@ -47,6 +52,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         rolling_summary_in_prompts: bool = True,
         include_contacts: bool = True,
         grouped: bool = False,
+        # Table-dump heuristics
+        full_table_dump: bool = False,
+        per_table_dumps: bool = False,
+        dump_safety_factor: float = 0.9,
+        dump_timeout_s: float = 3.0,
+        dump_scan_page_size: int = 1000,
+        max_input_tokens_override: Optional[int] = None,
     ) -> None:
         """
         Initialise the KnowledgeManager.
@@ -134,6 +146,18 @@ class KnowledgeManager(BaseKnowledgeManager):
         # into a nested structure to reduce duplication and token usage.
         self._group_results: bool = grouped
 
+        # Heuristic dump settings
+        self._full_table_dump: bool = full_table_dump
+        self._per_table_dumps: bool = per_table_dumps
+        self._dump_safety_factor: float = max(0.1, min(0.99, dump_safety_factor))
+        self._dump_timeout_s: float = max(0.5, dump_timeout_s)
+        self._dump_scan_page_size: int = max(50, dump_scan_page_size)
+        self._max_input_tokens: int = (
+            int(max_input_tokens_override)
+            if max_input_tokens_override is not None
+            else _tok.read_model_max_input_tokens()
+        )
+
         # ------------------------------------------------------------------
         # Optional Contacts-table linkage
         # ------------------------------------------------------------------
@@ -183,6 +207,129 @@ class KnowledgeManager(BaseKnowledgeManager):
             self._provision_storage()
         except Exception:
             pass
+
+    async def _maybe_build_show_all_seed(
+        self,
+        message: Union[str, dict, List[Union[str, dict]]],
+        tables_overview: Dict[str, Dict[str, Any]] | None = None,
+    ) -> Optional[List[dict]]:
+        """
+        Decide whether to seed a synthetic first tool call `show_all` that dumps
+        some or all tables, and if so return the seeded transcript. Otherwise None.
+        Uses `unify.get_groups`-based unique value enumeration for token estimation.
+        """
+        try:
+            if not (self._full_table_dump or self._per_table_dumps):
+                return None
+
+            if isinstance(message, list):
+                user_text = (
+                    next(
+                        (
+                            m.get("content")
+                            for m in message
+                            if isinstance(m, dict) and m.get("role") == "user"
+                        ),
+                        None,
+                    )
+                    or ""
+                )
+            elif isinstance(message, dict):
+                user_text = str(message.get("content") or "")
+            else:
+                user_text = message
+
+            overview = tables_overview or self._tables_overview()
+            all_tables = list((overview or {}).keys())
+            if not all_tables:
+                return None
+
+            table_to_ctx = {t: self._ctx_for_table(t) for t in all_tables}
+            table_to_columns: Dict[str, List[str]] = dict(
+                [(t, list(lt["columns"].keys())) for t, lt in overview.items()],
+            )
+
+            est = await _tok.estimate_tables_tokens_parallel(
+                table_to_ctx=table_to_ctx,
+                table_to_columns=table_to_columns,
+                max_input_tokens=self._max_input_tokens,
+                safety_factor=self._dump_safety_factor,
+                max_concurrency=4,
+            )
+            total_est = sum(est.values())
+            budget = int(self._max_input_tokens * self._dump_safety_factor)
+
+            selected: List[str] = []
+            if self._full_table_dump and total_est <= budget:
+                selected = list(all_tables)
+            elif self._per_table_dumps and all_tables:
+                per_tbl_threshold = int(
+                    self._max_input_tokens
+                    * self._dump_safety_factor
+                    / (2 * max(1, len(all_tables))),
+                )
+                selected = [t for t, v in est.items() if v <= per_tbl_threshold]
+
+            if not selected:
+                return None
+
+            payload, per_tbl_payload_tokens = build_grouped_dump_payload(
+                table_to_ctx,
+                selected,
+                limit=self._dump_scan_page_size,
+            )
+            total_payload_tokens = count_tokens_per_utf_byte(payload)
+            sum_per_table_tokens = sum(per_tbl_payload_tokens.values())
+            if sum_per_table_tokens > budget or total_payload_tokens > budget:
+                ranked = sorted(
+                    selected,
+                    key=lambda t: per_tbl_payload_tokens.get(t, 0),
+                    reverse=True,
+                )
+                keep = list(selected)
+                current_sum = sum_per_table_tokens
+                # Drop largest tables until within budget using per-table token sizes
+                while keep and current_sum > budget:
+                    drop = ranked.pop(0)
+                    if drop in keep:
+                        keep.remove(drop)
+                        current_sum -= per_tbl_payload_tokens.get(drop, 0)
+                selected = keep
+                # Rebuild payload for the reduced selection
+                payload, per_tbl_payload_tokens = build_grouped_dump_payload(
+                    {t: table_to_ctx[t] for t in selected},
+                    selected,
+                    limit=self._dump_scan_page_size,
+                )
+
+            if not selected:
+                return None
+
+            call_id = f"show_all_{uuid.uuid4().hex[:8]}"
+            seeded = [
+                {"role": "user", "content": user_text},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": "show_all", "arguments": "{}"},
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": "show_all",
+                    "content": payload,
+                },
+            ]
+            return seeded
+        except Exception as e:
+            print(f"Error in _maybe_build_show_all_seed: {e}")
+            return None
 
     # Helpers #
     # --------#
@@ -576,6 +723,8 @@ class KnowledgeManager(BaseKnowledgeManager):
             if use_semantic_cache in ("read", "both")
             else self._default_ask_tool_policy
         )
+        # Maybe seed a synthetic `show_all` dump as the first tool call (ask only)
+        text = await self._maybe_build_show_all_seed(text, tables_overview) or text
 
         handle = start_async_tool_loop(
             client,
@@ -1655,11 +1804,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             k=k,
             row_filter=filter,
         )
-        return maybe_group_rows(
+        grouped = maybe_group_rows(
             rows=rows,
             exclude_fields=list_private_fields(context),
             enabled=self._group_results,
         )
+        return grouped
 
     @read_only
     def _search_join(
