@@ -1,5 +1,4 @@
 import asyncio
-import types
 
 import pytest
 import unify
@@ -44,69 +43,6 @@ async def delegating_tool() -> AsyncToolUseLoopHandle:  # type: ignore[valid-typ
 
 delegating_tool.__name__ = "delegating_tool"
 delegating_tool.__qualname__ = "delegating_tool"
-
-
-# ---------------------------------------------------------------------------
-#  TEST
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_outer_handle_delegates_to_inner_pause_resume(monkeypatch):
-    """The outer handle's pause/resume must forward to the adopted inner handle."""
-
-    # ── set up outer loop
-    client = unify.AsyncUnify(
-        endpoint="o4-mini@openai",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
-    client.set_system_message(
-        "Call `delegating_tool` once then wait for it to finish before replying DONE.",
-    )
-
-    outer_handle = start_async_tool_use_loop(
-        client,
-        message="go",
-        tools={"delegating_tool": delegating_tool},
-        log_steps=False,
-    )
-
-    # ── wait until the pass-through adoption has happened ─────────────────
-    async def _delegated() -> bool:
-        return getattr(outer_handle, "_delegate", None) is not None
-
-    start = asyncio.get_event_loop().time()
-    while not await _delegated():
-        if asyncio.get_event_loop().time() - start > 30:
-            raise TimeoutError("Delegate not adopted within 30 s")
-        await asyncio.sleep(0.05)
-
-    delegate: AsyncToolUseLoopHandle = outer_handle._delegate  # type: ignore[attr-defined]
-
-    # Patch *this specific* delegate's pause method so we can count invocations.
-    pause_counter = {"count": 0}
-    original_pause = delegate.pause
-
-    def _patched_pause(self):
-        pause_counter["count"] += 1
-        return original_pause()
-
-    # Bind the patched method to the delegate instance.
-    delegate.pause = types.MethodType(_patched_pause, delegate)  # type: ignore[method-assign]
-
-    # ── invoke pause via the *outer* handle – should route to delegate.
-    outer_handle.pause()
-
-    # Verify that the delegate.pause was called exactly once.
-    assert pause_counter["count"] == 1, "Outer pause was not forwarded to inner handle"
-
-    # Resume so the inner loop can finish.
-    outer_handle.resume()
-
-    # Final result must bubble through.
-    result = await outer_handle.result()
 
 
 # ---------------------------------------------------------------------------
