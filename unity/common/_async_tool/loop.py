@@ -1290,8 +1290,8 @@ async def async_tool_use_loop_inner(
                         except Exception:
                             pass
 
-                        # After acknowledging a wait, still let the assistant think next turn
-                        llm_turn_required = True
+                        # After acknowledging a wait, do NOT grant an immediate LLM turn.
+                        # The loop should now wait for any pending tools or interjections.
                         continue
 
                     if name.startswith("stop_") and not name.startswith(
