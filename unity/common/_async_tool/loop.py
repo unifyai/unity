@@ -922,12 +922,7 @@ async def async_tool_use_loop_inner(
                 )
                 continue  # still waiting for other tool tasks
 
-            try:
-                _delegate = getattr(tools_data, "handover_delegate", None)
-            except Exception:
-                _delegate = None
-            if _delegate is not None:
-                continue
+            # No handover delegate in the new passthrough design
 
             # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
             #       any still‑running tool calls ────────────────────────────────
