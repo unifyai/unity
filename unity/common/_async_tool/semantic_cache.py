@@ -2,7 +2,7 @@ import unify
 import json
 import inspect
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping, TypedDict
 
 
 if TYPE_CHECKING:
@@ -52,11 +52,29 @@ def get_hint():
     """
 
 
+def _simplify_tool_trajectory(tool_trajectory: list[dict]):
+    _simplified_trajectory = []
+    for tool_call_pair in tool_trajectory:
+        name = tool_call_pair["request"]["function"]["name"]
+        arguments = tool_call_pair["request"]["function"]["arguments"]
+        result = tool_call_pair["response"]["content"]
+
+        _simplified_trajectory.append(
+            {
+                "name": name,
+                "arguments": arguments,
+                "result": result,
+            },
+        )
+
+    return _simplified_trajectory
+
+
 async def get_dummy_tool(
     semantic_cache_result: SemanticCacheResult,
     tools: "ToolsData",
 ):
-    history = semantic_cache_result.tool_trajectory
+    history = _simplify_tool_trajectory(semantic_cache_result.tool_trajectory)
     for tool_call in history:
         if (tool_name := tool_call.get("name")) in tools.normalized:
             # TODO use ThreadPoolExecutor to run the tool calls in parallel
@@ -140,11 +158,14 @@ Hi, what is the weather in Cairo?
 
 
 def clean_tool_trajectory(msgs):
+
+    class ToolRequestPair(TypedDict):
+        request: Mapping[str, Any]
+        response: Mapping[str, Any]
+
     cleaned_trajectory = []
     _flatten_tools = {
-        msg.get("tool_call_id"): {"content": msg["content"], "name": msg["name"]}
-        for msg in msgs
-        if msg.get("role") == "tool"
+        msg.get("tool_call_id"): msg for msg in msgs if msg.get("role") == "tool"
     }
 
     for msg in msgs:
@@ -154,15 +175,13 @@ def clean_tool_trajectory(msgs):
         if msg.get("tool_calls") is not None:
             for tool_call in msg.get("tool_calls"):
                 if (id := tool_call.get("id")) in _flatten_tools.keys():
-                    tool_call_content = _flatten_tools[id].get("content")
                     if _flatten_tools[id].get("name") == "semantic_search":
                         continue
-                    new_tool_call = {
-                        "name": _flatten_tools[id].get("name"),
-                        "arguments": tool_call.get("function", {}).get("arguments"),
-                        "result": tool_call_content,
-                    }
-                    cleaned_trajectory.append(new_tool_call)
+                    pair = ToolRequestPair(
+                        request=tool_call,
+                        response=_flatten_tools[id],
+                    )
+                    cleaned_trajectory.append(pair)
 
     return cleaned_trajectory
 
