@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 """
-Token utilities built around **tiktoken** with safe fallbacks.
+Consolidated token utilities for counting and budgeting, plus table token estimation.
 
-- `count_tokens(text, model_or_encoding)` → int
-- `is_within_token_limit(text, max_tokens, model_or_encoding)` → bool
-- `clip_text_to_token_limit(text, max_tokens, model_or_encoding)` → str
-
-Notes
------
-* We prefer `tiktoken.encoding_for_model(model)` where possible, falling back
-  to explicit encodings like `"o200k_base"` (GPT-4o/4o-mini) or
-  `"cl100k_base"` (GPT-4/3.5 + text-embedding-3-*).
-* If `tiktoken` is unavailable at runtime, we provide a robust approximation
-  (≈1 token per 4 chars) so callers never crash.
+This module centralises functionality previously scattered in parser-level utils
+so other managers can reuse them directly.
 """
-from typing import Optional
+
+import os
+import math
+import json
+from typing import Optional, Any, Dict, List, Tuple
+from unity.common.grouping_helpers import iter_unique_values_via_groups
+
 
 _TIKTOKEN_AVAILABLE = True
 try:
@@ -37,7 +34,7 @@ def _warn_once() -> None:
                 "⚠️  tiktoken not available – using a conservative char→token heuristic. "
                 "Install `tiktoken` for precise accounting.",
             )
-        except Exception as e:
+        except Exception:
             pass
         _WARNED_ON_FALLBACK = True
 
@@ -57,22 +54,18 @@ def get_encoding_for(model_or_encoding: Optional[str] = None):
         return None
 
     if model_or_encoding:
-        # Try model first
         try:
             return tiktoken.encoding_for_model(model_or_encoding)
-        except Exception as e:
-            # Try as raw encoding name
+        except Exception:
             try:
                 return tiktoken.get_encoding(model_or_encoding)
-            except Exception as e:
+            except Exception:
                 pass
 
-        # Default by rough family
         if "gpt-4o" in model_or_encoding or "o4-mini" in model_or_encoding:
             return tiktoken.get_encoding("o200k_base")
         return tiktoken.get_encoding("cl100k_base")
 
-    # No hint → widely compatible default
     return tiktoken.get_encoding("cl100k_base")
 
 
@@ -84,23 +77,20 @@ def count_tokens(text: str, model_or_encoding: Optional[str] = None) -> int:
     enc = get_encoding_for(model_or_encoding)
     try:
         return len(enc.encode(text))  # type: ignore[attr-defined]
-    except Exception as e:
+    except Exception:
         return int(len(text) / _AVG_CHARS_PER_TOKEN * 1.1)
 
 
-def count_tokens_per_utf_byte(document: str) -> float:
+def count_tokens_per_utf_byte(document: str) -> int:
     """
     Estimates token count based on UTF-8 byte length.
     Open AI uses this rather than `tiktoken` contrary
     to what is mentioned in the docs:
     https://community.openai.com/t/max-total-embeddings-tokens-per-request/1254699/6
     """
-    total_estimated_tokens = 0
-    for char in document:
-        byte_length = len(char.encode("utf-8"))
-        total_estimated_tokens += byte_length * _TOKENS_PER_UTF8_BYTE
-
-    return total_estimated_tokens
+    # Single C-level pass to UTF-8; then take length
+    n_bytes = len(document.encode("utf-8"))
+    return math.ceil(_TOKENS_PER_UTF8_BYTE * n_bytes)
 
 
 def is_within_token_limit_bytes(text: str, max_tokens: int) -> bool:
@@ -108,7 +98,6 @@ def is_within_token_limit_bytes(text: str, max_tokens: int) -> bool:
     try:
         return count_tokens_per_utf_byte(text) <= int(max_tokens)
     except Exception:
-        # Conservative fallback
         return len(text) * 0.5 <= int(max_tokens)
 
 
@@ -131,7 +120,6 @@ def clip_text_to_token_limit_bytes(text: str, max_tokens: int) -> str:
             current_bytes += bl
         return "".join(out_chars)
     except Exception:
-        # Fallback to approximate 4 chars per token
         max_chars = int(max_tokens * _AVG_CHARS_PER_TOKEN)
         return text[:max_chars]
 
@@ -205,7 +193,6 @@ def last_tokens_per_utf_byte(text: str, n_tokens: int) -> str:
         tail = b[-max_bytes:]
         return tail.decode("utf-8", errors="ignore")
     except Exception:
-        # Approximate fallback by characters
         approx_chars = int(n_tokens * _AVG_CHARS_PER_TOKEN)
         return text[-approx_chars:]
 
@@ -261,6 +248,90 @@ def clip_text_to_token_limit(
             return text
         toks = toks[:max_tokens]
         return enc.decode(toks)  # type: ignore[attr-defined]
-    except Exception as e:
+    except Exception:
         max_chars = int(max_tokens * _AVG_CHARS_PER_TOKEN)
         return text[:max_chars]
+
+
+# -------- Added: budgeting + per-table token estimation (via get_groups) ------
+
+
+def read_model_max_input_tokens() -> int:
+    env_keys = [
+        "KM_MAX_INPUT_TOKENS",
+        "UNIFY_MAX_INPUT_TOKENS",
+        "MODEL_MAX_INPUT_TOKENS",
+    ]
+    for k in env_keys:
+        val = os.environ.get(k)
+        if val:
+            try:
+                return int(val)
+            except Exception:
+                continue
+    return 128_000
+
+
+def safe_token_count(value: Any) -> int:
+    try:
+        if value is None:
+            return 0
+        s = value if isinstance(value, str) else str(value)
+        return count_tokens_per_utf_byte(s)
+    except Exception:
+        try:
+            return count_tokens_per_utf_byte(json.dumps(value, ensure_ascii=False))
+        except Exception:
+            return 0
+
+
+def token_budget(max_input_tokens: int, safety_factor: float) -> int:
+    return int(max_input_tokens * safety_factor)
+
+
+def estimate_table_tokens(
+    *,
+    context: str,
+    list_columns: List[str],
+    token_budget_cap: int,
+) -> int:
+    total = 0
+    for col in list_columns:
+        if total > token_budget_cap:
+            break
+        try:
+            uniques = iter_unique_values_via_groups(context, col)
+        except Exception:
+            uniques = []
+        for v in uniques:
+            total += safe_token_count(v)
+            if total > token_budget_cap:
+                return total
+    return total
+
+
+async def estimate_tables_tokens_parallel(
+    *,
+    table_to_ctx: Dict[str, str],
+    table_to_columns: Dict[str, List[str]],
+    max_input_tokens: int,
+    safety_factor: float,
+    max_concurrency: int = 4,
+) -> Dict[str, int]:
+    import asyncio
+
+    sem = asyncio.Semaphore(max(1, int(max_concurrency)))
+    cap = token_budget(max_input_tokens, safety_factor)
+
+    async def _run(table: str) -> Tuple[str, int]:
+        async with sem:
+            est = await asyncio.to_thread(
+                estimate_table_tokens,
+                context=table_to_ctx[table],
+                list_columns=table_to_columns.get(table, []),
+                token_budget_cap=cap,
+            )
+            return table, est
+
+    results = await asyncio.gather(*(_run(t) for t in table_to_ctx.keys()))
+    return {k: v for k, v in results}
