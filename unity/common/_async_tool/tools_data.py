@@ -473,14 +473,6 @@ class ToolsData:
                     is_passthrough=getattr(raw, "__passthrough__", False),
                 )
                 self.save_task(nested_task, metadata)
-                if self._logger:
-                    try:
-                        self._logger.info(
-                            f"spawned nested waiter for {info.name}/{call_id} (passthrough={metadata.is_passthrough})",
-                            prefix="🐞",
-                        )
-                    except Exception:
-                        pass
                 if h_up_q is not None:
                     self.clarification_channels[call_id] = (h_up_q, h_down_q)
                 return False  # ⬅️  no LLM turn required
