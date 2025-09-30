@@ -604,13 +604,6 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     def pause(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
-        # Replay any pending buffered passthrough ops
-        try:
-            asyncio.get_running_loop().create_task(
-                self._replay_pending_passthrough_ops(),
-            )
-        except Exception:
-            pass
         # Propagate pause to any nested handles first (always)
         try:
             task_info = getattr(self._task, "task_info", {})
@@ -635,28 +628,11 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             pass
 
         self._pause_event.clear()
-        # If no passthrough handle is available yet but tools are scheduled, buffer
-        try:
-            pt_handles = self._iter_passthrough_handles()
-            if (not pt_handles) and self._has_scheduled_tools():
-                try:
-                    self._pending_passthrough_ops.append(("pause", {}, ()))
-                except Exception:
-                    pass
-        except Exception:
-            pass
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
     def resume(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
-        # Replay any pending buffered passthrough ops
-        try:
-            asyncio.get_running_loop().create_task(
-                self._replay_pending_passthrough_ops(),
-            )
-        except Exception:
-            pass
         # Propagate resume to any nested handles first (always)
         try:
             task_info = getattr(self._task, "task_info", {})
@@ -681,16 +657,6 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             pass
 
         self._pause_event.set()
-        # If no passthrough handle is available yet but tools are scheduled, buffer
-        try:
-            pt_handles = self._iter_passthrough_handles()
-            if (not pt_handles) and self._has_scheduled_tools():
-                try:
-                    self._pending_passthrough_ops.append(("resume", {}, ()))
-                except Exception:
-                    pass
-        except Exception:
-            pass
 
     @functools.wraps(SteerableToolHandle.done, updated=())
     def done(self) -> bool:
