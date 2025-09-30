@@ -184,6 +184,84 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         # Event streams for bottom-up signals
         self._clar_q: asyncio.Queue[dict] = asyncio.Queue()
         self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
+        # Buffer passthrough operations (method_name, kwargs, fallback_keys) while
+        # a passthrough handle is not yet ready but tools are scheduled
+        self._pending_passthrough_ops: list[tuple[str, dict, tuple[str, ...]]] = []
+
+    # ── internal: passthrough forwarding/buffering helpers ──────────────────
+    def _iter_passthrough_handles(self):
+        try:
+            task_info = getattr(self._task, "task_info", {})
+        except Exception:
+            task_info = {}
+        if not isinstance(task_info, dict):
+            return []
+        out = []
+        for _t, _inf in task_info.items():
+            h = getattr(_inf, "handle", None)
+            is_pt = getattr(_inf, "is_passthrough", False)
+            if h is not None and is_pt:
+                out.append(h)
+        return out
+
+    def _has_scheduled_tools(self) -> bool:
+        try:
+            ti = getattr(self._task, "task_info", {})
+            return isinstance(ti, dict) and len(ti) > 0
+        except Exception:
+            return False
+
+    async def _forward_call_to_handle(
+        self,
+        handle,
+        method_name: str,
+        kwargs: dict,
+        fallback: tuple[str, ...],
+    ):
+        try:
+            return await forward_handle_call(
+                handle,
+                method_name,
+                kwargs,
+                fallback_positional_keys=fallback,
+            )
+        except Exception:
+            return None
+
+    async def _replay_pending_passthrough_ops(self) -> None:
+        if not self._pending_passthrough_ops:
+            return
+        handles = self._iter_passthrough_handles()
+        if not handles:
+            return
+        remaining: list[tuple[str, dict, tuple[str, ...]]] = []
+        for name, kw, fb in list(self._pending_passthrough_ops):
+            forwarded = False
+            for h in handles:
+                await self._forward_call_to_handle(h, name, kw, fb)
+                forwarded = True
+            if not forwarded:
+                remaining.append((name, kw, fb))
+        self._pending_passthrough_ops = remaining
+
+    async def _try_forward_or_buffer(
+        self,
+        method_name: str,
+        kwargs: dict,
+        fallback: tuple[str, ...] = (),
+    ) -> None:
+        handles = self._iter_passthrough_handles()
+        if handles:
+            for h in handles:
+                await self._forward_call_to_handle(h, method_name, kwargs, fallback)
+            return
+        if self._has_scheduled_tools():
+            try:
+                self._pending_passthrough_ops.append(
+                    (method_name, dict(kwargs or {}), tuple(fallback or ())),
+                )
+            except Exception:
+                pass
 
     async def ask(
         self,
@@ -314,37 +392,23 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                 return await nested.result()
 
             # tool name encodes the call-id so collisions are impossible
-            _proxy.__name__ = f"ask_{_inf['call_id']}"
+            try:
+                _cid = getattr(_inf, "call_id", None)
+            except Exception:
+                _cid = None
+            _proxy.__name__ = f"ask_{_cid or 'unknown'}"
             recursive_tools[_proxy.__name__] = _proxy
         # ----------------------------------------------------------------
 
-        # 3.5 Also fan-out the ask to any nested passthrough handles (best-effort).
-        try:
-            task_info = getattr(self._task, "task_info", {})
-            if isinstance(task_info, dict):
-                for _t, _inf in list(task_info.items()):
-                    h = getattr(_inf, "handle", None)
-                    is_pt = getattr(_inf, "is_passthrough", False)
-                    if h is None or not is_pt:
-                        continue
-                    try:
-                        # Fire-and-forget nested ask; do not block the outer ask
-                        async def _do_nested_ask(_h=h):
-                            try:
-                                nested = await _h.ask(
-                                    question,
-                                    parent_chat_context_cont=parent_chat_context_cont,
-                                )
-                                # Consume result to let the inner respond, but ignore value
-                                await nested.result()
-                            except Exception:
-                                pass
-
-                        asyncio.create_task(_do_nested_ask())
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        # Generalized passthrough forwarding/buffering
+        await self._replay_pending_passthrough_ops()
+        await self._try_forward_or_buffer(
+            "ask",
+            {
+                "question": question,
+                "parent_chat_context_cont": parent_chat_context_cont,
+            },
+        )
 
         # 4.  Fire off a *stand-alone* read-only loop.
         # Compose a clear loop identifier so logs show exactly which loop the
@@ -466,30 +530,13 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         except Exception:
             pass
 
-        # Best-effort: forward the interjection to any nested handles running in
-        # passthrough mode so they can incorporate the guidance immediately.
-        try:
-            task_info = getattr(self._task, "task_info", {})
-            if isinstance(task_info, dict):
-                for _t, _inf in list(task_info.items()):
-                    h = getattr(_inf, "handle", None)
-                    is_pt = getattr(_inf, "is_passthrough", False)
-                    if h is None or not is_pt:
-                        continue
-                    try:
-                        maybe = await forward_handle_call(
-                            h,
-                            "interject",
-                            {
-                                "message": message,
-                                "parent_chat_context_cont": parent_chat_context_cont,
-                            },
-                            fallback_positional_keys=["content", "message"],
-                        )
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        # Generalized passthrough forwarding/buffering
+        await self._replay_pending_passthrough_ops()
+        await self._try_forward_or_buffer(
+            "interject",
+            {"message": message, "parent_chat_context_cont": parent_chat_context_cont},
+            ("content", "message"),
+        )
 
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
         payload = (
@@ -510,6 +557,13 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         *,
         parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
+        # Replay any pending buffered passthrough ops
+        try:
+            asyncio.get_running_loop().create_task(
+                self._replay_pending_passthrough_ops(),
+            )
+        except Exception:
+            pass
         # Idempotent guard: if already stopping, do nothing and DO NOT log again
         if self._cancel_event.is_set():
             return
@@ -532,6 +586,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             task_info = {}
         try:
             items = task_info.items() if isinstance(task_info, dict) else []
+            pt_handles = self._iter_passthrough_handles()
             for _t, _inf in items:
                 try:
                     h = _inf.handle
@@ -552,6 +607,21 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                             asyncio.create_task(maybe)
                     except Exception:
                         pass
+            # If no passthrough handle is available yet but tools are scheduled, buffer
+            if (not pt_handles) and self._has_scheduled_tools():
+                try:
+                    self._pending_passthrough_ops.append(
+                        (
+                            "stop",
+                            {
+                                "reason": reason,
+                                "parent_chat_context_cont": parent_chat_context_cont,
+                            },
+                            ("reason",),
+                        ),
+                    )
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -573,6 +643,13 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     def pause(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
+        # Replay any pending buffered passthrough ops
+        try:
+            asyncio.get_running_loop().create_task(
+                self._replay_pending_passthrough_ops(),
+            )
+        except Exception:
+            pass
         # Propagate pause to any nested handles first (always)
         try:
             task_info = getattr(self._task, "task_info", {})
@@ -580,6 +657,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             task_info = {}
         try:
             items = task_info.items() if isinstance(task_info, dict) else []
+            pt_handles = self._iter_passthrough_handles()
             for _t, _inf in items:
                 try:
                     h = _inf.handle
@@ -616,6 +694,12 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                     except Exception:
                         # Best-effort propagation – never break outer pause
                         pass
+            # If no passthrough handle is available yet but tools are scheduled, buffer
+            if (not pt_handles) and self._has_scheduled_tools():
+                try:
+                    self._pending_passthrough_ops.append(("pause", {}, ()))
+                except Exception:
+                    pass
         except Exception:
             # Defensive: do not let propagation errors bubble up
             pass
@@ -624,6 +708,13 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     def resume(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
+        # Replay any pending buffered passthrough ops
+        try:
+            asyncio.get_running_loop().create_task(
+                self._replay_pending_passthrough_ops(),
+            )
+        except Exception:
+            pass
         # Propagate resume to any nested handles first (always)
         try:
             task_info = getattr(self._task, "task_info", {})
@@ -631,6 +722,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             task_info = {}
         try:
             items = task_info.items() if isinstance(task_info, dict) else []
+            pt_handles = self._iter_passthrough_handles()
             for _t, _inf in items:
                 try:
                     h = _inf.handle
@@ -667,6 +759,12 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                     except Exception:
                         # Best-effort propagation – never break outer resume
                         pass
+            # If no passthrough handle is available yet but tools are scheduled, buffer
+            if (not pt_handles) and self._has_scheduled_tools():
+                try:
+                    self._pending_passthrough_ops.append(("resume", {}, ()))
+                except Exception:
+                    pass
         except Exception:
             # Defensive: do not let propagation errors bubble up
             pass
