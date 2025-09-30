@@ -62,9 +62,9 @@ async def send_text(
 # ──────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_progress_bubbles_up_two_tiers() -> None:
+async def test_notification_bubbles_up_two_tiers() -> None:
     """
-    Verifies that progress updates emitted by a running tool are surfaced upstream
+    Verifies that notifications emitted by a running tool are surfaced upstream
     and allow the assistant to react; the tool then completes successfully.
     """
 
@@ -86,15 +86,20 @@ async def test_progress_bubbles_up_two_tiers() -> None:
     )
 
     # Await the first bubbled notification (fire-and-forget)
-    progress_event = await asyncio.wait_for(
+    notification_event = await asyncio.wait_for(
         outer_handle.next_notification(),
         timeout=60,
     )
-    assert progress_event["type"] == "notification"
-    assert progress_event["tool_name"] == "send_email"
+    assert notification_event["type"] == "notification"
+    assert notification_event["tool_name"] == "send_email"
     # The payload may contain 'message' (string) or richer fields – check message when present
-    if "message" in progress_event and isinstance(progress_event["message"], str):
-        assert any(k in progress_event["message"].lower() for k in ["compos", "send"])
+    if "message" in notification_event and isinstance(
+        notification_event["message"],
+        str,
+    ):
+        assert any(
+            k in notification_event["message"].lower() for k in ["compos", "send"]
+        )
 
     await asyncio.wait_for(outer_handle.result(), timeout=60)
 
@@ -122,11 +127,11 @@ async def test_progress_bubbles_up_two_tiers() -> None:
     # 3️⃣ a tool message acknowledges progress (attached to the original call) --
     # Progress updates are emitted as a tool reply to the original tool_call,
     # with name equal to the base tool (e.g. "send_email").
-    progress_tool_msgs = [
+    notification_tool_msgs = [
         m for m in msgs if m.get("role") == "tool" and m.get("name") == "send_email"
     ]
-    assert len(progress_tool_msgs) >= 1
-    first_prog = (progress_tool_msgs[0].get("content") or "").lower()
+    assert len(notification_tool_msgs) >= 1
+    first_prog = (notification_tool_msgs[0].get("content") or "").lower()
     # The content is a JSON-ish string containing {"tool": "send_email", ...}
     assert (
         ("send_email" in first_prog)
@@ -170,7 +175,7 @@ async def delegating_tool(
     notification_up_q: asyncio.Queue | None = None,
 ) -> str:  # return type misleading on purpose
     inner_llm = make_llm(
-        "Surface any internal progress updates as they occur; continue to completion.",
+        "Surface any internal notifications as they occur; continue to completion.",
     )
 
     # Bridge notifications by closing over the parent notification queue
@@ -192,8 +197,8 @@ async def delegating_tool(
 # regression test
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_progress_bubbles_through_returned_handle() -> None:
-    """Progress updates raised inside the returned handle must still reach the user."""
+async def test_notification_bubbles_through_returned_handle() -> None:
+    """Notification raised inside the returned handle must still reach the user."""
 
     outer_llm = make_llm(
         "If any internal work makes progress, you may acknowledge it briefly but continue to completion.",
