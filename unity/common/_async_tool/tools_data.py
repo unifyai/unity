@@ -356,18 +356,58 @@ class ToolsData:
             from unity.common.async_tool_loop import SteerableToolHandle
 
             if isinstance(raw, SteerableToolHandle):
-                # If the nested handle explicitly requests pass-through behaviour
-                # expose it directly to the outer caller *immediately* and hand over.
+                # Passthrough: do NOT hand over control to the nested handle.
+                # Keep the outer loop alive. We still want to forward early
+                # interjections and synchronise pause/stop state with the
+                # newly created handle, but without adopting it as a delegate.
                 if (
                     getattr(raw, "__passthrough__", False)
                     and outer_handle_container
                     and outer_handle_container[0] is not None
                 ):
-                    outer_handle_container[0]._adopt(raw)
-                    # Signal to the outer loop that it should stop doing work and
-                    # simply await the delegate's result.
-                    self.handover_delegate = raw
-                    return False  # outer loop will handle return path
+                    try:
+                        _outer = outer_handle_container[0]
+                        # Forward any early interjections that were queued before
+                        # this passthrough handle existed. Do NOT consume the outer
+                        # buffer so that subsequent passthrough handles also receive them.
+                        for _msg in list(getattr(_outer, "_early_interjects", [])):
+                            try:
+                                if isinstance(_msg, dict):
+                                    maybe_coro = raw.interject(  # type: ignore[attr-defined]
+                                        _msg.get("message", ""),
+                                        parent_chat_context_cont=_msg.get(
+                                            "parent_chat_context_continuted",
+                                        ),
+                                    )
+                                else:
+                                    maybe_coro = raw.interject(_msg)  # type: ignore[attr-defined]
+                                if asyncio.iscoroutine(maybe_coro):
+                                    asyncio.create_task(maybe_coro)
+                            except Exception:
+                                pass
+                        # Synchronise pause/cancel signals with the new handle
+                        try:
+                            if not getattr(
+                                _outer,
+                                "_pause_event",
+                                None,
+                            ).is_set() and hasattr(raw, "pause"):
+                                raw.pause()  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        try:
+                            if getattr(
+                                _outer,
+                                "_cancel_event",
+                                None,
+                            ).is_set() and hasattr(raw, "stop"):
+                                maybe = raw.stop()  # type: ignore[attr-defined]
+                                if asyncio.iscoroutine(maybe):
+                                    asyncio.create_task(maybe)
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
 
                 # ── upgrade interject / clarification flags from handle ─────
                 if hasattr(raw, "interject"):
@@ -421,6 +461,7 @@ class ToolsData:
                     clar_up_queue=h_up_q,
                     clar_down_queue=h_down_q,
                     notification_queue=info.notification_queue,
+                    is_passthrough=getattr(raw, "__passthrough__", False),
                 )
                 self.save_task(nested_task, metadata)
                 if h_up_q is not None:

@@ -340,6 +340,34 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             recursive_tools[_proxy.__name__] = _proxy
         # ----------------------------------------------------------------
 
+        # 3.5 Also fan-out the ask to any nested passthrough handles (best-effort).
+        try:
+            task_info = getattr(self._task, "task_info", {})
+            if isinstance(task_info, dict):
+                for _t, _inf in list(task_info.items()):
+                    h = getattr(_inf, "handle", None)
+                    is_pt = getattr(_inf, "is_passthrough", False)
+                    if h is None or not is_pt:
+                        continue
+                    try:
+                        # Fire-and-forget nested ask; do not block the outer ask
+                        async def _do_nested_ask(_h=h):
+                            try:
+                                nested = await _h.ask(
+                                    question,
+                                    parent_chat_context_cont=parent_chat_context_cont,
+                                )
+                                # Consume result to let the inner respond, but ignore value
+                                await nested.result()
+                            except Exception:
+                                pass
+
+                        asyncio.create_task(_do_nested_ask())
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # 4.  Fire off a *stand-alone* read-only loop.
         # Compose a clear loop identifier so logs show exactly which loop the
         # question refers to, e.g. "Question(TaskScheduler.execute)" or
@@ -477,6 +505,33 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         except Exception:
             pass
 
+        # Best-effort: forward the interjection to any nested handles running in
+        # passthrough mode so they can incorporate the guidance immediately.
+        try:
+            task_info = getattr(self._task, "task_info", {})
+            if isinstance(task_info, dict):
+                for _t, _inf in list(task_info.items()):
+                    h = getattr(_inf, "handle", None)
+                    is_pt = getattr(_inf, "is_passthrough", False)
+                    if h is None or not is_pt:
+                        continue
+                    try:
+                        maybe = forward_handle_call(
+                            h,
+                            "interject",
+                            {
+                                "message": message,
+                                "parent_chat_context_cont": parent_chat_context_cont,
+                            },
+                            fallback_positional_keys=["content", "message"],
+                        )
+                        if asyncio.iscoroutine(maybe):
+                            asyncio.create_task(maybe)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
         payload = (
             {
@@ -511,7 +566,37 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                 + (f" – reason: {reason}" if reason else ""),
             )
 
-        # Best-effort forwarding to a delegate (no logging, no early return)
+        # Always propagate stop to any nested steerable handles
+        try:
+            task_info = getattr(self._task, "task_info", {})
+        except Exception:
+            task_info = {}
+        try:
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                try:
+                    h = _inf.handle
+                except Exception:
+                    h = None
+                if h is not None and hasattr(h, "stop"):
+                    try:
+                        maybe = forward_handle_call(
+                            h,
+                            "stop",
+                            {
+                                "reason": reason,
+                                "parent_chat_context_cont": parent_chat_context_cont,
+                            },
+                            fallback_positional_keys=["reason"],
+                        )
+                        if asyncio.iscoroutine(maybe):
+                            asyncio.create_task(maybe)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Best-effort forwarding to a delegate (legacy); keep after multicast
         if self._delegate is not None:
             try:
                 maybe = self._delegate.stop(
@@ -546,9 +631,30 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     def pause(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
+        # Propagate pause to any nested handles first (always)
+        try:
+            task_info = getattr(self._task, "task_info", {})
+        except Exception:
+            task_info = {}
+        try:
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                try:
+                    h = _inf.handle
+                except Exception:
+                    h = None
+                if h is not None and hasattr(h, "pause"):
+                    try:
+                        maybe = h.pause()  # may be sync or async
+                        if asyncio.iscoroutine(maybe):
+                            asyncio.create_task(maybe)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         if self._delegate is not None:
             self._delegate.pause()
-            return
         self._pause_event.clear()
         # Propagate pause to any nested steerable handles that expose `.pause`
         try:
@@ -578,9 +684,30 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     def resume(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
+        # Propagate resume to any nested handles first (always)
+        try:
+            task_info = getattr(self._task, "task_info", {})
+        except Exception:
+            task_info = {}
+        try:
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                try:
+                    h = _inf.handle
+                except Exception:
+                    h = None
+                if h is not None and hasattr(h, "resume"):
+                    try:
+                        maybe = h.resume()  # may be sync or async
+                        if asyncio.iscoroutine(maybe):
+                            asyncio.create_task(maybe)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         if self._delegate is not None:
             self._delegate.resume()
-            return
         self._pause_event.set()
         # Propagate resume to any nested steerable handles that expose `.resume`
         try:
