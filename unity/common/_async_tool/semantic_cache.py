@@ -1,5 +1,6 @@
 import unify
 import json
+import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -51,13 +52,20 @@ def get_hint():
     """
 
 
-def get_dummy_tool(semantic_cache_result: SemanticCacheResult, tools: "ToolsData"):
+async def get_dummy_tool(
+    semantic_cache_result: SemanticCacheResult,
+    tools: "ToolsData",
+):
     history = semantic_cache_result.tool_trajectory
     for tool_call in history:
         if (tool_name := tool_call.get("name")) in tools.normalized:
+            # TODO use ThreadPoolExecutor to run the tool calls in parallel
             try:
                 args = json.loads(tool_call.get("arguments"))
-                tool_call["result"] = tools.normalized[tool_name].fn(**args)
+                if inspect.iscoroutinefunction(tools.normalized[tool_name].fn):
+                    tool_call["result"] = await tools.normalized[tool_name].fn(**args)
+                else:
+                    tool_call["result"] = tools.normalized[tool_name].fn(**args)
             except Exception:
                 continue
 
