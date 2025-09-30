@@ -7,6 +7,7 @@ from typing import Optional, Awaitable, Dict, Callable, Tuple, Any, Union, Type
 from ..constants import LOGGER
 from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
+from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_use_loop_inner
 
 # Tiny handle objects exposed to callers
@@ -15,17 +16,57 @@ from abc import ABC, abstractmethod
 
 
 class SteerableHandle(ABC):
-    """Abstract base class for steerable handles."""
+    """Abstract base class for steerable handles.
+
+    Notes on parent_chat_context_cont
+    ---------------------------------
+    Some steering methods accept an optional parameter ``parent_chat_context_cont``.
+    This represents the parent chat context continued since the start of this loop –
+    i.e., a continuation of the parent "conversation" (which may itself be another
+    tool loop). Implementations should ensure that, when provided, this context is
+    surfaced to the LLM in an appropriate way.
+    """
 
     @abstractmethod
-    async def ask(self, question: str) -> "SteerableHandle":
+    async def ask(
+        self,
+        question: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> "SteerableHandle":
         """
         Ask a question to the running process.
+
+        Parameters
+        ----------
+        question : str
+            The follow-up user question.
+        parent_chat_context_cont : list[dict] | None, optional
+            The parent chat context continued since the start of this loop.
+            This is the continuation of the parent conversation to date. When
+            provided, implementations should thread this into the LLM input. The
+            user message should be packaged as a dict content containing keys
+            "parent_chat_context_continuted" and "message".
         """
 
     @abstractmethod
-    def interject(self, message: str) -> Awaitable[Optional[str]] | Optional[str]:
-        """Inject an additional *user* turn into the running conversation."""
+    def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> Awaitable[Optional[str]] | Optional[str]:
+        """Inject an additional *user* turn into the running conversation.
+
+        Parameters
+        ----------
+        message : str
+            The user interjection to inject into the loop.
+        parent_chat_context_cont : list[dict] | None, optional
+            The parent chat context continued since the start of this loop.
+            When provided, implementations should ensure the LLM sees this
+            continuation alongside the interjection.
+        """
 
 
 class SteerableToolHandle(SteerableHandle):
@@ -41,8 +82,20 @@ class SteerableToolHandle(SteerableHandle):
     def stop(
         self,
         reason: Optional[str] = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
-        """Shutdown the loop, killing any pending work in the process."""
+        """Shutdown the loop, killing any pending work in the process.
+
+        Parameters
+        ----------
+        reason : str | None
+            Optional human-readable reason for stopping.
+        parent_chat_context_cont : list[dict] | None, optional
+            The parent chat context continued since the start of this loop.
+            Included for signature parity; no LLM call is made here, but this
+            value is forwarded to any delegated handle if present.
+        """
 
     @abstractmethod
     def pause(self) -> Awaitable[Optional[str]] | Optional[str]:
@@ -89,13 +142,13 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self,
         *,
         task: asyncio.Task,
-        interject_queue: asyncio.Queue[str],
+        interject_queue: asyncio.Queue[dict | str],
         cancel_event: asyncio.Event,
         stop_event: asyncio.Event,
         pause_event: Optional[asyncio.Event] = None,
         client: "unify.AsyncUnify | None" = None,
         loop_id: str = "",
-        initial_user_message: Optional[str] = None,
+        initial_user_message: Optional[Any] = None,
     ):
         self._task = task
         self._queue = interject_queue
@@ -120,7 +173,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         # Buffer interjections that may arrive **before** a downstream handle
         # (e.g. an `ActiveTask`) has been adopted.  Once a delegate is ready we
         # forward all queued messages so that no early user guidance is lost.
-        self._early_interjects: list[str] = []
+        self._early_interjects: list[dict | str] = []
 
         # Maintain a user-visible history (what the end-user would see):
         # Records: original prompt (user), interjections (user), ask Q/A (user/assistant).
@@ -138,12 +191,17 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self,
         question: str,
         *,
+        parent_chat_context_cont: list[dict] | None = None,
         _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
         """
         Answers *question* about this *pending* tool, associated with this handle.
         The question is read-only (the tool state is not modified whatsoever).
         The calling parent loop is left completely untouched.
+        When ``parent_chat_context_cont`` is provided, the user message will be
+        packaged as a dict with keys {"parent_chat_context_continuted", "message"}
+        to clearly signal the continuation of the parent conversation since the
+        start of this loop.
         """
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
@@ -151,12 +209,24 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         if self._delegate is not None:
             return await self._delegate.ask(
                 question,
+                parent_chat_context_cont=parent_chat_context_cont,
                 _return_reasoning_steps=_return_reasoning_steps,
             )
 
         # Record the user-visible question immediately (even if delegated)
         try:
-            self._user_visible_history.append({"role": "user", "content": question})
+            if parent_chat_context_cont is not None:
+                self._user_visible_history.append(
+                    {
+                        "role": "user",
+                        "content": {
+                            "message": question,
+                            "parent_chat_context_continuted": parent_chat_context_cont,
+                        },
+                    },
+                )
+            else:
+                self._user_visible_history.append({"role": "user", "content": question})
         except Exception:
             pass
 
@@ -169,6 +239,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                 if self._delegate is not None:
                     return await self._delegate.ask(
                         question,
+                        parent_chat_context_cont=parent_chat_context_cont,
                         _return_reasoning_steps=_return_reasoning_steps,
                     )
         except Exception:
@@ -303,9 +374,23 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         else:
             loop_id_label = f"Question({parent_label})"
 
+        # Build the message for the inspection loop – either a plain string or
+        # a chat dict with continued parent context.
+        _ask_message = (
+            {
+                "role": "user",
+                "content": {
+                    "message": question,
+                    "parent_chat_context_continuted": parent_chat_context_cont,
+                },
+            }
+            if parent_chat_context_cont is not None
+            else question
+        )
+
         helper_handle = start_async_tool_use_loop(
             inspection_client,
-            question,
+            _ask_message,
             recursive_tools,  # may be empty
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
@@ -349,20 +434,67 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
     # -- public API -----------------------------------------------------------
     @functools.wraps(SteerableToolHandle.interject, updated=())
-    async def interject(self, message: str) -> None:
+    async def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"💬 [{_label}] Interject requested: {message}")
         if self._delegate is not None:
-            await self._delegate.interject(message)
+            # Robust forwarding to delegates that may not accept the new kwarg
+            try:
+                await forward_handle_call(
+                    self._delegate,
+                    "interject",
+                    {
+                        "message": message,
+                        "parent_chat_context_cont": parent_chat_context_cont,
+                    },
+                    fallback_positional_keys=["content", "message"],
+                )
+            except Exception:
+                try:
+                    await self._delegate.interject(message)
+                except Exception:
+                    pass
             return
-        # Buffer then forward to resolver loop.
-        self._early_interjects.append(message)
-        await self._queue.put(message)
+        # Record user-visible immediately
+        try:
+            if parent_chat_context_cont is not None:
+                self._user_visible_history.append(
+                    {
+                        "role": "user",
+                        "content": {
+                            "message": message,
+                            "parent_chat_context_continuted": parent_chat_context_cont,
+                        },
+                    },
+                )
+            else:
+                self._user_visible_history.append({"role": "user", "content": message})
+        except Exception:
+            pass
+
+        # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
+        payload = (
+            {
+                "message": message,
+                "parent_chat_context_continuted": parent_chat_context_cont,
+            }
+            if parent_chat_context_cont is not None
+            else message
+        )
+        self._early_interjects.append(payload)
+        await self._queue.put(payload)
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
     def stop(
         self,
         reason: Optional[str] = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
         # Idempotent guard: if already stopping, do nothing and DO NOT log again
         if self._cancel_event.is_set():
@@ -382,7 +514,10 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         # Best-effort forwarding to a delegate (no logging, no early return)
         if self._delegate is not None:
             try:
-                maybe = self._delegate.stop(reason=reason)  # type: ignore[misc]
+                maybe = self._delegate.stop(
+                    reason=reason,
+                    parent_chat_context_cont=parent_chat_context_cont,
+                )  # type: ignore[misc]
                 if asyncio.iscoroutine(maybe):
                     asyncio.create_task(maybe)
             except TypeError:
@@ -579,7 +714,15 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             # coroutine in the background – it is semantically equivalent to the
             # original `interject()` call which also runs fire-and-forget.
             try:
-                maybe_coro = new_handle.interject(msg)  # type: ignore[attr-defined]
+                if isinstance(msg, dict):
+                    maybe_coro = new_handle.interject(  # type: ignore[attr-defined]
+                        msg.get("message", ""),
+                        parent_chat_context_cont=msg.get(
+                            "parent_chat_context_continuted",
+                        ),
+                    )
+                else:
+                    maybe_coro = new_handle.interject(msg)  # type: ignore[attr-defined]
                 if asyncio.iscoroutine(maybe_coro):
                     asyncio.create_task(maybe_coro)
             except Exception:
@@ -625,7 +768,15 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
             for _msg in self._early_interjects:
                 try:
-                    maybe_coro = new_handle.interject(_msg)  # type: ignore[attr-defined]
+                    if isinstance(_msg, dict):
+                        maybe_coro = new_handle.interject(  # type: ignore[attr-defined]
+                            _msg.get("message", ""),
+                            parent_chat_context_cont=_msg.get(
+                                "parent_chat_context_continuted",
+                            ),
+                        )
+                    else:
+                        maybe_coro = new_handle.interject(_msg)  # type: ignore[attr-defined]
                     if _aio.iscoroutine(maybe_coro):
                         _aio.create_task(maybe_coro)
                 except Exception:
@@ -677,7 +828,7 @@ def start_async_tool_use_loop(
     """
     # Ensure a stable loop_id for consistent logging across handle and inner loop
     loop_id = loop_id if loop_id is not None else short_id()
-    interject_queue: asyncio.Queue[str] = asyncio.Queue()
+    interject_queue: asyncio.Queue[dict | str] = asyncio.Queue()
     cancel_event = asyncio.Event()
     stop_event = asyncio.Event()
     pause_event = asyncio.Event()

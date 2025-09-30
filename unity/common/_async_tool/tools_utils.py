@@ -21,7 +21,7 @@ class ToolCallMetadata:
     tool_reply_msg: dict | None = None
     clarify_placeholder: dict | None = None
     handle: Any | None = None
-    interject_queue: asyncio.Queue[str] | None = None
+    interject_queue: asyncio.Queue[dict | str] | None = None
     clar_up_queue: asyncio.Queue[str] | None = None
     clar_down_queue: asyncio.Queue[str] | None = None
     # Optional notification stream emitted by tools; payload is a dict with arbitrary fields
