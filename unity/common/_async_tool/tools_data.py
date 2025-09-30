@@ -367,10 +367,19 @@ class ToolsData:
                 ):
                     try:
                         _outer = outer_handle_container[0]
+                        # Adopt the handle to enable built-in flushing of any
+                        # pending interjections and to wire through future steering
+                        # calls automatically, while the outer loop keeps running
+                        # (handover/early-return was removed in the new design).
+                        try:
+                            _outer._adopt(raw)  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
                         # Forward any early interjections that were queued before
                         # this passthrough handle existed. Do NOT consume the outer
                         # buffer so that subsequent passthrough handles also receive them.
-                        for _msg in list(getattr(_outer, "_early_interjects", [])):
+                        _early = list(getattr(_outer, "_early_interjects", []))
+                        for _msg in _early:
                             try:
                                 if isinstance(_msg, dict):
                                     maybe_coro = raw.interject(  # type: ignore[attr-defined]
@@ -382,8 +391,8 @@ class ToolsData:
                                 else:
                                     maybe_coro = raw.interject(_msg)  # type: ignore[attr-defined]
                                 if asyncio.iscoroutine(maybe_coro):
-                                    asyncio.create_task(maybe_coro)
-                            except Exception:
+                                    await maybe_coro
+                            except Exception as _exc:
                                 pass
                         # Synchronise pause/cancel signals with the new handle
                         try:
@@ -423,7 +432,7 @@ class ToolsData:
                         "Both queues are required (or neither).",
                     )
 
-                # 1️⃣ spawn the nested waiter (non-passthrough nested handle)
+                # 1️⃣ spawn the nested waiter (passthrough/non-passthrough nested handle)
                 if inspect.iscoroutinefunction(raw.result):
                     nested_coro = raw.result()  # already a coroutine
                 else:
@@ -464,6 +473,14 @@ class ToolsData:
                     is_passthrough=getattr(raw, "__passthrough__", False),
                 )
                 self.save_task(nested_task, metadata)
+                if self._logger:
+                    try:
+                        self._logger.info(
+                            f"spawned nested waiter for {info.name}/{call_id} (passthrough={metadata.is_passthrough})",
+                            prefix="🐞",
+                        )
+                    except Exception:
+                        pass
                 if h_up_q is not None:
                     self.clarification_channels[call_id] = (h_up_q, h_down_q)
                 return False  # ⬅️  no LLM turn required

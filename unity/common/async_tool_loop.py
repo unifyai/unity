@@ -477,7 +477,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                     if h is None or not is_pt:
                         continue
                     try:
-                        maybe = forward_handle_call(
+                        maybe = await forward_handle_call(
                             h,
                             "interject",
                             {
@@ -486,8 +486,6 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                             },
                             fallback_positional_keys=["content", "message"],
                         )
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
                     except Exception:
                         pass
         except Exception:
