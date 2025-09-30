@@ -584,53 +584,8 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                 f"🛑 [{_label}] Stop requested"
                 + (f" – reason: {reason}" if reason else ""),
             )
-
-        # Always propagate stop to any nested steerable handles
-        try:
-            task_info = getattr(self._task, "task_info", {})
-        except Exception:
-            task_info = {}
-        try:
-            items = task_info.items() if isinstance(task_info, dict) else []
-            pt_handles = self._iter_passthrough_handles()
-            for _t, _inf in items:
-                try:
-                    h = _inf.handle
-                except Exception:
-                    h = None
-                if h is not None and hasattr(h, "stop"):
-                    try:
-                        maybe = forward_handle_call(
-                            h,
-                            "stop",
-                            {
-                                "reason": reason,
-                                "parent_chat_context_cont": parent_chat_context_cont,
-                            },
-                            fallback_positional_keys=["reason"],
-                        )
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
-                    except Exception:
-                        pass
-            # If no passthrough handle is available yet but tools are scheduled, buffer
-            if (not pt_handles) and self._has_scheduled_tools():
-                try:
-                    self._pending_passthrough_ops.append(
-                        (
-                            "stop",
-                            {
-                                "reason": reason,
-                                "parent_chat_context_cont": parent_chat_context_cont,
-                            },
-                            ("reason",),
-                        ),
-                    )
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
+        # Do not directly forward stop to nested handles here; the inner loop
+        # will propagate stop exactly once during cancellation to avoid duplicates.
         # No delegate forwarding – outer loop remains in control.
 
         # Pre-adoption nested handles are stopped by the inner loop via propagate_stop_once.
