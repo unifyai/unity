@@ -158,6 +158,9 @@ Hi, what is the weather in Cairo?
 
 
 def clean_tool_trajectory(msgs):
+    # TODO:
+    # 1. Do the cleaning in the dummy tool call, store the raw tool calls
+    # 2. Use LLM to prune the tool calls
 
     class ToolRequestPair(TypedDict):
         request: Mapping[str, Any]
