@@ -101,29 +101,37 @@ async def test_notification_bubbles_up_two_tiers() -> None:
         log_steps=False,
     )
 
-    # Await a surfaced notification produced when the assistant calls notify_parent.
-    # Ignore any earlier progress events from base tools (e.g., send_email).
-    notification_event = None
-    for _ in range(5):
-        evt = await asyncio.wait_for(outer_handle.next_notification(), timeout=60)
-        if evt.get("tool_name") == "notify_parent":
-            notification_event = evt
-            break
-    assert (
-        notification_event is not None
-    ), "notify_parent was not called by the assistant"
-    assert notification_event["type"] == "notification"
-    assert notification_event["tool_name"] == "notify_parent"
-    if "message" in notification_event and isinstance(
-        notification_event["message"],
-        str,
-    ):
-        assert any(
-            k in notification_event["message"].lower()
-            for k in ["compos", "sending", "send", "sent", "email", "success"]
-        )
+    try:
+        # Await a surfaced notification produced when the assistant calls notify_parent.
+        # Ignore any earlier progress events from base tools (e.g., send_email).
+        notification_event = None
+        for _ in range(5):
+            evt = await asyncio.wait_for(outer_handle.next_notification(), timeout=60)
+            if evt.get("tool_name") == "notify_parent":
+                notification_event = evt
+                break
+        assert (
+            notification_event is not None
+        ), "notify_parent was not called by the assistant"
+        assert notification_event["type"] == "notification"
+        assert notification_event["tool_name"] == "notify_parent"
+        if "message" in notification_event and isinstance(
+            notification_event["message"],
+            str,
+        ):
+            assert any(
+                k in notification_event["message"].lower()
+                for k in ["compos", "sending", "send", "sent", "email", "success"]
+            )
 
-    await asyncio.wait_for(outer_handle.result(), timeout=60)
+        await asyncio.wait_for(outer_handle.result(), timeout=60)
+    finally:
+        # Ensure loop teardown even if assertions/timeouts fail
+        try:
+            outer_handle.stop("test cleanup")
+        except Exception:
+            pass
+        await asyncio.sleep(0)
 
     # ─────────────────────────
     # Assertions (chat transcript shape)
@@ -226,15 +234,21 @@ async def test_notification_bubbles_through_returned_handle() -> None:
         },
         log_steps=False,
     )
+    try:
+        # ── satisfy: we should receive a bubbled notification event from the INNER loop ──
+        event = await asyncio.wait_for(handle.next_notification(), timeout=60)
+        assert event["type"] == "notification"
+        assert event["tool_name"] == "delegating_tool"
+        assert "widget" in (event.get("message") or "").lower()
 
-    # ── satisfy: we should receive a bubbled notification event from the INNER loop ──
-    event = await asyncio.wait_for(handle.next_notification(), timeout=60)
-    assert event["type"] == "notification"
-    assert event["tool_name"] == "delegating_tool"
-    assert "widget" in (event.get("message") or "").lower()
+        # ── loop must now complete successfully ───────────────────────────────
+        await asyncio.wait_for(handle.result(), timeout=60)
 
-    # ── loop must now complete successfully ───────────────────────────────
-    await asyncio.wait_for(handle.result(), timeout=60)
-
-    # final sanity-check: assistant ends with the confirmation from inner_tool
-    assert "finished" in (outer_llm.messages[-1]["content"] or "").lower()
+        # final sanity-check: assistant ends with the confirmation from inner_tool
+        assert "finished" in (outer_llm.messages[-1]["content"] or "").lower()
+    finally:
+        try:
+            handle.stop("test cleanup")
+        except Exception:
+            pass
+        await asyncio.sleep(0)
