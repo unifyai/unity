@@ -351,6 +351,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         self._completed_tasks: list[tuple[int, str]] = []
         # Stream of per-task completion events (name → result text)
         self._completions: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        # Queue-level universal notification stream (dict events)
+        self._notif_q: asyncio.Queue[dict] = asyncio.Queue()
         # Sticky pass-through flag: enabled only when the queue truly contains a
         # single task at creation time; once disabled it never re-enables for the
         # lifetime of this ActiveQueue instance.
@@ -376,6 +378,18 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             ]
             return "Completed the following tasks: " + ", ".join(summary_items) + "."
         return "Chain completed."
+
+    # ----------------------------
+    # Notification helper
+    # ----------------------------
+    def _emit_notification(self, event: dict) -> None:
+        try:
+            self._notif_q.put_nowait(event)
+        except Exception:
+            try:
+                asyncio.create_task(self._notif_q.put(event))
+            except Exception:
+                pass
 
     # ----------------------------
     # Snapshot helper (head→tail)
@@ -548,6 +562,19 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                                 or rows[0].get("description")
                                 or "(unnamed task)"
                             )
+                            # Emit a standardized completion notification
+                            try:
+                                evt_completed = {
+                                    "type": "queue.task.completed",
+                                    "task_id": int(self._current_task_id),
+                                    "name": str(name),
+                                    "instance_id": rows[0].get("instance_id"),
+                                    "queue_id": rows[0].get("queue_id"),
+                                    "result": text,
+                                }
+                                self._emit_notification(evt_completed)
+                            except Exception:
+                                pass
                             self._completed_tasks.append(
                                 (int(self._current_task_id), str(name)),
                             )
@@ -560,10 +587,42 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     except Exception:
                         pass
                 if was_stopped:
+                    # Emit a stop/defer notification for the current task
+                    try:
+                        intent = getattr(self._current_handle, "_last_intent", None)
+                        reason = getattr(
+                            self._current_handle,
+                            "_last_intent_reason",
+                            None,
+                        )
+                    except Exception:
+                        intent, reason = None, None
+                    try:
+                        self._emit_notification(
+                            {
+                                "type": "queue.task.stopped",
+                                "task_id": int(self._current_task_id),
+                                "intent": intent,
+                                "reason": reason,
+                            },
+                        )
+                    except Exception:
+                        pass
                     self._final_result = text or "Stopped."
                     break
                 # If the stop/defer path was taken, end the queue here
                 if "stopped" in text.lower():
+                    try:
+                        self._emit_notification(
+                            {
+                                "type": "queue.task.stopped",
+                                "task_id": int(self._current_task_id),
+                                "intent": None,
+                                "reason": text,
+                            },
+                        )
+                    except Exception:
+                        pass
                     self._final_result = text
                     break
                 # Determine the next task to run using the live queue only
@@ -572,10 +631,48 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 if next_tid is None:
                     # Queue exhausted – compose a completion summary across all tasks
                     self._final_result = self._summarise_completions()
+                    try:
+                        self._emit_notification(
+                            {
+                                "type": "queue.completed",
+                                "summary": self._final_result,
+                                "completed": [
+                                    {"task_id": tid, "name": name}
+                                    for tid, name in self._completed_tasks
+                                ],
+                            },
+                        )
+                    except Exception:
+                        pass
                     break
 
                 # Start next task using CHAIN linkage semantics
                 self._current_task_id = next_tid
+                # Emit a standardized started notification
+                try:
+                    # Best-effort fetch for name/metadata
+                    _rows = self._s._filter_tasks(
+                        filter=f"task_id == {int(next_tid)}",
+                        limit=1,
+                    )
+                    _nm = (
+                        _rows[0].get("name")
+                        if _rows and _rows[0].get("name") is not None
+                        else None
+                    )
+                    self._emit_notification(
+                        {
+                            "type": "queue.task.started",
+                            "task_id": int(next_tid),
+                            "name": _nm,
+                            "queue_id": (_rows[0].get("queue_id") if _rows else None),
+                            "instance_id": (
+                                _rows[0].get("instance_id") if _rows else None
+                            ),
+                        },
+                    )
+                except Exception:
+                    pass
                 self._current_handle = await self._s._execute_internal(
                     task_id=next_tid,
                     parent_chat_context=self._parent_ctx,
@@ -810,12 +907,54 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         return {}
 
     async def next_notification(self) -> dict:  # pass-through when supported
+        # If we have pending queue-level events, deliver them immediately
         try:
-            if hasattr(self._current_handle, "next_notification"):
-                return await self._current_handle.next_notification()  # type: ignore[attr-defined]
+            return self._notif_q.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
         except Exception:
             pass
-        return {}
+
+        # Create awaitables for both sources: queue-level and inner-handle
+        notif_task = asyncio.create_task(self._notif_q.get())
+        inner_task = None
+        try:
+            if hasattr(self._current_handle, "next_notification"):
+                inner_task = asyncio.create_task(self._current_handle.next_notification())  # type: ignore[attr-defined]
+        except Exception:
+            inner_task = None
+
+        # If no inner source, just await queue-level
+        if inner_task is None:
+            try:
+                return await notif_task
+            except Exception:
+                return {}
+
+        done, pending = await asyncio.wait(
+            {notif_task, inner_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        # Retrieve result from first completed task
+        result: dict = {}
+        for t in done:
+            try:
+                res = await t
+                if isinstance(res, dict):
+                    result = res
+                else:
+                    # Wrap non-dict as a generic event
+                    result = {"type": "inner.notification", "data": res}
+            except Exception:
+                result = {}
+            break
+        # Cancel the other task to avoid leaks
+        for t in pending:
+            try:
+                t.cancel()
+            except Exception:
+                pass
+        return result
 
     async def answer_clarification(
         self,
