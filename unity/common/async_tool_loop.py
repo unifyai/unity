@@ -157,9 +157,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         # "running" ⇢ Event **set**,  "paused" ⇢ Event **cleared**
         self._pause_event = pause_event or asyncio.Event()
         self._client = client
-        # Optional live delegate – set via ``_adopt`` when this handle should
-        # forward every steering call to another *SteerableToolHandle*.
-        self._delegate: Optional["SteerableToolHandle"] = None
+        # No delegate in the new passthrough design – outer loop stays active.
         self._pause_event.set()
         self._loop_id: str = loop_id
         # Human-friendly label for logs (includes 4-hex suffix when available).
@@ -205,13 +203,6 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         """
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
-        # Fast-path: delegated handles answer directly.
-        if self._delegate is not None:
-            return await self._delegate.ask(
-                question,
-                parent_chat_context_cont=parent_chat_context_cont,
-                _return_reasoning_steps=_return_reasoning_steps,
-            )
 
         # Record the user-visible question immediately (even if delegated)
         try:
@@ -230,20 +221,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         except Exception:
             pass
 
-        # Small grace yield: if a pass-through delegate is being adopted,
-        # give the event loop a tick to complete adoption so we can route
-        # this ask directly to the inner handle.
-        try:
-            if self._delegate is None:
-                await asyncio.sleep(0)
-                if self._delegate is not None:
-                    return await self._delegate.ask(
-                        question,
-                        parent_chat_context_cont=parent_chat_context_cont,
-                        _return_reasoning_steps=_return_reasoning_steps,
-                    )
-        except Exception:
-            pass
+        # No delegate forwarding – outer loop remains in control.
 
         # 0.  Defensive guard: if the outer loop has already finished we can
         #     just answer from the final transcript without starting another
@@ -470,24 +448,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"💬 [{_label}] Interject requested: {message}")
-        if self._delegate is not None:
-            # Robust forwarding to delegates that may not accept the new kwarg
-            try:
-                await forward_handle_call(
-                    self._delegate,
-                    "interject",
-                    {
-                        "message": message,
-                        "parent_chat_context_cont": parent_chat_context_cont,
-                    },
-                    fallback_positional_keys=["content", "message"],
-                )
-            except Exception:
-                try:
-                    await self._delegate.interject(message)
-                except Exception:
-                    pass
-            return
+        # No delegate forwarding – outer loop remains in control.
         # Record user-visible immediately
         try:
             if parent_chat_context_cont is not None:
@@ -596,24 +557,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         except Exception:
             pass
 
-        # Best-effort forwarding to a delegate (legacy); keep after multicast
-        if self._delegate is not None:
-            try:
-                maybe = self._delegate.stop(
-                    reason=reason,
-                    parent_chat_context_cont=parent_chat_context_cont,
-                )  # type: ignore[misc]
-                if asyncio.iscoroutine(maybe):
-                    asyncio.create_task(maybe)
-            except TypeError:
-                try:
-                    maybe = self._delegate.stop(reason)  # type: ignore[misc]
-                    if asyncio.iscoroutine(maybe):
-                        asyncio.create_task(maybe)
-                except Exception:
-                    pass
-            except Exception:
-                pass
+        # No delegate forwarding – outer loop remains in control.
 
         # Pre-adoption nested handles are stopped by the inner loop via propagate_stop_once.
 
@@ -653,8 +597,6 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         except Exception:
             pass
 
-        if self._delegate is not None:
-            self._delegate.pause()
         self._pause_event.clear()
         # Propagate pause to any nested steerable handles that expose `.pause`
         try:
@@ -706,8 +648,6 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         except Exception:
             pass
 
-        if self._delegate is not None:
-            self._delegate.resume()
         self._pause_event.set()
         # Propagate resume to any nested steerable handles that expose `.resume`
         try:
@@ -735,38 +675,12 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
     @functools.wraps(SteerableToolHandle.done, updated=())
     def done(self) -> bool:
-        if self._delegate is not None:
-            return self._delegate.done()
         return self._task.done()
 
     @functools.wraps(SteerableToolHandle.result, updated=())
     async def result(self) -> str:
         """Return the final answer once the conversation loop (or delegate) completes."""
         _stopped_notice = "processed stopped early, no result"
-        if self._delegate is not None:
-            # 1) Wait for the delegated (inner) handle to finish and capture its answer.
-            try:
-                ans = await self._delegate.result()
-            except asyncio.CancelledError:
-                # Standardised stop semantics: return a notice string instead of raising.
-                ans = "processed stopped early, no result"
-            # If the OUTER handle was stopped, return the inner result now without
-            # waiting on the cancelled outer loop task.
-            try:
-                if self._cancel_event.is_set():
-                    return ans
-            except Exception:
-                pass
-            # 2) Best-effort: also wait for the OUTER loop task to finish so no background work remains.
-            #    Swallow any exceptions here to preserve prior semantics (caller receives the inner result).
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                # Outer task was cancelled – standardize the user-facing outcome.
-                return _stopped_notice
-            except Exception:
-                pass
-            return ans
         try:
             return await self._task
         except asyncio.CancelledError:
@@ -816,101 +730,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         except Exception:
             pass
 
-    # ── internal helper ──────────────────────────────────────────────────────
-    def _adopt(self, new_handle: "SteerableToolHandle") -> None:
-        """Switch all steering methods to *new_handle* (in-process only).
-
-        Move any *already queued* interjections over to the freshly adopted
-        delegate so that early user guidance (issued *before* the delegate was
-        ready) is not lost – a common source of hangs during tests that fire
-        `interject()` immediately after `execute()` returns.
-        """
-        # Flush queued interjections collected before the delegate became
-        # available.  We dispatch them *asynchronously* so that we keep the
-        # adopt operation non-blocking and avoid re-entrancy problems if the
-        # delegate itself relies on the outer event-loop.
-        import asyncio  # local import to dodge unconditional dependency at top-level
-
-        while not self._queue.empty():
-            try:
-                msg = self._queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-
-            # Forward the message to the delegate.  We purposefully schedule the
-            # coroutine in the background – it is semantically equivalent to the
-            # original `interject()` call which also runs fire-and-forget.
-            try:
-                if isinstance(msg, dict):
-                    maybe_coro = new_handle.interject(  # type: ignore[attr-defined]
-                        msg.get("message", ""),
-                        parent_chat_context_cont=msg.get(
-                            "parent_chat_context_continuted",
-                        ),
-                    )
-                else:
-                    maybe_coro = new_handle.interject(msg)  # type: ignore[attr-defined]
-                if asyncio.iscoroutine(maybe_coro):
-                    asyncio.create_task(maybe_coro)
-            except Exception:
-                # Silently swallow to preserve backwards-compat – early
-                # interjections are *best-effort* hints rather than critical.
-                pass
-
-            # Deduplicate: remove any identical buffered entries so the
-            # subsequent early-interjection replay does not double-forward.
-            try:
-                if self._early_interjects:
-                    self._early_interjects = [
-                        m for m in self._early_interjects if m != msg
-                    ]
-            except Exception:
-                # Best-effort only – never allow dedup bookkeeping to break adoption.
-                pass
-
-        # Keep pause / cancel signals in sync – they might have been toggled
-        # before we adopted the delegate.
-        try:
-            if not self._pause_event.is_set() and hasattr(new_handle, "pause"):
-                new_handle.pause()  # type: ignore[attr-defined]
-            if self._cancel_event.is_set() and hasattr(new_handle, "stop"):
-                new_handle.stop()  # type: ignore[attr-defined]
-        except Exception:
-            # These are advisory only – failing to propagate them should never
-            # break the overall execution.
-            pass
-
-        # Ensure only the original top-level handle is considered root for logging
-        try:
-            setattr(new_handle, "_is_root_handle", False)
-        except Exception:
-            pass
-
-        self._delegate = new_handle
-
-        # ── Flush any interjections that were consumed by the resolver loop ──
-        #     before the delegate became available.
-        if self._early_interjects:
-            import asyncio as _aio
-
-            for _msg in self._early_interjects:
-                try:
-                    if isinstance(_msg, dict):
-                        maybe_coro = new_handle.interject(  # type: ignore[attr-defined]
-                            _msg.get("message", ""),
-                            parent_chat_context_cont=_msg.get(
-                                "parent_chat_context_continuted",
-                            ),
-                        )
-                    else:
-                        maybe_coro = new_handle.interject(_msg)  # type: ignore[attr-defined]
-                    if _aio.iscoroutine(maybe_coro):
-                        _aio.create_task(maybe_coro)
-                except Exception:
-                    # Advisory only – failure to replay should not break the flow.
-                    pass
-
-            self._early_interjects.clear()
+    # No _adopt: passthrough no longer adopts delegates; outer loop remains active.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
