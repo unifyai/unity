@@ -122,29 +122,20 @@ async def construct_new_user_message(init_user_message, messages_history):
         return init_user_message
 
     CLEAN_USER_MESSAGE_PROMPT = """
-You are given a list of messages representing a conversation history.  Your only task is:
+Task: From the conversation history, return the final intended user message.
 
-Reconstruct the final intended user message by applying all interjections and corrections to the initial user message(s).
-
-Output only the final, corrected user message as a plain string (not JSON, not explanation) You should not include
-any redundant words or phrases that are not related to the user intended request.
-
-Each message has the format:
-
-"role": "message"
-"role" can be either "user" or "assistant".
-"message" is the text of the message.
-
-Some conversations may include interjections. An interjection is initiated by a "user" message.
+Rules:
+- Apply all user interjections/corrections; the latest user message overrides earlier ones.
+- Ignore assistant messages; they are never part of the output.
+- Output exactly one plain string: the final corrected user message. No quotes, JSON, or explanation.
+- Do not add new information. Remove redundant or off-topic words.
 
 Example:
-
-Input messages:
+Input:
 [
 "user: Hi, what is the weather in Tokyo?",
 "user: Actually, I meant in Cairo"
 ]
-
 Output:
 Hi, what is the weather in Cairo?
 """
