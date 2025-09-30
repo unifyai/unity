@@ -339,7 +339,13 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             return _StaticHandle()  # pragma: no cover
 
         # 1.  Gather a *read-only* snapshot of the parent chat.
-        parent_ctx = list(self._client.messages) if self._client else []
+        try:
+            msgs = getattr(self._client, "messages", []) if self._client else []
+            if msgs is None:
+                msgs = []
+            parent_ctx = list(msgs)
+        except Exception:
+            parent_ctx = []
 
         # 2.  Prepare an *in-memory* Unify client for the **inspection** loop
         #     (LLM sees only the system header + follow-up user question).
