@@ -676,27 +676,24 @@ async def async_tool_use_loop_inner(
                     # Only listen for *new* clarification questions.
                     # If the task is already awaiting an answer,
                     # `waiting_for_clarification` will be True.
-                    if tools_data.info[_t].waiting_for_clarification:
+                    info = tools_data.info[_t]
+                    if info.waiting_for_clarification:
                         continue
 
-                    cuq = tools_data.info[_t].clar_up_queue
-                    # Upward bubbling only for tasks running in passthrough mode
-                    if cuq is not None and getattr(
-                        tools_data.info[_t],
-                        "is_passthrough",
-                        False,
-                    ):
-                        w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
+                    # Always listen for clarification requests when a queue is provided
+                    if info.clar_up_queue is not None:
+                        w = asyncio.create_task(
+                            info.clar_up_queue.get(),
+                            name="ClarificationQueueGet",
+                        )
                         clar_waiters[w] = _t
-                    # Notification updates are non-blocking one-way signals; we always
-                    # listen for them, independent of clarification state.
-                    pq = tools_data.info[_t].notification_queue
-                    if pq is not None and getattr(
-                        tools_data.info[_t],
-                        "is_passthrough",
-                        False,
-                    ):
-                        pw = asyncio.create_task(pq.get(), name="NotificationQueueGet")
+
+                    # Always listen for notifications when a queue is provided
+                    if info.notification_queue is not None:
+                        pw = asyncio.create_task(
+                            info.notification_queue.get(),
+                            name="NotificationQueueGet",
+                        )
                         notif_waiters[pw] = _t
                 waiters = (
                     tools_data.pending
@@ -1509,32 +1506,28 @@ async def async_tool_use_loop_inner(
                                 ):
                                     _inf.waiting_for_clarification = False
                                     break
-                        # Only publish clarify acknowledgement to outer transcript for passthrough tasks
-                        if tgt_task is not None and getattr(
-                            tools_data.info[tgt_task],
-                            "is_passthrough",
-                            False,
-                        ):
-                            tool_reply_msg = create_tool_call_message(
-                                name=name,
-                                call_id=call["id"],
-                                content=(
-                                    f"Clarification answer sent upstream: {ans!r}\n"
-                                    "⏳ Waiting for the original tool to finish…"
-                                ),
-                            )
-                            await insert_tool_message_after_assistant(
-                                assistant_meta,
-                                msg,
-                                tool_reply_msg,
-                                client,
-                                _msg_dispatcher,
-                            )
+                        # Always publish a tool reply acknowledging the clarify helper
+                        tool_reply_msg = create_tool_call_message(
+                            name=name,
+                            call_id=call["id"],
+                            content=(
+                                f"Clarification answer sent upstream: {ans!r}\n"
+                                "⏳ Waiting for the original tool to finish…"
+                            ),
+                        )
+                        await insert_tool_message_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_reply_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
+                        if tgt_task is not None:
                             tools_data.info[tgt_task].clarify_placeholder = (
                                 tool_reply_msg
                             )
-                            # Trigger an immediate LLM turn after helper action
-                            llm_turn_required = True
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
                         continue
 
                     if name.startswith("interject_"):
