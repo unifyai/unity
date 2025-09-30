@@ -375,18 +375,18 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             loop_id_label = f"Question({parent_label})"
 
         # Build the message for the inspection loop – either a plain string or
-        # a chat dict with continued parent context.
-        _ask_message = (
-            {
+        # a single string that embeds the continued parent context.
+        if parent_chat_context_cont is not None:
+            try:
+                _ctx_text = json.dumps(parent_chat_context_cont, indent=2)
+            except Exception:
+                _ctx_text = str(parent_chat_context_cont)
+            _ask_message = {
                 "role": "user",
-                "content": {
-                    "message": question,
-                    "parent_chat_context_continuted": parent_chat_context_cont,
-                },
+                "content": f"{question}\n\nparent_chat_context_continuted:\n{_ctx_text}",
             }
-            if parent_chat_context_cont is not None
-            else question
-        )
+        else:
+            _ask_message = question
 
         helper_handle = start_async_tool_use_loop(
             inspection_client,
