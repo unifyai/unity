@@ -517,25 +517,25 @@ async def test_clarification_nested_handle():
 
 
 @pytest.mark.asyncio
-async def test_progress_nested_handle():
+async def test_notification_nested_handle():
     """
-    Inner tool emits progress updates via ``progress_up_q``; the outer loop must
-    surface these as progress events while continuing to completion.
+    Inner tool emits notifications via ``notification_up_q``; the outer loop must
+    surface these as notification events while continuing to completion.
 
-    We assert that a progress event is observed via ``handle.next_progress()`` and
+    We assert that a notification event is observed via ``handle.next_notification()`` and
     that the conversation completes with the instructed final reply.
     """
 
     # ── inner tool that emits progress updates ───────────────────────────
     async def inner_progress(
         *,
-        progress_up_q: asyncio.Queue | None = None,
+        notification_up_q: asyncio.Queue | None = None,
     ) -> str:
-        if progress_up_q is None:
-            raise RuntimeError("progress queue missing")
-        await progress_up_q.put({"message": "Inner loop: preparing widget"})
+        if notification_up_q is None:
+            raise RuntimeError("notification queue missing")
+        await notification_up_q.put({"message": "Inner loop: preparing widget"})
         await asyncio.sleep(0)
-        await progress_up_q.put({"message": "Inner loop: halfway"})
+        await notification_up_q.put({"message": "Inner loop: halfway"})
         return "✅ inner finished"
 
     inner_progress.__name__ = "inner_progress"
@@ -544,7 +544,7 @@ async def test_progress_nested_handle():
     # ── outer tool launches a nested loop and bridges progress via parent's queue ──
     async def outer_tool(
         *,
-        progress_up_q: asyncio.Queue | None = None,
+        notification_up_q: asyncio.Queue | None = None,
     ) -> AsyncToolUseLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
@@ -558,7 +558,7 @@ async def test_progress_nested_handle():
         )
 
         async def inner_bridge() -> str:
-            return await inner_progress(progress_up_q=progress_up_q)
+            return await inner_progress(notification_up_q=notification_up_q)
 
         return start_async_tool_use_loop(
             client=inner_client,
@@ -592,9 +592,9 @@ async def test_progress_nested_handle():
         timeout=240,
     )
 
-    # Receive a bubbled progress event from the INNER loop via the outer tool
-    event = await asyncio.wait_for(handle.next_progress(), timeout=60)
-    assert event["type"] == "progress"
+    # Receive a bubbled notification event from the INNER loop via the outer tool
+    event = await asyncio.wait_for(handle.next_notification(), timeout=60)
+    assert event["type"] == "notification"
     assert event["tool_name"] == "outer_tool"
     if isinstance(event.get("message"), str):
         assert any(k in event["message"].lower() for k in ["prepar", "halfway", "inner loop"])  # type: ignore[arg-type]

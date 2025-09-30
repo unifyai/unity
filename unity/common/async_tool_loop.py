@@ -66,8 +66,8 @@ class SteerableToolHandle(SteerableHandle):
         """Await the next clarification event pushed by a running tool."""
 
     @abstractmethod
-    async def next_progress(self) -> dict:
-        """Await the next progress event pushed by a running tool."""
+    async def next_notification(self) -> dict:
+        """Await the next notification pushed by a running tool."""
 
     @abstractmethod
     async def answer_clarification(self, call_id: str, answer: str) -> None:
@@ -132,7 +132,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
         # Event streams for bottom-up signals
         self._clar_q: asyncio.Queue[dict] = asyncio.Queue()
-        self._progress_q: asyncio.Queue[dict] = asyncio.Queue()
+        self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
 
     async def ask(
         self,
@@ -517,10 +517,10 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         """Await the next clarification event pushed by a running tool."""
         return await self._clar_q.get()
 
-    @functools.wraps(SteerableToolHandle.next_progress, updated=())
-    async def next_progress(self) -> dict:
-        """Await the next progress event pushed by a running tool."""
-        return await self._progress_q.get()
+    @functools.wraps(SteerableToolHandle.next_notification, updated=())
+    async def next_notification(self) -> dict:
+        """Await the next notification pushed by a running tool."""
+        return await self._notification_q.get()
 
     @functools.wraps(SteerableToolHandle.answer_clarification, updated=())
     async def answer_clarification(self, call_id: str, answer: str) -> None:

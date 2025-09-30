@@ -133,9 +133,9 @@ def wrap_handle_with_logging(
                 except Exception:
                     return {}
 
-            async def next_progress(self) -> dict:
+            async def next_notification(self) -> dict:
                 try:
-                    return await self._inner.next_progress()
+                    return await self._inner.next_notification()
                 except Exception:
                     return {}
 
@@ -226,10 +226,12 @@ def wrap_handle_with_logging(
             except Exception:
                 return {}
 
-        async def next_progress(self) -> dict:
+        async def next_notification(self) -> dict:
             try:
-                evt = await self._inner.next_progress()
-                asyncio.create_task(self._publish(action="next_progress", event=evt))
+                evt = await self._inner.next_notification()
+                asyncio.create_task(
+                    self._publish(action="next_notification", event=evt),
+                )
                 return evt
             except Exception:
                 return {}
