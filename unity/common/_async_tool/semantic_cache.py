@@ -84,7 +84,9 @@ async def get_dummy_tool(
                     tool_call["result"] = await tools.normalized[tool_name].fn(**args)
                 else:
                     tool_call["result"] = tools.normalized[tool_name].fn(**args)
+                tool_call["result_status"] = "new"
             except Exception:
+                tool_call["result_status"] = "cached"
                 continue
 
     call_id = f"call_MyCall"
