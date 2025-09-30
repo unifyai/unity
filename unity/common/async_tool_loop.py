@@ -680,34 +680,15 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             pass
 
         self._pause_event.clear()
-        # Propagate pause to any nested steerable handles that expose `.pause`
+        # If no passthrough handle is available yet but tools are scheduled, buffer
         try:
-            task_info = getattr(self._task, "task_info", {})
-        except Exception:
-            task_info = {}
-        try:
-            items = task_info.items() if isinstance(task_info, dict) else []
-            for _t, _inf in items:
-                try:
-                    h = _inf.handle
-                except Exception:
-                    h = None
-                if h is not None and hasattr(h, "pause"):
-                    try:
-                        maybe = h.pause()  # may be sync or async
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
-                    except Exception:
-                        # Best-effort propagation – never break outer pause
-                        pass
-            # If no passthrough handle is available yet but tools are scheduled, buffer
+            pt_handles = self._iter_passthrough_handles()
             if (not pt_handles) and self._has_scheduled_tools():
                 try:
                     self._pending_passthrough_ops.append(("pause", {}, ()))
                 except Exception:
                     pass
         except Exception:
-            # Defensive: do not let propagation errors bubble up
             pass
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
@@ -745,34 +726,15 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             pass
 
         self._pause_event.set()
-        # Propagate resume to any nested steerable handles that expose `.resume`
+        # If no passthrough handle is available yet but tools are scheduled, buffer
         try:
-            task_info = getattr(self._task, "task_info", {})
-        except Exception:
-            task_info = {}
-        try:
-            items = task_info.items() if isinstance(task_info, dict) else []
-            for _t, _inf in items:
-                try:
-                    h = _inf.handle
-                except Exception:
-                    h = None
-                if h is not None and hasattr(h, "resume"):
-                    try:
-                        maybe = h.resume()  # may be sync or async
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
-                    except Exception:
-                        # Best-effort propagation – never break outer resume
-                        pass
-            # If no passthrough handle is available yet but tools are scheduled, buffer
+            pt_handles = self._iter_passthrough_handles()
             if (not pt_handles) and self._has_scheduled_tools():
                 try:
                     self._pending_passthrough_ops.append(("resume", {}, ()))
                 except Exception:
                     pass
         except Exception:
-            # Defensive: do not let propagation errors bubble up
             pass
 
     @functools.wraps(SteerableToolHandle.done, updated=())
