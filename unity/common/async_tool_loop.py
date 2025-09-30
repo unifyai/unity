@@ -471,6 +471,13 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             except asyncio.CancelledError:
                 # Standardised stop semantics: return a notice string instead of raising.
                 ans = "processed stopped early, no result"
+            # If the OUTER handle was stopped, return the inner result now without
+            # waiting on the cancelled outer loop task.
+            try:
+                if self._cancel_event.is_set():
+                    return ans
+            except Exception:
+                pass
             # 2) Best-effort: also wait for the OUTER loop task to finish so no background work remains.
             #    Swallow any exceptions here to preserve prior semantics (caller receives the inner result).
             try:
