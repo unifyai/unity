@@ -875,6 +875,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
             task=asyncio.create_task(_run()),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
     long_tool.__name__ = "long_tool"
