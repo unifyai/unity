@@ -268,9 +268,18 @@ async def test_interjections_are_processed_and_loop_completes():
     assert isinstance(final, str) and final.strip()
 
     msgs = client.messages
-    idx_B = _interjection_index(msgs, "B please")
-    idx_C = _interjection_index(msgs, "C please")
-    assert idx_B < idx_C
+    # New behaviour: multiple interjections can be consolidated into the same
+    # system message block. Instead of requiring distinct message indices,
+    # assert that both snippets appear and that "B please" precedes "C please"
+    # within the combined interjection text.
+    inter_sys_msgs = [
+        m.get("content", "")
+        for m in msgs
+        if m.get("role") == "system" and "user: **" in (m.get("content", "") or "")
+    ]
+    combined = "\n".join(inter_sys_msgs)
+    assert "B please" in combined and "C please" in combined
+    assert combined.find("B please") < combined.find("C please")
 
     tool_msgs = [m for m in client.messages if m["role"] == "tool"]
     assert len(tool_msgs) >= 3
