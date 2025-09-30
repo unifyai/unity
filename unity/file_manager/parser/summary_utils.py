@@ -4,7 +4,7 @@ import math
 import os
 from typing import Optional
 
-from .token_utils import (
+from unity.common.token_utils import (
     clip_text_to_token_limit,
     count_tokens_per_utf_byte,
     has_meaningful_text,
