@@ -99,7 +99,7 @@ async def async_tool_use_loop_inner(
     *,
     loop_id: Optional[str] = None,
     lineage: Optional[list[str]] = None,
-    interject_queue: asyncio.Queue[str],
+    interject_queue: asyncio.Queue[dict | str],
     cancel_event: asyncio.Event,
     stop_event: asyncio.Event | None = None,
     pause_event: asyncio.Event,
@@ -166,10 +166,11 @@ async def async_tool_use_loop_inner(
         docstring – these are automatically converted to an OpenAI *tool
         schema* via :pyfunc:`method_to_schema`.
 
-    interject_queue : ``asyncio.Queue[str]``
+    interject_queue : ``asyncio.Queue[str | dict]``
         Thread-safe channel through which the *outer* application can push
         additional user turns at any time (e.g. the human changes their
-        mind mid-generation).
+        mind mid-generation). When a dict is provided it should follow the
+        shape {"message": str, "parent_chat_context_continuted": list[dict]}.
 
     cancel_event : ``asyncio.Event``
         Flips to *set* when the outer caller wants graceful shutdown.  The
@@ -593,9 +594,13 @@ async def async_tool_use_loop_inner(
                     )
                     for _m in uvh:
                         role = _m.get("role")
-                        content = (_m.get("content") or "").strip()
-                        if role in ("user", "assistant") and content:
-                            history_lines.append(f"{role}: {content}")
+                        _content = _m.get("content")
+                        if isinstance(_content, dict):
+                            _text = str(_content.get("message", "")).strip()
+                        else:
+                            _text = str(_content or "").strip()
+                        if role in ("user", "assistant") and _text:
+                            history_lines.append(f"{role}: {_text}")
                 except Exception:
                     # Fallback to just the original user prompt if available
                     try:
@@ -612,16 +617,53 @@ async def async_tool_use_loop_inner(
                     except Exception:
                         history_lines = []
 
-                sys_content = (
-                    "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
-                    "They have just interjected with the following message (in bold at the bottom). "
-                    "From their perspective, the conversation thus far is as follows:\n"
-                    "--\n" + ("\n".join(history_lines)) + f"\nuser: **{extra}**\n"
-                    "--\n"
-                    "Please consider and incorporate *all* interjections in your final response to the user. "
-                    "Later interjections should always override earlier interjections if there are "
-                    "any conflicting comments/requests across the different interjections."
-                )
+                # Support dict-style interjections carrying continued parent context
+                if isinstance(extra, dict):
+                    _msg_text = str(extra.get("message", "")).strip()
+                    _ctx_cont = extra.get("parent_chat_context_continuted")
+                    try:
+                        _ctx_str = (
+                            json.dumps(_ctx_cont, indent=2)
+                            if _ctx_cont is not None
+                            else None
+                        )
+                    except Exception:
+                        _ctx_str = None
+
+                    sys_content = (
+                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                        "They have just interjected with the following message (in bold at the bottom). "
+                        "From their perspective, the conversation thus far is as follows:\n"
+                        "--\n"
+                        + ("\n".join(history_lines))
+                        + f"\nuser: **{_msg_text}**\n"
+                        "--\n"
+                        + (
+                            "A continued parent chat context has been provided for this interjection.\n"
+                            + (_ctx_str or "(unserializable)")
+                            + "\n"
+                            if _ctx_cont is not None
+                            else ""
+                        )
+                        + "Please consider and incorporate *all* interjections in your final response to the user. "
+                        + "Later interjections should always override earlier interjections if there are "
+                        + "any conflicting comments/requests across the different interjections."
+                    )
+                else:
+                    _msg_text = str(extra)
+                    sys_content = (
+                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                        "They have just interjected with the following message (in bold at the bottom). "
+                        "From their perspective, the conversation thus far is as follows:\n"
+                        "--\n"
+                        + ("\n".join(history_lines))
+                        + f"\nuser: **{_msg_text}**\n"
+                        "--\n"
+                        "Please consider and incorporate *all* interjections in your final response to the user. "
+                        "Later interjections should always override earlier interjections if there are "
+                        "any conflicting comments/requests across the different interjections."
+                    )
+
                 interjection_msg = {"role": "system", "content": sys_content}
                 await _msg_dispatcher.append_msgs([interjection_msg])
 
@@ -629,7 +671,19 @@ async def async_tool_use_loop_inner(
                 with suppress(Exception):
                     if outer_handle:
                         outer_handle._user_visible_history.append(
-                            {"role": "user", "content": extra},
+                            {
+                                "role": "user",
+                                "content": (
+                                    {
+                                        "message": _msg_text,
+                                        "parent_chat_context_continuted": extra.get(
+                                            "parent_chat_context_continuted",
+                                        ),
+                                    }
+                                    if isinstance(extra, dict)
+                                    else _msg_text
+                                ),
+                            },
                         )
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
