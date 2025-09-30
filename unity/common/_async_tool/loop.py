@@ -326,7 +326,7 @@ async def async_tool_use_loop_inner(
     if semantic_cache:
         if closest_match := sc.get_tool_trajectory(message):
             logger.info(f"Semantic cache hit: {closest_match}", prefix="🔍")
-            msgs = sc.get_dummy_tool(closest_match, tools_data)
+            msgs = await sc.get_dummy_tool(closest_match, tools_data)
             client.append_messages(msgs)
             client.set_system_message((client.system_message or "") + sc.get_hint())
             tools_data.normalized["semantic_search"] = ToolSpec(fn=sc.semantic_search)
