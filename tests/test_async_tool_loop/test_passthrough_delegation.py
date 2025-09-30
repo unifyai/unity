@@ -141,7 +141,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-#  Regression: no extra outer LLM turn during passthrough handover
+#  Passthrough handover: outer performs a follow-up LLM turn
 # ---------------------------------------------------------------------------
 
 
@@ -203,11 +203,16 @@ class _SpyAsyncUnify:
 @pytest.mark.asyncio
 @_handle_project
 async def test_no_extra_llm_turn_during_passthrough_handover():
-    """Outer loop must not perform an additional LLM step after adopting a
-    passthrough delegate. Prior to the guard, the outer loop could start a
-    stray LLM step between adoption and the top-of-loop handover.
-    Deterministic: this test would have failed by observing 2 outer generate
-    calls; with the fix it observes exactly 1.
+    """Outer loop continues after passthrough and performs exactly one follow-up
+    LLM step once the inner tool completes.
+
+    New semantics: The outer loop no longer hands over and exits when a tool
+    returns a passthrough handle. Instead, it keeps running and, after the
+    inner finishes, publishes the tool result to the outer transcript and gives
+    the model one more turn. Therefore we expect exactly **two** outer LLM
+    generate calls:
+      1) to schedule the delegating tool, and
+      2) a follow-up turn after the inner returns its final result.
     """
 
     # Inner spy client drives the inner loop to (1) request sleeper, then (2) finish.
@@ -277,12 +282,27 @@ async def test_no_extra_llm_turn_during_passthrough_handover():
     # Await final result bubbling from the inner loop
     final = await outer_handle.result()
 
-    # Assert: outer LLM was invoked exactly once (no stray turn during handover)
+    # Assert: outer LLM was invoked exactly twice under new passthrough semantics
+    #   1) initial planning/tool request
+    #   2) follow-up after the tool result (inner DONE) is inserted
+    snapshots = outer_client.seen_messages
     assert (
-        len(outer_client.seen_messages) == 1
-    ), f"Expected exactly 1 outer LLM call, got {len(outer_client.seen_messages)}"
+        len(snapshots) == 2
+    ), f"Expected exactly 2 outer LLM calls, got {len(snapshots)}"
 
-    # Inner finished successfully
+    # The second invocation should see the tool result from the inner loop.
+    # Look for a tool message carrying the inner final content ("DONE").
+    seen_second = snapshots[1]
+    assert any(
+        (
+            m.get("role") == "tool"
+            and m.get("name") == "delegating_tool_regression"
+            and '"DONE"' in (m.get("content") or "")
+        )
+        for m in seen_second
+    ), "Expected outer transcript to include inner final result before second LLM call"
+
+    # Inner finished successfully and the outer returned a non-empty result
     assert isinstance(final, str) and final, "Outer result should be a non-empty string"
 
 
