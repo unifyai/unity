@@ -406,10 +406,6 @@ async def async_tool_use_loop_inner(
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
     llm_turn_required = False
-    # After the assistant chooses the no-op `wait` tool, avoid immediately
-    # asking the LLM again when nothing is pending. Idle until an interjection
-    # or cancellation.
-    suppress_llm_until_event = False
 
     # No persist mode: loop returns immediately upon final assistant message
 
@@ -787,9 +783,8 @@ async def async_tool_use_loop_inner(
                         except Exception:
                             pass
 
-                    # let the assistant answer immediately; clear suppression
+                    # let the assistant answer immediately
                     llm_turn_required = True
-                    suppress_llm_until_event = False
                     continue
 
                 # ── progress update bubbled up from a child tool (non-blocking) ─────
@@ -862,7 +857,6 @@ async def async_tool_use_loop_inner(
                             pass
                     # Require an immediate LLM turn (same behaviour as clarification)
                     llm_turn_required = True
-                    suppress_llm_until_event = False
 
                 needs_turn = False
                 # Only process completion for actual tool tasks; exclude helper waiters
@@ -879,7 +873,6 @@ async def async_tool_use_loop_inner(
                 # Other tools may still be running.
                 if needs_turn:
                     llm_turn_required = True
-                    suppress_llm_until_event = False
                 if tools_data.pending:
                     continue  # jump to top-of-loop
 
@@ -905,57 +898,6 @@ async def async_tool_use_loop_inner(
                 _delegate = None
             if _delegate is not None:
                 continue
-
-            # Honor `wait`: if previously chosen and nothing is pending, idle until
-            # an interjection or cancellation (do not ask the LLM again).
-            if suppress_llm_until_event and not tools_data.pending:
-                # timeout guard while idling
-                if timer.has_exceeded_time():
-                    return await _handle_limit_reached(
-                        f"timeout ({timeout}s) exceeded",
-                    )
-
-                interject_w = asyncio.create_task(
-                    interject_queue.get(),
-                    name="InterjectQueueGet",
-                )
-                cancel_waiter = asyncio.create_task(
-                    cancel_event.wait(),
-                    name="CancelEventWait",
-                )
-
-                done, _ = await asyncio.wait(
-                    {interject_w, cancel_waiter},
-                    return_when=asyncio.FIRST_COMPLETED,
-                    timeout=timer.remaining_time(),
-                )
-
-                # cleanup
-                for aux in (interject_w, cancel_waiter):
-                    if aux not in done and not aux.done():
-                        aux.cancel()
-                await asyncio.gather(interject_w, cancel_waiter, return_exceptions=True)
-
-                if not done:
-                    # idle timeout reached
-                    if timer.has_exceeded_time():
-                        return await _handle_limit_reached(
-                            f"timeout ({timeout}s) exceeded",
-                        )
-
-                if interject_w in done:
-                    await interject_queue.put(interject_w.result())
-                    suppress_llm_until_event = False
-                    continue
-
-                if cancel_waiter in done:
-                    with suppress(Exception):
-                        _stop_forwarded_once = await propagate_stop_once(
-                            tools_data.info,
-                            _stop_forwarded_once,
-                            "outer-loop cancelled",
-                        )
-                    raise asyncio.CancelledError
 
             # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
             #       any still‑running tool calls ────────────────────────────────
@@ -1326,10 +1268,6 @@ async def async_tool_use_loop_inner(
                         except Exception:
                             pass
 
-                        # Avoid immediately asking the LLM again only when there are
-                        # still pending tasks to wait on. If nothing is pending, do
-                        # not suppress – the LLM should produce the next response.
-                        suppress_llm_until_event = bool(tools_data.pending)
                         continue
 
                     if name.startswith("stop_") and not name.startswith(
@@ -1777,9 +1715,6 @@ async def async_tool_use_loop_inner(
             #   • `pending` empty        → the model just produced a plain
             #     assistant message; nothing more to do – return it.
             if tools_data.pending:  # still running
-                suppress_llm_until_event = (
-                    False  # allow a new turn once something finishes
-                )
                 continue  # wait for completions, then prompt LLM
 
             # ── timeout guard (final turn) ──────────────────────────────────
