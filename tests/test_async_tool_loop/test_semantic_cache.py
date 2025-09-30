@@ -1,6 +1,12 @@
 import unify
-from unity.common.async_tool_loop import start_async_tool_use_loop
+import asyncio
 import pytest
+
+from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common._async_tool.semantic_cache import (
+    construct_new_user_message,
+    clean_tool_trajectory,
+)
 from tests.helpers import _handle_project
 
 
@@ -174,3 +180,71 @@ async def test_tool_is_re_called():
     res = await handle.result()
     assert "The weather is cloudy" in res
     assert _call_count == 2, f"Expected 2 calls, got {_call_count}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_construct_new_user_message():
+    async def say_hello():
+        await asyncio.sleep(1)
+        return "Hello from Unity!"
+
+    async def say_goodbye():
+        return "Goodbye from Unity!"
+
+    client = unify.AsyncUnify("gpt-4o@openai", temperature=0.0, cache=False)
+    initial_user_message = "Call the say_hello tool and reply with the result only"
+    handle = start_async_tool_use_loop(
+        client,
+        initial_user_message,
+        tools={"say_hello": say_hello, "say_goodbye": say_goodbye},
+    )
+
+    await handle.interject("Actually, I meant to call the say_goodbye tool")
+    await handle.result()
+
+    msgs = client.messages
+    new_user_message = await construct_new_user_message(
+        initial_user_message,
+        msgs,
+    )
+
+    assert "say_goodbye" in new_user_message
+    assert "say_hello" not in new_user_message
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_prune_tools():
+    def say_hello(data: str) -> str:
+        return f"Hello from Unity!"
+
+    def say_goodbye(data: str) -> str:
+        return f"Goodbye from Unity!"
+
+    def find_contact(name: str) -> str:
+        return f"Contact found: {name}"
+
+    client = unify.AsyncUnify("gpt-4o@openai", temperature=0.0, cache=False)
+
+    instruction = (
+        "1) Call `say_hello` with data='foo' and `say_goodbye` with data='bar' exactly once each (in any order).\n"
+        "2) Then call `find_contact` with name='John Doe' exactly once.\n"
+        "3) After all tools complete, respond with ONLY the result of `find_contact` (no extra text)."
+    )
+
+    handle = start_async_tool_use_loop(
+        client,
+        instruction,
+        tools={
+            "say_hello": say_hello,
+            "say_goodbye": say_goodbye,
+            "find_contact": find_contact,
+        },
+    )
+
+    await handle.result()
+    cleaned = await clean_tool_trajectory(client.messages)
+
+    assert len(cleaned) == 1
+    assert cleaned[0]["request"]["function"]["name"] == "find_contact"
