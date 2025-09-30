@@ -10,8 +10,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field as PydanticField
 
-from ..token_utils import has_meaningful_text
-from ....common.llm_helpers import short_id
+from unity.common.token_utils import has_meaningful_text
+from unity.common.llm_helpers import short_id
 
 
 class DocumentMetadataExtraction(BaseModel):

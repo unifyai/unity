@@ -31,12 +31,10 @@ from .types.document import (
     DocumentImage,
     DocumentTable,
 )
-from .token_utils import (
-    count_tokens_per_utf_byte,
-    has_meaningful_text,
-)
 from .summary_utils import generate_summary_with_compression
-from .token_utils import (
+from unity.common.token_utils import (
+    has_meaningful_text,
+    count_tokens_per_utf_byte,
     is_within_token_limit_bytes,
     clip_text_to_token_limit_bytes,
     first_tokens_per_utf_byte,
@@ -181,7 +179,7 @@ class DoclingParser(GenericParser[Document]):
             )
 
         # Initialize spaCy (optional) and text splitters
-        self._spacy_nlp: Language | None = None
+        self._spacy_nlp = None
         if SPACY_AVAILABLE:
             self._init_spacy_pipeline()
         else:
