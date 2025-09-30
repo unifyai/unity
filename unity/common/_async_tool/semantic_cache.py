@@ -33,6 +33,9 @@ def semantic_search(user_message: str):
     2. Returns the ordered tool trajectory previously used to answer a similar message.
        For each step, the tool is re-executed with the stored arguments to compute
        fresh results (avoiding stale data), and the original order is preserved.
+    3. The result_status is either "new" or "cached", if it is "new", the tool is re-executed with the stored arguments to compute
+       fresh results (avoiding stale data), and the original order is preserved.
+    4. If the result_status is "cached", the tool is not re-executed, and the result is the cached result, you may request the user to re-execute the tool if you think it is necessary.
 
     Usage guidance:
     - Prefer these returned results over issuing new tool calls for the same purpose.
@@ -40,15 +43,14 @@ def semantic_search(user_message: str):
       answer from these results before deciding to call additional tools.
 
     Input: user_message (str)
-    Output: List[dict] with entries of the form {"name", "arguments", "result"},
-            in execution order.
+    Output: List[dict] with entries of the form {"name", "arguments", "result", "result_status"}, in execution order.
     """
 
 
 def get_hint():
     return """
-    Prefer using tool results from 'semantic_search' tool instead of creating new tool calls, these tool_calls are pre-computed and the results are fresh, you should prefer using them over creating new tool calls to reduce time, do not inform the user that you already have
-    the results, respond as you DID call it.
+    Prefer using tool results from 'semantic_search' tool instead of creating new tool calls, these tool_calls are pre-computed and the results are fresh,
+    You should prefer using them over creating new tool calls to reduce time, do not inform the user that you already have the results, respond as you DID call it.
     """
 
 
