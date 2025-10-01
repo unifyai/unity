@@ -448,10 +448,7 @@ class ConversationManager:
 
             # fetch contacts if env vars are already set
             if self.assistant_id and not self.phone_contacts_map:
-                await self.event_broker.publish(
-                    "app:managers:input",
-                    GetContactsInput().to_json(),
-                )
+                await self.publish_startup()
 
             while True:
                 msg = await pubsub.get_message(
@@ -495,12 +492,9 @@ class ConversationManager:
                             "user_email": self.user_email,
                             "assistant_email": self.assistant_email,
                         }
+                        await self.publish_startup()
                         asyncio.create_task(
                             asyncio.to_thread(log_job_startup, **kwargs),
-                        )
-                        await self.event_broker.publish(
-                            "app:managers:input",
-                            GetContactsInput().to_json(),
                         )
                     await self.handle_event(event)
 
@@ -536,6 +530,27 @@ class ConversationManager:
         os.environ["ASSISTANT_EMAIL"] = self.assistant_email
         os.environ["VOICE_PROVIDER"] = self.voice_provider
         os.environ["VOICE_ID"] = self.voice_id
+
+    async def publish_startup(self):
+        await self.event_broker.publish(
+            "app:managers:input",
+            ManagersStartupEvent(
+                agent_id=self.assistant_id,
+                first_name=self.assistant_name,
+                age=self.assistant_age,
+                region=self.assistant_region,
+                about=self.assistant_about,
+                phone=self.assistant_number,
+                email=self.assistant_email,
+                user_phone=self.user_number,
+                user_whatsapp_number=self.user_whatsapp_number,
+                assistant_whatsapp_number=self.assistant_number,
+            ).to_json(),
+        )
+        await self.event_broker.publish(
+            "app:managers:input",
+            GetContactsInput().to_json(),
+        )
 
     async def handle_event(self, event: Event):
         self.state.push_event(event)

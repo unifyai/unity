@@ -144,6 +144,20 @@ class Error(Event):
 
 # managers worker events
 @dataclass
+class ManagersStartupEvent(Event):
+    agent_id: str
+    first_name: str
+    age: str
+    region: str
+    about: str
+    phone: str
+    email: str
+    user_phone: str
+    user_whatsapp_number: str
+    assistant_whatsapp_number: str
+
+
+@dataclass
 class LogMessageInput(Event):
     medium: str
     sender_id: int
