@@ -23,6 +23,33 @@ class SemanticCacheResult:
     tool_trajectory: list[dict]
 
 
+class _Config:
+    def __init__(self, context: str = "", threshold: float = 0.2, top_k: int = 1):
+        if not context:
+            from unity import ASSISTANT_CONTEXT
+
+            context = f"{ASSISTANT_CONTEXT}/Cache"
+
+        self._context = context
+        self._threshold = threshold
+        self._top_k = top_k
+
+    @property
+    def context(self):
+        return self._context
+
+    @property
+    def threshold(self):
+        return self._threshold
+
+    @property
+    def top_k(self):
+        return self._top_k
+
+
+_CONFIG = _Config()
+
+
 # Dummy tool placeholder (used by async_tool_loop_inner)
 def semantic_search(user_message: str):
     """
@@ -224,9 +251,8 @@ async def clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=Non
 
 
 def store_tool_trajectory(user_message, tool_trajectory):
-    from unity import ASSISTANT_CONTEXT
-
-    store_context = f"{ASSISTANT_CONTEXT}/Cache"
+    global _CONFIG
+    store_context = _CONFIG.context
 
     # Ensure context exists
     context_exist = store_context in unify.get_contexts(prefix=store_context)
@@ -251,25 +277,22 @@ def store_tool_trajectory(user_message, tool_trajectory):
 
 
 def get_tool_trajectory(user_message):
-    from unity import ASSISTANT_CONTEXT
-
-    store_context = f"{ASSISTANT_CONTEXT}/Cache"
+    global _CONFIG
+    store_context = _CONFIG.context
 
     # Ensure context exists
     context_exist = store_context in unify.get_contexts(prefix=store_context)
     if not context_exist:
         unify.create_context(store_context)
 
-    threshold = 0.2
-    limit = 1
     logs = unify.get_logs(
         context=store_context,
         exclude_fields=["user_message_emb"],
-        filter=f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_EMBED_MODEL}')) < {threshold}",
+        filter=f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_EMBED_MODEL}')) < {_CONFIG.threshold}",
         sorting={
             f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_EMBED_MODEL}'))": "descending",
         },
-        limit=limit,
+        limit=_CONFIG.top_k,
     )
 
     if logs:

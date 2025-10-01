@@ -10,6 +10,27 @@ from unity.common._async_tool.semantic_cache import (
 from tests.helpers import _handle_project
 
 
+@pytest.fixture(autouse=True)
+def _patch_semantic_cache_config(monkeypatch):
+    class _DynamicConfig:
+        @property
+        def context(self):
+            return f"{unify.get_active_context()['write']}/SemanticCache"
+
+        @property
+        def threshold(self):
+            return 0.2
+
+        @property
+        def top_k(self):
+            return 1
+
+    monkeypatch.setattr(
+        "unity.common._async_tool.semantic_cache._CONFIG",
+        _DynamicConfig(),
+    )
+
+
 def say_hello():
     return "Hello from Unity!"
 
