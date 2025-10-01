@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
 
-_USER_MESSAGE_EMBEDDING_FIELD_NAME = "user_message_emb"
+_USER_MESSAGE_EMBEDDING_FIELD_NAME = "_user_message_emb"
 
 
 @dataclass
@@ -305,7 +305,7 @@ def get_tool_trajectory(user_message):
 
     logs = unify.get_logs(
         context=store_context,
-        exclude_fields=["user_message_emb"],
+        exclude_fields=[_USER_MESSAGE_EMBEDDING_FIELD_NAME],
         filter=f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_CONFIG.embedding_model}')) < {_CONFIG.threshold}",
         sorting={
             f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_CONFIG.embedding_model}'))": "descending",
