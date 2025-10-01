@@ -33,6 +33,7 @@ from ..common.semantic_search import (
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
 from ..image_manager.image_manager import ImageManager
+from ..common.embed_utils import list_private_fields
 
 
 class GuidanceManager(BaseGuidanceManager):
@@ -86,6 +87,9 @@ class GuidanceManager(BaseGuidanceManager):
                 self._ask_image,
                 self._attach_image_to_context,
                 self._attach_guidance_images_to_context,
+                # Function-aware helpers (read-only / context helpers)
+                self._get_functions_for_guidance,
+                self._attach_functions_for_guidance_to_context,
                 include_class_name=False,
             ),
         }
@@ -509,6 +513,7 @@ class GuidanceManager(BaseGuidanceManager):
         title: Optional[str] = None,
         content: Optional[str] = None,
         images: Optional[Dict[str, int]] = None,
+        function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
         if not title and not content and not images:
             raise ValueError(
@@ -518,6 +523,7 @@ class GuidanceManager(BaseGuidanceManager):
             title=title or "",
             content=content or "",
             images=images or {},
+            function_ids=function_ids or [],
         )
         log = unify.log(
             context=self._ctx,
@@ -537,6 +543,7 @@ class GuidanceManager(BaseGuidanceManager):
         title: Optional[str] = None,
         content: Optional[str] = None,
         images: Optional[Dict[str, int]] = None,
+        function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
         updates: Dict[str, Any] = {}
         if title is not None:
@@ -547,6 +554,15 @@ class GuidanceManager(BaseGuidanceManager):
             # Validate via model field-validator by constructing minimal model
             _ = Guidance(title=title or "tmp", content=content or "tmp", images=images)
             updates["images"] = _.images
+        if function_ids is not None:
+            # Validate via model validator
+            _g = Guidance(
+                title=title or "tmp",
+                content=content or "tmp",
+                images=images or {},
+                function_ids=function_ids,
+            )
+            updates["function_ids"] = _g.function_ids
         if not updates:
             raise ValueError("At least one field must be provided for an update.")
 
@@ -571,6 +587,75 @@ class GuidanceManager(BaseGuidanceManager):
             overwrite=True,
         )
         return {"outcome": "guidance updated", "details": {"guidance_id": guidance_id}}
+
+    # ─────────────────────────── Functions helpers ───────────────────────────
+    def _functions_context(self) -> str:
+        ctxs = unify.get_active_context()
+        read_ctx = ctxs.get("read")
+        return f"{read_ctx}/Functions" if read_ctx else "Functions"
+
+    def _get_functions_for_guidance(
+        self,
+        *,
+        guidance_id: int,
+        include_implementations: bool = False,
+    ) -> List[Dict[str, Any]]:
+        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        if not rows:
+            return []
+        fids = list(dict.fromkeys(int(fid) for fid in (rows[0].function_ids or [])))
+        if not fids:
+            return []
+
+        # Build a safe filter like: (function_id == 1) or (function_id == 2)
+        filt = " or ".join(f"function_id == {int(fid)}" for fid in fids)
+        funcs = unify.get_logs(
+            context=self._functions_context(),
+            filter=filt or "False",
+            exclude_fields=list_private_fields(self._functions_context()),
+        )
+
+        out: List[Dict[str, Any]] = []
+        for lg in funcs:
+            ent = lg.entries
+            item: Dict[str, Any] = {
+                "function_id": ent.get("function_id"),
+                "name": ent.get("name"),
+                "argspec": ent.get("argspec"),
+                "docstring": ent.get("docstring"),
+                "calls": ent.get("calls"),
+                "precondition": ent.get("precondition"),
+            }
+            if include_implementations:
+                item["implementation"] = ent.get("implementation")
+            out.append(item)
+        return out
+
+    def _attach_functions_for_guidance_to_context(
+        self,
+        *,
+        guidance_id: int,
+        include_implementations: bool = False,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Attach related functions into the loop context as structured data.
+
+        Returns a dict with keys:
+            attached_count: int
+            functions: list of function dicts (see _get_functions_for_guidance)
+        """
+        funcs = self._get_functions_for_guidance(
+            guidance_id=guidance_id,
+            include_implementations=include_implementations,
+        )
+        if limit is not None:
+            try:
+                limit = int(limit)
+            except Exception:
+                limit = None
+            if isinstance(limit, int) and limit >= 0:
+                funcs = funcs[:limit]
+        return {"attached_count": len(funcs), "functions": funcs}
 
     def _delete_guidance(self, *, guidance_id: int) -> ToolOutcome:
         ids = unify.get_logs(

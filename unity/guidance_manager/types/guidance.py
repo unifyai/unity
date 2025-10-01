@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List
 from pydantic import BaseModel, Field, field_validator, model_validator
 import re
 
@@ -27,6 +27,14 @@ class Guidance(BaseModel):
         description=(
             "Mapping of json.dumps strings like '[x:y]' → image_id (int). "
             "Matches the images column semantics used in Transcripts."
+        ),
+    )
+
+    function_ids: List[int] = Field(
+        default_factory=list,
+        description=(
+            "List of Function.function_id values that this guidance is relevant for. "
+            "Represents a many-to-many relationship between Guidance and Functions."
         ),
     )
 
@@ -60,6 +68,22 @@ class Guidance(BaseModel):
                 raise ValueError(
                     f"images value for key '{k}' must be an integer image_id",
                 ) from exc
+        return out
+
+    @field_validator("function_ids", mode="before")
+    @classmethod
+    def _validate_function_ids(cls, v):
+        """Ensure function_ids is a list[int]. None → []. Coerce values to int."""
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise TypeError("function_ids must be a list[int]")
+        out: list[int] = []
+        for item in v:
+            try:
+                out.append(int(item))
+            except Exception as exc:
+                raise ValueError("function_ids must contain integers") from exc
         return out
 
     @model_validator(mode="before")
