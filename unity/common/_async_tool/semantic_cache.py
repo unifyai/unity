@@ -22,44 +22,17 @@ class SemanticCacheResult:
 
 
 class _Config:
-    def __init__(
-        self,
-        context: str = "",
-        threshold: float = 0.2,
-        top_k: int = 1,
-        embedding_model: str = "text-embedding-3-small",
-        model: str = "gpt-4o@openai",
-    ):
-        self._context = context
-        self._threshold = threshold
-        self._top_k = top_k
-        self._embedding_model = embedding_model
-        self._model = model
+    threshold: float = 0.2
+    top_k: int = 1
+    embedding_model: str = "text-embedding-3-small"
+    model: str = "gpt-4o@openai"
+    _context: str = "Cache"
 
     @property
     def context(self):
-        if not self._context:
-            from unity import ASSISTANT_CONTEXT
+        from unity import ASSISTANT_CONTEXT
 
-            self._context = f"{ASSISTANT_CONTEXT}/Cache"
-
-        return self._context
-
-    @property
-    def threshold(self):
-        return self._threshold
-
-    @property
-    def top_k(self):
-        return self._top_k
-
-    @property
-    def embedding_model(self):
-        return self._embedding_model
-
-    @property
-    def model(self):
-        return self._model
+        return f"{ASSISTANT_CONTEXT}/{self._context}"
 
 
 _CONFIG = _Config()
