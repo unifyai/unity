@@ -305,8 +305,17 @@ class TranscriptManager(BaseTranscriptManager):
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
         """Require search_messages on the first step; auto thereafter."""
-        if step_index < 1 and "search_messages" in current_tools:
-            return ("required", {"search_messages": current_tools["search_messages"]})
+        if step_index < 1:
+            allowed: Dict[str, Any] = {}
+            if "search_messages" in current_tools:
+                allowed["search_messages"] = current_tools["search_messages"]
+            # Also allow immediate clarification when queues are present so the model can disambiguate first
+            if "request_clarification" in current_tools:
+                allowed["request_clarification"] = current_tools[
+                    "request_clarification"
+                ]
+            if allowed:
+                return ("required", allowed)
         return ("auto", current_tools)
 
     async def summarize(self, *args, **kwargs):
