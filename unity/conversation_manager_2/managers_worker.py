@@ -75,7 +75,9 @@ class ManagersWorker:
                 if not unity.ASSISTANT:
                     unity.init(
                         assistant_id=int(
-                            payload.get("agent_id", "0").replace("default-assistant-", ""),
+                            payload.get("agent_id", "0").replace(
+                                "default-assistant-", ""
+                            ),
                         ),
                         default_assistant={
                             "user_id": "default-user",
@@ -128,8 +130,7 @@ class ManagersWorker:
             await self._event_broker.publish(
                 self._publish_channel,
                 ManagersStartupOutput(
-                    initialized=self._initialized,
-                    contacts=contacts
+                    initialized=self._initialized, contacts=contacts
                 ).to_json(),
             )
 
@@ -163,7 +164,9 @@ class ManagersWorker:
             )
 
             message = messages[0] if messages else None
-            print(f"[ManagersWorker] Logged message: {medium} from {sender_id} to {receiver_ids}")
+            print(
+                f"[ManagersWorker] Logged message: {medium} from {sender_id} to {receiver_ids}"
+            )
 
             # Publish reply as Event envelope
             if message:
