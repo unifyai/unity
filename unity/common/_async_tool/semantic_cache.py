@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
+from ..llm_helpers import _dumps
 
 _USER_MESSAGE_EMBEDDING_FIELD_NAME = "_user_message_emb"
 
@@ -155,7 +156,7 @@ async def get_dummy_tool(
     msg = create_tool_call_message(
         name="semantic_search",
         call_id=call_id,
-        content=json.dumps(history, indent=4),
+        content=_dumps(history, indent=2),
     )
     return [
         dummy_tool_call,
