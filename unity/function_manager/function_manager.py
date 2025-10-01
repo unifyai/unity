@@ -12,6 +12,7 @@ from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
 from ..file_manager.file_manager import FileManager
+from ..image_manager.image_manager import ImageManager, ImageHandle
 
 
 class FunctionManager(BaseFunctionManager):
@@ -387,6 +388,7 @@ class FunctionManager(BaseFunctionManager):
                 calls=calls,
                 embedding_text=embedding_text,
                 precondition=precondition,
+                guidance_ids=[],
                 new=True,
             )
 
@@ -416,6 +418,7 @@ class FunctionManager(BaseFunctionManager):
                 "function_id": log.entries["function_id"],
                 "argspec": log.entries["argspec"],
                 "docstring": log.entries["docstring"],
+                "guidance_ids": log.entries.get("guidance_ids", []),
             }
             if include_implementations:
                 data["implementation"] = log.entries["implementation"]
@@ -614,3 +617,147 @@ class FunctionManager(BaseFunctionManager):
             exclude_fields=list_private_fields(self._ctx),
         )
         return [lg.entries for lg in logs]
+
+    # ------------------------------------------------------------------ #
+    #  Inverse linkage: Functions → Guidance                              #
+    # ------------------------------------------------------------------ #
+
+    def _guidance_context(self) -> str:
+        ctxs = unify.get_active_context()
+        read_ctx = ctxs.get("read")
+        return f"{read_ctx}/Guidance" if read_ctx else "Guidance"
+
+    def _get_guidance_ids_for_function(self, *, function_id: int) -> List[int]:
+        # Prefer reading from the function row if present
+        try:
+            log = self._get_log_by_function_id(function_id=function_id)
+            gids = log.entries.get("guidance_ids") or []
+            if isinstance(gids, list) and gids:
+                return [int(g) for g in gids]
+        except Exception:
+            pass
+
+        # Fallback: scan Guidance rows that reference this function via function_ids
+        gctx = self._guidance_context()
+        try:
+            rows = unify.get_logs(
+                context=gctx,
+                filter=f"{int(function_id)} in function_ids",
+                exclude_fields=list_private_fields(gctx),
+            )
+            return [
+                int(r.entries.get("guidance_id"))
+                for r in rows
+                if r.entries.get("guidance_id") is not None
+            ]
+        except Exception:
+            return []
+
+    def _get_guidance_for_function(
+        self,
+        *,
+        function_id: int,
+        include_images: bool = True,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return guidance records linked to the function.
+
+        Each dict includes: guidance_id, title, content, images (optional).
+        """
+        gids = self._get_guidance_ids_for_function(function_id=function_id)
+        if not gids:
+            return []
+        if limit is not None:
+            try:
+                limit = int(limit)
+            except Exception:
+                limit = None
+            if isinstance(limit, int) and limit >= 0:
+                gids = gids[:limit]
+        cond = " or ".join(f"guidance_id == {int(g)}" for g in gids)
+        gctx = self._guidance_context()
+        rows = unify.get_logs(
+            context=gctx,
+            filter=cond or "False",
+            exclude_fields=list_private_fields(gctx),
+        )
+        out: List[Dict[str, Any]] = []
+        for lg in rows:
+            ent = lg.entries
+            rec: Dict[str, Any] = {
+                "guidance_id": ent.get("guidance_id"),
+                "title": ent.get("title"),
+                "content": ent.get("content"),
+            }
+            if include_images:
+                rec["images"] = ent.get("images") or {}
+            out.append(rec)
+        return out
+
+    def _get_image_handles_for_function_guidance(
+        self,
+        *,
+        function_id: int,
+        limit: Optional[int] = None,
+    ) -> List[ImageHandle]:
+        """Return ImageHandle objects for images referenced by guidance linked to the function."""
+        guids = self._get_guidance_for_function(
+            function_id=function_id,
+            include_images=True,
+        )
+        image_ids: List[int] = []
+        for g in guids:
+            for _, img_id in (g.get("images") or {}).items():
+                try:
+                    image_ids.append(int(img_id))
+                except Exception:
+                    continue
+        # Preserve order while de-duplicating
+        image_ids = list(dict.fromkeys(image_ids))
+        if limit is not None:
+            try:
+                limit = int(limit)
+            except Exception:
+                limit = None
+            if isinstance(limit, int) and limit >= 0:
+                image_ids = image_ids[:limit]
+
+        im = ImageManager()
+        return im.get_images(image_ids)
+
+    def _attach_guidance_images_for_function_to_context(
+        self,
+        *,
+        function_id: int,
+        limit: Optional[int] = 3,
+    ) -> Dict[str, Any]:
+        """Attach images referenced by related guidance into the loop context.
+
+        Returns a dict with keys:
+            attached_count: int
+            images: list of { meta: {...}, image: <base64> }
+        """
+        handles = self._get_image_handles_for_function_guidance(
+            function_id=function_id,
+            limit=limit,
+        )
+        images: List[Dict[str, Any]] = []
+        for h in handles:
+            try:
+                raw_bytes = h.raw()
+            except Exception:
+                continue
+            import base64
+
+            b64 = base64.b64encode(raw_bytes).decode("utf-8")
+            images.append(
+                {
+                    "meta": {
+                        "image_id": int(h.image_id),
+                        "caption": h.caption,
+                        "timestamp": getattr(h.timestamp, "isoformat", lambda: "")(),
+                    },
+                    "image": b64,
+                },
+            )
+        return {"attached_count": len(images), "images": images}
