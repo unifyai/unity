@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
+from unity.image_manager.utils import make_solid_png_base64
 
 import pytest
 
@@ -9,9 +10,8 @@ from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
 
 
-# 1x1 PNG (opaque) – tiny valid image payloads
-PNG_1x1_RED = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAtMB9q5g3GkAAAAASUVORK5CYII="
-PNG_1x1_BLUE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMB9j3v1S0AAAAASUVORK5CYII="
+PNG_RED_B64 = make_solid_png_base64(8, 8, (255, 0, 0))
+PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 
 
 @pytest.mark.unit
@@ -24,12 +24,12 @@ def test_add_and_filter_images():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "A small red square",
-                "data": PNG_1x1_RED,
+                "data": PNG_RED_B64,
             },
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "A tiny blue pixel",
-                "data": PNG_1x1_BLUE,
+                "data": PNG_BLUE_B64,
             },
         ],
     )
@@ -54,7 +54,7 @@ def test_update_images():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "original",
-                "data": PNG_1x1_RED,
+                "data": PNG_RED_B64,
             },
         ],
     )
@@ -83,12 +83,12 @@ def test_get_images_order_and_raw():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "first",
-                "data": PNG_1x1_RED,
+                "data": PNG_RED_B64,
             },
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "second",
-                "data": PNG_1x1_BLUE,
+                "data": PNG_BLUE_B64,
             },
         ],
     )
@@ -99,5 +99,5 @@ def test_get_images_order_and_raw():
     # Verify raw bytes round-trip for both
     raw0 = handles[0].raw()
     raw1 = handles[1].raw()
-    assert raw0 == base64.b64decode(PNG_1x1_BLUE)
-    assert raw1 == base64.b64decode(PNG_1x1_RED)
+    assert raw0 == base64.b64decode(PNG_BLUE_B64)
+    assert raw1 == base64.b64decode(PNG_RED_B64)

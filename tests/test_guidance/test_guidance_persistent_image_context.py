@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from unity.image_manager.utils import make_solid_png_base64
 
 import pytest
 
@@ -9,8 +10,8 @@ from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
 
 
-# 1x1 PNG (opaque) – small valid image payload
-PNG_1x1_BLUE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMB9j3v1S0AAAAASUVORK5CYII="
+# Slightly larger solid-blue PNG to satisfy provider parsing (e.g., 8x8)
+PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 
 
 @pytest.mark.eval
@@ -33,7 +34,7 @@ async def test_guidance_persistent_image_context_then_reason():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "blue pixel art icon",
-                "data": PNG_1x1_BLUE,
+                "data": PNG_BLUE_B64,
             },
         ],
     )
