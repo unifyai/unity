@@ -2,6 +2,7 @@ import asyncio
 import unify
 import json
 import inspect
+import copy
 
 from typing import Dict, Union, Callable, Tuple, Any, Set, Optional
 from contextlib import suppress
@@ -32,6 +33,7 @@ from .messages import (
 )
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
+from . import semantic_cache as sc
 
 
 class LoopLogger:
@@ -120,6 +122,7 @@ async def async_tool_use_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
+    semantic_cache: Optional[bool] = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -244,6 +247,8 @@ async def async_tool_use_loop_inner(
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
 
+    _initial_user_message = copy.deepcopy(message)
+
     # If structured output is expected, inform the model up-front so it can
     # plan its reasoning with the final JSON shape in mind.  Enforcement via
     # `set_response_format` still happens at the end of the loop.
@@ -326,6 +331,30 @@ async def async_tool_use_loop_inner(
 
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
+    semantic_closest_match = None
+    last_valid_user_history = []
+    if semantic_cache:
+        if semantic_closest_match := sc.search_semantic_cache(message):
+            msgs = await sc.get_dummy_tool(semantic_closest_match, tools_data)
+            if log_steps == "full":
+                logger.info(
+                    f"Semantic cache hit ({semantic_closest_match.closest_user_message}): {json.dumps(msgs[1]['content'], indent=2)}",
+                    prefix="🔍",
+                )
+            client.append_messages(msgs)
+            client.set_system_message(
+                (client.system_message or "") + sc.get_system_msg_hint(),
+            )
+            tools_data.normalized["semantic_search"] = ToolSpec(
+                fn=sc.semantic_search_placeholder,
+            )
+        else:
+            if log_steps == "full":
+                logger.info(
+                    "Semantic cache miss, no entry for the user message",
+                    prefix="🔍",
+                )
+
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
@@ -633,6 +662,7 @@ async def async_tool_use_loop_inner(
 
                 interjection_msg = {"role": "system", "content": sys_content}
                 await _msg_dispatcher.append_msgs([interjection_msg])
+                last_valid_user_history = history_lines + [f"user: {extra}"]
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
@@ -1784,3 +1814,17 @@ async def async_tool_use_loop_inner(
     finally:
         with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
+
+        if semantic_cache:
+            # TODO: ideally, should not be blocking and more of a background task
+            # but ensure it is saved before the session ends
+            await sc.save_semantic_cache(
+                _initial_user_message,
+                last_valid_user_history,
+                client.messages,
+                previous_tool_trajectory=(
+                    semantic_closest_match.tool_trajectory
+                    if semantic_closest_match
+                    else None
+                ),
+            )

@@ -110,6 +110,7 @@ _configure_default_logging()
 
 _INITIALISED = False
 ASSISTANT = None  # Will hold the selected assistant record once init() runs
+ASSISTANT_CONTEXT = None
 
 
 def _list_all_assistants() -> list[dict]:
@@ -145,7 +146,7 @@ def init(
        ``EVENT_BUS`` raise a :class:`RuntimeError`.
     """
 
-    global _INITIALISED, ASSISTANT
+    global _INITIALISED, ASSISTANT, ASSISTANT_CONTEXT
     if _INITIALISED:
         return
 
@@ -182,6 +183,7 @@ def init(
         ctx = "Assistant"
 
     # 2. Set the assistant context *after* validation
+    ASSISTANT_CONTEXT = ctx
     unify.set_context(ctx)
 
     # 3. Bring up the global EventBus
