@@ -53,13 +53,13 @@ _CONFIG = _Config()
 
 
 def _simplify_tool_trajectory(tool_trajectory: list[ToolCallPair]):
-    _simplified_trajectory = []
+    ret = []
     for tool_call_pair in tool_trajectory:
         name = tool_call_pair["request"]["function"]["name"]
         arguments = tool_call_pair["request"]["function"]["arguments"]
         result = tool_call_pair["response"]["content"]
 
-        _simplified_trajectory.append(
+        ret.append(
             {
                 "name": name,
                 "arguments": arguments,
@@ -68,7 +68,7 @@ def _simplify_tool_trajectory(tool_trajectory: list[ToolCallPair]):
             },
         )
 
-    return _simplified_trajectory
+    return ret
 
 
 async def _construct_new_user_message(init_user_message, messages_history):
@@ -108,10 +108,9 @@ Can you find the contact with the name John Smith?
     global _CONFIG
     client = _CONFIG.get_client()
     client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
-    res = await client.generate(
+    return await client.generate(
         user_message=f"Messages: {json.dumps(messages_history)}",
     )
-    return res
 
 
 async def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=None):
@@ -303,7 +302,7 @@ async def get_dummy_tool(
             tool_call["result"] = result
 
     call_id = f"call_SemanticSearchCallIdPlaceholder"
-    dummy_tool_call = {
+    request = {
         "content": None,
         "refusal": None,
         "role": "assistant",
@@ -321,14 +320,14 @@ async def get_dummy_tool(
             },
         ],
     }
-    msg = create_tool_call_message(
+    response = create_tool_call_message(
         name="semantic_search",
         call_id=call_id,
         content=_dumps(history, indent=2),
     )
     return [
-        dummy_tool_call,
-        msg,
+        request,
+        response,
     ]
 
 
