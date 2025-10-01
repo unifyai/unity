@@ -43,6 +43,11 @@ def build_ask_prompt(
     search_fname = _tool_name(tools, "search")
     list_columns_fname = _tool_name(tools, "list_columns")
     request_clar_fname = _tool_name(tools, "request_clarification")
+    # Image-aware helpers (may be absent; document if present)
+    get_imgs_fname = _tool_name(tools, "get_images_for_guidance")
+    ask_image_fname = _tool_name(tools, "ask_image")
+    attach_image_fname = _tool_name(tools, "attach_image_to_context")
+    attach_guid_imgs_fname = _tool_name(tools, "attach_guidance_images_to_context")
 
     _require_tools(
         {
@@ -85,8 +90,54 @@ def build_ask_prompt(
         ─ Filtering ─
         • Exact id match
           `{filter_fname}(filter="guidance_id == 42", limit=1)`
+
+        ─ Images ─
+        • List images referenced by a guidance item (no raw data)
+          `{get_imgs_fname}(guidance_id=42)`
+        • Ask a one-off question about an image (does NOT persist visual context)
+          `{ask_image_fname}(image_id=12, question="What text is visible?")`
+        • Attach a specific image for persistent visual reasoning in this loop
+          `{attach_image_fname}(image_id=12, note="Need to see the layout")`
+        • Attach multiple images linked from a guidance item (limit to first 2)
+          `{attach_guid_imgs_fname}(guidance_id=42, limit=2)`
         """,
     ).strip()
+
+    # Hide image sections gracefully when tools are absent
+    if not get_imgs_fname or not ask_image_fname:
+        usage_examples = usage_examples.replace("─ Images ─\n", "")
+    if not get_imgs_fname:
+        usage_examples = usage_examples.replace(
+            f"\n        • List images referenced by a guidance item (no raw data)\n          `{{get_imgs}}(guidance_id=42)`".replace(
+                "{get_imgs}",
+                str(get_imgs_fname),
+            ),
+            "",
+        )
+    if not ask_image_fname:
+        usage_examples = usage_examples.replace(
+            f'\n        • Ask a one-off question about an image (does NOT persist visual context)\n          `{{ask_img}}(image_id=12, question="What text is visible?")`'.replace(
+                "{ask_img}",
+                str(ask_image_fname),
+            ),
+            "",
+        )
+    if not attach_image_fname:
+        usage_examples = usage_examples.replace(
+            f'\n        • Attach a specific image for persistent visual reasoning in this loop\n          `{{attach_img}}(image_id=12, note="Need to see the layout")`'.replace(
+                "{attach_img}",
+                str(attach_image_fname),
+            ),
+            "",
+        )
+    if not attach_guid_imgs_fname:
+        usage_examples = usage_examples.replace(
+            f"\n        • Attach multiple images linked from a guidance item (limit to first 2)\n          `{{attach_guid}}(guidance_id=42, limit=2)`".replace(
+                "{attach_guid}",
+                str(attach_guid_imgs_fname),
+            ),
+            "",
+        )
 
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
@@ -108,6 +159,11 @@ def build_ask_prompt(
             "You are an assistant specialising in retrieving distilled guidance items.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about how you should answer or which tools to call; interpret the question and choose the best approach yourself.",
+            (
+                "For images: prefer `ask_image` for targeted Q&A; use `attach_image_to_context`/`attach_guidance_images_to_context` when you need persistent visual context in this loop."
+                if (ask_image_fname or attach_image_fname or attach_guid_imgs_fname)
+                else ""
+            ),
             clar_sentence,
             f"There are currently {num_items} guidance entries stored with the following columns:",
             json.dumps(columns, indent=4),
