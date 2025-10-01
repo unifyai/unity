@@ -46,11 +46,54 @@ class ImageHandle:
         return self._image.timestamp
 
     def raw(self) -> bytes:
-        """Return the decoded image bytes from the stored base64 string."""
-        try:
-            return base64.b64decode(self._image.data)
-        except Exception as exc:
-            raise ValueError("Invalid base64 image data") from exc
+        """
+        Return the decoded image bytes.
+
+        If the data is a GCS URL, it downloads the content. Otherwise, it assumes
+        the data is a base64 string and decodes it.
+        """
+        data_str = self._image.data
+        is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
+            "https://storage.googleapis.com/"
+        )
+
+        if is_gcs_url:
+            try:
+                parsed_url = urlparse(data_str)
+                bucket_name = ""
+                object_path = ""
+
+                if parsed_url.scheme == "gs":
+                    bucket_name = parsed_url.netloc
+                    object_path = parsed_url.path.lstrip("/")
+                elif parsed_url.hostname == "storage.googleapis.com":
+                    path_parts = parsed_url.path.lstrip("/").split("/", 1)
+                    if len(path_parts) == 2:
+                        bucket_name, object_path = path_parts
+                    else:
+                        raise ValueError("Invalid GCS HTTPS URL format.")
+
+                if not bucket_name or not object_path:
+                    raise ValueError("Could not parse bucket or path from GCS URL.")
+
+                storage_client = self._manager.storage_client
+                bucket = storage_client.bucket(bucket_name)
+                blob = bucket.blob(object_path)
+
+                if not blob.exists():
+                    raise FileNotFoundError(f"Image not found at GCS URL: {data_str}")
+
+                return blob.download_as_bytes()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to download image from GCS: {data_str}"
+                ) from exc
+        else:
+            # Fallback to assuming it's base64
+            try:
+                return base64.b64decode(data_str)
+            except Exception as exc:
+                raise ValueError("Invalid base64 image data") from exc
 
     async def ask(
         self,
