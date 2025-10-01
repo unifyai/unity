@@ -306,9 +306,9 @@ def get_tool_trajectory(user_message):
     logs = unify.get_logs(
         context=store_context,
         exclude_fields=[_USER_MESSAGE_EMBEDDING_FIELD_NAME],
-        filter=f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_CONFIG.embedding_model}')) < {_CONFIG.threshold}",
+        filter=f"cosine({_USER_MESSAGE_EMBEDDING_FIELD_NAME}, embed('{escape_single_quotes(user_message)}', model='{_CONFIG.embedding_model}')) < {_CONFIG.threshold}",
         sorting={
-            f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_CONFIG.embedding_model}'))": "descending",
+            f"cosine({_USER_MESSAGE_EMBEDDING_FIELD_NAME}, embed('{escape_single_quotes(user_message)}', model='{_CONFIG.embedding_model}'))": "descending",
         },
         limit=_CONFIG.top_k,
     )
