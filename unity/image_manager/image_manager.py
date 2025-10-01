@@ -3,15 +3,20 @@ from __future__ import annotations
 import base64
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import unify
+from google.cloud import storage
+from google.oauth2 import service_account
+from google.cloud.exceptions import NotFound
+
 
 from ..common.async_tool_loop import (
+    start_async_tool_use_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
-    start_async_tool_use_loop,
 )
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
@@ -56,8 +61,9 @@ class ImageHandle:
         """
         Ask a high-level question about this image using a small tool loop.
 
-        The loop sends the underlying image to the model as an image block but
-        does not expose the raw image in the textual return value.
+        The loop sends the underlying image to the model as an image block.
+        If the image is stored as a GCS URL, it generates a temporary signed URL
+        to make it accessible to the vision model.
         """
 
         # Use a vision-capable default
@@ -75,16 +81,61 @@ class ImageHandle:
             ),
         )
 
-        # Provide the image as a user content block (vision input). Accept either base64 data or a URL.
+        # Provide the image as a user content block (vision input).
         data_str = self._image.data
         content_block: dict
-        if isinstance(data_str, str) and (
-            data_str.startswith("http://") or data_str.startswith("https://")
-        ):
+
+        # Check if the data string is a GCS URL
+        is_gcs_url = data_str.startswith("gs://") or data_str.startswith("https://storage.googleapis.com/")
+
+        if is_gcs_url:
+            try:
+                
+                parsed_url = urlparse(data_str)
+                bucket_name = ""
+                object_path = ""
+
+                if parsed_url.scheme == "gs":
+                    bucket_name = parsed_url.netloc
+                    object_path = parsed_url.path.lstrip("/")
+                elif parsed_url.hostname == "storage.googleapis.com":
+                    path_parts = parsed_url.path.lstrip("/").split("/", 1)
+                    if len(path_parts) == 2:
+                        bucket_name, object_path = path_parts
+                    else:
+                        raise ValueError("Invalid GCS HTTPS URL format.")
+                
+                if not bucket_name or not object_path:
+                    raise ValueError("Could not parse bucket or path from GCS URL.")
+
+                storage_client = self._manager.storage_client
+                bucket = storage_client.bucket(bucket_name)
+                blob = bucket.blob(object_path)
+
+                if not blob.exists():
+                    raise NotFound(f"File not found at GCS URL: {data_str}")
+
+                # Generate a URL valid for 1 hour
+                signed_url = blob.generate_signed_url(
+                    version="v4",
+                    expiration=timedelta(hours=1),
+                    method="GET",
+                )
+
+                content_block = {
+                    "type": "image_url",
+                    "image_url": {"url": signed_url},
+                }
+
+            except Exception as e:
+                # If signing fails, raise an error as the image is inaccessible
+                raise RuntimeError(f"Failed to generate signed URL for GCS image: {e}") from e
+
+        elif isinstance(data_str, str) and (data_str.startswith("http://") or data_str.startswith("https://")):
             # Pass the URL through directly; upstream must ensure it is fetchable
             content_block = {
                 "type": "image_url",
-                "image_url": {"url": data_str},
+                "image_url": {"url": data_str},                                                                           }
             }
         elif isinstance(data_str, str) and data_str.startswith("data:image/"):
             # Full data URL provided; pass as-is
@@ -136,8 +187,8 @@ class ImageHandle:
             original_result = handle.result
 
             async def wrapped_result():
-                ans = await original_result()
-                return ans, client.messages
+                answer = await original_result()
+                return answer, client.messages
 
             handle.result = wrapped_result  # type: ignore[assignment]
 
@@ -165,6 +216,15 @@ class ImageManager(BaseImageManager):
         ), "read and write contexts must be the same when instantiating an ImageManager."
 
         self._ctx = f"{read_ctx}/Images" if read_ctx else "Images"
+
+        # Initialize the storage client
+        try:
+            # Assumes the credentials file is at the root of the project
+            credentials_path = os.path.join(os.path.dirname(__file__), "..", "..", "application_default_credentials.json")
+            credentials = service_account.Credentials.from_service_account_file(credentials_path)
+            self.storage_client = storage.Client(credentials=credentials)
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize Google Cloud Storage client: {e}") from e
 
         # Ensure context/fields exist deterministically
         self._store = TableStore(
@@ -219,6 +279,7 @@ class ImageManager(BaseImageManager):
         return [Image(**r) for r in filled]
 
     def get_images(self, image_ids: List[int]) -> List[ImageHandle]:
+        """Return handles for the given image ids (missing ids are skipped)."""
         if not image_ids:
             return []
         id_list = ", ".join(str(int(i)) for i in image_ids)
@@ -244,6 +305,10 @@ class ImageManager(BaseImageManager):
 
     # ------------------------------ Writes --------------------------------
     def add_images(self, items: List[Dict[str, Any]]) -> List[int]:
+        """
+        Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
+        Returns the allocated ``image_id`` values in insertion order.
+        """
         out_ids: List[int] = []
         for raw in items or []:
             payload = dict(raw or {})
@@ -276,6 +341,10 @@ class ImageManager(BaseImageManager):
         return out_ids
 
     def update_images(self, updates: List[Dict[str, Any]]) -> List[int]:
+        """
+        Update existing images. Each update dict must include ``image_id`` and may
+        set ``timestamp``, ``caption``, and/or ``data``. Returns updated ids.
+        """
         updated: List[int] = []
         for change in updates or []:
             if not isinstance(change, dict):
