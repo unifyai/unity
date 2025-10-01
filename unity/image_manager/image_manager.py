@@ -86,11 +86,13 @@ class ImageHandle:
         content_block: dict
 
         # Check if the data string is a GCS URL
-        is_gcs_url = data_str.startswith("gs://") or data_str.startswith("https://storage.googleapis.com/")
+        is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
+            "https://storage.googleapis.com/"
+        )
 
         if is_gcs_url:
             try:
-                
+
                 parsed_url = urlparse(data_str)
                 bucket_name = ""
                 object_path = ""
@@ -104,7 +106,7 @@ class ImageHandle:
                         bucket_name, object_path = path_parts
                     else:
                         raise ValueError("Invalid GCS HTTPS URL format.")
-                
+
                 if not bucket_name or not object_path:
                     raise ValueError("Could not parse bucket or path from GCS URL.")
 
@@ -129,9 +131,13 @@ class ImageHandle:
 
             except Exception as e:
                 # If signing fails, raise an error as the image is inaccessible
-                raise RuntimeError(f"Failed to generate signed URL for GCS image: {e}") from e
+                raise RuntimeError(
+                    f"Failed to generate signed URL for GCS image: {e}"
+                ) from e
 
-        elif isinstance(data_str, str) and (data_str.startswith("http://") or data_str.startswith("https://")):
+        elif isinstance(data_str, str) and (
+            data_str.startswith("http://") or data_str.startswith("https://")
+        ):
             # Pass the URL through directly; upstream must ensure it is fetchable
             content_block = {
                 "type": "image_url",
@@ -220,11 +226,20 @@ class ImageManager(BaseImageManager):
         # Initialize the storage client
         try:
             # Assumes the credentials file is at the root of the project
-            credentials_path = os.path.join(os.path.dirname(__file__), "..", "..", "application_default_credentials.json")
-            credentials = service_account.Credentials.from_service_account_file(credentials_path)
+            credentials_path = os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "application_default_credentials.json",
+            )
+            credentials = service_account.Credentials.from_service_account_file(
+                credentials_path
+            )
             self.storage_client = storage.Client(credentials=credentials)
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize Google Cloud Storage client: {e}") from e
+            raise RuntimeError(
+                f"Failed to initialize Google Cloud Storage client: {e}"
+            ) from e
 
         # Ensure context/fields exist deterministically
         self._store = TableStore(
