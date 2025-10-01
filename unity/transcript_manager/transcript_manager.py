@@ -1339,6 +1339,7 @@ class TranscriptManager(BaseTranscriptManager):
         - image_id: int
         - caption: str | None
         - timestamp: str (ISO8601)
+        - substring: str  → text extracted from the message content using the span
         """
         logs = unify.get_logs(
             context=self._transcripts_ctx,
@@ -1367,12 +1368,15 @@ class TranscriptManager(BaseTranscriptManager):
                 ts_str = h.timestamp.isoformat()
             except Exception:
                 ts_str = ""
+            # Compute substring based on the span range over the message content
+            substr = self._substring_from_span(str(msg.content), str(span))
             out.append(
                 {
                     "span": str(span),
                     "image_id": int(h.image_id),
                     "caption": h.caption,
                     "timestamp": ts_str,
+                    "substring": substr,
                 },
             )
         return out
@@ -1434,7 +1438,7 @@ class TranscriptManager(BaseTranscriptManager):
         -------
         dict with keys:
             attached_count: int
-            images: list of { meta: {...}, image: <base64> }
+            images: list of { meta: {image_id, caption, timestamp, spans, substrings}, image: <base64> }
         """
         logs = unify.get_logs(
             context=self._transcripts_ctx,
@@ -1451,7 +1455,13 @@ class TranscriptManager(BaseTranscriptManager):
         img_map = msg.images or {}
         if not img_map:
             return {"attached_count": 0, "images": []}
+        # Preserve the order of first appearance for image ids
         unique_ids: List[int] = list(dict.fromkeys(int(v) for v in img_map.values()))
+        # Also collect the spans per image id to compute substrings
+        spans_by_id: Dict[int, List[str]] = {}
+        for span_key, img_id in img_map.items():
+            iid = int(img_id)
+            spans_by_id.setdefault(iid, []).append(str(span_key))
         if limit is not None:
             try:
                 limit = int(limit)
@@ -1468,17 +1478,65 @@ class TranscriptManager(BaseTranscriptManager):
                 b64 = base64.b64encode(raw_bytes).decode("utf-8")
             except Exception:
                 continue
+            # Derive spans and substrings aligned to this image within the message content
+            spans_for_img = spans_by_id.get(int(h.image_id), [])
+            substrings = [
+                self._substring_from_span(str(msg.content), s) for s in spans_for_img
+            ]
             images.append(
                 {
                     "meta": {
                         "image_id": int(h.image_id),
                         "caption": h.caption,
                         "timestamp": getattr(h.timestamp, "isoformat", lambda: "")(),
+                        "spans": spans_for_img,
+                        "substrings": substrings,
                     },
                     "image": b64,
                 },
             )
         return {"attached_count": len(images), "images": images}
+
+    # ────────────────────────────────────────────────────────────────────
+    # Span → substring helper
+    # ────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _substring_from_span(content: str, span: str) -> str:
+        """Return the best-effort substring of ``content`` for a slice key ``"[x:y]"``.
+
+        Supports negative and open-ended indices, clamps to valid bounds, and
+        gracefully returns an empty string when the span is malformed.
+        """
+        try:
+            import re as _re
+
+            m = _re.fullmatch(r"\[\s*(-?\d+)?\s*:\s*(-?\d+)?\s*\]", str(span))
+            if not m:
+                return ""
+            start_s, end_s = m.group(1), m.group(2)
+            L = len(content)
+            if start_s is None:
+                start = 0
+            else:
+                start = int(start_s)
+                if start < 0:
+                    start = max(0, L + start)
+                else:
+                    start = min(L, start)
+            if end_s is None:
+                end = L
+            else:
+                end = int(end_s)
+                if end < 0:
+                    end = max(0, L + end)
+                else:
+                    end = min(L, end)
+            if start > end:
+                start, end = end, start
+            return content[start:end]
+        except Exception:
+            return ""
 
     # ────────────────────────────────────────────────────────────────────
     # Column and metrics helpers (paralleling ContactManager)
