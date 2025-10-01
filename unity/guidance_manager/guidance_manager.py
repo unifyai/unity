@@ -32,7 +32,7 @@ from ..common.semantic_search import (
 )
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
-from ..image_manager.image_manager import ImageManager
+from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..image_manager.utils import substring_from_span
 from ..common.embed_utils import list_private_fields
 
@@ -425,26 +425,8 @@ class GuidanceManager(BaseGuidanceManager):
             )
         return out
 
+    @functools.wraps(ImageHandle.ask, assigned=("__doc__",), updated=())
     async def _ask_image(self, *, image_id: int, question: str) -> str:
-        """Ask a one-off question about a specific image and return a text answer.
-
-        Characteristics
-        ---------------
-        - Stateless: does not modify the current guidance loop context.
-        - Single-image focus: optimised for quick, atomic visual checks.
-        - Output is plain text; no image blocks are persisted in the outer loop.
-
-        Typical uses
-        ------------
-        - Short identifications, brief descriptions, reading a small piece of text.
-
-        Limitations
-        -----------
-        - Not suitable when subsequent steps in the same loop must "see" the
-          image, or when integrating multiple images simultaneously is required.
-        - Prefer `attach_image_to_context` / `attach_guidance_images_to_context`
-          for persistent, multi-step, or multi-image reasoning.
-        """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
@@ -455,25 +437,13 @@ class GuidanceManager(BaseGuidanceManager):
             answer = str(answer)
         return answer
 
+    @functools.wraps(ImageHandle.raw, assigned=("__doc__",), updated=())
     def _attach_image_to_context(
         self,
         *,
         image_id: int,
         note: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Attach one image into the current guidance loop context.
-
-        Characteristics
-        ---------------
-        - Provides the raw image (base64) so the outer loop promotes an image block.
-        - Persists visual context for the remainder of the loop, enabling follow‑up turns.
-        - Can be called repeatedly to attach multiple images as needed.
-
-        Use when
-        --------
-        - The answer depends on direct visual inspection within this loop
-          (e.g., multi‑attribute judgments, spatial reasoning, or side‑by‑side comparisons).
-        """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
