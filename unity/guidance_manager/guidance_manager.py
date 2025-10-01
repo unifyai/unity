@@ -33,6 +33,7 @@ from ..common.semantic_search import (
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
 from ..image_manager.image_manager import ImageManager
+from ..image_manager.utils import substring_from_span
 from ..common.embed_utils import list_private_fields
 
 
@@ -405,7 +406,7 @@ class GuidanceManager(BaseGuidanceManager):
                 ts_str = h.timestamp.isoformat()
             except Exception:
                 ts_str = ""
-            substr = self._substring_from_span(str(guidance_row.content), str(span))
+            substr = substring_from_span(str(guidance_row.content), str(span))
             out.append(
                 {
                     "span": str(span),
@@ -506,8 +507,7 @@ class GuidanceManager(BaseGuidanceManager):
                 continue
             spans_for_img = spans_by_id.get(int(h.image_id), [])
             substrings = [
-                self._substring_from_span(str(guidance_row.content), s)
-                for s in spans_for_img
+                substring_from_span(str(guidance_row.content), s) for s in spans_for_img
             ]
             images.append(
                 {
@@ -524,42 +524,7 @@ class GuidanceManager(BaseGuidanceManager):
         return {"attached_count": len(images), "images": images}
 
     # -------------------------- Span helper ---------------------------------
-    @staticmethod
-    def _substring_from_span(content: str, span: str) -> str:
-        """Return the best-effort substring of ``content`` for a slice key ``"[x:y]"``.
-
-        Supports negative and open-ended indices, clamps to bounds, returns
-        an empty string on malformed spans.
-        """
-        try:
-            import re as _re
-
-            m = _re.fullmatch(r"\[\s*(-?\d+)?\s*:\s*(-?\d+)?\s*\]", str(span))
-            if not m:
-                return ""
-            start_s, end_s = m.group(1), m.group(2)
-            L = len(content)
-            if start_s is None:
-                start = 0
-            else:
-                start = int(start_s)
-                if start < 0:
-                    start = max(0, L + start)
-                else:
-                    start = min(L, start)
-            if end_s is None:
-                end = L
-            else:
-                end = int(end_s)
-                if end < 0:
-                    end = max(0, L + end)
-                else:
-                    end = min(L, end)
-            if start > end:
-                start, end = end, start
-            return content[start:end]
-        except Exception:
-            return ""
+    # substring_from_span now provided by unity.image_manager.utils
 
     def _add_guidance(
         self,

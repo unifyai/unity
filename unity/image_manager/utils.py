@@ -38,3 +38,47 @@ def make_solid_png_base64(width: int, height: int, rgb: Tuple[int, int, int]) ->
         signature + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
     )
     return base64.b64encode(png).decode("ascii")
+
+
+def substring_from_span(content: str, span: str) -> str:
+    """Return the best‑effort substring of ``content`` for a slice key "[x:y]".
+
+    Rules implemented to match manager behaviour:
+    - Supports negative and open‑ended indices.
+    - Indices are clamped to the valid range [0, len(content)].
+    - If start > end, indices are swapped to produce a forward slice.
+    - On malformed input, returns an empty string.
+    """
+    try:
+        import re as _re
+
+        m = _re.fullmatch(r"\[\s*(-?\d+)?\s*:\s*(-?\d+)?\s*\]", str(span))
+        if not m:
+            return ""
+        start_s, end_s = m.group(1), m.group(2)
+        L = len(content)
+
+        if start_s is None:
+            start = 0
+        else:
+            start = int(start_s)
+            if start < 0:
+                start = max(0, L + start)
+            else:
+                start = min(L, start)
+
+        if end_s is None:
+            end = L
+        else:
+            end = int(end_s)
+            if end < 0:
+                end = max(0, L + end)
+            else:
+                end = min(L, end)
+
+        if start > end:
+            start, end = end, start
+
+        return content[start:end]
+    except Exception:
+        return ""
