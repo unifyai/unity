@@ -332,6 +332,7 @@ async def async_tool_use_loop_inner(
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     semantic_closest_match = None
+    last_valid_user_history = []
     if semantic_cache:
         if semantic_closest_match := sc.search_semantic_cache(message):
             msgs = await sc.get_dummy_tool(semantic_closest_match, tools_data)
@@ -437,7 +438,6 @@ async def async_tool_use_loop_inner(
     llm_turn_required = False
 
     # No persist mode: loop returns immediately upon final assistant message
-    last_valid_history = None
 
     try:
         while True:
@@ -662,7 +662,7 @@ async def async_tool_use_loop_inner(
 
                 interjection_msg = {"role": "system", "content": sys_content}
                 await _msg_dispatcher.append_msgs([interjection_msg])
-                last_valid_history = history_lines + [f"user: {extra}"]
+                last_valid_user_history = history_lines + [f"user: {extra}"]
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
@@ -1820,7 +1820,7 @@ async def async_tool_use_loop_inner(
             # but ensure it is saved before the session ends
             await sc.save_semantic_cache(
                 _initial_user_message,
-                last_valid_history,
+                last_valid_user_history,
                 client.messages,
                 previous_tool_trajectory=(
                     semantic_closest_match.tool_trajectory
