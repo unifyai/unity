@@ -64,6 +64,8 @@ class FileManager(BaseFileManager):
     ) -> None:
         self._tmp_dir = Path(tempfile.mkdtemp(prefix="unity_files_"))
         self._display_to_path: Dict[str, Path] = {}
+        # Track display names that are registered as protected (read-only from the FileManager's perspective)
+        self._protected_display_names: set[str] = set()
         # Use provided parser or create default DoclingParser
         self._parser: BaseParser = (
             parser
@@ -187,6 +189,40 @@ class FileManager(BaseFileManager):
     def import_file(self, file_path: str | os.PathLike[str]) -> str:
         """Import a single file from the filesystem. Returns display name."""
         return self._add_file(Path(file_path))
+
+    # Protected/registration helpers ------------------------------------- #
+    def register_existing_file(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        display_name: Optional[str] = None,
+        protected: bool = False,
+    ) -> str:
+        """
+        Register an already-existing file on disk for read-only access.
+
+        - Does not copy the file into the temp directory
+        - Makes the file visible via FileManager.list()/exists()/parse()
+        - When protected=True, the file cannot be deleted/mutated by FileManager APIs
+        """
+        p = Path(path).expanduser().resolve()
+        if not p.exists() or not p.is_file():
+            raise FileNotFoundError(str(p))
+
+        # Use provided display name verbatim when given, otherwise default to the filename
+        name = display_name or p.name
+        if name in self._display_to_path and self._display_to_path[name] != p:
+            # Avoid accidental collision; make a stable unique variant
+            name = _unique_name(set(self._display_to_path.keys()), name)
+
+        self._display_to_path[name] = p
+        if protected:
+            self._protected_display_names.add(name)
+        return name
+
+    def is_protected(self, filename: str) -> bool:
+        """Return True if the registered display name is marked protected."""
+        return filename in self._protected_display_names
 
     # Helper methods ------------------------------------------------------ #
     def _validate_and_prepare_files(
@@ -492,23 +528,33 @@ class FileManager(BaseFileManager):
         - The actual file in the temporary directory is NOT removed by this method.
         - This operation cannot be undone.
         """
-        log_ids = unify.get_logs(
+        logs = unify.get_logs(
             context=self._ctx,
             filter=f"file_id == {file_id}",
-            return_ids_only=True,
+            limit=1,
         )
-        if not log_ids:
+        if not logs:
             raise ValueError(
                 f"No file found with file_id {file_id} to delete.",
             )
-        if len(log_ids) > 1:
+        if len(logs) > 1:
             raise RuntimeError(
                 f"Multiple files found with file_id {file_id}. Data integrity issue.",
             )
 
+        # Guard against deleting protected files
+        try:
+            filename = logs[0].entries.get("filename")
+            if isinstance(filename, str) and filename in self._protected_display_names:
+                raise PermissionError(
+                    f"'{filename}' is protected and cannot be deleted by FileManager.",
+                )
+        except Exception:
+            pass
+
         unify.delete_logs(
             context=self._ctx,
-            logs=log_ids,
+            logs=[logs[0].id],
         )
         return {
             "outcome": "file deleted",
