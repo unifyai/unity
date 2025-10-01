@@ -12,8 +12,6 @@ from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
 
 _USER_MESSAGE_EMBEDDING_FIELD_NAME = "user_message_emb"
-_EMBED_MODEL = "text-embedding-3-small"
-_MODEL = "gpt-4o@openai"
 
 
 @dataclass
@@ -24,7 +22,14 @@ class SemanticCacheResult:
 
 
 class _Config:
-    def __init__(self, context: str = "", threshold: float = 0.2, top_k: int = 1):
+    def __init__(
+        self,
+        context: str = "",
+        threshold: float = 0.2,
+        top_k: int = 1,
+        embedding_model: str = "text-embedding-3-small",
+        model: str = "gpt-4o@openai",
+    ):
         if not context:
             from unity import ASSISTANT_CONTEXT
 
@@ -33,6 +38,8 @@ class _Config:
         self._context = context
         self._threshold = threshold
         self._top_k = top_k
+        self._embedding_model = embedding_model
+        self._model = model
 
     @property
     def context(self):
@@ -45,6 +52,14 @@ class _Config:
     @property
     def top_k(self):
         return self._top_k
+
+    @property
+    def embedding_model(self):
+        return self._embedding_model
+
+    @property
+    def model(self):
+        return self._model
 
 
 _CONFIG = _Config()
@@ -182,7 +197,8 @@ Output:
 Hi, what is the weather in Cairo?
 """
 
-    client = unify.AsyncUnify(_MODEL)
+    global _CONFIG
+    client = unify.AsyncUnify(_CONFIG.model)
     client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
     res = await client.generate(
         user_message=f"Messages: {json.dumps(messages_history)}",
@@ -197,6 +213,8 @@ async def clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=Non
 
     class PruneToolsResponseFormat(BaseModel):
         indices: list[int]
+
+    global _CONFIG
 
     cleaned_trajectory = []
     if previous_tool_trajectory:
@@ -227,7 +245,7 @@ async def clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=Non
                     )
                     cleaned_trajectory.append(pair)
 
-    client = unify.AsyncUnify(_MODEL)
+    client = unify.AsyncUnify(_CONFIG.model)
     client.set_system_message(
         """
         You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
@@ -265,7 +283,7 @@ def store_tool_trajectory(user_message, tool_trajectory):
         tool_trajectory=json.dumps(tool_trajectory),
     )
 
-    embed_expr = f"embed({{logs:user_message}}, model='{_EMBED_MODEL}')"
+    embed_expr = f"embed({{logs:user_message}}, model='{_CONFIG.embedding_model}')"
     unify.create_derived_logs(
         context=store_context,
         key=_USER_MESSAGE_EMBEDDING_FIELD_NAME,
@@ -288,9 +306,9 @@ def get_tool_trajectory(user_message):
     logs = unify.get_logs(
         context=store_context,
         exclude_fields=["user_message_emb"],
-        filter=f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_EMBED_MODEL}')) < {_CONFIG.threshold}",
+        filter=f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_CONFIG.embedding_model}')) < {_CONFIG.threshold}",
         sorting={
-            f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_EMBED_MODEL}'))": "descending",
+            f"cosine(user_message, embed('{escape_single_quotes(user_message)}', model='{_CONFIG.embedding_model}'))": "descending",
         },
         limit=_CONFIG.top_k,
     )

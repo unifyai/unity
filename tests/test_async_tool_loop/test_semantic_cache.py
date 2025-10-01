@@ -8,22 +8,15 @@ from unity.common._async_tool.semantic_cache import (
     clean_tool_trajectory,
 )
 from tests.helpers import _handle_project
+from unity.common._async_tool.semantic_cache import _Config
 
 
 @pytest.fixture(autouse=True)
 def _patch_semantic_cache_config(monkeypatch):
-    class _DynamicConfig:
+    class _DynamicConfig(_Config):
         @property
         def context(self):
             return f"{unify.get_active_context()['write']}/SemanticCache"
-
-        @property
-        def threshold(self):
-            return 0.2
-
-        @property
-        def top_k(self):
-            return 1
 
     monkeypatch.setattr(
         "unity.common._async_tool.semantic_cache._CONFIG",
