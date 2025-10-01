@@ -18,6 +18,7 @@ from unity.conversation_manager_2.new_events import (
     GetContactsInput,
     LogMessageOutput,
     GetContactsOutput,
+    ManagersStartupOutput,
 )
 
 
@@ -120,6 +121,18 @@ class ManagersWorker:
             except Exception as e:
                 print(f"[ManagersWorker] Error during initialization: {e}")
 
+            if self._initialized:
+                contacts = await self._get_contacts(publish=False)
+            else:
+                contacts = []
+            await self._event_broker.publish(
+                self._publish_channel,
+                ManagersStartupOutput(
+                    initialized=self._initialized,
+                    contacts=contacts
+                ).to_json(),
+            )
+
     async def _log_message(self, event: LogMessageInput) -> None:
         """Log a message via TranscriptManager."""
         if not self._initialized:
@@ -163,7 +176,7 @@ class ManagersWorker:
         except Exception as e:
             print(f"[ManagersWorker] Error logging message: {e}")
 
-    async def _get_contacts(self) -> None:
+    async def _get_contacts(self, publish: bool = False) -> None:
         """Fetch all contacts and publish back."""
         if not self._initialized:
             print("[ManagersWorker] Not initialized, cannot get contacts")
@@ -189,6 +202,8 @@ class ManagersWorker:
             )
 
             print(f"[ManagersWorker] Fetched {len(contacts)} contacts")
+
+            return contacts
 
         except Exception as e:
             print(f"[ManagersWorker] Error fetching contacts: {e}")

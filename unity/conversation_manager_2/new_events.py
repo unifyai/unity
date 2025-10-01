@@ -156,6 +156,11 @@ class ManagersStartupEvent(Event):
     user_whatsapp_number: str
     assistant_whatsapp_number: str
 
+@dataclass
+class ManagersStartupOutput(Event):
+    initialized: bool
+    contacts: list[dict[str, Any]]
+
 
 @dataclass
 class LogMessageInput(Event):

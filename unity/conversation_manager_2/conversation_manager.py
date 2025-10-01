@@ -159,6 +159,7 @@ class ConversationManager:
         self.chat_history = []
         self.call_proc = None
         self.call_contact = None
+        self.initialized = False
 
     async def run_llm(self):
         now = None
@@ -475,6 +476,10 @@ class ConversationManager:
                     if isinstance(event, Ping):
                         print("ping received - keeping conversation manager alive")
                         continue
+                    elif isinstance(event, ManagersStartupOutput):
+                        self.initialized = event.initialized
+                        self.set_contacts(event.contacts)
+                        continue
                     elif isinstance(event, StartupEvent):
                         payload = event.to_dict()["payload"]
                         self.set_details(payload)
@@ -496,6 +501,7 @@ class ConversationManager:
                         asyncio.create_task(
                             asyncio.to_thread(log_job_startup, **kwargs),
                         )
+                        continue
                     await self.handle_event(event)
 
     def set_details(self, payload):
@@ -531,6 +537,17 @@ class ConversationManager:
         os.environ["VOICE_PROVIDER"] = self.voice_provider
         os.environ["VOICE_ID"] = self.voice_id
 
+    def set_contacts(self, contacts):
+        conversation_contacts = [
+            ConversationContact(
+                c["id"], c["name"], c["id"] == 1, c["number"], c["email"]
+            )
+            for c in contacts
+        ]
+        self.phone_contacts_map = {c.number: c for c in conversation_contacts}
+        self.email_contacts_map = {c.email: c for c in conversation_contacts}
+        self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
+
     async def publish_startup(self):
         await self.event_broker.publish(
             "app:managers:input",
@@ -547,12 +564,12 @@ class ConversationManager:
                 assistant_whatsapp_number=self.assistant_number,
             ).to_json(),
         )
-        await self.event_broker.publish(
-            "app:managers:input",
-            GetContactsInput().to_json(),
-        )
 
     async def handle_event(self, event: Event):
+        # wait for initialization of the managers
+        while not self.initialized:
+            await asyncio.sleep(0.1)
+
         self.state.push_event(event)
 
         if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
@@ -586,8 +603,6 @@ class ConversationManager:
                 )
 
         elif isinstance(event, PhoneCallStarted):
-            while not self.phone_contacts_map:
-                await asyncio.sleep(0.1)
             self.mode = "call"
             contact = self.phone_contacts_map.get(event.contact)
             self.call_contact = contact
@@ -602,15 +617,7 @@ class ConversationManager:
             await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, GetContactsOutput):
-            conversation_contacts = [
-                ConversationContact(
-                    c["id"], c["name"], c["id"] == 1, c["number"], c["email"]
-                )
-                for c in event.contacts
-            ]
-            self.phone_contacts_map = {c.number: c for c in conversation_contacts}
-            self.email_contacts_map = {c.email: c for c in conversation_contacts}
-            self.inverted_contacts_map = {v.id: v for v in conversation_contacts}
+            self.set_contacts(event.contacts)
 
         elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)
