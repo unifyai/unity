@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -62,8 +63,8 @@ class ImageHandle:
         # Use a vision-capable default
         client = unify.AsyncUnify(
             "gpt-4o@openai",
-            cache=json.loads(unify.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(unify.getenv("UNIFY_TRACED", "true")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
 
         # Build a succinct system message tailored to image Q&A
@@ -74,7 +75,22 @@ class ImageHandle:
             ),
         )
 
-        # Provide the image as a user content block (vision input)
+        # Provide the image as a user content block (vision input). Enforce strict validation.
+        try:
+            decoded = base64.b64decode(self._image.data, validate=True)
+        except Exception as exc:
+            raise ValueError("Invalid base64 image data") from exc
+
+        head = decoded[:10]
+        if head.startswith(b"\xff\xd8"):
+            mime = "image/jpeg"
+        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+            mime = "image/png"
+        else:
+            raise ValueError(
+                "Unsupported image format; only PNG and JPEG are supported.",
+            )
+
         client.append_messages(
             [
                 {
@@ -83,7 +99,7 @@ class ImageHandle:
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:image/png;base64,{self._image.data}",
+                                "url": f"data:{mime};base64,{self._image.data}",
                             },
                         },
                     ],
