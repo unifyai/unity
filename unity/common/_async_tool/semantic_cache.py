@@ -96,6 +96,7 @@ def _simplify_tool_trajectory(tool_trajectory: list[dict]):
                 "name": name,
                 "arguments": arguments,
                 "result": result,
+                "result_status": "cached",
             },
         )
 
@@ -113,7 +114,10 @@ async def get_dummy_tool(
         for tool_call in history:
             if (tool_name := tool_call.get("name")) in tools.normalized:
                 fn = tools.normalized[tool_name].fn
-                args = json.loads(tool_call.get("arguments"))
+                try:
+                    args = json.loads(tool_call.get("arguments")) or {}
+                except Exception:
+                    continue
                 if inspect.iscoroutinefunction(fn):
                     awaitables.append(loop.create_task(fn(**args)))
                 else:
@@ -123,10 +127,10 @@ async def get_dummy_tool(
         results = await asyncio.gather(*awaitables, return_exceptions=True)
         for tool_call, result in zip(history, results):
             if isinstance(result, Exception):
-                tool_call["result_status"] = "cached"
-            else:
-                tool_call["result_status"] = "new"
-                tool_call["result"] = result
+                continue
+
+            tool_call["result_status"] = "new"
+            tool_call["result"] = result
 
     call_id = f"call_SemanticSearchCallIdPlaceholder"
     dummy_tool_call = {
