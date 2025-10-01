@@ -1816,6 +1816,8 @@ async def async_tool_use_loop_inner(
             TOOL_LOOP_LINEAGE.reset(_token)
 
         if semantic_cache:
+            # TODO: ideally, should not be blocking and more of a background task
+            # but ensure it is saved before the session ends
             await sc.save_semantic_cache(
                 _initial_user_message,
                 last_valid_history,
