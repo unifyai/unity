@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 import os
-import logging
 from typing import Optional
 
 import redis.asyncio as redis
@@ -14,7 +13,7 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import UNASSIGNED
 from unity.conversation_manager_2.new_events import (
     Event,
-    StartupEvent,
+    ManagersStartupEvent,
     LogMessageInput,
     GetContactsInput,
     LogMessageOutput,
@@ -38,9 +37,6 @@ class ManagersWorker:
         self._subscribe_channel = "app:managers:input"
         self._publish_channel = "app:managers:output"
 
-        # Setup logger
-        self._logger = logging.getLogger("ManagersWorker")
-
         # Internal queue for ordered processing
         self._message_queue: asyncio.Queue = asyncio.Queue()
 
@@ -54,48 +50,10 @@ class ManagersWorker:
         self._stop_event = asyncio.Event()
 
     # ──────────────────────────────────────────────────────────────────
-    # Helpers
-    # ──────────────────────────────────────────────────────────────────
-
-    async def _initialize_unity(self) -> None:
-        # ToDo: need to clean this up to avoid duplication
-        # with ConversationManager.set_details
-        assistant_id = os.environ.get("ASSISTANT_ID", "0")
-        unity.init(
-            assistant_id=int(
-                assistant_id.replace("default-assistant-", ""),
-            ),
-            default_assistant=dict(
-                user_id="default-user",
-                created_at=datetime.now().isoformat(),
-                updated_at=datetime.now().isoformat(),
-                agent_id=assistant_id,
-                first_name=os.environ.get("ASSISTANT_NAME", ""),
-                surname="",
-                age=os.environ.get("ASSISTANT_AGE", ""),
-                region=os.environ.get("ASSISTANT_REGION", ""),
-                about=os.environ.get("ASSISTANT_ABOUT", ""),
-                phone=os.environ.get("ASSISTANT_NUMBER", ""),
-                email=os.environ.get("ASSISTANT_EMAIL", ""),
-                user_phone=os.environ.get("USER_NUMBER", ""),
-                user_whatsapp_number=os.environ.get("USER_WHATSAPP_NUMBER", ""),
-                assistant_whatsapp_number=os.environ.get("ASSISTANT_NUMBER", ""),
-                api_key=os.environ.get("UNIFY_KEY"),
-                weekly_limit=None,
-                max_parallel=None,
-                profile_photo=None,
-                country=None,
-                voice_id=None,
-                voice_provider="cartesia",
-                user_last_name="",
-            ),
-        )
-
-    # ──────────────────────────────────────────────────────────────────
     # Message handlers
     # ──────────────────────────────────────────────────────────────────
 
-    async def _startup(self) -> None:
+    async def _startup(self, payload: dict) -> None:
         """
         Initialize all managers and configure them.
         This is the first message processed, blocking all subsequent messages.
@@ -103,31 +61,47 @@ class ManagersWorker:
         Note: Environment variables are already set by ConversationManager.set_details()
         when the StartupEvent arrives, so we don't duplicate that logic here.
         """
-        self._logger.info("Processing startup")
+        print("[ManagersWorker] Processing startup")
 
         async with self._init_lock:
             if self._initialized:
-                self._logger.info("Already initialized, skipping")
+                print("[ManagersWorker] Already initialized, skipping")
                 return
 
             try:
                 # 0. Initialize unity
-                self._logger.info("Initializing unity...")
+                print("[ManagersWorker] Initializing unity...")
                 if not unity.ASSISTANT:
-                    await self._initialize_unity()
-                self._logger.info("Unity initialized")
+                    unity.init(
+                        assistant_id=int(
+                            payload.get("agent_id", "0").replace("default-assistant-", ""),
+                        ),
+                        default_assistant={
+                            "user_id": "default-user",
+                            "created_at": datetime.now().isoformat(),
+                            "updated_at": datetime.now().isoformat(),
+                            "surname": "",
+                            "weekly_limit": None,
+                            "max_parallel": None,
+                            "profile_photo": None,
+                            "country": None,
+                            "user_last_name": "",
+                            **payload,
+                        },
+                    )
+                print("[ManagersWorker] Unity initialized")
 
                 # 1. Initialize ContactManager
-                self._logger.info("Initializing ContactManager...")
+                print("[ManagersWorker] Initializing ContactManager...")
                 self._contact_manager = ContactManager()
-                self._logger.info("ContactManager initialized")
+                print("[ManagersWorker] ContactManager initialized")
 
                 # 2. Initialize TranscriptManager with ContactManager
-                self._logger.info("Initializing TranscriptManager...")
+                print("[ManagersWorker] Initializing TranscriptManager...")
                 self._transcript_manager = TranscriptManager(
                     contact_manager=self._contact_manager
                 )
-                self._logger.info("TranscriptManager initialized")
+                print("[ManagersWorker] TranscriptManager initialized")
 
                 # 3. Configure TranscriptManager logger with auth header
                 # Assumes UNIFY_KEY is already in environment from set_details()
@@ -136,30 +110,30 @@ class ManagersWorker:
                     self._transcript_manager._get_logger().session.headers[
                         "Authorization"
                     ] = f"Bearer {api_key}"
-                    self._logger.info("TranscriptManager logger configured")
+                    print("[ManagersWorker] TranscriptManager logger configured")
 
                 # TODO: Initialize other managers (Conductor, etc.) here
 
                 self._initialized = True
-                self._logger.info("Initialization complete")
+                print("[ManagersWorker] Initialization complete")
 
             except Exception as e:
-                self._logger.error(f"Error during initialization: {e}", exc_info=True)
+                print(f"[ManagersWorker] Error during initialization: {e}")
 
-    async def _log_message(self, evt: LogMessageInput) -> None:
+    async def _log_message(self, event: LogMessageInput) -> None:
         """Log a message via TranscriptManager."""
         if not self._initialized:
-            self._logger.warning("Not initialized, cannot log message")
-            await self._startup()
+            print("[ManagersWorker] Not initialized, cannot log message")
+            return
 
         try:
-            medium = evt.medium or "unify_chat"
-            sender_id = int(evt.sender_id)
-            receiver_ids = [int(r) for r in (evt.receiver_ids or [])]
-            content = evt.content
-            timestamp = evt.timestamp
-            exchange_id = getattr(evt, "exchange_id", UNASSIGNED)
-            metadata = getattr(evt, "metadata", None)
+            medium = event.medium or "unify_chat"
+            sender_id = int(event.sender_id)
+            receiver_ids = [int(r) for r in (event.receiver_ids or [])]
+            content = event.content
+            timestamp = event.timestamp
+            exchange_id = getattr(event, "exchange_id", UNASSIGNED)
+            metadata = getattr(event, "metadata", None)
 
             # Log the message
             messages = self._transcript_manager.log_messages(
@@ -176,9 +150,7 @@ class ManagersWorker:
             )
 
             message = messages[0] if messages else None
-            self._logger.debug(
-                f"Logged message: {medium} from {sender_id} to {receiver_ids}"
-            )
+            print(f"[ManagersWorker] Logged message: {medium} from {sender_id} to {receiver_ids}")
 
             # Publish reply as Event envelope
             if message:
@@ -186,16 +158,16 @@ class ManagersWorker:
                     self._publish_channel,
                     LogMessageOutput(exchange_id=message.exchange_id).to_json(),
                 )
-                self._logger.debug(f"Published exchange_id {message.exchange_id}")
+                print(f"[ManagersWorker] Published exchange_id {message.exchange_id}")
 
         except Exception as e:
-            self._logger.error(f"Error logging message: {e}", exc_info=True)
+            print(f"[ManagersWorker] Error logging message: {e}")
 
     async def _get_contacts(self) -> None:
         """Fetch all contacts and publish back."""
         if not self._initialized:
-            self._logger.warning("Not initialized, cannot get contacts")
-            await self._startup()
+            print("[ManagersWorker] Not initialized, cannot get contacts")
+            return
 
         try:
             # Get all contacts from ContactManager and convert to dict
@@ -216,10 +188,10 @@ class ManagersWorker:
                 GetContactsOutput(contacts=contacts).to_json(),
             )
 
-            self._logger.debug(f"Fetched {len(contacts)} contacts")
+            print(f"[ManagersWorker] Fetched {len(contacts)} contacts")
 
         except Exception as e:
-            self._logger.error(f"Error fetching contacts: {e}", exc_info=True)
+            print(f"[ManagersWorker] Error fetching contacts: {e}")
 
     # ──────────────────────────────────────────────────────────────────
     # Message processing
@@ -228,18 +200,18 @@ class ManagersWorker:
     async def _process_message(self, event: Event) -> None:
         """Process a single Event from the queue."""
         # Route to handlers using isinstance
-        if isinstance(event, StartupEvent):
-            await self._startup()
+        if isinstance(event, ManagersStartupEvent):
+            await self._startup(event.to_dict()["payload"])
         elif isinstance(event, LogMessageInput):
             await self._log_message(event)
         elif isinstance(event, GetContactsInput):
             await self._get_contacts()
         else:
-            self._logger.warning(f"Unknown event: {event.to_dict()['event_name']}")
+            print(f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}")
 
     async def _queue_processor(self) -> None:
         """Worker task that processes messages from the queue in FIFO order."""
-        self._logger.info("Queue processor started")
+        print("[ManagersWorker] Queue processor started")
 
         while not self._stop_event.is_set():
             try:
@@ -253,9 +225,9 @@ class ManagersWorker:
                 await self._process_message(msg)
 
             except Exception as e:
-                self._logger.error(f"Error in queue processor: {e}", exc_info=True)
+                print(f"[ManagersWorker] Error in queue processor: {e}")
 
-        self._logger.info("Queue processor stopped")
+        print("[ManagersWorker] Queue processor stopped")
 
     # ──────────────────────────────────────────────────────────────────
     # Main event loop (Pub/Sub listener)
@@ -266,9 +238,10 @@ class ManagersWorker:
         Subscribe to Redis Pub/Sub and enqueue messages.
         A separate task processes the queue to ensure ordering.
         """
-        self._logger.info("Starting to wait for events")
-        self._logger.info(f"Subscribe channel: {self._subscribe_channel}")
-        self._logger.info(f"Publish channel: {self._publish_channel}")
+        print("Flag", self._initialized)
+        print("[ManagersWorker] Starting to wait for events")
+        print(f"[ManagersWorker] Subscribe channel: {self._subscribe_channel}")
+        print(f"[ManagersWorker] Publish channel: {self._publish_channel}")
 
         # Start queue processor task
         processor_task = asyncio.create_task(self._queue_processor())
@@ -276,7 +249,7 @@ class ManagersWorker:
         try:
             async with self._event_broker.pubsub() as pubsub:
                 await pubsub.subscribe(self._subscribe_channel)
-                self._logger.info(f"Subscribed to {self._subscribe_channel}")
+                print(f"[ManagersWorker] Subscribed to {self._subscribe_channel}")
 
                 while not self._stop_event.is_set():
                     try:
@@ -288,26 +261,24 @@ class ManagersWorker:
                         if msg is not None:
                             try:
                                 event = Event.from_json(msg["data"])  # type: ignore[arg-type]
-                                await self._message_queue.put(event)
-                                self._logger.debug(
-                                    f"Enqueued event: {event.to_dict()['event_name']}"
+                                print(
+                                    f"[ManagersWorker] Enqueued event: {event.to_dict()['event_name']}"
                                 )
-                            except Exception:
-                                self._logger.error(
-                                    "Failed to parse Event from message", exc_info=True
+                                await self._message_queue.put(event)
+                            except Exception as parse_err:
+                                print(
+                                    f"[ManagersWorker] Failed to parse Event from message: {parse_err}"
                                 )
 
                     except Exception as e:
-                        self._logger.error(
-                            f"Error receiving message: {e}", exc_info=True
-                        )
+                        print(f"[ManagersWorker] Error receiving message: {e}")
                         await asyncio.sleep(1)
 
         finally:
             # Stop processor
             self._stop_event.set()
             await processor_task
-            self._logger.info("Worker stopped")
+            print("[ManagersWorker] Worker stopped")
 
     def stop(self) -> None:
         """Signal the worker to stop."""
