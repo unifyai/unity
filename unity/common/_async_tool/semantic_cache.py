@@ -183,9 +183,16 @@ async def clean_tool_trajectory(user_message, msgs):
                 if (id := tool_call.get("id")) in _flatten_tools.keys():
                     if _flatten_tools[id].get("name") == "semantic_search":
                         continue
+
+                    request = tool_call
+                    request.pop("id")
+
+                    response = _flatten_tools[id]
+                    response.pop("tool_call_id")
+
                     pair = ToolRequestPair(
-                        request=tool_call,
-                        response=_flatten_tools[id],
+                        request=request,
+                        response=response,
                     )
                     cleaned_trajectory.append(pair)
 
