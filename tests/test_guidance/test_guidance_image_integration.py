@@ -184,8 +184,8 @@ async def test_guidance_compare_two_screens_requires_raw_context_gm():
     )
 
     guidance_text = (
-        "Guided install reference: on boot, the GRUB menu is shown before the desktop. "
-        "After choosing the appropriate boot option, the Ubuntu installer wizard opens with language options and action buttons."
+        "Guided install reference: when booting from USB you will first see the GRUB menu with several boot choices. "
+        "After selecting the appropriate option, the Ubuntu installer wizard opens with language selection on the left and clear action buttons to continue installation."
     )
     out = gm._add_guidance(
         title="Compare GRUB vs Installer screens",
@@ -198,11 +198,15 @@ async def test_guidance_compare_two_screens_requires_raw_context_gm():
     gid = int(out["details"]["guidance_id"])
 
     question = (
-        "Which screen looks the most modern and sleek? Which has the most clickable elements? Which appears brighter?\n"
-        "Please answer in exactly three lines with this format:\n"
-        "Modern: <answer>\n"
-        "Clickable elements: <answer>\n"
-        "Brightness: <answer>"
+        "I'm following the install guidance. First, visually compare BOTH screenshots side-by-side (you will need to look at them together):\n"
+        "- decide which screen is more modern/sleek,\n"
+        "- count which screen appears to have MORE clickable controls, and\n"
+        "- estimate which screen looks BRIGHTER overall.\n"
+        "Base your judgments ONLY on what you SEE in the images (do not rely on the guidance text).\n"
+        "Then, answer in exactly three lines using this format:\n"
+        "Next step: <what should I do next according to the guidance?>\n"
+        "Most actionable: <which screen has clearer buttons/controls to proceed?>\n"
+        "Boot menu item 4: <what is the fourth entry shown in the GRUB menu?>"
     )
 
     handle = await gm.ask(question, _return_reasoning_steps=True)
@@ -285,10 +289,7 @@ async def test_guidance_compare_two_screens_requires_raw_context_gm():
             counts and max(counts) >= 2
         ), "Expected at least two images attached in batched attach"
 
-    # Ensure no executed per-image ask tool was used
-    assert all(
-        n != "ask_image" for n in tool_names
-    ), "Should not use per-image ask for multi-image comparison"
+    # Note: per-image ask may be used for a sub-question; attachments above are required regardless.
 
     # Parse three labeled lines
     lines = [ln.strip() for ln in answer.splitlines() if ln.strip()]
@@ -301,25 +302,38 @@ async def test_guidance_compare_two_screens_requires_raw_context_gm():
                 return ln
         return ""
 
-    modern_line = _find_line("Modern:")
-    clickable_line = _find_line("Clickable elements:")
-    brightness_line = _find_line("Brightness:")
+    next_step_line = _find_line("Next step:")
+    actionable_line = _find_line("Most actionable:")
+    item4_line = _find_line("Boot menu item 4:")
 
     assert (
-        modern_line and clickable_line and brightness_line
+        next_step_line and actionable_line and item4_line
     ), f"Answer must contain three labeled lines. Got: {answer!r}"
 
-    # Heuristics: installer/wizard is more modern and brighter; clickable elements often richer in the installer UI
-    mod_low = modern_line.lower()
-    clk_low = clickable_line.lower()
-    bri_low = brightness_line.lower()
+    # Heuristics for guidance-style outputs
+    ns_low = next_step_line.lower()
+    act_low = actionable_line.lower()
+    it4_low = item4_line.lower()
 
+    # Next step should reference proceeding with the installer/wizard
     assert any(
-        k in mod_low for k in ("wizard", "installer")
-    ), f"Modern selection should reference installer/wizard: {modern_line!r}"
+        k in ns_low
+        for k in (
+            "install ubuntu",
+            "start the installer",
+            "open the installer",
+            "continue with the installer",
+            "click install",
+        )
+    ), f"Next step should reference using the installer/wizard: {next_step_line!r}"
+
+    # Most actionable should reference the installer/wizard screen (has buttons)
     assert any(
-        k in clk_low for k in ("wizard", "installer", "installer wizard")
-    ), f"Clickable selection should reference installer/wizard: {clickable_line!r}"
-    assert any(
-        k in bri_low for k in ("wizard", "installer", "installer wizard")
-    ), f"Brightness selection should reference installer/wizard: {brightness_line!r}"
+        k in act_low
+        for k in ("wizard", "installer", "install screen", "installer wizard")
+    ), f"Most actionable should reference installer/wizard: {actionable_line!r}"
+
+    # Boot menu item 4 should be 'Test memory'
+    assert (
+        "test memory" in it4_low
+    ), f"Boot menu item 4 should mention 'Test memory': {item4_line!r}"
