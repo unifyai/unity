@@ -4,8 +4,8 @@ import pytest
 
 from unity.common.async_tool_loop import start_async_tool_use_loop
 from unity.common._async_tool.semantic_cache import (
-    construct_new_user_message,
-    clean_tool_trajectory,
+    _construct_new_user_message,
+    _clean_tool_trajectory,
 )
 from tests.helpers import _handle_project
 from unity.common._async_tool.semantic_cache import _Config
@@ -224,7 +224,7 @@ async def test_construct_new_user_message():
     await handle.result()
 
     msgs = client.messages
-    new_user_message = await construct_new_user_message(
+    new_user_message = await _construct_new_user_message(
         initial_user_message,
         msgs,
     )
@@ -264,7 +264,7 @@ async def test_prune_tools():
     )
 
     await handle.result()
-    cleaned = await clean_tool_trajectory(
+    cleaned = await _clean_tool_trajectory(
         "respond with the result of the find_contact tool",
         client.messages,
     )

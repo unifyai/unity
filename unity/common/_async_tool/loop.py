@@ -333,20 +333,26 @@ async def async_tool_use_loop_inner(
     # Initialise loop state early so preflight backfill can schedule tasks
     semantic_closest_match = None
     if semantic_cache:
-        if semantic_closest_match := sc.get_tool_trajectory(message):
+        if semantic_closest_match := sc.search_semantic_cache(message):
             msgs = await sc.get_dummy_tool(semantic_closest_match, tools_data)
-            logger.info(
-                f"Semantic cache hit ({semantic_closest_match.closest_user_message}): {json.dumps(msgs[1]['content'], indent=2)}",
-                prefix="🔍",
-            )
+            if log_steps == "full":
+                logger.info(
+                    f"Semantic cache hit ({semantic_closest_match.closest_user_message}): {json.dumps(msgs[1]['content'], indent=2)}",
+                    prefix="🔍",
+                )
             client.append_messages(msgs)
-            client.set_system_message((client.system_message or "") + sc.get_hint())
-            tools_data.normalized["semantic_search"] = ToolSpec(fn=sc.semantic_search)
-        else:
-            logger.info(
-                "Semantic cache miss, no entry for the user message",
-                prefix="🔍",
+            client.set_system_message(
+                (client.system_message or "") + sc.get_system_msg_hint(),
             )
+            tools_data.normalized["semantic_search"] = ToolSpec(
+                fn=sc.semantic_search_placeholder,
+            )
+        else:
+            if log_steps == "full":
+                logger.info(
+                    "Semantic cache miss, no entry for the user message",
+                    prefix="🔍",
+                )
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
@@ -1810,12 +1816,9 @@ async def async_tool_use_loop_inner(
             TOOL_LOOP_LINEAGE.reset(_token)
 
         if semantic_cache:
-            embedding_message = await sc.construct_new_user_message(
+            await sc.save_semantic_cache(
                 _initial_user_message,
                 last_valid_history,
-            )
-            tool_trajectory = await sc.clean_tool_trajectory(
-                embedding_message,
                 client.messages,
                 previous_tool_trajectory=(
                     semantic_closest_match.tool_trajectory
@@ -1823,4 +1826,3 @@ async def async_tool_use_loop_inner(
                     else None
                 ),
             )
-            sc.store_tool_trajectory(embedding_message, tool_trajectory)

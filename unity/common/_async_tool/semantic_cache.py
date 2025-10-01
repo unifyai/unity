@@ -19,13 +19,6 @@ from ..llm_helpers import _dumps
 _USER_MESSAGE_EMBEDDING_FIELD_NAME = "_user_message_emb"
 
 
-@dataclass
-class SemanticCacheResult:
-    original_user_message: str
-    closest_user_message: str
-    tool_trajectory: list[dict]
-
-
 class _Config:
     threshold: float = 0.2
     top_k: int = 1
@@ -40,50 +33,14 @@ class _Config:
         return f"{ASSISTANT_CONTEXT}/{self._context}"
 
 
+@dataclass
+class SemanticCacheResult:
+    original_user_message: str
+    closest_user_message: str
+    tool_trajectory: list[dict]
+
+
 _CONFIG = _Config()
-
-
-# Dummy tool placeholder (used by async_tool_loop_inner)
-def semantic_search(user_message: str):
-    """
-    Search a semantic cache for prior solutions relevant to the given user_message.
-
-    Workflow:
-    1. Performs a semantic search over cached user messages using embeddings keyed by the
-       provided user_message.
-    2. Returns the ordered tool trajectory previously used to answer a similar message.
-       For each step, the result_status is either "new" or "cached", and the original order is preserved.
-    3. If the result_status is "new", the tool is re-executed with the stored arguments to compute
-       fresh results (avoiding stale data), and the original order is preserved.
-    4. If the result_status is "cached", the tool is not re-executed, and the result is the cached result from previous run.
-
-    Usage guidance:
-    - Prefer these returned results over issuing new tool calls for the same purpose.
-    - The tools may or may not fully resolve the request; use judgment to synthesize an
-      answer from these results before deciding to call additional tools.
-
-    Input: user_message (str)
-    Output: List[dict] with entries of the form {"name", "arguments", "result", "result_status"}, in execution order.
-    """
-
-
-def get_hint():
-    return """
-    You have access to a best-effort semantic cache of prior tool trajectories.
-    For the current user message, the 'semantic_search' tool may return the set of tools that were previously called to answer a similar query, along with already-computed results.
-
-    Guidance:
-    - Prefer using those returned results directly when the status is "new", or follow a similar sequence of tools with updated arguments if required, before creating new or unrelated tool calls.
-    - Treat them as latency-saving precomputed outputs to avoid redundant work and reduce time.
-    - If gaps remain or the results do not fully address the request, call only the minimal additional tools needed.
-    - If tools status is "cached", and you need the result, you must call the tool instead of using the cached result.
-
-    Rules:
-    - Do not call the 'semantic_search' tool again, it is only used to get the tool trajectory.
-    - Do not call tools that are in the tool trajectory, they are already executed with the same arguments and has the "result_status":"new".
-    - Do NOT state, hint, or imply that you are using a cache, 'semantic_search', prior runs, or precomputed results.
-    - Write answers as if you executed the necessary tools now.
-    """
 
 
 def _simplify_tool_trajectory(tool_trajectory: list[dict]):
@@ -105,68 +62,11 @@ def _simplify_tool_trajectory(tool_trajectory: list[dict]):
     return _simplified_trajectory
 
 
-async def get_dummy_tool(
-    semantic_cache_result: SemanticCacheResult,
-    tools: "ToolsData",
-):
-    history = _simplify_tool_trajectory(semantic_cache_result.tool_trajectory)
-    loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor(thread_name_prefix="semantic_cache") as executor:
-        awaitables = []
-        for tool_call in history:
-            if (tool_name := tool_call.get("name")) in tools.normalized:
-                fn = tools.normalized[tool_name].fn
-                try:
-                    args = json.loads(tool_call.get("arguments")) or {}
-                except Exception:
-                    continue
-                if inspect.iscoroutinefunction(fn):
-                    awaitables.append(loop.create_task(fn(**args)))
-                else:
-                    awaitables.append(
-                        loop.run_in_executor(executor, functools.partial(fn, **args)),
-                    )
-        results = await asyncio.gather(*awaitables, return_exceptions=True)
-        for tool_call, result in zip(history, results):
-            if isinstance(result, Exception):
-                continue
-
-            tool_call["result_status"] = "new"
-            tool_call["result"] = result
-
-    call_id = f"call_SemanticSearchCallIdPlaceholder"
-    dummy_tool_call = {
-        "content": None,
-        "refusal": None,
-        "role": "assistant",
-        "annotations": [],
-        "audio": None,
-        "function_call": None,
-        "tool_calls": [
-            {
-                "id": call_id,
-                "function": {
-                    "arguments": f"{semantic_cache_result.original_user_message}",
-                    "name": "semantic_search",
-                },
-                "type": "function",
-            },
-        ],
-    }
-    msg = create_tool_call_message(
-        name="semantic_search",
-        call_id=call_id,
-        content=_dumps(history, indent=2),
-    )
-    return [
-        dummy_tool_call,
-        msg,
-    ]
-
-
-async def construct_new_user_message(init_user_message, messages_history):
+async def _construct_new_user_message(init_user_message, messages_history):
     if not messages_history:
         return init_user_message
+
+    # TODO clarifications should be included and used to construct the new user message
 
     CLEAN_USER_MESSAGE_PROMPT = """
 Task: From the conversation history, return the final intended user message.
@@ -196,7 +96,7 @@ Hi, what is the weather in Cairo?
     return res
 
 
-async def clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=None):
+async def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=None):
     class ToolRequestPair(TypedDict):
         request: Mapping[str, Any]
         response: Mapping[str, Any]
@@ -258,7 +158,7 @@ async def clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=Non
     return cleaned_trajectory
 
 
-def store_tool_trajectory(user_message, tool_trajectory):
+def _save_to_cache(user_message, tool_trajectory):
     global _CONFIG
     store_context = _CONFIG.context
 
@@ -284,7 +184,7 @@ def store_tool_trajectory(user_message, tool_trajectory):
     return log_id
 
 
-def get_tool_trajectory(user_message):
+def search_semantic_cache(user_message) -> SemanticCacheResult | None:
     global _CONFIG
     store_context = _CONFIG.context
 
@@ -311,3 +211,125 @@ def get_tool_trajectory(user_message):
         )
 
     return None
+
+
+# Dummy tool placeholder (passed to async tool use loop)
+def semantic_search_placeholder(user_message: str):
+    """
+    Search a semantic cache for prior solutions relevant to the given user_message.
+
+    Workflow:
+    1. Performs a semantic search over cached user messages using embeddings keyed by the
+       provided user_message.
+    2. Returns the ordered tool trajectory previously used to answer a similar message.
+       For each step, the result_status is either "new" or "cached", and the original order is preserved.
+    3. If the result_status is "new", the tool is re-executed with the stored arguments to compute
+       fresh results (avoiding stale data), and the original order is preserved.
+    4. If the result_status is "cached", the tool is not re-executed, and the result is the cached result from previous run.
+
+    Usage guidance:
+    - Prefer these returned results over issuing new tool calls for the same purpose.
+    - The tools may or may not fully resolve the request; use judgment to synthesize an
+      answer from these results before deciding to call additional tools.
+
+    Input: user_message (str)
+    Output: List[dict] with entries of the form {"name", "arguments", "result", "result_status"}, in execution order.
+    """
+
+
+def get_system_msg_hint() -> str:
+    return """
+    You have access to a best-effort semantic cache of prior tool trajectories.
+    For the current user message, the 'semantic_search' tool may return the set of tools that were previously called to answer a similar query, along with already-computed results.
+
+    Guidance:
+    - Prefer using those returned results directly when the status is "new", or follow a similar sequence of tools with updated arguments if required, before creating new or unrelated tool calls.
+    - Treat them as latency-saving precomputed outputs to avoid redundant work and reduce time.
+    - If gaps remain or the results do not fully address the request, call only the minimal additional tools needed.
+    - If tools status is "cached", and you need the result, you must call the tool instead of using the cached result.
+
+    Rules:
+    - Do not call the 'semantic_search' tool again, it is only used to get the tool trajectory.
+    - Do not call tools that are in the tool trajectory, they are already executed with the same arguments and has the "result_status":"new".
+    - Do NOT state, hint, or imply that you are using a cache, 'semantic_search', prior runs, or precomputed results.
+    - Write answers as if you executed the necessary tools now.
+    """
+
+
+async def get_dummy_tool(
+    semantic_cache_result: SemanticCacheResult,
+    tools: "ToolsData",
+):
+    history = _simplify_tool_trajectory(semantic_cache_result.tool_trajectory)
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(thread_name_prefix="semantic_cache") as executor:
+        awaitables = []
+        for tool_call in history:
+            if (tool_name := tool_call.get("name")) in tools.normalized:
+                fn = tools.normalized[tool_name].fn
+                try:
+                    args = json.loads(tool_call.get("arguments")) or {}
+                except Exception:
+                    continue
+                if inspect.iscoroutinefunction(fn):
+                    awaitables.append(loop.create_task(fn(**args)))
+                else:
+                    awaitables.append(
+                        loop.run_in_executor(executor, functools.partial(fn, **args)),
+                    )
+        results = await asyncio.gather(*awaitables, return_exceptions=True)
+        for tool_call, result in zip(history, results):
+            if isinstance(result, Exception):
+                continue
+
+            tool_call["result_status"] = "new"
+            tool_call["result"] = result
+
+    call_id = f"call_SemanticSearchCallIdPlaceholder"
+    dummy_tool_call = {
+        "content": None,
+        "refusal": None,
+        "role": "assistant",
+        "annotations": [],
+        "audio": None,
+        "function_call": None,
+        "tool_calls": [
+            {
+                "id": call_id,
+                "function": {
+                    "arguments": f"{semantic_cache_result.original_user_message}",
+                    "name": "semantic_search",
+                },
+                "type": "function",
+            },
+        ],
+    }
+    msg = create_tool_call_message(
+        name="semantic_search",
+        call_id=call_id,
+        content=_dumps(history, indent=2),
+    )
+    return [
+        dummy_tool_call,
+        msg,
+    ]
+
+
+async def save_semantic_cache(
+    initial_user_message,
+    user_message_visible_history,
+    messages_history,
+    previous_tool_trajectory=None,
+):
+    new_user_message = await _construct_new_user_message(
+        initial_user_message,
+        user_message_visible_history,
+    )
+
+    tool_trajectory = await _clean_tool_trajectory(
+        new_user_message,
+        messages_history,
+        previous_tool_trajectory=previous_tool_trajectory,
+    )
+
+    _save_to_cache(new_user_message, tool_trajectory)
