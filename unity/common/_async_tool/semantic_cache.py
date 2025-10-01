@@ -37,17 +37,22 @@ class _Config:
         return unify.AsyncUnify(self._model, reasoning_effort=self._reasoning_effort)
 
 
+class ToolCallPair(TypedDict):
+    request: Mapping[str, Any]
+    response: Mapping[str, Any]
+
+
 @dataclass
 class SemanticCacheResult:
     original_user_message: str
     closest_user_message: str
-    tool_trajectory: list[dict]
+    tool_trajectory: list[ToolCallPair]
 
 
 _CONFIG = _Config()
 
 
-def _simplify_tool_trajectory(tool_trajectory: list[dict]):
+def _simplify_tool_trajectory(tool_trajectory: list[ToolCallPair]):
     _simplified_trajectory = []
     for tool_call_pair in tool_trajectory:
         name = tool_call_pair["request"]["function"]["name"]
@@ -110,9 +115,6 @@ Can you find the contact with the name John Smith?
 
 
 async def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=None):
-    class ToolRequestPair(TypedDict):
-        request: Mapping[str, Any]
-        response: Mapping[str, Any]
 
     class PruneToolsResponseFormat(BaseModel):
         indices: list[int]
@@ -122,6 +124,7 @@ async def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=No
     cleaned_trajectory = []
     if previous_tool_trajectory:
         cleaned_trajectory.extend(previous_tool_trajectory)
+
     _flatten_tools = {
         msg.get("tool_call_id"): msg for msg in msgs if msg.get("role") == "tool"
     }
@@ -142,7 +145,7 @@ async def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=No
                     response = _flatten_tools[id]
                     response.pop("tool_call_id")
 
-                    pair = ToolRequestPair(
+                    pair = ToolCallPair(
                         request=request,
                         response=response,
                     )
@@ -217,10 +220,11 @@ def search_semantic_cache(user_message) -> SemanticCacheResult | None:
     )
 
     if logs:
+        entries = logs[0].entries
         return SemanticCacheResult(
             original_user_message=user_message,
-            closest_user_message=logs[0].entries["user_message"],
-            tool_trajectory=json.loads(logs[0].entries["tool_trajectory"]),
+            closest_user_message=entries["user_message"],
+            tool_trajectory=json.loads(entries["tool_trajectory"]),
         )
 
     return None
