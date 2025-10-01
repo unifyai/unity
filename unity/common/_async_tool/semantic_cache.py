@@ -13,6 +13,7 @@ from ..semantic_search import escape_single_quotes
 
 _USER_MESSAGE_EMBEDDING_FIELD_NAME = "user_message_emb"
 _EMBED_MODEL = "text-embedding-3-small"
+_MODEL = "gpt-4o@openai"
 
 
 @dataclass
@@ -152,7 +153,7 @@ Output:
 Hi, what is the weather in Cairo?
 """
 
-    client = unify.AsyncUnify("gpt-4o@openai")
+    client = unify.AsyncUnify(_MODEL)
     client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
     res = await client.generate(
         user_message=f"Messages: {json.dumps(messages_history)}",
@@ -188,7 +189,7 @@ async def clean_tool_trajectory(user_message, msgs):
                     )
                     cleaned_trajectory.append(pair)
 
-    client = unify.AsyncUnify("gpt-4o@openai")
+    client = unify.AsyncUnify(_MODEL)
     client.set_system_message(
         """
         You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
