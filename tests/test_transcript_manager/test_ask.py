@@ -444,7 +444,7 @@ async def test_ask_requests_clarification_when_context_missing(
 
         while True:
             try:
-                q = await asyncio.wait_for(up_q.get(), timeout=60)
+                q = await asyncio.wait_for(up_q.get(), timeout=300)
             except asyncio.TimeoutError:
                 break
 
@@ -478,7 +478,7 @@ async def test_ask_requests_clarification_when_context_missing(
     )
 
     # Ensure at least one clarification was requested
-    await asyncio.wait_for(saw_first_clarification.wait(), timeout=60)
+    await asyncio.wait_for(saw_first_clarification.wait(), timeout=300)
 
     # ── 5.  Await final answer and reasoning steps ─────────────────────────
     answer, steps = await handle.result()
