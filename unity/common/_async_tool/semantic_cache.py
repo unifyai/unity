@@ -30,11 +30,6 @@ class _Config:
         embedding_model: str = "text-embedding-3-small",
         model: str = "gpt-4o@openai",
     ):
-        if not context:
-            from unity import ASSISTANT_CONTEXT
-
-            context = f"{ASSISTANT_CONTEXT}/Cache"
-
         self._context = context
         self._threshold = threshold
         self._top_k = top_k
@@ -43,6 +38,11 @@ class _Config:
 
     @property
     def context(self):
+        if not self._context:
+            from unity import ASSISTANT_CONTEXT
+
+            self._context = f"{ASSISTANT_CONTEXT}/Cache"
+
         return self._context
 
     @property
