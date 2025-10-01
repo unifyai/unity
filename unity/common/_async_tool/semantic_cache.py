@@ -81,7 +81,8 @@ Rules:
 - Output exactly one plain string: the final corrected user message. No quotes, JSON, or explanation.
 - Do not add new information. Remove redundant or off-topic words.
 
-Example:
+Examples:
+
 Input:
 [
 "user: Hi, what is the weather in Tokyo?",
@@ -89,6 +90,14 @@ Input:
 ]
 Output:
 Hi, what is the weather in Cairo?
+
+Input:
+[
+"user: Can you find the contact with the name John Doe?",
+"user: Sorry it's actually John Smith"
+]
+Output:
+Can you find the contact with the name John Smith?
 """
 
     global _CONFIG
