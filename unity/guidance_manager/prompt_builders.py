@@ -48,6 +48,9 @@ def build_ask_prompt(
     ask_image_fname = _tool_name(tools, "ask_image")
     attach_image_fname = _tool_name(tools, "attach_image_to_context")
     attach_guid_imgs_fname = _tool_name(tools, "attach_guidance_images_to_context")
+    # Function-aware helpers
+    get_funcs_fname = _tool_name(tools, "get_functions_for_guidance")
+    attach_funcs_fname = _tool_name(tools, "attach_functions_for_guidance_to_context")
 
     _require_tools(
         {
@@ -138,6 +141,20 @@ def build_ask_prompt(
             ),
             "",
         )
+
+    # Append functions section if tools are available
+    if get_funcs_fname or attach_funcs_fname:
+        func_section = textwrap.dedent(
+            f"""
+
+        ─ Functions ─
+        • List functions relevant to a guidance item (by ids stored on the row)
+          `{get_funcs_fname}(guidance_id=42, include_implementations=false)`
+        • Attach related functions into this loop's context for direct reasoning
+          `{attach_funcs_fname}(guidance_id=42, include_implementations=false, limit=3)`
+        """,
+        ).strip()
+        usage_examples = f"{usage_examples}\n{func_section}"
 
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
@@ -239,10 +256,10 @@ Tool selection
 
 Create / Update / Delete
 ------------------------
-• Create a new guidance entry
-  `{add_fname}(title='Setup demo', content='How to set up the product demo...', images={{'[0:10]': 12}})`
-• Update a known guidance id
-  `{upd_fname}(guidance_id=42, content='Updated narrative...', images={{'[10:20]': 15}})`
+        • Create a new guidance entry
+        `{add_fname}(title='Setup demo', content='How to set up the product demo...', images={{'[0:10]': 12}}, function_ids=[1, 2])`
+        • Update a known guidance id
+        `{upd_fname}(guidance_id=42, content='Updated narrative...', images={{'[10:20]': 15}}, function_ids=[2, 3])`
 • Delete a guidance entry
   `{del_fname}(guidance_id=77)`
         """,
