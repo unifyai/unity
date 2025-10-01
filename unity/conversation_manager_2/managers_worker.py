@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import asyncio
-import json
+from datetime import datetime
 import os
 import logging
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import redis.asyncio as redis
 
+import unity
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import UNASSIGNED
+from unity.conversation_manager_2.new_events import (
+    Event,
+    StartupEvent,
+    LogMessageInput,
+    GetContactsInput,
+    LogMessageOutput,
+    GetContactsOutput,
+)
 
 
 class ManagersWorker:
@@ -22,19 +31,18 @@ class ManagersWorker:
     Uses Pub/Sub with an internal queue to ensure FIFO ordering.
     """
 
-    def __init__(self, event_broker: redis.Redis, job_name: str):
-        self.event_broker = event_broker
-        self.job_name = job_name
+    def __init__(self, event_broker: redis.Redis):
+        self._event_broker = event_broker
 
         # Pub/Sub channels
-        self.subscribe_channel = f"managers:{job_name}:requests"
-        self.reply_channel = f"managers:{job_name}:replies"
+        self._subscribe_channel = "app:managers:input"
+        self._publish_channel = "app:managers:output"
 
         # Setup logger
-        self.logger = logging.getLogger("ManagersWorker")
+        self._logger = logging.getLogger("ManagersWorker")
 
         # Internal queue for ordered processing
-        self.message_queue: asyncio.Queue = asyncio.Queue()
+        self._message_queue: asyncio.Queue = asyncio.Queue()
 
         # Managers (initialized on startup message)
         self._contact_manager: Optional[ContactManager] = None
@@ -46,10 +54,46 @@ class ManagersWorker:
         self._stop_event = asyncio.Event()
 
     # ──────────────────────────────────────────────────────────────────
+    # Helpers
+    # ──────────────────────────────────────────────────────────────────
+
+    async def _initialize_unity(self) -> None:
+        assistant_id = os.environ.get("ASSISTANT_ID", "0")
+        unity.init(
+            assistant_id=int(
+                assistant_id.replace("default-assistant-", ""),
+            ),
+            default_assistant=dict(
+                user_id="default-user",
+                created_at=datetime.now().isoformat(),
+                updated_at=datetime.now().isoformat(),
+                agent_id=assistant_id,
+                first_name=os.environ.get("ASSISTANT_NAME", ""),
+                surname="",
+                age=os.environ.get("ASSISTANT_AGE", ""),
+                region=os.environ.get("ASSISTANT_REGION", ""),
+                about=os.environ.get("ASSISTANT_ABOUT", ""),
+                phone=os.environ.get("ASSISTANT_NUMBER", ""),
+                email=os.environ.get("ASSISTANT_EMAIL", ""),
+                user_phone=os.environ.get("USER_NUMBER", ""),
+                user_whatsapp_number=os.environ.get("USER_WHATSAPP_NUMBER", ""),
+                assistant_whatsapp_number=os.environ.get("ASSISTANT_NUMBER", ""),
+                api_key=os.environ.get("UNIFY_KEY"),
+                weekly_limit=None,
+                max_parallel=None,
+                profile_photo=None,
+                country=None,
+                voice_id=None,
+                voice_provider="cartesia",
+                user_last_name="",
+            ),
+        )
+
+    # ──────────────────────────────────────────────────────────────────
     # Message handlers
     # ──────────────────────────────────────────────────────────────────
 
-    async def _startup(self, payload: Dict[str, Any]) -> None:
+    async def _startup(self) -> None:
         """
         Initialize all managers and configure them.
         This is the first message processed, blocking all subsequent messages.
@@ -57,25 +101,31 @@ class ManagersWorker:
         Note: Environment variables are already set by ConversationManager.set_details()
         when the StartupEvent arrives, so we don't duplicate that logic here.
         """
-        self.logger.info("Processing startup")
+        self._logger.info("Processing startup")
 
         async with self._init_lock:
             if self._initialized:
-                self.logger.info("Already initialized, skipping")
+                self._logger.info("Already initialized, skipping")
                 return
 
             try:
+                # 0. Initialize unity
+                self._logger.info("Initializing unity...")
+                if not unity.ASSISTANT:
+                    await self._initialize_unity()
+                self._logger.info("Unity initialized")
+
                 # 1. Initialize ContactManager
-                self.logger.info("Initializing ContactManager...")
+                self._logger.info("Initializing ContactManager...")
                 self._contact_manager = ContactManager()
-                self.logger.info("ContactManager initialized")
+                self._logger.info("ContactManager initialized")
 
                 # 2. Initialize TranscriptManager with ContactManager
-                self.logger.info("Initializing TranscriptManager...")
+                self._logger.info("Initializing TranscriptManager...")
                 self._transcript_manager = TranscriptManager(
                     contact_manager=self._contact_manager
                 )
-                self.logger.info("TranscriptManager initialized")
+                self._logger.info("TranscriptManager initialized")
 
                 # 3. Configure TranscriptManager logger with auth header
                 # Assumes UNIFY_KEY is already in environment from set_details()
@@ -84,31 +134,30 @@ class ManagersWorker:
                     self._transcript_manager._get_logger().session.headers[
                         "Authorization"
                     ] = f"Bearer {api_key}"
-                    self.logger.info("TranscriptManager logger configured")
+                    self._logger.info("TranscriptManager logger configured")
 
                 # TODO: Initialize other managers (Conductor, etc.) here
 
                 self._initialized = True
-                self.logger.info("Initialization complete")
+                self._logger.info("Initialization complete")
 
             except Exception as e:
-                self.logger.error(f"Error during initialization: {e}", exc_info=True)
-                raise
+                self._logger.error(f"Error during initialization: {e}", exc_info=True)
 
-    async def _log_message(self, payload: Dict[str, Any]) -> None:
+    async def _log_message(self, evt: LogMessageInput) -> None:
         """Log a message via TranscriptManager."""
         if not self._initialized:
-            self.logger.warning("Not initialized, cannot log message")
-            return
+            self._logger.warning("Not initialized, cannot log message")
+            await self._startup()
 
         try:
-            medium = payload.get("medium", "unify_chat")
-            sender_id = int(payload["sender_id"])
-            receiver_ids = [int(r) for r in payload.get("receiver_ids", [])]
-            content = payload["content"]
-            timestamp = payload["timestamp"]
-            exchange_id = payload.get("exchange_id", UNASSIGNED)
-            metadata = payload.get("metadata")
+            medium = evt.medium or "unify_chat"
+            sender_id = int(evt.sender_id)
+            receiver_ids = [int(r) for r in (evt.receiver_ids or [])]
+            content = evt.content
+            timestamp = evt.timestamp
+            exchange_id = getattr(evt, "exchange_id", UNASSIGNED)
+            metadata = getattr(evt, "metadata", None)
 
             # Log the message
             messages = self._transcript_manager.log_messages(
@@ -125,31 +174,26 @@ class ManagersWorker:
             )
 
             message = messages[0] if messages else None
-            self.logger.debug(
+            self._logger.debug(
                 f"Logged message: {medium} from {sender_id} to {receiver_ids}"
             )
 
-            # Publish reply with exchange_id
+            # Publish reply as Event envelope
             if message:
-                await self.event_broker.publish(
-                    self.reply_channel,
-                    json.dumps(
-                        {
-                            "type": "log_message_reply",
-                            "exchange_id": message.exchange_id,
-                        }
-                    ),
+                await self._event_broker.publish(
+                    self._publish_channel,
+                    LogMessageOutput(exchange_id=message.exchange_id).to_json(),
                 )
-                self.logger.debug(f"Published exchange_id {message.exchange_id}")
+                self._logger.debug(f"Published exchange_id {message.exchange_id}")
 
         except Exception as e:
-            self.logger.error(f"Error logging message: {e}", exc_info=True)
+            self._logger.error(f"Error logging message: {e}", exc_info=True)
 
-    async def _get_contacts(self, payload: Dict[str, Any]) -> None:
+    async def _get_contacts(self) -> None:
         """Fetch all contacts and publish back."""
         if not self._initialized:
-            self.logger.warning("Not initialized, cannot get contacts")
-            return
+            self._logger.warning("Not initialized, cannot get contacts")
+            await self._startup()
 
         try:
             # Get all contacts from ContactManager and convert to dict
@@ -158,56 +202,48 @@ class ManagersWorker:
                 {
                     "id": str(c.contact_id),
                     "name": f"{c.first_name or ''} {c.surname or ''}".strip(),
-                    "phone": c.phone_number,
+                    "number": c.phone_number,
                     "email": c.email_address,
                 }
                 for c in rows
             ]
 
-            # Publish reply
-            await self.event_broker.publish(
-                self.reply_channel,
-                json.dumps(
-                    {
-                        "type": "get_contacts_reply",
-                        "contacts": contacts,
-                    }
-                ),
+            # Publish reply as Event envelope
+            await self._event_broker.publish(
+                self._publish_channel,
+                GetContactsOutput(contacts=contacts).to_json(),
             )
 
-            self.logger.debug(f"Fetched {len(contacts)} contacts")
+            self._logger.debug(f"Fetched {len(contacts)} contacts")
 
         except Exception as e:
-            self.logger.error(f"Error fetching contacts: {e}", exc_info=True)
+            self._logger.error(f"Error fetching contacts: {e}", exc_info=True)
 
     # ──────────────────────────────────────────────────────────────────
     # Message processing
     # ──────────────────────────────────────────────────────────────────
 
-    async def _process_message(self, msg_data: Dict[str, Any]) -> None:
-        """Process a single message from the queue."""
-        message_type = msg_data.get("type")
-        payload = msg_data.get("payload", {})
-
-        # Route to handlers
-        if message_type == "startup":
-            await self._startup(payload)
-        elif message_type == "log_message":
-            await self._log_message(payload)
-        elif message_type == "get_contacts":
-            await self._get_contacts(payload)
+    async def _process_message(self, event: Event) -> None:
+        """Process a single Event from the queue."""
+        # Route to handlers using isinstance
+        if isinstance(event, StartupEvent):
+            await self._startup()
+        elif isinstance(event, LogMessageInput):
+            await self._log_message(event)
+        elif isinstance(event, GetContactsInput):
+            await self._get_contacts()
         else:
-            self.logger.warning(f"Unknown message type: {message_type}")
+            self._logger.warning(f"Unknown event: {event.to_dict()['event_name']}")
 
     async def _queue_processor(self) -> None:
         """Worker task that processes messages from the queue in FIFO order."""
-        self.logger.info("Queue processor started")
+        self._logger.info("Queue processor started")
 
         while not self._stop_event.is_set():
             try:
                 # Wait for message with timeout to check stop event
                 try:
-                    msg = await asyncio.wait_for(self.message_queue.get(), timeout=1.0)
+                    msg = await asyncio.wait_for(self._message_queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
                     continue
 
@@ -215,9 +251,9 @@ class ManagersWorker:
                 await self._process_message(msg)
 
             except Exception as e:
-                self.logger.error(f"Error in queue processor: {e}", exc_info=True)
+                self._logger.error(f"Error in queue processor: {e}", exc_info=True)
 
-        self.logger.info("Queue processor stopped")
+        self._logger.info("Queue processor stopped")
 
     # ──────────────────────────────────────────────────────────────────
     # Main event loop (Pub/Sub listener)
@@ -228,17 +264,17 @@ class ManagersWorker:
         Subscribe to Redis Pub/Sub and enqueue messages.
         A separate task processes the queue to ensure ordering.
         """
-        self.logger.info("Starting to wait for events")
-        self.logger.info(f"Subscribe channel: {self.subscribe_channel}")
-        self.logger.info(f"Reply channel: {self.reply_channel}")
+        self._logger.info("Starting to wait for events")
+        self._logger.info(f"Subscribe channel: {self._subscribe_channel}")
+        self._logger.info(f"Publish channel: {self._publish_channel}")
 
         # Start queue processor task
         processor_task = asyncio.create_task(self._queue_processor())
 
         try:
-            async with self.event_broker.pubsub() as pubsub:
-                await pubsub.subscribe(self.subscribe_channel)
-                self.logger.info(f"Subscribed to {self.subscribe_channel}")
+            async with self._event_broker.pubsub() as pubsub:
+                await pubsub.subscribe(self._subscribe_channel)
+                self._logger.info(f"Subscribed to {self._subscribe_channel}")
 
                 while not self._stop_event.is_set():
                     try:
@@ -246,14 +282,21 @@ class ManagersWorker:
                             timeout=2, ignore_subscribe_messages=True
                         )
 
-                        if msg and msg["type"] == "message":
-                            # Decode and enqueue
-                            data = json.loads(msg["data"])
-                            await self.message_queue.put(data)
-                            self.logger.debug(f"Enqueued message: {data.get('type')}")
+                        # Parse Event from JSON envelope and enqueue
+                        if msg is not None:
+                            try:
+                                event = Event.from_json(msg["data"])  # type: ignore[arg-type]
+                                await self._message_queue.put(event)
+                                self._logger.debug(
+                                    f"Enqueued event: {event.to_dict()['event_name']}"
+                                )
+                            except Exception:
+                                self._logger.error(
+                                    "Failed to parse Event from message", exc_info=True
+                                )
 
                     except Exception as e:
-                        self.logger.error(
+                        self._logger.error(
                             f"Error receiving message: {e}", exc_info=True
                         )
                         await asyncio.sleep(1)
@@ -262,7 +305,7 @@ class ManagersWorker:
             # Stop processor
             self._stop_event.set()
             await processor_task
-            self.logger.info("Worker stopped")
+            self._logger.info("Worker stopped")
 
     def stop(self) -> None:
         """Signal the worker to stop."""

@@ -117,36 +117,38 @@ class ConversationManager:
 
         # this will probs be retrieved from a database or whatever
         # its hardcoded atm (obviously)
-        self.phone_contacts_map = {
-            "+12697784020": ConversationContact(
-                "1",
-                "Yasser Ahmed",
-                True,
-                "+12697784020",
-                "yasser@unify.ai",
-            ),
-            "+13502381308": ConversationContact(
-                "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
-            ),
-            "+16605382869": ConversationContact(
-                "3", "Ved", False, "+16605382869", "ved@unify.ai"
-            ),
-        }
-        self.email_contacts_map = {
-            "yasser@unify.ai": ConversationContact(
-                "1",
-                "Yasser Ahmed",
-                True,
-                "+12697784020",
-                "yasser@unify.ai",
-            ),
-            "dan@unify.ai": ConversationContact(
-                "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
-            ),
-            "ved@unify.ai": ConversationContact(
-                "3", "Ved", False, "+16605382869", "ved@unify.ai"
-            ),
-        }
+        # self.phone_contacts_map = {
+        #     "+12697784020": ConversationContact(
+        #         "1",
+        #         "Yasser Ahmed",
+        #         True,
+        #         "+12697784020",
+        #         "yasser@unify.ai",
+        #     ),
+        #     "+13502381308": ConversationContact(
+        #         "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
+        #     ),
+        #     "+16605382869": ConversationContact(
+        #         "3", "Ved", False, "+16605382869", "ved@unify.ai"
+        #     ),
+        # }
+        # self.email_contacts_map = {
+        #     "yasser@unify.ai": ConversationContact(
+        #         "1",
+        #         "Yasser Ahmed",
+        #         True,
+        #         "+12697784020",
+        #         "yasser@unify.ai",
+        #     ),
+        #     "dan@unify.ai": ConversationContact(
+        #         "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
+        #     ),
+        #     "ved@unify.ai": ConversationContact(
+        #         "3", "Ved", False, "+16605382869", "ved@unify.ai"
+        #     ),
+        # }
+        self.phone_contacts_map = {}
+        self.email_contacts_map = {}
 
         self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
         self.state = ConversationManagerState(
@@ -440,7 +442,17 @@ class ConversationManager:
 
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:comms:*", "app:conductor:*")
+            await pubsub.psubscribe(
+                "app:comms:*", "app:conductor:*", "app:managers:output"
+            )
+
+            # fetch contacts if env vars are already set
+            if self.assistant_id and not self.phone_contacts_map:
+                await self.event_broker.publish(
+                    "app:managers:input",
+                    GetContactsInput().to_json(),
+                )
+
             while True:
                 msg = await pubsub.get_message(
                     timeout=2,
@@ -485,6 +497,10 @@ class ConversationManager:
                         }
                         asyncio.create_task(
                             asyncio.to_thread(log_job_startup, **kwargs),
+                        )
+                        await self.event_broker.publish(
+                            "app:managers:input",
+                            GetContactsInput().to_json(),
                         )
                     await self.handle_event(event)
 
@@ -555,6 +571,8 @@ class ConversationManager:
                 )
 
         elif isinstance(event, PhoneCallStarted):
+            while not self.phone_contacts_map:
+                await asyncio.sleep(0.1)
             self.mode = "call"
             contact = self.phone_contacts_map.get(event.contact)
             self.call_contact = contact
@@ -567,6 +585,17 @@ class ConversationManager:
 
         elif isinstance(event, PhoneUtterance):
             await self.schedule_llm_run(0, cancel_running=True)
+
+        elif isinstance(event, GetContactsOutput):
+            conversation_contacts = [
+                ConversationContact(
+                    c["id"], c["name"], c["id"] == 1, c["number"], c["email"]
+                )
+                for c in event.contacts
+            ]
+            self.phone_contacts_map = {c.number: c for c in conversation_contacts}
+            self.email_contacts_map = {c.email: c for c in conversation_contacts}
+            self.inverted_contacts_map = {v.id: v for v in conversation_contacts}
 
         elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)

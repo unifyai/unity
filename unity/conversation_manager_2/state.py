@@ -170,6 +170,21 @@ class ConversationManagerState:
                 event.timestamp,
             )
 
+        elif isinstance(event, GetContactsOutput):
+            self.phone_contacts_map = {
+                c["number"]: ConversationContact(
+                    c["id"], c["name"], c["id"] == 1, c["number"], c["email"]
+                )
+                for c in event.contacts
+            }
+            self.inverted_contacts_map = {
+                v.id: v for v in self.phone_contacts_map.values()
+            }
+
+        elif isinstance(event, LogMessageOutput):
+            # ToDo: set the exchange_id here after we start tracking it in the state
+            pass
+
         elif isinstance(event, Error):
             self.push_notif("comms error", event.message, event.timestamp)
 
