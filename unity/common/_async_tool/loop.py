@@ -327,7 +327,7 @@ async def async_tool_use_loop_inner(
         if closest_match := sc.get_tool_trajectory(message):
             msgs = await sc.get_dummy_tool(closest_match, tools_data)
             logger.info(
-                f"Semantic cache hit ({closest_match.closest_user_message}): {json.dumps(msgs[1]["content"], indent=2)}",
+                f"Semantic cache hit ({closest_match.closest_user_message}): {json.dumps(msgs[1]['content'], indent=2)}",
                 prefix="🔍",
             )
             client.append_messages(msgs)
