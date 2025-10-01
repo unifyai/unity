@@ -41,16 +41,4 @@ class Image(BaseModel):
 
     def to_post_json(self) -> dict:
         exclude = {"image_id"} if self.image_id == -1 else set()
-        payload = self.model_dump(mode="json", exclude=exclude)
-        # Hint backend that `data` contains image bytes (base64) so it is typed as an image column
-        try:
-            et = dict(payload.get("explicit_types") or {})
-            # Preserve any existing explicit type metadata and ensure image typing
-            current = dict(et.get("data") or {})
-            current["type"] = "image"
-            et["data"] = current
-            payload["explicit_types"] = et
-        except Exception:
-            # Best‑effort; if anything goes wrong, fall back to raw payload
-            pass
-        return payload
+        return self.model_dump(mode="json", exclude=exclude)
