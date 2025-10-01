@@ -153,7 +153,10 @@ def build_ask_prompt(
  Guidance on when to use which image tool
  ---------------------------------------
  • Prefer `{ask_image_fname}` when you need a quick textual observation about a single image, without changing the current loop context.
- • Use `{attach_image_fname}` or `{attach_msg_imgs_fname}` when follow‑up turns should continue to see the image(s) as visual context in this loop.
+  • Use `{attach_image_fname}` or `{attach_msg_imgs_fname}` when follow‑up turns should continue to see the image(s) as visual context in this loop.
+  • For multi‑image reasoning, side‑by‑side comparisons, or multi‑attribute judgments (e.g., relative brightness, visual complexity, or counts of UI elements), attach the relevant image(s) so they are visible within the same loop before answering.
+  • When images are already linked to a message, prefer `{attach_msg_imgs_fname}` with an appropriate `limit` to attach them in one step; otherwise attach specific image ids individually using `{attach_image_fname}`.
+  • Avoid issuing several independent one‑off image questions when the answer depends on considering multiple images together; attach once, then reason over the attached visual context.
 
  Anti‑patterns to avoid
  ---------------------
@@ -234,6 +237,7 @@ def build_ask_prompt(
         • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
         • When you need multiple independent reads, plan them together and run them in parallel rather than a serial drip of micro‑calls.
         • Batch arguments where possible and avoid confirmatory re‑queries unless new ambiguity arises.
+        • When visual context is required across multiple steps, attach the needed images once at the start (ideally in a single call if available) and proceed with analysis using the persistent visual context, instead of repeating isolated per‑image queries.
         """,
     ).strip()
 

@@ -1385,10 +1385,20 @@ class TranscriptManager(BaseTranscriptManager):
     async def _ask_image(self, *, image_id: int, question: str) -> str:
         """Ask a one-off question about a specific image and return a text answer.
 
-        Notes
-        -----
-        - Creates a small nested vision-capable loop and returns its textual
-          answer without modifying the current transcript loop context.
+        Characteristics
+        ---------------
+        - Stateless: does not modify the current transcript loop context.
+        - Single-image focus: optimised for quick, atomic visual checks.
+        - Output is plain text; no image blocks are persisted in the outer loop.
+
+        Typical uses
+        ------------
+        - Short identifications, brief descriptions, reading a small piece of text.
+
+        Limitations
+        -----------
+        - Not suitable when subsequent steps in the same loop must "see" the
+          image, or when integrating multiple images simultaneously is required.
         """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
@@ -1408,8 +1418,16 @@ class TranscriptManager(BaseTranscriptManager):
     ) -> Dict[str, Any]:
         """Attach one image into the current transcript loop context.
 
-        Returns a dict that includes an "image" base64 field so the outer loop
-        promotes it into an image_url block for persistent visual reasoning.
+        Characteristics
+        ---------------
+        - Provides the raw image (base64) so the outer loop promotes an image block.
+        - Persists visual context for the remainder of the loop, enabling follow‑up turns.
+        - Can be called repeatedly to attach multiple images as needed.
+
+        Use when
+        --------
+        - The answer depends on direct visual inspection within this loop
+          (e.g., multi‑attribute judgments, spatial reasoning, or side‑by‑side comparisons).
         """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
@@ -1435,11 +1453,21 @@ class TranscriptManager(BaseTranscriptManager):
     ) -> Dict[str, Any]:
         """Attach multiple images referenced by a message to the loop context.
 
+        Characteristics
+        ---------------
+        - Batches attachment of several images linked via the message's span→image mapping.
+        - Returns metadata (spans/substrings) alongside the base64 for each image.
+        - Useful for multi‑image tasks where the loop should retain visual context.
+
+        Parameters
+        ----------
+        limit : int
+            Cap on how many images are attached (order preserved by first appearance).
+
         Returns
         -------
-        dict with keys:
-            attached_count: int
-            images: list of { meta: {image_id, caption, timestamp, spans, substrings}, image: <base64> }
+        dict
+            { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
         """
         logs = unify.get_logs(
             context=self._transcripts_ctx,
