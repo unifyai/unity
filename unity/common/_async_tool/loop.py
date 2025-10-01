@@ -326,7 +326,7 @@ async def async_tool_use_loop_inner(
     if semantic_cache:
         if closest_match := sc.get_tool_trajectory(message):
             logger.info(
-                f"Semantic cache hit: {closest_match.closest_match}",
+                f"Semantic cache hit: {closest_match.closest_user_message}",
                 prefix="🔍",
             )
             msgs = await sc.get_dummy_tool(closest_match, tools_data)

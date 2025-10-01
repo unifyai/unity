@@ -18,7 +18,7 @@ _EMBED_MODEL = "text-embedding-3-small"
 @dataclass
 class SemanticCacheResult:
     original_user_message: str
-    closest_match: str
+    closest_user_message: str
     tool_trajectory: list[dict]
 
 
@@ -255,7 +255,7 @@ def get_tool_trajectory(user_message):
     if logs:
         return SemanticCacheResult(
             original_user_message=user_message,
-            closest_match=logs[0].entries["user_message"],
+            closest_user_message=logs[0].entries["user_message"],
             tool_trajectory=json.loads(logs[0].entries["tool_trajectory"]),
         )
 
