@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from datetime import datetime, timezone
+from unity.image_manager.utils import make_solid_png_base64
 
 from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
@@ -19,17 +20,17 @@ def test_search_images_by_caption_semantics():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "a scenic mountain landscape at sunrise",
-                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAtMB9q5g3GkAAAAASUVORK5CYII=",
+                "data": make_solid_png_base64(8, 8, (200, 200, 255)),
             },
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "a cat sitting on a red sofa",
-                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAtMB9q5g3GkAAAAASUVORK5CYII=",
+                "data": make_solid_png_base64(8, 8, (255, 0, 0)),
             },
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "blue pixel art icon",
-                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAtMB9q5g3GkAAAAASUVORK5CYII=",
+                "data": make_solid_png_base64(8, 8, (0, 0, 255)),
             },
         ],
     )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
+from unity.image_manager.utils import make_solid_png_base64
 
 import pytest
 
@@ -10,8 +11,7 @@ from unity.guidance_manager.guidance_manager import GuidanceManager
 from tests.helpers import _handle_project
 
 
-# Tiny valid 1x1 PNG (opaque)
-PNG_1x1_RED = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAtMB9q5g3GkAAAAASUVORK5CYII="
+PNG_RED_B64 = make_solid_png_base64(8, 8, (255, 0, 0))
 
 
 @pytest.mark.unit
@@ -23,7 +23,7 @@ def test_get_images_for_guidance_returns_metadata_only():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "diagram of layout",
-                "data": PNG_1x1_RED,
+                "data": PNG_RED_B64,
             },
         ],
     )
@@ -54,7 +54,7 @@ def test_attach_image_to_context_promotes_image_block():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "tiny red pixel",
-                "data": PNG_1x1_RED,
+                "data": PNG_RED_B64,
             },
         ],
     )

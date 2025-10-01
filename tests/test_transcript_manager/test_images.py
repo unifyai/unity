@@ -7,11 +7,11 @@ import unify
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
 from unity.image_manager.image_manager import ImageManager
+from unity.image_manager.utils import make_solid_png_base64
 from tests.helpers import _handle_project
 
 
-# 1x1 PNG (opaque) – tiny valid image payload (blue)
-PNG_1x1_BLUE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMB9j3v1S0AAAAASUVORK5CYII="
+PNG_1x1_BLUE = make_solid_png_base64(8, 8, (0, 0, 255))
 
 
 @pytest.mark.unit

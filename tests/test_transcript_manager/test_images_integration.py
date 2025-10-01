@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone, timedelta
+from unity.image_manager.utils import make_solid_png_base64
 
 import pytest
 
@@ -11,8 +12,7 @@ from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
 
 
-# 1x1 PNG (opaque) – small valid image payload (blue)
-PNG_1x1_BLUE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMB9j3v1S0AAAAASUVORK5CYII="
+PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 
 
 @pytest.mark.unit
@@ -27,7 +27,7 @@ def test_get_images_for_message_returns_metadata_only_tm():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "blue screen capture",
-                "data": PNG_1x1_BLUE,
+                "data": PNG_BLUE_B64,
             },
         ],
     )
@@ -71,7 +71,7 @@ def test_attach_image_to_context_promotes_image_block_tm():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "tiny blue pixel",
-                "data": PNG_1x1_BLUE,
+                "data": PNG_BLUE_B64,
             },
         ],
     )
@@ -106,7 +106,7 @@ async def test_ask_can_use_images_for_color_question_tm():
             {
                 "timestamp": datetime.now(timezone.utc) - timedelta(days=7),
                 "caption": "zoe video-conference blue screen",
-                "data": PNG_1x1_BLUE,
+                "data": PNG_BLUE_B64,
             },
         ],
     )
