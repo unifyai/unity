@@ -236,3 +236,190 @@ async def test_ask_boot_option_and_fourth_item_tm():
         or ("attach_image_to_context" in serialized)
         or ("ask_image" in serialized)
     ), "Expected image-aware reasoning to be used"
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.requires_real_unify
+@_handle_project
+async def test_compare_two_screens_requires_raw_context_tm():
+    tm = TranscriptManager()
+    im = ImageManager()
+
+    # Load real screenshots for the comparison
+    import os
+
+    here = os.path.dirname(__file__)
+    grub_path = os.path.join(here, "grub_screen.jpg")
+    wizard_path = os.path.join(here, "wizard_screen.jpg")
+    with open(grub_path, "rb") as f:
+        grub_bytes = f.read()
+    with open(wizard_path, "rb") as f:
+        wizard_bytes = f.read()
+
+    [grub_id, wizard_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "GRUB boot menu screenshot",
+                "data": grub_bytes,
+            },
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "Ubuntu installer wizard screenshot",
+                "data": wizard_bytes,
+            },
+        ],
+    )
+
+    user_message = (
+        "Boot the PC from the Ubuntu USB stick and, when the GRUB screen appears, "
+        "select “Try or Install Ubuntu” (or use “Ubuntu (safe graphics)” if needed). "
+        "After the live system loads, the installation wizard opens: choose your language on the left "
+        "and click “Install Ubuntu” (or “Try Ubuntu” if you just want to explore)."
+    )
+
+    # Log the walkthrough message with images mapped to spans
+    tm.log_messages(
+        Message(
+            medium="unify_chat",
+            sender_id=10,
+            receiver_ids=[20],
+            timestamp=datetime.now(timezone.utc),
+            content=user_message,
+            exchange_id=99001,
+            images={
+                "[52:147]": int(grub_id),
+                "[182:314]": int(wizard_id),
+            },
+        ),
+    )
+    tm.join_published()
+
+    question = (
+        "Which screen looks the most modern and sleek? Which has the most clickable elements? Which appears brighter?\n"
+        "Please answer in exactly three lines with this format:\n"
+        "Modern: <answer>\n"
+        "Clickable elements: <answer>\n"
+        "Brightness: <answer>"
+    )
+
+    handle = await tm.ask(question, _return_reasoning_steps=True)
+    answer, steps = await handle.result()
+
+    # Basic answer shape
+    assert isinstance(answer, str) and answer.strip(), "Expected textual answer"
+
+    # Validate that the loop chose to ATTACH images (raw) rather than ask one-off questions
+    # Inspect executed tool messages directly instead of brittle substring scans over the entire trace.
+    def _executed_tools(step_msgs):
+        names = []
+        msgs = []
+        for m in step_msgs or []:
+            if isinstance(m, dict) and m.get("role") == "tool":
+                nm = m.get("name")
+                if isinstance(nm, str):
+                    names.append(nm)
+                    msgs.append(m)
+        return names, msgs
+
+    tool_names, tool_msgs = _executed_tools(steps)
+
+    # Expect either a batched attach via message id or two individual attaches
+    num_single_attaches = sum(1 for n in tool_names if n == "attach_image_to_context")
+    used_batched_attach = any(
+        n == "attach_message_images_to_context" for n in tool_names
+    )
+    assert used_batched_attach or (
+        num_single_attaches >= 2
+    ), "Expected images to be attached into the loop context (raw)"
+
+    # If batched attach was used, check that at least two images were attached via the tool payload
+    if used_batched_attach:
+        attach_msgs = [
+            m for m in tool_msgs if m.get("name") == "attach_message_images_to_context"
+        ]
+
+        # Extract attached_count from the tool content, handling both plain strings and text blocks
+        def _extract_attached_count(m: dict) -> int:
+            content = m.get("content")
+            text = None
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                parts = []
+                for blk in content:
+                    if (
+                        isinstance(blk, dict)
+                        and blk.get("type") == "text"
+                        and isinstance(blk.get("text"), str)
+                    ):
+                        parts.append(blk.get("text"))
+                if parts:
+                    text = "\n".join(parts)
+            if not text:
+                return -1
+            import json as _json
+
+            # Try strict JSON first
+            try:
+                payload = _json.loads(text)
+                return int(payload.get("attached_count", -1))
+            except Exception:
+                pass
+            # Fallback: regex for attached_count
+            try:
+                import re as _re
+
+                mobj = _re.search(r"\"attached_count\"\s*:\s*(\d+)", text)
+                if mobj:
+                    return int(mobj.group(1))
+            except Exception:
+                pass
+            return -1
+
+        counts = [
+            c for c in (_extract_attached_count(m) for m in attach_msgs) if c >= 0
+        ]
+        assert (
+            counts and max(counts) >= 2
+        ), "Expected at least two images attached in batched attach"
+
+    # Ensure no executed per-image ask tool was used
+    assert all(
+        n != "ask_image" for n in tool_names
+    ), "Should not use per-image ask for multi-image comparison"
+
+    # Parse three labeled lines
+    lines = [ln.strip() for ln in answer.splitlines() if ln.strip()]
+
+    # Find the specific labeled entries (case-insensitive startswith)
+    def _find_line(prefix: str) -> str:
+        pfx = prefix.lower()
+        for ln in lines:
+            if ln.lower().startswith(pfx):
+                return ln
+        return ""
+
+    modern_line = _find_line("Modern:")
+    clickable_line = _find_line("Clickable elements:")
+    brightness_line = _find_line("Brightness:")
+
+    assert (
+        modern_line and clickable_line and brightness_line
+    ), f"Answer must contain three labeled lines. Got: {answer!r}"
+
+    # Heuristics: installer/wizard is more modern and brighter; GRUB has more buttons/menu items
+    mod_low = modern_line.lower()
+    clk_low = clickable_line.lower()
+    bri_low = brightness_line.lower()
+
+    assert any(
+        k in mod_low for k in ("wizard", "installer")
+    ), f"Modern selection should reference installer/wizard: {modern_line!r}"
+    assert any(
+        k in clk_low for k in ("wizard", "installer", "installer wizard")
+    ), f"Clickable selection should reference installer/wizard: {clickable_line!r}"
+    assert any(
+        k in bri_low for k in ("wizard", "installer", "installer wizard")
+    ), f"Brightness selection should reference installer/wizard: {brightness_line!r}"
