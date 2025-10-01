@@ -3,15 +3,20 @@ from __future__ import annotations
 import base64
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import unify
+from google.cloud import storage
+from google.oauth2 import service_account
+from google.cloud.exceptions import NotFound
+
 
 from ..common.async_tool_loop import (
+    start_async_tool_use_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
-    start_async_tool_use_loop,
 )
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
@@ -41,11 +46,54 @@ class ImageHandle:
         return self._image.timestamp
 
     def raw(self) -> bytes:
-        """Return the decoded image bytes from the stored base64 string."""
-        try:
-            return base64.b64decode(self._image.data)
-        except Exception as exc:
-            raise ValueError("Invalid base64 image data") from exc
+        """
+        Return the decoded image bytes.
+
+        If the data is a GCS URL, it downloads the content. Otherwise, it assumes
+        the data is a base64 string and decodes it.
+        """
+        data_str = self._image.data
+        is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
+            "https://storage.googleapis.com/"
+        )
+
+        if is_gcs_url:
+            try:
+                parsed_url = urlparse(data_str)
+                bucket_name = ""
+                object_path = ""
+
+                if parsed_url.scheme == "gs":
+                    bucket_name = parsed_url.netloc
+                    object_path = parsed_url.path.lstrip("/")
+                elif parsed_url.hostname == "storage.googleapis.com":
+                    path_parts = parsed_url.path.lstrip("/").split("/", 1)
+                    if len(path_parts) == 2:
+                        bucket_name, object_path = path_parts
+                    else:
+                        raise ValueError("Invalid GCS HTTPS URL format.")
+
+                if not bucket_name or not object_path:
+                    raise ValueError("Could not parse bucket or path from GCS URL.")
+
+                storage_client = self._manager.storage_client
+                bucket = storage_client.bucket(bucket_name)
+                blob = bucket.blob(object_path)
+
+                if not blob.exists():
+                    raise FileNotFoundError(f"Image not found at GCS URL: {data_str}")
+
+                return blob.download_as_bytes()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to download image from GCS: {data_str}"
+                ) from exc
+        else:
+            # Fallback to assuming it's base64
+            try:
+                return base64.b64decode(data_str)
+            except Exception as exc:
+                raise ValueError("Invalid base64 image data") from exc
 
     async def ask(
         self,
@@ -56,8 +104,9 @@ class ImageHandle:
         """
         Ask a high-level question about this image using a small tool loop.
 
-        The loop sends the underlying image to the model as an image block but
-        does not expose the raw image in the textual return value.
+        The loop sends the underlying image to the model as an image block.
+        If the image is stored as a GCS URL, it generates a temporary signed URL
+        to make it accessible to the vision model.
         """
 
         # Use a vision-capable default
@@ -75,34 +124,100 @@ class ImageHandle:
             ),
         )
 
-        # Provide the image as a user content block (vision input). Enforce strict validation.
-        try:
-            decoded = base64.b64decode(self._image.data, validate=True)
-        except Exception as exc:
-            raise ValueError("Invalid base64 image data") from exc
+        # Provide the image as a user content block (vision input).
+        data_str = self._image.data
+        content_block: dict
 
-        head = decoded[:10]
-        if head.startswith(b"\xff\xd8"):
-            mime = "image/jpeg"
-        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
-            mime = "image/png"
+        # Check if the data string is a GCS URL
+        is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
+            "https://storage.googleapis.com/"
+        )
+
+        if is_gcs_url:
+            try:
+
+                parsed_url = urlparse(data_str)
+                bucket_name = ""
+                object_path = ""
+
+                if parsed_url.scheme == "gs":
+                    bucket_name = parsed_url.netloc
+                    object_path = parsed_url.path.lstrip("/")
+                elif parsed_url.hostname == "storage.googleapis.com":
+                    path_parts = parsed_url.path.lstrip("/").split("/", 1)
+                    if len(path_parts) == 2:
+                        bucket_name, object_path = path_parts
+                    else:
+                        raise ValueError("Invalid GCS HTTPS URL format.")
+
+                if not bucket_name or not object_path:
+                    raise ValueError("Could not parse bucket or path from GCS URL.")
+
+                storage_client = self._manager.storage_client
+                bucket = storage_client.bucket(bucket_name)
+                blob = bucket.blob(object_path)
+
+                if not blob.exists():
+                    raise NotFound(f"File not found at GCS URL: {data_str}")
+
+                # Generate a URL valid for 1 hour
+                signed_url = blob.generate_signed_url(
+                    version="v4",
+                    expiration=timedelta(hours=1),
+                    method="GET",
+                )
+
+                content_block = {
+                    "type": "image_url",
+                    "image_url": {"url": signed_url},
+                }
+
+            except Exception as e:
+                # If signing fails, raise an error as the image is inaccessible
+                raise RuntimeError(
+                    f"Failed to generate signed URL for GCS image: {e}"
+                ) from e
+
+        elif isinstance(data_str, str) and (
+            data_str.startswith("http://") or data_str.startswith("https://")
+        ):
+            # Pass the URL through directly; upstream must ensure it is fetchable
+            content_block = {
+                "type": "image_url",
+                "image_url": {"url": data_str},
+            }
+        elif isinstance(data_str, str) and data_str.startswith("data:image/"):
+            # Full data URL provided; pass as-is
+            content_block = {
+                "type": "image_url",
+                "image_url": {"url": data_str},
+            }
         else:
-            raise ValueError(
-                "Unsupported image format; only PNG and JPEG are supported.",
-            )
+            # Expect a raw base64 payload – validate and infer mime from header
+            try:
+                decoded = base64.b64decode(data_str, validate=True)
+            except Exception as exc:
+                raise ValueError("Invalid base64 image data") from exc
+
+            head = decoded[:10]
+            if head.startswith(b"\xff\xd8"):
+                mime = "image/jpeg"
+            elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                mime = "image/png"
+            else:
+                raise ValueError(
+                    "Unsupported image format; only PNG and JPEG are supported.",
+                )
+            content_block = {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{data_str}"},
+            }
 
         client.append_messages(
             [
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime};base64,{self._image.data}",
-                            },
-                        },
-                    ],
+                    "content": [content_block],
                 },
             ],
         )
@@ -121,8 +236,8 @@ class ImageHandle:
             original_result = handle.result
 
             async def wrapped_result():
-                ans = await original_result()
-                return ans, client.messages
+                answer = await original_result()
+                return answer, client.messages
 
             handle.result = wrapped_result  # type: ignore[assignment]
 
@@ -150,6 +265,24 @@ class ImageManager(BaseImageManager):
         ), "read and write contexts must be the same when instantiating an ImageManager."
 
         self._ctx = f"{read_ctx}/Images" if read_ctx else "Images"
+
+        # Initialize the storage client
+        try:
+            # Assumes the credentials file is at the root of the project
+            credentials_path = os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "application_default_credentials.json",
+            )
+            credentials = service_account.Credentials.from_service_account_file(
+                credentials_path
+            )
+            self.storage_client = storage.Client(credentials=credentials)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to initialize Google Cloud Storage client: {e}"
+            ) from e
 
         # Ensure context/fields exist deterministically
         self._store = TableStore(
@@ -204,6 +337,7 @@ class ImageManager(BaseImageManager):
         return [Image(**r) for r in filled]
 
     def get_images(self, image_ids: List[int]) -> List[ImageHandle]:
+        """Return handles for the given image ids (missing ids are skipped)."""
         if not image_ids:
             return []
         id_list = ", ".join(str(int(i)) for i in image_ids)
@@ -229,6 +363,10 @@ class ImageManager(BaseImageManager):
 
     # ------------------------------ Writes --------------------------------
     def add_images(self, items: List[Dict[str, Any]]) -> List[int]:
+        """
+        Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
+        Returns the allocated ``image_id`` values in insertion order.
+        """
         out_ids: List[int] = []
         for raw in items or []:
             payload = dict(raw or {})
@@ -238,11 +376,12 @@ class ImageManager(BaseImageManager):
             if isinstance(data_val, (bytes, bytearray)):
                 payload["data"] = base64.b64encode(data_val).decode("utf-8")
             img = Image(**payload)
+            # Preserve explicit_types from the model (marks data as type=image)
             log = unify.log(
                 context=self._ctx,
                 **img.to_post_json(),
                 new=True,
-                mutable=True,
+                mutable=None,
             )
             try:
                 out_ids.append(int(log.entries["image_id"]))
@@ -260,6 +399,10 @@ class ImageManager(BaseImageManager):
         return out_ids
 
     def update_images(self, updates: List[Dict[str, Any]]) -> List[int]:
+        """
+        Update existing images. Each update dict must include ``image_id`` and may
+        set ``timestamp``, ``caption``, and/or ``data``. Returns updated ids.
+        """
         updated: List[int] = []
         for change in updates or []:
             if not isinstance(change, dict):
@@ -277,6 +420,12 @@ class ImageManager(BaseImageManager):
                 if isinstance(d, (bytes, bytearray)):
                     d = base64.b64encode(d).decode("utf-8")
                 entries["data"] = d
+                # Ensure backend keeps the data column typed as an image
+                existing_et = entries.get("explicit_types") or {}
+                et_for_data = dict(existing_et.get("data") or {})
+                et_for_data["type"] = "image"
+                existing_et["data"] = et_for_data
+                entries["explicit_types"] = existing_et
             if not entries:
                 continue
             ids = unify.get_logs(
