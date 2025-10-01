@@ -135,7 +135,7 @@ class ImageHandle:
             # Pass the URL through directly; upstream must ensure it is fetchable
             content_block = {
                 "type": "image_url",
-                "image_url": {"url": data_str},                                                                           }
+                "image_url": {"url": data_str},
             }
         elif isinstance(data_str, str) and data_str.startswith("data:image/"):
             # Full data URL provided; pass as-is
