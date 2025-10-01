@@ -32,6 +32,13 @@ class Message(BaseModel):
         description="ID of the conversation thread this message belongs to",
         ge=-1,
     )
+    images: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Mapping of json.dumps strings like '[x:y]' → image_id (int). "
+            "Supports negative indices and open-ended ranges (e.g., '[6:]', '[:10]')."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
