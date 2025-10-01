@@ -95,13 +95,13 @@ def build_ask_prompt(
           `{filter_fname}(filter="guidance_id == 42", limit=1)`
 
         ─ Images ─
-        • List images referenced by a guidance item (no raw data)
+        • List images referenced by a guidance item (no raw data). Each item also includes the substring of the guidance content corresponding to the span that linked the image.
           `{get_imgs_fname}(guidance_id=42)`
         • Ask a one-off question about an image (does NOT persist visual context)
           `{ask_image_fname}(image_id=12, question="What text is visible?")`
         • Attach a specific image for persistent visual reasoning in this loop
           `{attach_image_fname}(image_id=12, note="Need to see the layout")`
-        • Attach multiple images linked from a guidance item (limit to first 2)
+        • Attach multiple images linked from a guidance item (limit to first 2). For each attached image, the meta includes `spans` and `substrings` derived from the guidance content for alignment.
           `{attach_guid_imgs_fname}(guidance_id=42, limit=2)`
         """,
     ).strip()

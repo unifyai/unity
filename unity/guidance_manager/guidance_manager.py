@@ -384,11 +384,13 @@ class GuidanceManager(BaseGuidanceManager):
         - image_id: int
         - caption: str | None
         - timestamp: str (ISO8601)
+        - substring: str  → text extracted from the guidance content using the span
         """
         rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return []
-        img_map = rows[0].images or {}
+        guidance_row = rows[0]
+        img_map = guidance_row.images or {}
         if not img_map:
             return []
         image_ids = [int(v) for v in img_map.values()]
@@ -403,12 +405,14 @@ class GuidanceManager(BaseGuidanceManager):
                 ts_str = h.timestamp.isoformat()
             except Exception:
                 ts_str = ""
+            substr = self._substring_from_span(str(guidance_row.content), str(span))
             out.append(
                 {
                     "span": str(span),
                     "image_id": int(h.image_id),
                     "caption": h.caption,
                     "timestamp": ts_str,
+                    "substring": substr,
                 },
             )
         return out
@@ -470,15 +474,20 @@ class GuidanceManager(BaseGuidanceManager):
         -------
         dict with keys:
             attached_count: int
-            images: list of { meta: {...}, image: <base64> }
+            images: list of { meta: {image_id, caption, timestamp, spans, substrings}, image: <base64> }
         """
         rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return {"attached_count": 0, "images": []}
-        img_map = rows[0].images or {}
+        guidance_row = rows[0]
+        img_map = guidance_row.images or {}
         if not img_map:
             return {"attached_count": 0, "images": []}
         unique_ids: List[int] = list(dict.fromkeys(int(v) for v in img_map.values()))
+        spans_by_id: Dict[int, List[str]] = {}
+        for span_key, img_id in img_map.items():
+            iid = int(img_id)
+            spans_by_id.setdefault(iid, []).append(str(span_key))
         if limit is not None:
             try:
                 limit = int(limit)
@@ -495,17 +504,62 @@ class GuidanceManager(BaseGuidanceManager):
                 b64 = base64.b64encode(raw_bytes).decode("utf-8")
             except Exception:
                 continue
+            spans_for_img = spans_by_id.get(int(h.image_id), [])
+            substrings = [
+                self._substring_from_span(str(guidance_row.content), s)
+                for s in spans_for_img
+            ]
             images.append(
                 {
                     "meta": {
                         "image_id": int(h.image_id),
                         "caption": h.caption,
                         "timestamp": getattr(h.timestamp, "isoformat", lambda: "")(),
+                        "spans": spans_for_img,
+                        "substrings": substrings,
                     },
                     "image": b64,
                 },
             )
         return {"attached_count": len(images), "images": images}
+
+    # -------------------------- Span helper ---------------------------------
+    @staticmethod
+    def _substring_from_span(content: str, span: str) -> str:
+        """Return the best-effort substring of ``content`` for a slice key ``"[x:y]"``.
+
+        Supports negative and open-ended indices, clamps to bounds, returns
+        an empty string on malformed spans.
+        """
+        try:
+            import re as _re
+
+            m = _re.fullmatch(r"\[\s*(-?\d+)?\s*:\s*(-?\d+)?\s*\]", str(span))
+            if not m:
+                return ""
+            start_s, end_s = m.group(1), m.group(2)
+            L = len(content)
+            if start_s is None:
+                start = 0
+            else:
+                start = int(start_s)
+                if start < 0:
+                    start = max(0, L + start)
+                else:
+                    start = min(L, start)
+            if end_s is None:
+                end = L
+            else:
+                end = int(end_s)
+                if end < 0:
+                    end = max(0, L + end)
+                else:
+                    end = min(L, end)
+            if start > end:
+                start, end = end, start
+            return content[start:end]
+        except Exception:
+            return ""
 
     def _add_guidance(
         self,
