@@ -531,7 +531,6 @@ class FileManager(BaseFileManager):
         logs = unify.get_logs(
             context=self._ctx,
             filter=f"file_id == {file_id}",
-            limit=1,
         )
         if not logs:
             raise ValueError(
