@@ -5,6 +5,7 @@ import json
 import asyncio
 import functools
 from typing import List, Dict, Optional, Union, Any, Callable, Literal
+import base64
 
 import unify
 from ..common.embed_utils import ensure_vector_column
@@ -40,6 +41,7 @@ from ..common.semantic_search import (
 )
 import json as _json
 from ..events.event_bus import EVENT_BUS, Event
+from ..image_manager.image_manager import ImageManager
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -145,6 +147,18 @@ class TranscriptManager(BaseTranscriptManager):
         except Exception:
             # Non-fatal; logging will still work without the helper if backend creates implicitly
             pass
+
+        # Image support: lazy-safe image manager and image-aware tools
+        self._image_manager: ImageManager = ImageManager()
+        self._tools.update(
+            methods_to_tool_dict(
+                self._get_images_for_message,
+                self._ask_image,
+                self._attach_image_to_context,
+                self._attach_message_images_to_context,
+                include_class_name=False,
+            ),
+        )
 
         # ── Async logging (mirrors EventBus) ────────────────────────────────
         # Using a dedicated logger means log_create() returns immediately,
@@ -1312,6 +1326,159 @@ class TranscriptManager(BaseTranscriptManager):
                 "updated_messages": total_updates,
             },
         }
+
+    # ────────────────────────────────────────────────────────────────────
+    # Image helpers (parallel to GuidanceManager image tools)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _get_images_for_message(self, *, message_id: int) -> List[Dict[str, Any]]:
+        """Return image metadata (no raw data) for images referenced by a message.
+
+        Output schema (list of objects):
+        - span: str  → the "[x:y]" span key
+        - image_id: int
+        - caption: str | None
+        - timestamp: str (ISO8601)
+        """
+        logs = unify.get_logs(
+            context=self._transcripts_ctx,
+            filter=f"message_id == {int(message_id)}",
+            limit=1,
+            from_fields=list(Message.model_fields.keys()),
+        )
+        if not logs:
+            return []
+        try:
+            msg = Message(**logs[0].entries)
+        except Exception:
+            return []
+        img_map = msg.images or {}
+        if not img_map:
+            return []
+        image_ids = [int(v) for v in img_map.values()]
+        handles = self._image_manager.get_images(image_ids)
+        by_id = {h.image_id: h for h in handles}
+        out: List[Dict[str, Any]] = []
+        for span, img_id in img_map.items():
+            h = by_id.get(int(img_id))
+            if h is None:
+                continue
+            try:
+                ts_str = h.timestamp.isoformat()
+            except Exception:
+                ts_str = ""
+            out.append(
+                {
+                    "span": str(span),
+                    "image_id": int(h.image_id),
+                    "caption": h.caption,
+                    "timestamp": ts_str,
+                },
+            )
+        return out
+
+    async def _ask_image(self, *, image_id: int, question: str) -> str:
+        """Ask a one-off question about a specific image and return a text answer.
+
+        Notes
+        -----
+        - Creates a small nested vision-capable loop and returns its textual
+          answer without modifying the current transcript loop context.
+        """
+        handles = self._image_manager.get_images([int(image_id)])
+        if not handles:
+            raise ValueError(f"No image found with image_id {image_id}")
+        handle = handles[0]
+        sub = await handle.ask(question)
+        answer = await sub.result()
+        if not isinstance(answer, str):
+            answer = str(answer)
+        return answer
+
+    def _attach_image_to_context(
+        self,
+        *,
+        image_id: int,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Attach one image into the current transcript loop context.
+
+        Returns a dict that includes an "image" base64 field so the outer loop
+        promotes it into an image_url block for persistent visual reasoning.
+        """
+        handles = self._image_manager.get_images([int(image_id)])
+        if not handles:
+            raise ValueError(f"No image found with image_id {image_id}")
+        h = handles[0]
+        try:
+            raw_bytes = h.raw()
+        except Exception as exc:
+            raise ValueError("Failed to load raw image bytes") from exc
+        b64 = base64.b64encode(raw_bytes).decode("utf-8")
+        payload: Dict[str, Any] = {
+            "note": note
+            or f"Attached image {h.image_id} for persistent context (caption={h.caption!r}).",
+            "image": b64,
+        }
+        return payload
+
+    def _attach_message_images_to_context(
+        self,
+        *,
+        message_id: int,
+        limit: int = 3,
+    ) -> Dict[str, Any]:
+        """Attach multiple images referenced by a message to the loop context.
+
+        Returns
+        -------
+        dict with keys:
+            attached_count: int
+            images: list of { meta: {...}, image: <base64> }
+        """
+        logs = unify.get_logs(
+            context=self._transcripts_ctx,
+            filter=f"message_id == {int(message_id)}",
+            limit=1,
+            from_fields=list(Message.model_fields.keys()),
+        )
+        if not logs:
+            return {"attached_count": 0, "images": []}
+        try:
+            msg = Message(**logs[0].entries)
+        except Exception:
+            return {"attached_count": 0, "images": []}
+        img_map = msg.images or {}
+        if not img_map:
+            return {"attached_count": 0, "images": []}
+        unique_ids: List[int] = list(dict.fromkeys(int(v) for v in img_map.values()))
+        if limit is not None:
+            try:
+                limit = int(limit)
+            except Exception:
+                limit = 3
+            if limit >= 0:
+                unique_ids = unique_ids[:limit]
+
+        handles = self._image_manager.get_images(unique_ids)
+        images: List[Dict[str, Any]] = []
+        for h in handles:
+            try:
+                raw_bytes = h.raw()
+                b64 = base64.b64encode(raw_bytes).decode("utf-8")
+            except Exception:
+                continue
+            images.append(
+                {
+                    "meta": {
+                        "image_id": int(h.image_id),
+                        "caption": h.caption,
+                        "timestamp": getattr(h.timestamp, "isoformat", lambda: "")(),
+                    },
+                    "image": b64,
+                },
+            )
+        return {"attached_count": len(images), "images": images}
 
     # ────────────────────────────────────────────────────────────────────
     # Column and metrics helpers (paralleling ContactManager)
