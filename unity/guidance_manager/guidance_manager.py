@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import List, Dict, Optional, Callable, Any, Tuple
+import base64
 import asyncio
 import json
 import functools
@@ -31,6 +32,7 @@ from ..common.semantic_search import (
 )
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
+from ..image_manager.image_manager import ImageManager
 
 
 class GuidanceManager(BaseGuidanceManager):
@@ -79,6 +81,11 @@ class GuidanceManager(BaseGuidanceManager):
                 self._list_columns,
                 self._filter,
                 self._search,
+                # Image-aware tools (read-only / persistent context helpers)
+                self._get_images_for_guidance,
+                self._ask_image,
+                self._attach_image_to_context,
+                self._attach_guidance_images_to_context,
                 include_class_name=False,
             ),
         }
@@ -95,6 +102,9 @@ class GuidanceManager(BaseGuidanceManager):
         }
 
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+
+        # Lazy-safe image manager for resolving and attaching images
+        self._image_manager: ImageManager = ImageManager()
 
         # Track custom fields seen/created during lifetime
         self._known_custom_fields: set[str] = set()
@@ -358,6 +368,141 @@ class GuidanceManager(BaseGuidanceManager):
         return resp
 
     # ------------------------------- Private tools ----------------------------
+    def _get_images_for_guidance(
+        self,
+        *,
+        guidance_id: int,
+    ) -> List[Dict[str, Any]]:
+        """Return image metadata (no raw data) for images referenced by a guidance row.
+
+        Output schema (list of objects):
+        - span: str  → the "[x:y]" span key
+        - image_id: int
+        - caption: str | None
+        - timestamp: str (ISO8601)
+        """
+        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        if not rows:
+            return []
+        img_map = rows[0].images or {}
+        if not img_map:
+            return []
+        image_ids = [int(v) for v in img_map.values()]
+        handles = self._image_manager.get_images(image_ids)
+        by_id = {h.image_id: h for h in handles}
+        out: List[Dict[str, Any]] = []
+        for span, img_id in img_map.items():
+            h = by_id.get(int(img_id))
+            if h is None:
+                continue
+            try:
+                ts_str = h.timestamp.isoformat()
+            except Exception:
+                ts_str = ""
+            out.append(
+                {
+                    "span": str(span),
+                    "image_id": int(h.image_id),
+                    "caption": h.caption,
+                    "timestamp": ts_str,
+                },
+            )
+        return out
+
+    async def _ask_image(self, *, image_id: int, question: str) -> str:
+        """Ask a one-off question about a specific image and return a text answer.
+
+        Notes
+        -----
+        - This creates a small nested vision-capable loop and returns its final
+          textual answer without modifying the current guidance loop context.
+        """
+        handles = self._image_manager.get_images([int(image_id)])
+        if not handles:
+            raise ValueError(f"No image found with image_id {image_id}")
+        handle = handles[0]
+        sub = await handle.ask(question)
+        answer = await sub.result()
+        if not isinstance(answer, str):
+            answer = str(answer)
+        return answer
+
+    def _attach_image_to_context(
+        self,
+        *,
+        image_id: int,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Attach one image into the current guidance loop context.
+
+        Returns a dict that includes an "image" base64 field so the outer loop
+        promotes it into an image_url block for persistent visual reasoning.
+        """
+        handles = self._image_manager.get_images([int(image_id)])
+        if not handles:
+            raise ValueError(f"No image found with image_id {image_id}")
+        h = handles[0]
+        try:
+            raw_bytes = h.raw()
+        except Exception as exc:
+            raise ValueError("Failed to load raw image bytes") from exc
+        b64 = base64.b64encode(raw_bytes).decode("utf-8")
+        payload: Dict[str, Any] = {
+            "note": note
+            or f"Attached image {h.image_id} for persistent context (caption={h.caption!r}).",
+            "image": b64,
+        }
+        return payload
+
+    def _attach_guidance_images_to_context(
+        self,
+        *,
+        guidance_id: int,
+        limit: int = 3,
+    ) -> Dict[str, Any]:
+        """Attach multiple images referenced by a guidance row to the loop context.
+
+        Returns
+        -------
+        dict with keys:
+            attached_count: int
+            images: list of { meta: {...}, image: <base64> }
+        """
+        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        if not rows:
+            return {"attached_count": 0, "images": []}
+        img_map = rows[0].images or {}
+        if not img_map:
+            return {"attached_count": 0, "images": []}
+        unique_ids: List[int] = list(dict.fromkeys(int(v) for v in img_map.values()))
+        if limit is not None:
+            try:
+                limit = int(limit)
+            except Exception:
+                limit = 3
+            if limit >= 0:
+                unique_ids = unique_ids[:limit]
+
+        handles = self._image_manager.get_images(unique_ids)
+        images: List[Dict[str, Any]] = []
+        for h in handles:
+            try:
+                raw_bytes = h.raw()
+                b64 = base64.b64encode(raw_bytes).decode("utf-8")
+            except Exception:
+                continue
+            images.append(
+                {
+                    "meta": {
+                        "image_id": int(h.image_id),
+                        "caption": h.caption,
+                        "timestamp": getattr(h.timestamp, "isoformat", lambda: "")(),
+                    },
+                    "image": b64,
+                },
+            )
+        return {"attached_count": len(images), "images": images}
+
     def _add_guidance(
         self,
         *,
