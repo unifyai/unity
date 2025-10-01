@@ -75,34 +75,49 @@ class ImageHandle:
             ),
         )
 
-        # Provide the image as a user content block (vision input). Enforce strict validation.
-        try:
-            decoded = base64.b64decode(self._image.data, validate=True)
-        except Exception as exc:
-            raise ValueError("Invalid base64 image data") from exc
-
-        head = decoded[:10]
-        if head.startswith(b"\xff\xd8"):
-            mime = "image/jpeg"
-        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
-            mime = "image/png"
+        # Provide the image as a user content block (vision input). Accept either base64 data or a URL.
+        data_str = self._image.data
+        content_block: dict
+        if isinstance(data_str, str) and (
+            data_str.startswith("http://") or data_str.startswith("https://")
+        ):
+            # Pass the URL through directly; upstream must ensure it is fetchable
+            content_block = {
+                "type": "image_url",
+                "image_url": {"url": data_str},
+            }
+        elif isinstance(data_str, str) and data_str.startswith("data:image/"):
+            # Full data URL provided; pass as-is
+            content_block = {
+                "type": "image_url",
+                "image_url": {"url": data_str},
+            }
         else:
-            raise ValueError(
-                "Unsupported image format; only PNG and JPEG are supported.",
-            )
+            # Expect a raw base64 payload – validate and infer mime from header
+            try:
+                decoded = base64.b64decode(data_str, validate=True)
+            except Exception as exc:
+                raise ValueError("Invalid base64 image data") from exc
+
+            head = decoded[:10]
+            if head.startswith(b"\xff\xd8"):
+                mime = "image/jpeg"
+            elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                mime = "image/png"
+            else:
+                raise ValueError(
+                    "Unsupported image format; only PNG and JPEG are supported.",
+                )
+            content_block = {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{data_str}"},
+            }
 
         client.append_messages(
             [
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime};base64,{self._image.data}",
-                            },
-                        },
-                    ],
+                    "content": [content_block],
                 },
             ],
         )
@@ -238,11 +253,12 @@ class ImageManager(BaseImageManager):
             if isinstance(data_val, (bytes, bytearray)):
                 payload["data"] = base64.b64encode(data_val).decode("utf-8")
             img = Image(**payload)
+            # Preserve explicit_types from the model (marks data as type=image)
             log = unify.log(
                 context=self._ctx,
                 **img.to_post_json(),
                 new=True,
-                mutable=True,
+                mutable=None,
             )
             try:
                 out_ids.append(int(log.entries["image_id"]))
@@ -277,6 +293,12 @@ class ImageManager(BaseImageManager):
                 if isinstance(d, (bytes, bytearray)):
                     d = base64.b64encode(d).decode("utf-8")
                 entries["data"] = d
+                # Ensure backend keeps the data column typed as an image
+                existing_et = entries.get("explicit_types") or {}
+                et_for_data = dict(existing_et.get("data") or {})
+                et_for_data["type"] = "image"
+                existing_et["data"] = et_for_data
+                entries["explicit_types"] = existing_et
             if not entries:
                 continue
             ids = unify.get_logs(
