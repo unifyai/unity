@@ -154,3 +154,85 @@ async def test_ask_can_use_images_for_color_question_tm():
 
     # The textual answer itself should not include raw image data
     assert "data:image" not in answer and "image_url" not in answer
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.requires_real_unify
+@_handle_project
+async def test_ask_boot_option_and_fourth_item_tm():
+    tm = TranscriptManager()
+    im = ImageManager()
+
+    # Load real screenshots for the walkthrough
+    import os
+
+    here = os.path.dirname(__file__)
+    grub_path = os.path.join(here, "grub_screen.jpg")
+    wizard_path = os.path.join(here, "wizard_screen.jpg")
+    with open(grub_path, "rb") as f:
+        grub_bytes = f.read()
+    with open(wizard_path, "rb") as f:
+        wizard_bytes = f.read()
+
+    [grub_id, wizard_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "GRUB boot menu screenshot",
+                "data": grub_bytes,
+            },
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "Ubuntu installer wizard screenshot",
+                "data": wizard_bytes,
+            },
+        ],
+    )
+
+    user_message = (
+        "Boot the PC from the Ubuntu USB stick and, when the GRUB screen appears, "
+        "select “Try or Install Ubuntu” (or use “Ubuntu (safe graphics)” if needed). "
+        "After the live system loads, the installation wizard opens: choose your language on the left "
+        "and click “Install Ubuntu” (or “Try Ubuntu” if you just want to explore)."
+    )
+
+    # Log the walkthrough message with images mapped to spans
+    tm.log_messages(
+        Message(
+            medium="unify_chat",
+            sender_id=10,
+            receiver_ids=[20],
+            timestamp=datetime.now(timezone.utc),
+            content=user_message,
+            exchange_id=88001,
+            images={
+                "[52:147]": int(grub_id),
+                "[182:314]": int(wizard_id),
+            },
+        ),
+    )
+    tm.join_published()
+
+    question = (
+        "According to the walkthrough, which boot option should you select to proceed, "
+        "and what is the fourth item shown in the boot menu?"
+    )
+
+    handle = await tm.ask(question, _return_reasoning_steps=True)
+    answer, steps = await handle.result()
+
+    assert isinstance(answer, str) and answer.strip(), "Expected textual answer"
+    low = answer.lower()
+    assert "try or install ubuntu" in low, f"Missing boot option in: {answer!r}"
+    assert "test memory" in low, f"Missing fourth menu item in: {answer!r}"
+
+    # Ensure some vision signal appeared during reasoning
+    serialized = str(steps)
+    assert (
+        ("image_url" in serialized)
+        or ("data:image" in serialized)
+        or ("attach_message_images_to_context" in serialized)
+        or ("attach_image_to_context" in serialized)
+        or ("ask_image" in serialized)
+    ), "Expected image-aware reasoning to be used"
