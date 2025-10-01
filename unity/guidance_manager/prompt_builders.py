@@ -95,14 +95,22 @@ def build_ask_prompt(
           `{filter_fname}(filter="guidance_id == 42", limit=1)`
 
         ─ Images ─
-        • List images referenced by a guidance item (no raw data). Each item also includes the substring of the guidance content corresponding to the span that linked the image.
+        • List images referenced by a guidance item (metadata only; no base64). Each item also includes the substring of the guidance content corresponding to the span that linked the image.
           `{get_imgs_fname}(guidance_id=42)`
-        • Ask a one-off question about an image (does NOT persist visual context)
+        • Ask a one‑off question about an image (text answer only; DOES NOT persist visual context)
           `{ask_image_fname}(image_id=12, question="What text is visible?")`
         • Attach a specific image for persistent visual reasoning in this loop
           `{attach_image_fname}(image_id=12, note="Need to see the layout")`
         • Attach multiple images linked from a guidance item (limit to first 2). For each attached image, the meta includes `spans` and `substrings` derived from the guidance content for alignment.
           `{attach_guid_imgs_fname}(guidance_id=42, limit=2)`
+
+        Guidance on when to use which image tool
+        ---------------------------------------
+        • Prefer `{ask_image_fname}` when you need a quick textual observation about a single image, without changing the current loop context.
+        • Use `{attach_image_fname}` or `{attach_guid_imgs_fname}` when follow‑up turns should continue to see the image(s) as visual context in this loop.
+        • For multi‑image reasoning, side‑by‑side comparisons, or multi‑attribute judgments (e.g., relative brightness, counts of UI elements), attach the relevant image(s) so they are visible within the same loop before answering.
+        • When images are already linked to a guidance row, prefer `{attach_guid_imgs_fname}` with an appropriate `limit` to attach them in one step; otherwise attach specific image ids individually using `{attach_image_fname}`.
+        • Avoid issuing several independent one‑off image questions when the answer depends on considering multiple images together; attach once, then reason over the persistent visual context.
         """,
     ).strip()
 
@@ -177,7 +185,7 @@ def build_ask_prompt(
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about how you should answer or which tools to call; interpret the question and choose the best approach yourself.",
             (
-                "For images: prefer `ask_image` for targeted Q&A; use `attach_image_to_context`/`attach_guidance_images_to_context` when you need persistent visual context in this loop."
+                "For images: prefer `ask_image` for targeted, single‑image Q&A; use `attach_image_to_context` / `attach_guidance_images_to_context` when you need persistent, multi‑step or multi‑image visual context in this loop."
                 if (ask_image_fname or attach_image_fname or attach_guid_imgs_fname)
                 else ""
             ),

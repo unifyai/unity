@@ -378,7 +378,7 @@ class GuidanceManager(BaseGuidanceManager):
         *,
         guidance_id: int,
     ) -> List[Dict[str, Any]]:
-        """Return image metadata (no raw data) for images referenced by a guidance row.
+        """Return image metadata (no raw/base64) for images referenced by a guidance row.
 
         Output schema (list of objects):
         - span: str  → the "[x:y]" span key
@@ -386,6 +386,13 @@ class GuidanceManager(BaseGuidanceManager):
         - caption: str | None
         - timestamp: str (ISO8601)
         - substring: str  → text extracted from the guidance content using the span
+
+        Notes
+        -----
+        This tool is read-only and returns metadata only. It never exposes raw
+        image bytes. Use `attach_image_to_context` or
+        `attach_guidance_images_to_context` when persistent visual context is
+        required inside the loop.
         """
         rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
@@ -421,10 +428,22 @@ class GuidanceManager(BaseGuidanceManager):
     async def _ask_image(self, *, image_id: int, question: str) -> str:
         """Ask a one-off question about a specific image and return a text answer.
 
-        Notes
-        -----
-        - This creates a small nested vision-capable loop and returns its final
-          textual answer without modifying the current guidance loop context.
+        Characteristics
+        ---------------
+        - Stateless: does not modify the current guidance loop context.
+        - Single-image focus: optimised for quick, atomic visual checks.
+        - Output is plain text; no image blocks are persisted in the outer loop.
+
+        Typical uses
+        ------------
+        - Short identifications, brief descriptions, reading a small piece of text.
+
+        Limitations
+        -----------
+        - Not suitable when subsequent steps in the same loop must "see" the
+          image, or when integrating multiple images simultaneously is required.
+        - Prefer `attach_image_to_context` / `attach_guidance_images_to_context`
+          for persistent, multi-step, or multi-image reasoning.
         """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
@@ -444,8 +463,16 @@ class GuidanceManager(BaseGuidanceManager):
     ) -> Dict[str, Any]:
         """Attach one image into the current guidance loop context.
 
-        Returns a dict that includes an "image" base64 field so the outer loop
-        promotes it into an image_url block for persistent visual reasoning.
+        Characteristics
+        ---------------
+        - Provides the raw image (base64) so the outer loop promotes an image block.
+        - Persists visual context for the remainder of the loop, enabling follow‑up turns.
+        - Can be called repeatedly to attach multiple images as needed.
+
+        Use when
+        --------
+        - The answer depends on direct visual inspection within this loop
+          (e.g., multi‑attribute judgments, spatial reasoning, or side‑by‑side comparisons).
         """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
@@ -471,11 +498,21 @@ class GuidanceManager(BaseGuidanceManager):
     ) -> Dict[str, Any]:
         """Attach multiple images referenced by a guidance row to the loop context.
 
+        Characteristics
+        ---------------
+        - Batches attachment of several images linked via the guidance's span→image mapping.
+        - Returns metadata (spans/substrings) alongside the base64 for each image.
+        - Useful for multi‑image tasks where the loop should retain visual context.
+
+        Parameters
+        ----------
+        limit : int
+            Cap on how many images are attached (order preserved by first appearance).
+
         Returns
         -------
-        dict with keys:
-            attached_count: int
-            images: list of { meta: {image_id, caption, timestamp, spans, substrings}, image: <base64> }
+        dict
+            { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
         """
         rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
