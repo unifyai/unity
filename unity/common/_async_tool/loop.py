@@ -325,11 +325,11 @@ async def async_tool_use_loop_inner(
     # Initialise loop state early so preflight backfill can schedule tasks
     if semantic_cache:
         if closest_match := sc.get_tool_trajectory(message):
+            msgs = await sc.get_dummy_tool(closest_match, tools_data)
             logger.info(
-                f"Semantic cache hit: {closest_match.closest_user_message}",
+                f"Semantic cache hit ({closest_match.closest_user_message}): {json.dumps(msgs[1]["content"], indent=2)}",
                 prefix="🔍",
             )
-            msgs = await sc.get_dummy_tool(closest_match, tools_data)
             client.append_messages(msgs)
             client.set_system_message((client.system_message or "") + sc.get_hint())
             tools_data.normalized["semantic_search"] = ToolSpec(fn=sc.semantic_search)
