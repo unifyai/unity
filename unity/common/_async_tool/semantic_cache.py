@@ -161,7 +161,7 @@ Hi, what is the weather in Cairo?
     return res
 
 
-async def clean_tool_trajectory(user_message, msgs):
+async def clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=None):
     class ToolRequestPair(TypedDict):
         request: Mapping[str, Any]
         response: Mapping[str, Any]
@@ -170,6 +170,8 @@ async def clean_tool_trajectory(user_message, msgs):
         indices: list[int]
 
     cleaned_trajectory = []
+    if previous_tool_trajectory:
+        cleaned_trajectory.extend(previous_tool_trajectory)
     _flatten_tools = {
         msg.get("tool_call_id"): msg for msg in msgs if msg.get("role") == "tool"
     }

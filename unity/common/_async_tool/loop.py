@@ -323,11 +323,12 @@ async def async_tool_use_loop_inner(
 
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     # Initialise loop state early so preflight backfill can schedule tasks
+    semantic_closest_match = None
     if semantic_cache:
-        if closest_match := sc.get_tool_trajectory(message):
-            msgs = await sc.get_dummy_tool(closest_match, tools_data)
+        if semantic_closest_match := sc.get_tool_trajectory(message):
+            msgs = await sc.get_dummy_tool(semantic_closest_match, tools_data)
             logger.info(
-                f"Semantic cache hit ({closest_match.closest_user_message}): {json.dumps(msgs[1]['content'], indent=2)}",
+                f"Semantic cache hit ({semantic_closest_match.closest_user_message}): {json.dumps(msgs[1]['content'], indent=2)}",
                 prefix="🔍",
             )
             client.append_messages(msgs)
@@ -1705,5 +1706,10 @@ async def async_tool_use_loop_inner(
             tool_trajectory = await sc.clean_tool_trajectory(
                 embedding_message,
                 client.messages,
+                previous_tool_trajectory=(
+                    semantic_closest_match.tool_trajectory
+                    if semantic_closest_match
+                    else None
+                ),
             )
             sc.store_tool_trajectory(embedding_message, tool_trajectory)
