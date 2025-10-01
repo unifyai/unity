@@ -75,6 +75,7 @@ def get_hint():
     - Prefer using those returned results directly when the status is "new", or follow a similar sequence of tools with updated arguments if required, before creating new or unrelated tool calls.
     - Treat them as latency-saving precomputed outputs to avoid redundant work and reduce time.
     - If gaps remain or the results do not fully address the request, call only the minimal additional tools needed.
+    - If tools status is "cached", and you need the result, you must call the tool instead of using the cached result.
 
     Rules:
     - Do not call the 'semantic_search' tool again, it is only used to get the tool trajectory.

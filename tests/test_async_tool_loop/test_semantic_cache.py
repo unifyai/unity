@@ -267,3 +267,33 @@ async def test_prune_tools():
     assert (
         cleaned[0]["request"]["function"]["name"] == "find_contact"
     ), f"Expected find_contact, got {cleaned[0]['request']['function']['name']}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_tool_call_signature_updated():
+    def say_hello():
+        return "Hello from Unity!"
+
+    client = unify.AsyncUnify("gpt-4o@openai", temperature=0.0, cache=False)
+    handle = start_async_tool_use_loop(
+        client,
+        "Call the say_hello tool and reply with the result only",
+        tools={"say_hello": say_hello},
+        semantic_cache=True,
+    )
+    res = await handle.result()
+    assert "Hello from Unity!" in res
+
+    def _say_hello_new(user: str):
+        return f"Hello from {user}!"
+
+    client = unify.AsyncUnify("gpt-4o@openai", temperature=0.0, cache=False)
+    handle = start_async_tool_use_loop(
+        client,
+        "Call the say_hello tool with the argument 'Unify' and reply with the result only",
+        tools={"say_hello": _say_hello_new},
+        semantic_cache=True,
+    )
+    res = await handle.result()
+    assert "Hello from Unify!" in res
