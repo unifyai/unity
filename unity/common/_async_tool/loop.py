@@ -329,8 +329,8 @@ async def async_tool_use_loop_inner(
     #   by comparing the live count with max_concurrent.
     # -----------------------------------------------------------------------
 
-    tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     # Initialise loop state early so preflight backfill can schedule tasks
+    tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     semantic_closest_match = None
     if semantic_cache:
         if semantic_closest_match := sc.search_semantic_cache(message):
