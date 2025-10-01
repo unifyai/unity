@@ -441,11 +441,12 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const zodSchema = schema ? jsonSchemaToZod(schema) : z.string();
-      const data = await browserAgent!.extract(instructions, zodSchema as ZodTypeAny);
+      const zodSchema: ZodTypeAny = schema ? jsonSchemaToZod(schema) : z.string();
+      const extractFn = (browserAgent as unknown as { extract: (i: string, s: ZodTypeAny) => Promise<unknown> }).extract;
+      const dataUnknown: unknown = await extractFn(instructions, zodSchema);
 
       // If successful, send the response and exit the loop
-      return res.json({ data });
+      return res.json({ data: dataUnknown });
     } catch (err: unknown) {
       lastError = err;
       // Check if the error is related to the LLM returning invalid JSON.
@@ -471,11 +472,10 @@ app.post('/query', isAgentReady, async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'bad_request', message: 'Query is required.' });
   }
   try {
-    const zodSchema = schema ? jsonSchemaToZod(schema) : z.any();
+    const zodSchema: ZodTypeAny = schema ? jsonSchemaToZod(schema) : z.any();
     const queryFn = (browserAgent as unknown as { query: (q: unknown, s: ZodTypeAny) => Promise<unknown> }).query;
-    const dataUnknown: unknown = await queryFn(query, zodSchema as ZodTypeAny);
-    const data = dataUnknown as z.infer<typeof zodSchema>;
-    res.json({ data });
+    const dataUnknown: unknown = await queryFn(query, zodSchema);
+    res.json({ data: dataUnknown });
   } catch (err) {
     handleAgentError(err, res);
   }

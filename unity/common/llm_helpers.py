@@ -82,6 +82,30 @@ def _strip_image_keys(obj):
         return obj
 
 
+def _canonical_tool_owner_name(cls: type) -> str:
+    """Return a normalised class name for tool exposure.
+
+    Policy:
+    - Walk the MRO; if any ancestor's name starts with "Base", strip "Base"
+      and use the remainder (e.g., BaseActor → Actor).
+    - Fallback to the class' own __name__ unchanged.
+    """
+    try:
+        for c in getattr(cls, "__mro__", ()):
+            if c is object:
+                continue
+            name = getattr(c, "__name__", "")
+            if name.startswith("Base") and len(name) > 4:
+                return name[4:]
+    except Exception:
+        pass
+
+    try:
+        return getattr(cls, "__name__", "")
+    except Exception:
+        return ""
+
+
 def methods_to_tool_dict(
     *methods: Tuple[Union[Callable, "ToolSpec"]],
     include_class_name: bool = True,
@@ -114,7 +138,8 @@ def methods_to_tool_dict(
                 "__class__",
             )
         ):
-            key = f"{fn.__self__.__class__.__name__}_{fn.__name__}".replace("__", "_")
+            cls_name = _canonical_tool_owner_name(fn.__self__.__class__)
+            key = f"{cls_name}_{fn.__name__}".replace("__", "_")
         else:
             key = fn.__name__.lstrip("_")
 
@@ -412,6 +437,7 @@ def method_to_schema(
             "parent_chat_context",
             "clarification_up_q",
             "clarification_down_q",
+            "notification_up_q",
         )
 
         if is_hidden:
@@ -432,7 +458,8 @@ def method_to_schema(
         bound_method.__self__,
         "__class__",
     ):
-        prefix = f"{bound_method.__self__.__class__.__name__}_"
+        _cls_name = _canonical_tool_owner_name(bound_method.__self__.__class__)
+        prefix = f"{_cls_name}_"
     elif hasattr(bound_method, "__qualname__"):
         parts = bound_method.__qualname__.split(".")
         prefix = f"{parts[-2]}_" if len(parts) > 1 else ""

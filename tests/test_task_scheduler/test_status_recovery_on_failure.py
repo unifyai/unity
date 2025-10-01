@@ -23,7 +23,7 @@ async def test_defer_reinstate_failure_fallback_downgrades_status(monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("reinstate failed")
 
-    monkeypatch.setattr(ts, "reinstate_to_previous_queue", boom, raising=True)
+    monkeypatch.setattr(ts, "_reinstate_to_previous_queue", boom, raising=True)
 
     # Defer via interject with defer-like wording
     await handle.interject("Let's stop and resume later as originally scheduled.")

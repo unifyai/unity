@@ -101,7 +101,7 @@ async def async_tool_use_loop_inner(
     *,
     loop_id: Optional[str] = None,
     lineage: Optional[list[str]] = None,
-    interject_queue: asyncio.Queue[str],
+    interject_queue: asyncio.Queue[dict | str],
     cancel_event: asyncio.Event,
     stop_event: asyncio.Event | None = None,
     pause_event: asyncio.Event,
@@ -169,10 +169,11 @@ async def async_tool_use_loop_inner(
         docstring – these are automatically converted to an OpenAI *tool
         schema* via :pyfunc:`method_to_schema`.
 
-    interject_queue : ``asyncio.Queue[str]``
+    interject_queue : ``asyncio.Queue[str | dict]``
         Thread-safe channel through which the *outer* application can push
         additional user turns at any time (e.g. the human changes their
-        mind mid-generation).
+        mind mid-generation). When a dict is provided it should follow the
+        shape {"message": str, "parent_chat_context_continuted": list[dict]}.
 
     cancel_event : ``asyncio.Event``
         Flips to *set* when the outer caller wants graceful shutdown.  The
@@ -233,6 +234,13 @@ async def async_tool_use_loop_inner(
     """
     # unique id / lineage
     cfg = LoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
+    # Expose the resolved human-friendly label (with 4-hex suffix) to the outer handle
+    # so that any steering logs (stop/pause/resume/interject/ask) include the same suffix.
+    try:
+        if outer_handle_container and outer_handle_container[0] is not None:
+            setattr(outer_handle_container[0], "_log_label", cfg.label)
+    except Exception:
+        pass
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
@@ -349,6 +357,13 @@ async def async_tool_use_loop_inner(
         _self_task = asyncio.current_task()
         if _self_task is not None:
             setattr(_self_task, "task_info", tools_data.info)  # type: ignore[attr-defined]
+            # Also expose the map of clarification channels so handle-level methods
+            # can route answers programmatically without involving the LLM.
+            setattr(
+                _self_task,
+                "clarification_channels",
+                tools_data.clarification_channels,
+            )
 
     # Ensure we forward stop to nested handles at most once, even if multiple
     # branches detect cancellation/stop around the same time.
@@ -425,36 +440,7 @@ async def async_tool_use_loop_inner(
             # set, the outer loop must stop doing any further work and simply
             # await the delegate's result. This guarantees no extra assistant
             # turns, tools, or events are emitted by the outer loop.
-            try:
-                _delegate = getattr(tools_data, "handover_delegate", None)
-            except Exception:
-                _delegate = None
-            if _delegate is not None:
-                if log_steps:
-                    logger.info(
-                        "Handing over to passthrough delegate – outer loop exiting.",
-                        prefix="🔁",
-                    )
-                # Proactively stop any remaining outer pending tasks, but DO NOT touch the
-                # delegate itself (it lives in the inner loop and is now in charge).
-                try:
-                    if tools_data.pending:
-                        # Forward a stop to any nested steerable handles first to allow graceful shutdown
-                        with suppress(Exception):
-                            _stop_forwarded_once = await propagate_stop_once(
-                                tools_data.info,
-                                _stop_forwarded_once,
-                                "outer-loop handover",
-                            )
-                        await tools_data.cancel_pending_tasks()
-                except Exception:
-                    pass
-                # Await the delegate and return its answer as the final reply for the outer loop.
-                try:
-                    return await _delegate.result()
-                finally:
-                    # Ensure lineage contextvar is reset even on early return
-                    pass
+            # Passthrough mode no longer hands over control; outer loop continues.
 
             # ── 0-α-P. Global *pause* gate  ────────────────────────────
             # Keep handling tool completions & cancellation, but *never*
@@ -598,9 +584,13 @@ async def async_tool_use_loop_inner(
                     )
                     for _m in uvh:
                         role = _m.get("role")
-                        content = (_m.get("content") or "").strip()
-                        if role in ("user", "assistant") and content:
-                            history_lines.append(f"{role}: {content}")
+                        _content = _m.get("content")
+                        if isinstance(_content, dict):
+                            _text = str(_content.get("message", "")).strip()
+                        else:
+                            _text = str(_content or "").strip()
+                        if role in ("user", "assistant") and _text:
+                            history_lines.append(f"{role}: {_text}")
                 except Exception:
                     # Fallback to just the original user prompt if available
                     try:
@@ -617,16 +607,53 @@ async def async_tool_use_loop_inner(
                     except Exception:
                         history_lines = []
 
-                sys_content = (
-                    "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
-                    "They have just interjected with the following message (in bold at the bottom). "
-                    "From their perspective, the conversation thus far is as follows:\n"
-                    "--\n" + ("\n".join(history_lines)) + f"\nuser: **{extra}**\n"
-                    "--\n"
-                    "Please consider and incorporate *all* interjections in your final response to the user. "
-                    "Later interjections should always override earlier interjections if there are "
-                    "any conflicting comments/requests across the different interjections."
-                )
+                # Support dict-style interjections carrying continued parent context
+                if isinstance(extra, dict):
+                    _msg_text = str(extra.get("message", "")).strip()
+                    _ctx_cont = extra.get("parent_chat_context_continuted")
+                    try:
+                        _ctx_str = (
+                            json.dumps(_ctx_cont, indent=2)
+                            if _ctx_cont is not None
+                            else None
+                        )
+                    except Exception:
+                        _ctx_str = None
+
+                    sys_content = (
+                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                        "They have just interjected with the following message (in bold at the bottom). "
+                        "From their perspective, the conversation thus far is as follows:\n"
+                        "--\n"
+                        + ("\n".join(history_lines))
+                        + f"\nuser: **{_msg_text}**\n"
+                        "--\n"
+                        + (
+                            "A continued parent chat context has been provided for this interjection.\n"
+                            + (_ctx_str or "(unserializable)")
+                            + "\n"
+                            if _ctx_cont is not None
+                            else ""
+                        )
+                        + "Please consider and incorporate *all* interjections in your final response to the user. "
+                        + "Later interjections should always override earlier interjections if there are "
+                        + "any conflicting comments/requests across the different interjections."
+                    )
+                else:
+                    _msg_text = str(extra)
+                    sys_content = (
+                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                        "They have just interjected with the following message (in bold at the bottom). "
+                        "From their perspective, the conversation thus far is as follows:\n"
+                        "--\n"
+                        + ("\n".join(history_lines))
+                        + f"\nuser: **{_msg_text}**\n"
+                        "--\n"
+                        "Please consider and incorporate *all* interjections in your final response to the user. "
+                        "Later interjections should always override earlier interjections if there are "
+                        "any conflicting comments/requests across the different interjections."
+                    )
+
                 interjection_msg = {"role": "system", "content": sys_content}
                 await _msg_dispatcher.append_msgs([interjection_msg])
                 last_valid_history = history_lines + [f"user: {extra}"]
@@ -635,7 +662,19 @@ async def async_tool_use_loop_inner(
                 with suppress(Exception):
                     if outer_handle:
                         outer_handle._user_visible_history.append(
-                            {"role": "user", "content": extra},
+                            {
+                                "role": "user",
+                                "content": (
+                                    {
+                                        "message": _msg_text,
+                                        "parent_chat_context_continuted": extra.get(
+                                            "parent_chat_context_continuted",
+                                        ),
+                                    }
+                                    if isinstance(extra, dict)
+                                    else _msg_text
+                                ),
+                            },
                         )
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
@@ -656,20 +695,34 @@ async def async_tool_use_loop_inner(
                     name="CancelEventWait",
                 )
                 clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
+                notif_waiters: Dict[asyncio.Task, asyncio.Task] = {}
                 for _t in tools_data.pending:
                     # Only listen for *new* clarification questions.
                     # If the task is already awaiting an answer,
                     # `waiting_for_clarification` will be True.
-                    if tools_data.info[_t].waiting_for_clarification:
+                    info = tools_data.info[_t]
+                    if info.waiting_for_clarification:
                         continue
 
-                    cuq = tools_data.info[_t].clar_up_queue
-                    if cuq is not None:
-                        w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
+                    # Always listen for clarification requests when a queue is provided
+                    if info.clar_up_queue is not None:
+                        w = asyncio.create_task(
+                            info.clar_up_queue.get(),
+                            name="ClarificationQueueGet",
+                        )
                         clar_waiters[w] = _t
+
+                    # Always listen for notifications when a queue is provided
+                    if info.notification_queue is not None:
+                        pw = asyncio.create_task(
+                            info.notification_queue.get(),
+                            name="NotificationQueueGet",
+                        )
+                        notif_waiters[pw] = _t
                 waiters = (
                     tools_data.pending
                     | set(clar_waiters)
+                    | set(notif_waiters)
                     | {cancel_waiter, interject_w}
                 )
 
@@ -704,6 +757,7 @@ async def async_tool_use_loop_inner(
                     interject_w,
                     cancel_waiter,
                     *clar_waiters.keys(),
+                    *notif_waiters.keys(),
                 ):
                     if aux not in done and not aux.done():
                         aux.cancel()
@@ -730,6 +784,7 @@ async def async_tool_use_loop_inner(
                         question = cw.result()  # the text from the child
                         src_task = clar_waiters[cw]
                         call_id = tools_data.info[src_task].call_id
+                        tool_name = tools_data.info[src_task].name
 
                         # 1️⃣ mark the task as waiting
                         tools_data.info[src_task].waiting_for_clarification = True
@@ -760,12 +815,103 @@ async def async_tool_use_loop_inner(
                         )
                         tool_msg = ph  # for event_bus
 
+                        # 4️⃣ forward event to the outer handle (programmatic consumption)
+                        try:
+                            outer = (
+                                outer_handle_container[0]
+                                if outer_handle_container
+                                else None
+                            )
+                            if outer is not None and hasattr(outer, "_clar_q"):
+                                await outer._clar_q.put(
+                                    {
+                                        "type": "clarification",
+                                        "call_id": call_id,
+                                        "tool_name": tool_name,
+                                        "question": question,
+                                    },
+                                )
+                        except Exception:
+                            pass
+
                     # let the assistant answer immediately
                     llm_turn_required = True
                     continue
 
+                # ── progress update bubbled up from a child tool (non-blocking) ─────
+                if done & notif_waiters.keys():
+                    for pw in done & notif_waiters.keys():
+                        payload = pw.result()
+                        src_task = notif_waiters[pw]
+                        call_id = tools_data.info[src_task].call_id
+                        tool_name = tools_data.info[src_task].name
+
+                        # Acknowledge bottom‑up notification for this call_id; keep one tool reply per call_id
+                        try:
+                            content_payload = (
+                                payload
+                                if isinstance(payload, dict)
+                                else {"message": str(payload)}
+                            )
+                            pretty = _dumps(
+                                {"tool": tool_name, **content_payload},
+                                indent=4,
+                            )
+                        except Exception:
+                            pretty = _dumps(
+                                {"tool": tool_name, "message": str(payload)},
+                                indent=4,
+                            )
+
+                        # Update existing tool reply if present, else create one
+                        placeholder = tools_data.info[src_task].tool_reply_msg
+                        if placeholder is None:
+                            placeholder = create_tool_call_message(
+                                name=tool_name,
+                                call_id=call_id,
+                                content=pretty,
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                tools_data.info[src_task].assistant_msg,
+                                placeholder,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            tools_data.info[src_task].tool_reply_msg = placeholder
+                        else:
+                            placeholder["content"] = pretty
+
+                        # 2️⃣ forward event to the outer handle stream
+                        try:
+                            outer = (
+                                outer_handle_container[0]
+                                if outer_handle_container
+                                else None
+                            )
+                            if outer is not None and hasattr(outer, "_notification_q"):
+                                # Prefer dict payload, else wrap string
+                                event_payload = (
+                                    payload
+                                    if isinstance(payload, dict)
+                                    else {"message": str(payload)}
+                                )
+                                await outer._notification_q.put(
+                                    {
+                                        "type": "notification",
+                                        "call_id": call_id,
+                                        "tool_name": tool_name,
+                                        **event_payload,
+                                    },
+                                )
+                        except Exception:
+                            pass
+                    # Require an immediate LLM turn (same behaviour as clarification)
+                    llm_turn_required = True
+
                 needs_turn = False
-                for task in done:  # finished tool(s)
+                # Only process completion for actual tool tasks; exclude helper waiters
+                for task in done & tools_data.pending:  # finished tool(s)
                     if await tools_data.process_completed_task(
                         task=task,
                         consecutive_failures=consecutive_failures,
@@ -776,9 +922,9 @@ async def async_tool_use_loop_inner(
                         needs_turn = True
 
                 # Other tools may still be running.
+                if needs_turn:
+                    llm_turn_required = True
                 if tools_data.pending:
-                    if needs_turn:  # only when something new
-                        llm_turn_required = True
                     continue  # jump to top-of-loop
 
             # ── B: wait for remaining tools before asking the LLM again,
@@ -796,6 +942,8 @@ async def async_tool_use_loop_inner(
                     msg_dispatcher=_msg_dispatcher,
                 )
                 continue  # still waiting for other tool tasks
+
+            # No handover delegate in the new passthrough design
 
             # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
             #       any still‑running tool calls ────────────────────────────────
@@ -872,6 +1020,19 @@ async def async_tool_use_loop_inner(
             dynamic_tool_factory = DynamicToolFactory(tools_data)
             dynamic_tool_factory.generate()
             dynamic_tools = dynamic_tool_factory.dynamic_tools
+
+            # If any task is currently waiting for clarification, hide the
+            # global `wait` helper to ensure the model proceeds to request
+            # clarification rather than idling. This avoids deadlocks where
+            # no interjection arrives and a tool is blocked awaiting input.
+            try:
+                if any(
+                    getattr(_inf, "waiting_for_clarification", False)
+                    for _inf in tools_data.info.values()
+                ):
+                    dynamic_tools.pop("wait", None)
+            except Exception:
+                pass
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
@@ -1120,84 +1281,42 @@ async def async_tool_use_loop_inner(
                             continue
 
                     # ── Special-case dynamic helpers ──────────────────────
-                    # • continue_* → acknowledge, no scheduling
-                    # • cancel_*   → cancel underlying task & purge metadata
-                    if name.startswith("continue_"):
-                        # Helper names are of the form: continue_{toolName}_{safeId}
-                        call_id_suffix = name.split("_")[-1]
+                    # • wait        → acknowledge, list running tasks, no scheduling
+                    # • cancel_*    → cancel underlying task & purge metadata
+                    if name == "wait":
+                        # Log the no-op and prune it from the transcript to avoid clutter.
+                        try:
+                            logger.info(
+                                "Assistant chose `wait` – no-op; not persisting to transcript.",
+                                prefix="🕒",
+                            )
+                        except Exception:
+                            pass
 
-                        tgt_task = next(
-                            (
-                                t
-                                for t, inf in tools_data.info.items()
-                                if str(inf.call_id).endswith(call_id_suffix)
-                            ),
-                            None,
-                        )
+                        # Remove this `wait` tool call from the assistant message. If it
+                        # was the only call and there is no content, drop the assistant msg.
+                        try:
+                            calls = msg.get("tool_calls") or []
+                            remaining_calls = [
+                                c
+                                for c in calls
+                                if c.get("function", {}).get("name") != "wait"
+                            ]
+                            content_present = bool((msg.get("content") or "").strip())
+                            if not remaining_calls:
+                                if not content_present:
+                                    if client.messages and client.messages[-1] is msg:
+                                        client.messages.pop()
+                                else:
+                                    msg.pop("tool_calls", None)
+                            else:
+                                msg["tool_calls"] = remaining_calls
+                        except Exception:
+                            pass
 
-                        orig_fn = (
-                            tools_data.info[tgt_task].name if tgt_task else "unknown"
-                        )
-                        arg_json = (
-                            tools_data.info[tgt_task].call_dict["function"]["arguments"]
-                            if tgt_task
-                            else "{}"
-                        )
-                        pretty_name = f"continue {orig_fn}({arg_json})"
-
-                        if tgt_task:  # still running → insert generated placeholder now
-                            info = tools_data.info[tgt_task]
-                            name = info.name
-                            arg_json = info.call_dict["function"]["arguments"]
-                            tool_reply_msg = create_tool_call_message(
-                                name=name,
-                                call_id=call["id"],
-                                content=(
-                                    "The following tool calls are still running. If any of them are no longer "
-                                    "relevant to the sequence of user requests, then you can call their "
-                                    f"`_cancel_*` helper, otherwise feel free to call the corresponding "
-                                    f"`_continue_*` helper to keep waiting:\n"
-                                    f" • {name}({arg_json}) → cancel_{call['id']} / continue_{call['id']}"
-                                ),
-                            )
-                            await insert_tool_message_after_assistant(
-                                assistant_meta,
-                                msg,
-                                tool_reply_msg,
-                                client,
-                                _msg_dispatcher,
-                            )
-                            info.continue_msg = tool_reply_msg
-                        else:  # the original tool already finished
-                            # Lookup finished result by matching call-id suffix
-                            _full_id = next(
-                                (
-                                    k
-                                    for k in tools_data.completed_results.keys()
-                                    if k.endswith(call_id_suffix)
-                                ),
-                                None,
-                            )
-                            finished = tools_data.completed_results.get(
-                                _full_id,
-                                _dumps(
-                                    {"status": "not-found", "call_id": call_id_suffix},
-                                    indent=4,
-                                ),
-                            )
-                            tool_msg = create_tool_call_message(
-                                name=pretty_name,
-                                call_id=call["id"],
-                                content=finished,
-                            )
-                            await insert_tool_message_after_assistant(
-                                assistant_meta,
-                                msg,
-                                tool_msg,
-                                client,
-                                _msg_dispatcher,
-                            )
-                        continue  # completed handling of this _continue
+                        # After acknowledging a wait, do NOT grant an immediate LLM turn.
+                        # The loop should now wait for any pending tools or interjections.
+                        continue
 
                     if name.startswith("stop_") and not name.startswith(
                         "_stop_tasks",
@@ -1265,6 +1384,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
 
                         continue  # nothing else to schedule
 
@@ -1317,6 +1438,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
@@ -1368,6 +1491,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
                         continue  # helper handled
 
                     if name.startswith("clarify_"):
@@ -1405,6 +1530,7 @@ async def async_tool_use_loop_inner(
                                 ):
                                     _inf.waiting_for_clarification = False
                                     break
+                        # Always publish a tool reply acknowledging the clarify helper
                         tool_reply_msg = create_tool_call_message(
                             name=name,
                             call_id=call["id"],
@@ -1424,6 +1550,8 @@ async def async_tool_use_loop_inner(
                             tools_data.info[tgt_task].clarify_placeholder = (
                                 tool_reply_msg
                             )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
                         continue
 
                     if name.startswith("interject_"):
@@ -1484,6 +1612,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
 
                         continue  # nothing else to schedule
 
@@ -1643,27 +1773,8 @@ async def async_tool_use_loop_inner(
             #     flight; loop back to wait for them.
             #   • `pending` empty        → the model just produced a plain
             #     assistant message; nothing more to do – return it.
-            if tools_data.pending:  # still running – stop them proactively, then finish
-                try:
-                    for t in list(tools_data.pending):
-                        with suppress(Exception):
-                            info_t = tools_data.info.get(t)
-                            if (
-                                info_t is not None
-                                and (nested_handle := info_t.handle) is not None
-                                and hasattr(
-                                    nested_handle,
-                                    "stop",
-                                )
-                            ):
-                                await maybe_await(nested_handle.stop())
-                        if not t.done():
-                            t.cancel()
-                    await asyncio.gather(*tools_data.pending, return_exceptions=True)
-                except Exception:
-                    pass
-                finally:
-                    tools_data.pending.clear()
+            if tools_data.pending:  # still running
+                continue  # wait for completions, then prompt LLM
 
             # ── timeout guard (final turn) ──────────────────────────────────
             if timer.has_exceeded_time():

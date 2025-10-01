@@ -169,7 +169,7 @@ async def test_interject_leads_to_second_tool_and_final_result():
 @pytest.mark.asyncio
 @_handle_project
 async def test_stop_stops_gracefully():
-    """handle.stop() cancels the loop: result() raises CancelledError and task is done."""
+    """handle.stop() cancels the loop and result() returns a standard notice string."""
     client = new_client()
     handle = start_async_tool_use_loop(
         client,
@@ -179,22 +179,22 @@ async def test_stop_stops_gracefully():
 
     handle.stop()
 
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    final = await handle.result()
+    assert final == "processed stopped early, no result"
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_backfills_missing_tool_reply_for_helper_call() -> None:
     """
-    Pre-seed transcript with an assistant helper tool_call (e.g. continue_…)
-    but no tool reply. The loop must backfill an acknowledgement tool message
-    directly after that assistant turn so API ordering is satisfied.
+    Pre-seed transcript with an assistant helper tool_call (e.g. wait).
+    New behaviour: helper `wait` is pruned (no backfilled tool reply, no chat clutter).
+    The pre-seeded assistant helper turn should be removed, and no tool reply should appear.
     """
     client = new_client()
 
     helper_call_id = "call_TEST_HELPER"
-    helper_name = "continue_slow_call_TESTSLOW"
+    helper_name = "wait"
     assistant_msg = {
         "role": "assistant",
         "content": None,
@@ -214,39 +214,33 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
         tools={},  # helpers are acknowledged during backfill without execution
     )
 
-    # Wait until the assistant turn is present and a backfilled tool reply appears after it
-    assistant_idx: int | None = None
+    # Allow the loop to process backfill/pruning
     for _ in range(60):
         await asyncio.sleep(0.05)
-        for i, m in enumerate(client.messages or []):
-            if (
-                m.get("role") == "assistant"
-                and m.get("tool_calls")
-                and any(tc.get("id") == helper_call_id for tc in m["tool_calls"])
-            ):
-                assistant_idx = i
-                break
-        if assistant_idx is not None and len(client.messages) > assistant_idx + 1:
+        if client.messages:
             break
 
-    assert assistant_idx is not None, "helper assistant turn not found in transcript"
-    assert (assistant_idx + 1) < len(client.messages)
+    # The pre-seeded helper assistant turn should be pruned
+    assert assistant_msg not in client.messages
 
-    next_msg = client.messages[assistant_idx + 1]
-    assert (
-        next_msg.get("role") == "tool"
-    ), "expected a backfilled tool reply after helper call"
-    assert (
-        next_msg.get("tool_call_id") == helper_call_id
-    ), "backfilled tool reply must match helper tool_call_id"
-    assert (
-        next_msg.get("name") == helper_name
-    ), "ack tool message should use the helper tool name"
+    # No assistant message should contain the helper tool_call id
+    assert not any(
+        m.get("role") == "assistant"
+        and m.get("tool_calls")
+        and any(tc.get("id") == helper_call_id for tc in m["tool_calls"])
+        for m in client.messages
+    )
+
+    # No tool reply should reference the helper call id
+    assert not any(
+        m.get("role") == "tool" and m.get("tool_call_id") == helper_call_id
+        for m in client.messages
+    )
 
     # Cleanly stop the loop
     handle.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    final2 = await handle.result()
+    assert final2 == "processed stopped early, no result"
 
     assert handle.done()
 
@@ -274,9 +268,18 @@ async def test_interjections_are_processed_and_loop_completes():
     assert isinstance(final, str) and final.strip()
 
     msgs = client.messages
-    idx_B = _interjection_index(msgs, "B please")
-    idx_C = _interjection_index(msgs, "C please")
-    assert idx_B < idx_C
+    # New behaviour: multiple interjections can be consolidated into the same
+    # system message block. Instead of requiring distinct message indices,
+    # assert that both snippets appear and that "B please" precedes "C please"
+    # within the combined interjection text.
+    inter_sys_msgs = [
+        m.get("content", "")
+        for m in msgs
+        if m.get("role") == "system" and "user: **" in (m.get("content", "") or "")
+    ]
+    combined = "\n".join(inter_sys_msgs)
+    assert "B please" in combined and "C please" in combined
+    assert combined.find("B please") < combined.find("C please")
 
     tool_msgs = [m for m in client.messages if m["role"] == "tool"]
     assert len(tool_msgs) >= 3
@@ -576,5 +579,5 @@ async def test_backfills_missing_tool_reply_for_prior_assistant_turn() -> None:
     assert next_msg.get("role") == "tool" and next_msg.get("tool_call_id") == call_id
 
     handle.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await handle.result()
+    final2 = await handle.result()
+    assert final2 == "processed stopped early, no result"

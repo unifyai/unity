@@ -111,32 +111,32 @@ class CommsManager:
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     topic = event["from"].split("<")[1][:-1]
                     task = asyncio.run_coroutine_threadsafe(
-                    self.message_queue.publish(
-                        f"app:comms:{thread}_message",
-                        events_map[thread](
-                            subject=event["subject"],
-                            body=event["body"],
-                            contact=topic,
-                            message_id=event["message_id"]
-                        ).to_json(),
-                    ),
-                    self.loop,
-                )
+                        self.message_queue.publish(
+                            f"app:comms:{thread}_message",
+                            events_map[thread](
+                                subject=event["subject"],
+                                body=event["body"],
+                                contact=topic,
+                                message_id=event["message_id"],
+                            ).to_json(),
+                        ),
+                        self.loop,
+                    )
                 else:
                     topic = event["from_number"].replace("whatsapp:", "").strip()
-                # Put the message in the queue instead of creating a task
-                task = asyncio.run_coroutine_threadsafe(
-                    self.message_queue.publish(
-                        f"app:comms:{thread}_message",
-                        events_map[thread](
-                            content=content,
-                            contact=topic,
-                        ).to_json(),
-                    ),
-                    self.loop,
-                )
+                    # Put the message in the queue instead of creating a task
+                    task = asyncio.run_coroutine_threadsafe(
+                        self.message_queue.publish(
+                            f"app:comms:{thread}_message",
+                            events_map[thread](
+                                content=content,
+                                contact=topic,
+                            ).to_json(),
+                        ),
+                        self.loop,
+                    )
                 message.ack()
-            elif thread == "call":
+            elif "call" in thread:
                 try:
                     # Extract phone numbers from the message data
                     from_number = event.get("caller_number", "")
@@ -144,11 +144,16 @@ class CommsManager:
                         "Unity_",
                         "",
                     )
+
+                    # TODO: differentiate between calls picked up from outbound calls and inbound calls
                     task = asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
-                            "app:comms:call_initiated",
-                            PhoneCallInitiated(
-                                contact=event["caller_number"],
+                            "app:comms:call_recieved",
+                            PhoneCallRecieved(
+                                contact=event.get(
+                                    "caller_number",
+                                    event.get("user_number"),
+                                ),
                                 # voice_id=event.get("voice_id", None),
                                 # voice_provider=event.get("voice_provider", None),
                             ).to_json(),
@@ -162,8 +167,8 @@ class CommsManager:
                     #     from_number,
                     #     to_number,
                     # )
-                    task.result()
                     message.ack()
+                    task.result()
                 except json.JSONDecodeError:
                     print("Invalid message format for call event")
                     message.nack()

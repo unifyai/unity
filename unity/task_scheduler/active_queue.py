@@ -14,7 +14,7 @@ steerable handle in turn. It:
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, Callable, Optional, List, Any, TYPE_CHECKING
+from typing import Dict, Optional, List, Any, TYPE_CHECKING
 import json
 import os
 
@@ -201,13 +201,49 @@ class _QueueSnapshot:
                 current_task_id,
             )
 
-            total_count = len(queue_rows)
-            # Identify current index
-            current_index = -1
+            # Prefer a full chain snapshot (including terminal predecessors) for
+            # progress math, while keeping the details list runnable-only.
+            try:
+                _full_chain = (
+                    scheduler._walk_queue_from_task(  # type: ignore[attr-defined]
+                        task_id=int(current_task_id),
+                    )
+                    or []
+                )
+            except Exception:
+                _full_chain = []
+
+            full_rows: list[dict] = []
+            for t in _full_chain:
+                try:
+                    full_rows.append(
+                        {
+                            "task_id": getattr(t, "task_id", None),
+                            "name": getattr(t, "name", None),
+                            "description": getattr(t, "description", None),
+                            "status": getattr(t, "status", None),
+                            "schedule": getattr(t, "schedule", None),
+                        },
+                    )
+                except Exception:
+                    continue
+
+            # Compute indices against both views
+            total_count_runnable = len(queue_rows)
+            total_count_full = len(full_rows) if full_rows else total_count_runnable
+
+            # Identify current index in each view
+            current_index_runnable = -1
             for idx, r in enumerate(queue_rows):
                 if r.get("task_id") == current_task_id:
-                    current_index = idx
+                    current_index_runnable = idx
                     break
+            current_index_full = -1
+            if full_rows:
+                for idx, r in enumerate(full_rows):
+                    if r.get("task_id") == current_task_id:
+                        current_index_full = idx
+                        break
 
             # Count statuses
             def _to_status_str(row: dict) -> str:
@@ -216,25 +252,60 @@ class _QueueSnapshot:
                 except Exception:
                     return str(row.get("status"))
 
-            completed_count = sum(
-                1 for r in queue_rows if _to_status_str(r) == "completed"
-            )
-            remaining_count = max(0, total_count - completed_count)
+            # Use full chain (when available) to count completed predecessors and
+            # compute remaining/position; fall back to runnable-only otherwise.
+            if full_rows:
+                completed_count = sum(
+                    1 for r in full_rows if _to_status_str(r) == "completed"
+                )
+                total_count = total_count_full
+                remaining_count = max(0, total_count - completed_count)
+                current_index = current_index_full
+            else:
+                completed_count = sum(
+                    1 for r in queue_rows if _to_status_str(r) == "completed"
+                )
+                total_count = total_count_runnable
+                remaining_count = max(0, total_count - completed_count)
+                current_index = current_index_runnable
 
-            # Next tasks preview (up to 3)
+            # Next tasks preview (up to 3) – derive from runnable view to avoid index drift
             next_names: list[str] = []
-            if current_index >= 0:
-                for j in range(current_index + 1, min(current_index + 4, total_count)):
-                    nm = queue_rows[j].get("name")
+            if current_index_runnable >= 0 and total_count_runnable > 0:
+                for j in range(
+                    current_index_runnable + 1,
+                    min(current_index_runnable + 4, total_count_runnable),
+                ):
+                    try:
+                        nm = queue_rows[j].get("name")
+                    except Exception:
+                        nm = None
                     if nm:
                         next_names.append(str(nm))
 
             # High-level summary line
             if current_index >= 0 and current_index < total_count:
-                current_name = queue_rows[current_index].get("name") or "(unnamed task)"
+                # Use runnable view for the display name to ensure the active task is referenced
+                if 0 <= current_index_runnable < len(queue_rows):
+                    current_name = (
+                        queue_rows[current_index_runnable].get("name")
+                        or "(unnamed task)"
+                    )
+                elif full_rows and 0 <= current_index_full < len(full_rows):
+                    current_name = (
+                        full_rows[current_index_full].get("name") or "(unnamed task)"
+                    )
+                else:
+                    current_name = "(unnamed task)"
+                # Position uses full-chain index when available (e.g., 2/4), else runnable
+                current_pos = (
+                    (current_index_full + 1)
+                    if (full_rows and current_index_full >= 0)
+                    else (current_index_runnable + 1)
+                )
                 headline = (
                     f"Chain status: {completed_count}/{total_count} completed; "
-                    f"{remaining_count} remaining; executing {current_index + 1}/{total_count}: "
+                    f"{remaining_count} remaining; executing {current_pos}/{total_count}: "
                     f"{current_name}."
                 )
             else:
@@ -280,6 +351,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         self._completed_tasks: list[tuple[int, str]] = []
         # Stream of per-task completion events (name → result text)
         self._completions: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        # Queue-level universal notification stream (dict events)
+        self._notif_q: asyncio.Queue[dict] = asyncio.Queue()
         # Sticky pass-through flag: enabled only when the queue truly contains a
         # single task at creation time; once disabled it never re-enables for the
         # lifetime of this ActiveQueue instance.
@@ -305,6 +378,18 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             ]
             return "Completed the following tasks: " + ", ".join(summary_items) + "."
         return "Chain completed."
+
+    # ----------------------------
+    # Notification helper
+    # ----------------------------
+    def _emit_notification(self, event: dict) -> None:
+        try:
+            self._notif_q.put_nowait(event)
+        except Exception:
+            try:
+                asyncio.create_task(self._notif_q.put(event))
+            except Exception:
+                pass
 
     # ----------------------------
     # Snapshot helper (head→tail)
@@ -477,6 +562,19 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                                 or rows[0].get("description")
                                 or "(unnamed task)"
                             )
+                            # Emit a standardized completion notification
+                            try:
+                                evt_completed = {
+                                    "type": "queue.task.completed",
+                                    "task_id": int(self._current_task_id),
+                                    "name": str(name),
+                                    "instance_id": rows[0].get("instance_id"),
+                                    "queue_id": rows[0].get("queue_id"),
+                                    "result": text,
+                                }
+                                self._emit_notification(evt_completed)
+                            except Exception:
+                                pass
                             self._completed_tasks.append(
                                 (int(self._current_task_id), str(name)),
                             )
@@ -489,10 +587,42 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     except Exception:
                         pass
                 if was_stopped:
+                    # Emit a stop/defer notification for the current task
+                    try:
+                        intent = getattr(self._current_handle, "_last_intent", None)
+                        reason = getattr(
+                            self._current_handle,
+                            "_last_intent_reason",
+                            None,
+                        )
+                    except Exception:
+                        intent, reason = None, None
+                    try:
+                        self._emit_notification(
+                            {
+                                "type": "queue.task.stopped",
+                                "task_id": int(self._current_task_id),
+                                "intent": intent,
+                                "reason": reason,
+                            },
+                        )
+                    except Exception:
+                        pass
                     self._final_result = text or "Stopped."
                     break
                 # If the stop/defer path was taken, end the queue here
                 if "stopped" in text.lower():
+                    try:
+                        self._emit_notification(
+                            {
+                                "type": "queue.task.stopped",
+                                "task_id": int(self._current_task_id),
+                                "intent": None,
+                                "reason": text,
+                            },
+                        )
+                    except Exception:
+                        pass
                     self._final_result = text
                     break
                 # Determine the next task to run using the live queue only
@@ -501,10 +631,48 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 if next_tid is None:
                     # Queue exhausted – compose a completion summary across all tasks
                     self._final_result = self._summarise_completions()
+                    try:
+                        self._emit_notification(
+                            {
+                                "type": "queue.completed",
+                                "summary": self._final_result,
+                                "completed": [
+                                    {"task_id": tid, "name": name}
+                                    for tid, name in self._completed_tasks
+                                ],
+                            },
+                        )
+                    except Exception:
+                        pass
                     break
 
                 # Start next task using CHAIN linkage semantics
                 self._current_task_id = next_tid
+                # Emit a standardized started notification
+                try:
+                    # Best-effort fetch for name/metadata
+                    _rows = self._s._filter_tasks(
+                        filter=f"task_id == {int(next_tid)}",
+                        limit=1,
+                    )
+                    _nm = (
+                        _rows[0].get("name")
+                        if _rows and _rows[0].get("name") is not None
+                        else None
+                    )
+                    self._emit_notification(
+                        {
+                            "type": "queue.task.started",
+                            "task_id": int(next_tid),
+                            "name": _nm,
+                            "queue_id": (_rows[0].get("queue_id") if _rows else None),
+                            "instance_id": (
+                                _rows[0].get("instance_id") if _rows else None
+                            ),
+                        },
+                    )
+                except Exception:
+                    pass
                 self._current_handle = await self._s._execute_internal(
                     task_id=next_tid,
                     parent_chat_context=self._parent_ctx,
@@ -729,6 +897,83 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except Exception:
             return str(payload)
 
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:  # pass-through when supported
+        try:
+            if hasattr(self._current_handle, "next_clarification"):
+                return await self._current_handle.next_clarification()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        return {}
+
+    async def next_notification(self) -> dict:  # pass-through when supported
+        # If we have pending queue-level events, deliver them immediately
+        try:
+            return self._notif_q.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+        except Exception:
+            pass
+
+        # Create awaitables for both sources: queue-level and inner-handle
+        notif_task = asyncio.create_task(self._notif_q.get())
+        inner_task = None
+        try:
+            if hasattr(self._current_handle, "next_notification"):
+                inner_task = asyncio.create_task(self._current_handle.next_notification())  # type: ignore[attr-defined]
+        except Exception:
+            inner_task = None
+
+        # If no inner source, just await queue-level
+        if inner_task is None:
+            try:
+                return await notif_task
+            except Exception:
+                return {}
+
+        done, pending = await asyncio.wait(
+            {notif_task, inner_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        # Retrieve result from first completed task
+        result: dict = {}
+        for t in done:
+            try:
+                res = await t
+                if isinstance(res, dict):
+                    result = res
+                else:
+                    # Wrap non-dict as a generic event
+                    result = {"type": "inner.notification", "data": res}
+            except Exception:
+                result = {}
+            break
+        # Cancel the other task to avoid leaks
+        for t in pending:
+            try:
+                t.cancel()
+            except Exception:
+                pass
+        return result
+
+    async def answer_clarification(
+        self,
+        call_id: str,
+        answer: str,
+    ) -> None:  # pass-through or use queue channel
+        try:
+            if hasattr(self._current_handle, "answer_clarification"):
+                await self._current_handle.answer_clarification(call_id, answer)  # type: ignore[attr-defined]
+                return
+        except Exception:
+            pass
+        # Fallback: if we have a queue-level clarification channel, push there
+        try:
+            if self._clar_down is not None:
+                await self._clar_down.put(answer)
+        except Exception:
+            pass
+
     async def ask(
         self,
         question: str,
@@ -739,13 +984,26 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
 
         Policy
         ------
-        - Construct a compact chain snapshot (head→tail) and headline.
-        - Ask the current task for a detailed progress update.
-        - Provide the LLM with: snapshot JSON, headline, completions since start,
-          and the full current-task progress. The LLM decides how much task‑level
-          detail is appropriate for the user’s question (high‑level vs granular).
-        - No pass‑through fast path; always synthesize a response with an LLM.
+        - If and only if this queue has always remained a singleton since creation
+          (sticky passthrough), bypass the queue-level LLM and delegate directly to
+          the inner task's ask() with the user question unchanged.
+        - Otherwise: construct a compact chain snapshot (head→tail) and headline;
+          forward the user's question verbatim to the current task and capture its
+          response; then provide the LLM with snapshot JSON, headline, completions
+          since start, and the inner task's answer. The LLM decides how much
+          task‑level detail is appropriate for the user’s question (high‑level vs
+          granular).
         """
+
+        # Sticky singleton passthrough for ask(): delegate directly when this queue
+        # has only ever contained a single task. If the queue ever grew (size > 1),
+        # _should_passthrough() permanently disables passthrough for this instance.
+        if self._should_passthrough():
+            try:
+                return await self._current_handle.ask(question)  # type: ignore[arg-type]
+            except Exception:
+                # Defensive fallback: proceed with the LLM synthesis path below
+                pass
 
         # Build queue context
         queue_preamble: str | None = _QueueSnapshot.build_preamble(
@@ -763,22 +1021,10 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except Exception:
             chain_size = 0
 
-        # Single inner ask combining a progress update request with the user's question (best‑effort)
+        # Ask inner task the user's question verbatim (no progress prompt)
         inner_task_response: str = ""
         try:
-            progress_prompt = (
-                "Please provide a detailed, task‑centric progress update so far. "
-                "Focus on facts only. Include: a one‑line headline; key outputs produced; "
-                "items completed; items remaining; risks/blockers; estimated time to finish if applicable. "
-                "Be comprehensive but concise."
-            )
-            combined_prompt = (
-                progress_prompt
-                + "\n\nAdditionally, answer the following user question directly and concisely:"  # noqa: E501
-                + "\nUSER QUESTION:\n"
-                + question
-            )
-            ih = await self._current_handle.ask(combined_prompt)  # type: ignore[arg-type]
+            ih = await self._current_handle.ask(question)  # type: ignore[arg-type]
             try:
                 inner_task_response = await ih.result()
             except Exception:
@@ -869,17 +1115,14 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             async def ask(self, q: str) -> "SteerableToolHandle":  # type: ignore[override]
                 return self
 
-        return _AnswerHandle(answer)
+            # New abstract event APIs – provide harmless stubs for the static handle
+            async def next_clarification(self) -> dict:
+                return {}
 
-    @property
-    def valid_tools(self) -> Dict[str, Callable]:  # type: ignore[override]
-        tools = {
-            self.interject.__name__: self.interject,
-            self.stop.__name__: self.stop,
-        }
-        paused_flag = getattr(self._current_handle, "_paused", False)
-        if paused_flag:
-            tools[self.resume.__name__] = self.resume
-        else:
-            tools[self.pause.__name__] = self.pause
-        return tools
+            async def next_notification(self) -> dict:
+                return {}
+
+            async def answer_clarification(self, call_id: str, answer: str) -> None:
+                return None
+
+        return _AnswerHandle(answer)

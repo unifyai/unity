@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
@@ -21,36 +21,11 @@ from ..singleton_registry import SingletonABCMeta
 
 class BaseActiveTask(SteerableToolHandle, ABC):
     """
-    Abstract interface for a live, steerable long‑running activity.
+    Abstract interface for a live, steerable task.
 
     The activity can be paused, resumed, interjected, queried (ask), or
     stopped, and ultimately resolves to a single result string.
-
-    Concrete implementations must implement the abstract members and expose the
-    currently available controls via ``valid_tools``.
     """
-
-    # Public API
-    @abstractmethod
-    async def ask(
-        self,
-        question: str,
-        *,
-        _return_reasoning_steps: bool = False,
-    ) -> SteerableToolHandle:
-        """Ask a read-only question about the live activity and return a handle.
-
-        Implementations should return a lightweight handle whose ``result()``
-        yields the answer string (and may optionally include reasoning when
-        ``_return_reasoning_steps`` is True)."""
-
-    @property
-    @abstractmethod
-    def valid_tools(self) -> Dict[str, Callable]:
-        """
-        Map of public‑name → callable for the user‑accessible controls that are
-        currently valid in the activity's lifecycle state.
-        """
 
     @abstractmethod
     def stop(
@@ -82,6 +57,19 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
 
     Implementations choose their storage and execution strategy; this base
     class defines the required behavior and method signatures.
+
+    Intended use
+    ------------
+    The TaskScheduler is responsible for activities that should be represented
+    as first‑class Tasks – with names, descriptions, scheduling fields and a
+    completion status – and for returning a live, steerable execution handle
+    when starting such tasks.
+
+    Scope and positioning (LLM‑facing)
+    ----------------------------------
+    Use this interface for activities that should be represented as durable
+    Tasks with names, descriptions, scheduling fields and completion status.
+    It returns a steerable execution handle when starting such tasks.
     """
 
     # ------------------------------------------------------------------ #
@@ -187,6 +175,10 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         Only use `update` within `execute` when the user explicitly asked to
         create a missing task or to change task fields before running.
 
+        This method is not intended to be used to materialize transient
+        conversational sessions. It should be used to create or modify durable
+        Tasks and their scheduling/ordering.
+
         Please always be explicit about the *ordering* of tasks.
         If the order *doesn't* matter please say so explicitly.
         If the order *does* matter, and the tasks are given in the correct number order,
@@ -224,6 +216,20 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         Do *not* request *how* the task should be executed; state what you
         want to run in natural language and allow the `execute` method to
         determine the best method and steps.
+
+        Mandatory execution rule
+        ------------------------
+        Requests to "run", "start", "execute", "begin", or "launch" a task
+        MUST be fulfilled via this `execute` method (exactly once). Do not use
+        `update` as a substitute for starting tasks. If fields need adjusting
+        prior to execution, perform the minimal `update` first and then call
+        `execute` to actually start the task.
+
+        Notes on scope
+        --------------
+        The above rule applies to activities that are clearly Tasks (durable,
+        tracked units of work). This surface is not intended for live, ad‑hoc
+        conversational sessions that happen inside the current chat.
 
         The assistant should interpret *text* to figure out which task the user
         wants to run.  Typical workflow:
@@ -284,30 +290,3 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         ValueError
             When no matching task could be identified.
         """
-
-    # ------------------------------------------------------------------ #
-    #  Public lifecycle helpers                                           #
-    # ------------------------------------------------------------------ #
-
-    def reinstate_to_previous_queue(
-        self,
-        *,
-        task_id: int,
-        allow_active: bool = False,
-    ) -> Dict[str, str]:
-        """
-        Restore a task to its previous queue/schedule position after a defer‑stop.
-
-        Parameters
-        ----------
-        task_id : int
-            Identifier of the task to reinstate.
-        allow_active : bool, default ``False``
-            When ``True``, permit reinstatement while a task is currently active.
-
-        Returns
-        -------
-        dict[str, str]
-            Implementation‑specific status details.
-        """
-        raise NotImplementedError

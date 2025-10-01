@@ -8,9 +8,10 @@ import unify
 import logging
 from .base import BaseActor
 from typing import Optional
+from unity.common.async_tool_loop import SteerableToolHandle
 
 
-class SimulatedActorHandle:
+class SimulatedActorHandle(SteerableToolHandle):
     """
     A lightweight, actor-scoped handle for simulating execution of a series of actions.
 
@@ -21,7 +22,6 @@ class SimulatedActorHandle:
     - stop(reason) -> str
     - result() -> str (async)
     - done() -> bool
-    - valid_tools (property)
     """
 
     def __init__(
@@ -244,21 +244,6 @@ class SimulatedActorHandle:
     def done(self) -> bool:
         return self._done_event.is_set()
 
-    @property
-    def valid_tools(self):
-        if self._description is None:
-            return {}
-        available = {
-            self.stop.__name__: self.stop,
-            self.interject.__name__: self.interject,
-            self.ask.__name__: self.ask,
-        }
-        if self._paused:
-            available[self.resume.__name__] = self.resume
-        else:
-            available[self.pause.__name__] = self.pause
-        return available
-
     # ------------------------
     # Status query helpers
     # ------------------------
@@ -291,6 +276,28 @@ class SimulatedActorHandle:
             return max(0, int(self._steps) - int(self._steps_taken))
         except Exception:
             return None
+
+    # ------------------------
+    # Event APIs required by SteerableToolHandle
+    # ------------------------
+    async def next_clarification(self) -> dict:
+        try:
+            if self._clarification_up_q is not None:
+                msg = await self._clarification_up_q.get()
+                return {"message": msg}
+        except Exception:
+            pass
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        try:
+            if self._clarification_down_q is not None:
+                await self._clarification_down_q.put(answer)
+        except Exception:
+            pass
 
 
 class SimulatedActor(BaseActor):

@@ -76,7 +76,7 @@ class _SimulatedFileHandle(SteerableToolHandle):
     # --------------------------------------------------------------------- #
     async def result(self):
         if self._cancelled:
-            raise asyncio.CancelledError()
+            return "processed stopped early, no result"
 
         # honour pauses injected by an outer loop
         while self._paused and not self._cancelled:
@@ -126,18 +126,6 @@ class _SimulatedFileHandle(SteerableToolHandle):
     def done(self) -> bool:
         return self._done_event.is_set()
 
-    @property
-    def valid_tools(self):
-        tools = {
-            self.interject.__name__: self.interject,
-            self.stop.__name__: self.stop,
-        }
-        if self._paused:
-            tools[self.resume.__name__] = self.resume
-        else:
-            tools[self.pause.__name__] = self.pause
-        return tools
-
     async def ask(self, question: str) -> "SteerableToolHandle":
         q_msg = (
             f"Your only task is to simulate an answer to the following question: {question}\n\n"
@@ -159,6 +147,26 @@ class _SimulatedFileHandle(SteerableToolHandle):
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
         )
+
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:
+        try:
+            if self._clar_up_q is not None:
+                msg = await self._clar_up_q.get()
+                return {"message": msg}
+        except Exception:
+            pass
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        try:
+            if self._clar_down_q is not None:
+                await self._clar_down_q.put(answer)
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -185,6 +193,8 @@ class SimulatedFileManager(BaseFileManager):
         self._simulation_guidance = simulation_guidance
         # In-memory storage for simulated files
         self._files: Dict[str, Dict[str, Any]] = {}
+        # Track protected files by display name (read-only from simulated API)
+        self._protected: set[str] = set()
 
         # Counter for simulated file IDs
         self._next_file_id = 1
@@ -425,6 +435,49 @@ class SimulatedFileManager(BaseFileManager):
 
         return added_files
 
+    # --------------------------------------------------------------------- #
+    # Protected/registration helpers (API parity with real FileManager)     #
+    # --------------------------------------------------------------------- #
+    def register_existing_file(
+        self,
+        path: str,
+        *,
+        display_name: Optional[str] = None,
+        protected: bool = False,
+    ) -> str:
+        """
+        Simulate registering an existing file without copying. Creates a visible
+        entry in the in-memory catalogue and optionally marks it protected.
+        """
+        from pathlib import Path
+
+        p = Path(path)
+        name = display_name or p.name
+        # Ensure unique display name
+        if name in self._files:
+            base = p.stem
+            ext = p.suffix
+            i = 1
+            new_name = name
+            while new_name in self._files:
+                new_name = f"{base} ({i}){ext}"
+                i += 1
+            name = new_name
+
+        self.add_simulated_file(
+            name,
+            records=[{"content": f"Simulated registered file from {str(p)}"}],
+            metadata={"source_path": str(p)},
+            full_text=f"Simulated content from {str(p)}",
+            description=f"Registered file: {name}",
+        )
+        if protected:
+            self._protected.add(name)
+        return name
+
+    def is_protected(self, filename: str) -> bool:
+        return filename in self._protected
+
     def _search_files(
         self,
         *,
@@ -549,8 +602,12 @@ class SimulatedFileManager(BaseFileManager):
     def _delete_file(self, *, file_id: int) -> Dict[str, Any]:
         """Simulate deleting a file record."""
         # Find file by ID (simplified simulation)
-        for filename, file_data in self._files.items():
+        for filename, file_data in list(self._files.items()):
             if file_data.get("file_id", 0) == file_id:
+                if filename in self._protected:
+                    raise PermissionError(
+                        f"'{filename}' is protected and cannot be deleted by FileManager.",
+                    )
                 del self._files[filename]
                 return {
                     "outcome": "file deleted",

@@ -11,7 +11,7 @@ import json
 import os
 import threading
 import functools
-from typing import List, Optional
+from typing import List, Optional, Callable, Any
 
 import unify
 
@@ -83,7 +83,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
     async def result(self):
         """Return the LLM answer (or raise if stopped)."""
         if self._cancelled:
-            raise asyncio.CancelledError()
+            return "processed stopped early, no result"
 
         while self._paused and not self._cancelled:
             await asyncio.sleep(0.05)
@@ -143,17 +143,25 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
     def done(self) -> bool:
         return self._done_event.is_set()
 
-    @property
-    def valid_tools(self):
-        tools = {
-            self.interject.__name__: self.interject,
-            self.stop.__name__: self.stop,
-        }
-        if self._paused:
-            tools[self.resume.__name__] = self.resume
-        else:
-            tools[self.pause.__name__] = self.pause
-        return tools
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:
+        try:
+            if self._clar_up_q is not None:
+                msg = await self._clar_up_q.get()
+                return {"message": msg}
+        except Exception:
+            pass
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        try:
+            if self._clar_down_q is not None:
+                await self._clar_down_q.put(answer)
+        except Exception:
+            pass
 
     async def ask(
         self,
@@ -201,11 +209,19 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        # Optional: customise how the SimulatedActor is constructed per execute()
+        actor_factory: Optional[Callable[..., Any]] = None,
+        actor_steps: Optional[int] = None,
+        actor_duration: Optional[float] = None,
     ) -> None:
         self._description = description
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
+        # Actor configuration (optional)
+        self._actor_factory: Optional[Callable[..., Any]] = actor_factory
+        self._actor_steps: Optional[int] = actor_steps
+        self._actor_duration: Optional[float] = actor_duration
 
         # One shared, *stateful* LLM for *everything*
         self._llm = unify.AsyncUnify(
@@ -410,13 +426,24 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             )
 
         task_description = f"{text} (simulated)"
-        from ..actor.simulated import SimulatedActor
 
-        actor = SimulatedActor(
-            duration=10,
-            _requests_clarification=_requests_clarification,
-            simulation_guidance=self._simulation_guidance,
-        )
+        # Build actor with configured defaults or via a custom factory
+        actor_kwargs = {
+            # Respect scheduler-level defaults when provided
+            "steps": self._actor_steps,
+            "duration": self._actor_duration,
+            "_requests_clarification": _requests_clarification,
+            "simulation_guidance": self._simulation_guidance,
+        }
+        # Drop None values so defaults are not forced
+        actor_kwargs = {k: v for k, v in actor_kwargs.items() if v is not None}
+
+        if self._actor_factory is not None:
+            actor = self._actor_factory(**actor_kwargs)
+        else:
+            from ..actor.simulated import SimulatedActor
+
+            actor = SimulatedActor(**actor_kwargs)
         handle = await actor.act(
             task_description,
             parent_chat_context=parent_chat_context,

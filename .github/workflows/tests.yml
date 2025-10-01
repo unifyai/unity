@@ -57,12 +57,12 @@ on:
         description: "Test session timeout in minutes (for all tests)"
         required: false
         type: number
-        default: 60
+        default: 120
       runner_timeout:
         description: "Runner timeout in minutes"
         required: false
         type: number
-        default: 70
+        default: 130
 
 jobs:
   black:
@@ -104,9 +104,9 @@ jobs:
 
   pytest:
     name: pytest (${{ matrix.test_path }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-8-cores
     environment: unity-testing
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 70 }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 130 }}
     needs: discover
     strategy:
       fail-fast: false
@@ -158,7 +158,10 @@ jobs:
         # 6) Install spaCy model
         uv pip install $(spacy info en_core_web_sm --url)
 
-        # 7) cleanup
+        # 7) install pytest-xdist
+        uv pip install pytest-xdist
+
+        # 8) cleanup
         rm temp_requirements.txt
 
     - name: Restore .cache.ndjson
@@ -176,6 +179,8 @@ jobs:
           --timeout=${{ inputs.test_timeout || 240 }} \
           -p no:warnings \
           -vv \
+          -n auto \
+          --dist=loadfile \
           --durations=${{ inputs.test_show_slowest || 20 }} \
           --log-cli-level=${{ inputs.test_cli_log_level || 'ERROR' }} \
           --log-file-level=${{ inputs.test_log_file_level || 'INFO' }} \
@@ -186,7 +191,7 @@ jobs:
           --session-timeout=$((UNITY_TESTS_SESSION_TIMEOUT * 60)) \
           --test-log-file="tests.log" ${{ matrix.test_path }}
       env:
-        UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 60 }}
+        UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 120 }}
         UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
         UNIFY_TESTS_RAND_PROJ: true
         UNIFY_TESTS_DELETE_PROJ_ON_EXIT: true
@@ -197,7 +202,7 @@ jobs:
         UNIFY_DELETE_CONTEXT_ON_EXIT: false
         UNIFY_OVERWRITE_PROJECT: true
         UNIFY_CACHE_BENCHMARK: true
-        UNIFY_PRETEST_CONTEXT_CREATE: true
+        UNIFY_PRETEST_CONTEXT_CREATE: false
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
         FIRST_NAME: Rick

@@ -16,7 +16,6 @@ from unity.conversation_manager.events import (
     PhoneCallInitiatedEvent,
     PhoneCallStopEvent,
     InterruptEvent,
-    SMSMessageSentEvent,
     WhatsappMessageSentEvent,
 )
 from unity.conversation_manager.prompt_builders import (
@@ -335,7 +334,7 @@ async def _send_email_via_address(
     from_email = os.getenv("ASSISTANT_EMAIL")
 
     print(
-        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}"
+        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}",
     )
     async with aiohttp.ClientSession() as session:
         async with session.post(
@@ -778,6 +777,16 @@ class Call(SteerableToolHandle):
     def done(self) -> bool:
         return self.status == "ended"
 
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        return None
+
 
 class GoogleMeet(SteerableToolHandle):
     def __init__(
@@ -992,3 +1001,13 @@ class GoogleMeet(SteerableToolHandle):
 
     def done(self) -> bool:
         return self.status == "ended"
+
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        return None

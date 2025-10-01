@@ -11,6 +11,7 @@ import inspect
 import json
 import logging
 import sys
+import os
 import textwrap
 import traceback
 from collections import defaultdict, OrderedDict
@@ -3009,27 +3010,6 @@ class HierarchicalPlan(BaseActiveTask):
             )
         return False
 
-    @property
-    def valid_tools(self) -> Dict[str, Callable]:
-        """
-        Gets a dictionary of currently valid user-accessible controls.
-
-        Returns:
-            A mapping of public tool names to their callable methods.
-        """
-        tools = {}
-        potential_tools = [
-            "stop",
-            "pause",
-            "resume",
-            "ask",
-            "interject",
-        ]
-        for method_name in potential_tools:
-            if self._is_valid_method(method_name):
-                tools[method_name] = getattr(self, method_name)
-        return tools
-
 
 class HierarchicalActor(BaseActor):
     """
@@ -3066,6 +3046,8 @@ class HierarchicalActor(BaseActor):
             agent_mode: The agent mode to use. Can be "browser" or "desktop".
             agent_server_url: The URL of the agent server to use. Can be used to connect to a remote client.
         """
+        # todo: enable auto fetch desktop_url later
+        # agent_server_url = self._get_desktop_url(agent_server_url)
         self.function_manager = function_manager or FunctionManager()
         self.action_provider = ActionProvider(
             session_connect_url=session_connect_url,
@@ -3087,6 +3069,67 @@ class HierarchicalActor(BaseActor):
         self.max_local_retries = max_local_retries or 3
         self.timeout = timeout
         self._plan_handles: weakref.WeakSet = weakref.WeakSet()
+
+    def _get_desktop_url(self, agent_server_url: str) -> str:
+        """
+        Resolve desktop_url from the orchestrator by assistant full name.
+
+        Steps:
+        - GET <UNIFY_BASE_URL>/assistant with Authorization: Bearer <UNIFY_KEY>
+        - Match the assistant whose full name matches env ASSISTANT_NAME as "<first> <last>"
+        - Return its "desktop_url" field
+
+        Falls back to the provided agent_server_url on any failure.
+        """
+        orchestra_url = os.getenv("UNIFY_BASE_URL")
+        unify_key = os.getenv("UNIFY_KEY")
+        assistant_name = (os.getenv("ASSISTANT_NAME") or "").strip()
+
+        if not orchestra_url or not unify_key or not assistant_name:
+            return agent_server_url
+
+        # Build request
+        try:
+            import requests  # local import to avoid hard dependency at module import time
+
+            url = f"{orchestra_url.rstrip('/')}/assistant"
+            headers = {"Authorization": f"Bearer {unify_key}"}
+            resp = requests.get(url, headers=headers, timeout=30)
+            if not (200 <= resp.status_code < 300):
+                return agent_server_url
+            try:
+                payload = resp.json()
+            except Exception:
+                return agent_server_url
+
+            # Normalize list
+            assistants = []
+            if isinstance(payload, list):
+                assistants = payload
+            elif isinstance(payload, dict) and isinstance(payload.get("info"), list):
+                assistants = payload.get("info", [])
+            else:
+                return agent_server_url
+
+            # Find by full name
+            for a in assistants:
+                try:
+                    first = (a.get("first_name") or a.get("first") or "").strip()
+                    last = (
+                        a.get("surname") or a.get("last_name") or a.get("last") or ""
+                    ).strip()
+                    full = f"{first} {last}".strip()
+                    if full == assistant_name:
+                        desktop_url = a.get("desktop_url")
+                        if isinstance(desktop_url, str) and desktop_url.strip():
+                            return desktop_url
+                        return agent_server_url
+                except Exception:
+                    continue
+        except Exception:
+            return agent_server_url
+
+        return agent_server_url
 
     def _sanitize_code(self, code: str, plan: HierarchicalPlan) -> str:
         """

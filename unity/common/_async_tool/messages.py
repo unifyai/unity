@@ -227,10 +227,10 @@ async def forward_handle_call(
         return None
 
 
-# Helper: detect helper-tool names (continue_/stop_/pause_/resume_/clarify_/interject_)
+# Helper: detect helper-tool names (wait/stop_/pause_/resume_/clarify_/interject_)
 def _is_helper_tool(name: str) -> bool:
     return (
-        name.startswith("continue_")
+        name == "wait"
         or name.startswith("stop_")
         or name.startswith("pause_")
         or name.startswith("resume_")
@@ -251,8 +251,8 @@ def build_helper_ack_content(name: str, args_json: Any) -> str:
     except Exception:
         payload = {}
 
-    if name.startswith("continue_"):
-        ack_content = "Continue request acknowledged. Still waiting for the original tool call to finish."
+    if name == "wait":
+        ack_content = "Waiting acknowledged. Keeping current tool calls in flight."
     elif name.startswith("stop_"):
         ack_content = "Stop request acknowledged. If the underlying call is still running, it will be stopped."
     elif name.startswith("pause_"):
@@ -388,7 +388,7 @@ async def ensure_placeholders_for_pending(
             continue
         if assistant_msg is not None and _inf.assistant_msg is not assistant_msg:
             continue
-        if _inf.tool_reply_msg or _inf.continue_msg or _inf.clarify_placeholder:
+        if _inf.tool_reply_msg or _inf.clarify_placeholder:
             continue
 
         placeholder = create_tool_call_message(
@@ -441,7 +441,32 @@ async def schedule_missing_for_message(
 
             # Handle dynamic helpers similarly to main path
             if _is_helper_tool(name):
-                # Do not execute helpers during backfill, only acknowledge
+                # Special-case: `wait` should not clutter the transcript.
+                if name == "wait":
+                    # Prune the wait tool call from the assistant message; if it was the
+                    # only tool call and content is empty, drop the assistant message.
+                    try:
+                        tool_calls = asst_msg.get("tool_calls") or []
+                        remaining = [c for c in tool_calls if c.get("id") != cid]
+                        content_present = bool((asst_msg.get("content") or "").strip())
+                        if not remaining:
+                            if not content_present:
+                                try:
+                                    idx_in_log = client.messages.index(asst_msg)
+                                    client.messages.pop(idx_in_log)
+                                except Exception:
+                                    pass
+                            else:
+                                asst_msg.pop("tool_calls", None)
+                        else:
+                            asst_msg["tool_calls"] = remaining
+                    except Exception:
+                        pass
+                    # Mark as handled without emitting any tool reply
+                    scheduled.append(cid)
+                    continue
+
+                # Other helpers: acknowledge but do not execute during backfill
                 try:
                     await acknowledge_helper_call(
                         asst_msg,

@@ -43,7 +43,8 @@ def test_add_single_function_success():
 @pytest.mark.unit
 def test_add_multiple_functions_with_dependency():
     add_src = "def add(a, b):\n    return a + b\n"
-    twice_src = "def twice(x):\n    return add(x, x)\n"
+    # Update to avoid user-defined function calls (now disallowed)
+    twice_src = "def twice(x):\n    return x + x\n"
     fm = FunctionManager()
     result = fm.add_functions(implementations=[add_src, twice_src])
     assert result == {"add": "added", "twice": "added"}
@@ -55,15 +56,13 @@ def test_add_multiple_functions_with_dependency():
     [
         ("def bad(x)\n    return x", "Syntax error"),  # syntax error
         ("    def indented(x):\n        return x", "must start at column 0"),  # indent
-        ("def foo(x):\n    import math\n    return x", "Imports are not allowed"),
+        # Dangerous built-ins are disallowed
+        ("def uses_eval(x):\n    return eval(str(x))", "Dangerous built-in 'eval'"),
+        ("def uses_open():\n    return open('f.txt','w')", "Dangerous built-in 'open'"),
+        # Self-recursive calls (user-defined) are disallowed under current policy
         (
-            "def uses_unknown(x):\n    return unknown(x)",
-            "references unknown function",
-        ),
-        ("def uses_vars(x):\n    return vars(x)", "Built-in 'vars' is not permitted"),
-        (
-            "def uses_math(x):\n    import math\n    return math.sin(x)",
-            "Imports are not allowed",
+            "def recurse(x):\n    return recurse(x-1)",
+            "cannot call user-defined function 'recurse'",
         ),
     ],
 )
@@ -123,20 +122,22 @@ def test_delete_single_function():
 @pytest.mark.unit
 def test_delete_function_with_dependants_cascades():
     add_src = "def add(a, b):\n    return a + b\n"
-    twin_src = "def twin(x):\n    return add(x, x)\n"
+    # No user-defined calls allowed; keep independent
+    twin_src = "def twin(x):\n    return x + x\n"
     fm = FunctionManager()
     fm.add_functions(implementations=[add_src, twin_src])
 
-    # delete `add` AND everything that depends on it
+    # delete `add`; since no dependants are allowed, only `add` is removed
     fm.delete_function(function_id=0, delete_dependents=True)
-    assert fm.list_functions() == {}
+    remaining = fm.list_functions()
+    assert remaining.keys() == {"twin"}
 
 
 @_handle_project
 @pytest.mark.unit
 def test_delete_function_without_cascading_leaves_dependants():
     add_src = "def add(a, b):\n    return a + b\n"
-    twin_src = "def twin(x):\n    return add(x, x)\n"
+    twin_src = "def twin(x):\n    return x + x\n"
     fm = FunctionManager()
     fm.add_functions(implementations=[add_src, twin_src])
 
@@ -159,7 +160,7 @@ def test_search_functions_filtering_across_columns():
         "    return p + tax\n"
     )
     square_src = "def square(x):\n    return x * x\n"
-    use_src = "def apply_price(x):\n    return price_total(x, 0)\n"
+    use_src = "def apply_price(x):\n    return x\n"
     fm = FunctionManager()
     fm.add_functions(implementations=[price_src, square_src, use_src])
 
@@ -172,6 +173,6 @@ def test_search_functions_filtering_across_columns():
     hits = fm.search_functions(filter="name[0:2] == 'sq'")
     assert {h["name"] for h in hits} == {"square"}
 
-    # find callers of `price_total`
-    hits = fm.search_functions(filter="'price_total' in calls")
-    assert {h["name"] for h in hits} == {"apply_price"}
+    # filter by implementation contents (allowed column)
+    hits = fm.search_functions(filter="'return x * x' in implementation")
+    assert {h["name"] for h in hits} == {"square"}

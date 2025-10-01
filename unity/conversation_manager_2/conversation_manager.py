@@ -10,16 +10,18 @@ from pathlib import Path
 
 from pydantic_core import from_json
 
-from unity.conversation_manager_2.debug_logger import log_job_startup
-from unity.events.event_bus import EVENT_BUS
+from unity.conversation_manager_2.debug_logger import log_job_startup, mark_job_done
 from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager_2.actions import (
     RESPONSES_MODEL,
     _send_sms_message_via_number,
-    _send_email_via_address
+    _send_email_via_address,
+    _start_call,
 )
 from unity.conversation_manager_2.state import ConversationManagerState
+from unity.conversation_manager_2.prompt_utils import ThreadMessage
 from unity.helpers import run_script, terminate_process
+from .prompt_utils import ConversationContact
 
 
 import redis.asyncio as redis
@@ -41,15 +43,6 @@ CONV_CONTEXT_LENGTH = 50
 
 with open(Path(__file__).parent.resolve() / "prompts" / "v1.md") as f:
     SYS = f.read()
-
-
-@dataclass
-class Contact:
-    id: str
-    name: str
-    is_boss: bool
-    number: str
-    email: str
 
 
 class ConversationManager:
@@ -124,53 +117,58 @@ class ConversationManager:
 
         # this will probs be retrieved from a database or whatever
         # its hardcoded atm (obviously)
-        self.phone_contacts_map = {
-            "+12697784020": Contact(
-                "1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"
-            ),
-            "+13502381308": Contact(
-                "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
-            ),
-            "+16605382869": Contact("3", "Ved", False, "+16605382869", "ved@unify.ai"),
-        }
-        self.email_contacts_map = {
-            "yasser@unify.ai": Contact(
-                "1", "Yasser Ahmed", True, "+12697784020", "yasser@unify.ai"
-            ),
-            "dan@unify.ai": Contact(
-                "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
-            ),
-            "ved@unify.ai": Contact("3", "Ved", False, "+16605382869", "ved@unify.ai"),
-        }
+        # self.phone_contacts_map = {
+        #     "+12697784020": ConversationContact(
+        #         "1",
+        #         "Yasser Ahmed",
+        #         True,
+        #         "+12697784020",
+        #         "yasser@unify.ai",
+        #     ),
+        #     "+13502381308": ConversationContact(
+        #         "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
+        #     ),
+        #     "+16605382869": ConversationContact(
+        #         "3", "Ved", False, "+16605382869", "ved@unify.ai"
+        #     ),
+        # }
+        # self.email_contacts_map = {
+        #     "yasser@unify.ai": ConversationContact(
+        #         "1",
+        #         "Yasser Ahmed",
+        #         True,
+        #         "+12697784020",
+        #         "yasser@unify.ai",
+        #     ),
+        #     "dan@unify.ai": ConversationContact(
+        #         "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
+        #     ),
+        #     "ved@unify.ai": ConversationContact(
+        #         "3", "Ved", False, "+16605382869", "ved@unify.ai"
+        #     ),
+        # }
+        self.phone_contacts_map = {}
+        self.email_contacts_map = {}
 
         self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
         self.state = ConversationManagerState(
-            self.phone_contacts_map, self.email_contacts_map
+            self.phone_contacts_map,
+            self.email_contacts_map,
+            self.inverted_contacts_map,
         )
         self.chat_history = []
         self.call_proc = None
-
-    # should be re-written to account for the new refactor
-    async def _init_past_events(self):
-        # TODO: this should be generalized to retrieve the entire
-        # state, which inclues the current active tasks
-        # the current active contacts etc
-        print("Retrieving all past events...")
-        bus_events = await EVENT_BUS.search(
-            filter='type == "Comms"',
-            limit=self.conv_context_length,
-        )
-
-        self.past_events = [Event.from_bus_event(e).to_dict() for e in bus_events][::-1]
-        self.is_past_events_init.set()
+        self.call_contact = None
 
     async def run_llm(self):
         now = None
         # this will be used at the end to only filter out notification before now
         # this can be done in a better way but for now, this ~ensures, notifications added mid llm run are not cleared after the run
+        # TODO: abstract the llm stuff in another module to reduce clutter
         if self.state.notifications.notifs:
             now = datetime.now()
         prompt = str(self.state)
+        print(self.state.notifications)
         print(prompt)
         input_message = [{"role": "user", "content": prompt}]
         if self.mode in ["call", "gmeet"]:
@@ -180,13 +178,18 @@ class ConversationManager:
             async with self.openai_client.responses.stream(
                 model="gpt-4.1",
                 instructions=Template(SYS).render(
-                    name=self.user_name, number=self.user_number
+                    name=self.user_name,
+                    number=self.user_number,
                 ),
-                input=self.chat_history + input_message,
+                # input=self.chat_history + input_message,
+                input=input_message,
                 text_format=RESPONSES_MODEL[self.mode],
             ) as stream:
                 first_chunk = True
                 async for event in stream:
+                    if not self.call_proc:
+                        print("call ended, stopping stream")
+                        break
                     if event.type == "response.output_text.delta":
                         # print(event.delta)
                         out += event.delta
@@ -199,7 +202,7 @@ class ConversationManager:
                                 )
                                 first_chunk = False
                             if len(last_phone_utterance) != len(
-                                parsed_out["phone_utterance"]
+                                parsed_out["phone_utterance"],
                             ):
                                 await self.event_broker.publish(
                                     "app:call:response_gen",
@@ -209,22 +212,29 @@ class ConversationManager:
                                             "chunk": parsed_out["phone_utterance"][
                                                 len(last_phone_utterance) :
                                             ],
-                                        }
+                                        },
                                     ),
                                 )
                             last_phone_utterance = parsed_out["phone_utterance"]
             await self.event_broker.publish(
-                "app:call:response_gen", json.dumps({"type": "end_gen"})
+                "app:call:response_gen",
+                json.dumps({"type": "end_gen"}),
             )
-            print(parsed_out)
+            # print(parsed_out)
+            self.state.active_conversations[self.call_contact.id].push_message(
+                "phone",
+                ThreadMessage("You", last_phone_utterance, datetime.now()),
+            )
 
         else:
             out = await self.openai_client.responses.parse(
                 model="gpt-4.1",
                 instructions=Template(SYS).render(
-                    name=self.user_name, number=self.user_number
+                    name=self.user_name,
+                    number=self.user_number,
                 ),
-                input=self.chat_history + input_message,
+                # input=self.chat_history + input_message,
+                input=input_message,
                 text_format=RESPONSES_MODEL[self.mode],
             )
             parsed_out = out.output[0].content[0].parsed.model_dump()
@@ -236,24 +246,169 @@ class ConversationManager:
             for action in parsed_out["actions"]:
                 if action["action_name"] == "send_sms":
                     print("sending sms message")
-                    contact_num_id = action["number_or_id"]
-                    contact = self.phone_contacts_map.get(
-                        contact_num_id
-                    ) or self.inverted_contacts_map.get(contact_num_id)
-                    await _send_sms_message_via_number(
-                        contact.number, action["message"]
+                    contact_num_id = (
+                        action["contact_id"]
+                        if action["contact_id"] != "-1"
+                        else action["number"]
                     )
-                    event = SMSSent(contact=contact.number, content=action["message"])
-                    self.state.push_event(event)
+                    # check if contact exists if not create a new contact
+                    contact = self.phone_contacts_map.get(
+                        contact_num_id,
+                    ) or self.inverted_contacts_map.get(contact_num_id)
+                    print(self.inverted_contacts_map)
+                    print("contact", contact)
+                    if contact is None:
+                        contact = ConversationContact(
+                            id=str(len(self.inverted_contacts_map) + 1),
+                            name=f"{action['first_name']} {action['last_name'] or ''}".strip(),
+                            is_boss=False,
+                            number=action["number"],
+                            email=None,
+                        )
+                        self.phone_contacts_map[contact.number] = contact
+                        self.inverted_contacts_map[contact.id] = contact
+                        self.state.push_notif(
+                            "comms",
+                            f"New contact created and added to contacts `{contact.name}`",
+                            datetime.now(),
+                        )
+
+                    # overwrite contact number
+                    if action.get("number") and contact.number != action.get("number"):
+                        old_num = contact.number
+                        contact.number = action.get("number")
+                        self.phone_contacts_map[contact.number] = contact
+                        self.state.push_notif(
+                            "comms",
+                            f"contact `{contact.name}` number was updated implicitly from {old_num} to {contact.number}",
+                            datetime.now(),
+                        )
+
+                    res = await _send_sms_message_via_number(
+                        contact.number,
+                        action["message"],
+                    )
+                    if not res["success"]:
+                        # self.state.push_notif("comms", f"Attempted to send an SMS to an invalid number {contact.number}", datetime.now())
+                        await self.event_broker.publish(
+                            "app:comms:error",
+                            Error(
+                                f"Attempted to send an SMS to an invalid number {contact.number}. Make sure the number is correct.",
+                            ).to_json(),
+                        )
+
+                    else:
+                        event = SMSSent(
+                            contact=contact.number,
+                            content=action["message"],
+                        )
+                        # self.state.push_event(event)
+                        await self.event_broker.publish(
+                            "app:comms:sms_sent",
+                            event.to_json(),
+                        )
                 elif action["action_name"] == "send_email":
                     print("sending email")
-                    contact_email_id = action["email_or_id"]
-                    contact = self.email_contacts_map.get(contact_email_id) or self.inverted_contacts_map.get(contact_email_id)
-                    await _send_email_via_address(
-                        contact.email, action["subject"], action["body"], action.get("messge_id")
+                    contact_email_id = (
+                        action["contact_id"]
+                        if action["contact_id"] != "-1"
+                        else action["email"]
                     )
-                    event = EmailSent(contact=contact.email, subject=action["subject"], body=action["body"], message_id=action.get("message_id"))
-                    self.state.push_event(event)
+                    contact = self.email_contacts_map.get(
+                        contact_email_id,
+                    ) or self.inverted_contacts_map.get(contact_email_id)
+                    print(self.inverted_contacts_map)
+                    print("contact", contact)
+                    if contact is None:
+                        contact = ConversationContact(
+                            id=str(len(self.inverted_contacts_map) + 1),
+                            name=f"{action['first_name']} {action['last_name'] or ''}".strip(),
+                            is_boss=False,
+                            email=action["email"],
+                        )
+                        self.email_contacts_map[contact.email] = contact
+                        self.inverted_contacts_map[contact.id] = contact
+                        self.state.push_notif(
+                            "comms",
+                            f"New contact created and added to contacts `{contact.name}`",
+                            datetime.now(),
+                        )
+                    if action.get("email") and contact.email != action.get("email"):
+                        print("setting new email....")
+                        old_email = contact.email
+                        contact.email = action.get("email")
+                        self.email_contacts_map[contact.email] = contact
+                        self.state.push_notif(
+                            "comms",
+                            f"contact `{contact.name}` email was updated implicitly from {old_email} to {contact.email}",
+                            datetime.now(),
+                        )
+
+                    await _send_email_via_address(
+                        contact.email,
+                        action["subject"],
+                        action["body"],
+                        action.get("messge_id"),
+                    )
+                    event = EmailSent(
+                        contact=contact.email,
+                        subject=action["subject"],
+                        body=action["body"],
+                        message_id=action.get("message_id"),
+                    )
+                    # self.state.push_event(event)
+                    await self.event_broker.publish(
+                        "app:comms:email_sent",
+                        event.to_json(),
+                    )
+                elif action["action_name"] == "make_call":
+                    print("calling...")
+                    contact_num_id = (
+                        action["contact_id"]
+                        if action["contact_id"] != "-1"
+                        else action["number"]
+                    )
+                    contact = self.phone_contacts_map.get(
+                        contact_num_id,
+                    ) or self.inverted_contacts_map.get(contact_num_id)
+                    print(self.inverted_contacts_map)
+                    print("contact", contact)
+                    if contact is None:
+                        contact = ConversationContact(
+                            id=str(len(self.inverted_contacts_map) + 1),
+                            name=f"{action['first_name']} {action['last_name'] or ''}".strip(),
+                            is_boss=False,
+                            number=action["number"],
+                            email=None,
+                        )
+                        self.phone_contacts_map[contact.number] = contact
+                        self.inverted_contacts_map[contact.id] = contact
+                        self.state.push_notif(
+                            "comms",
+                            f"New contact created and added to contacts `{contact.name}`",
+                            datetime.now(),
+                        )
+                    if action.get("number") and contact.number != action.get("number"):
+                        old_num = contact.number
+                        contact.number = action.get("number")
+                        self.phone_contacts_map[contact.number] = contact
+                        self.state.push_notif(
+                            "comms",
+                            f"contact `{contact.name}` number was updated implicitly from {old_num} to {contact.number}",
+                            datetime.now(),
+                        )
+
+                    res = await _start_call(self.assistant_number, contact.number)
+                    if not res["success"]:
+                        await self.event_broker.publish(
+                            "app:comms:error",
+                            Error(res["error"]).to_json(),
+                        )
+                    else:
+                        await self.event_broker.publish(
+                            "app:comms:call_initiated",
+                            PhoneCallSent(contact=contact.number).to_json(),
+                        )
 
         self.chat_history.append(input_message[0])
         self.chat_history.append({"role": "assistant", "content": out})
@@ -287,10 +442,21 @@ class ConversationManager:
 
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:comms:*", "app:conductor:*")
+            await pubsub.psubscribe(
+                "app:comms:*", "app:conductor:*", "app:managers:output"
+            )
+
+            # fetch contacts if env vars are already set
+            if self.assistant_id and not self.phone_contacts_map:
+                await self.event_broker.publish(
+                    "app:managers:input",
+                    GetContactsInput().to_json(),
+                )
+
             while True:
                 msg = await pubsub.get_message(
-                    timeout=2, ignore_subscribe_messages=True
+                    timeout=2,
+                    ignore_subscribe_messages=True,
                 )
 
                 if msg is not None:
@@ -312,6 +478,30 @@ class ConversationManager:
                     if isinstance(event, Ping):
                         print("ping received - keeping conversation manager alive")
                         continue
+                    elif isinstance(event, StartupEvent):
+                        payload = event.to_dict()["payload"]
+                        self.set_details(payload)
+                        kwargs = {
+                            "job_name": self.job_name,
+                            "timestamp": payload["timestamp"],
+                            "medium": payload["medium"],
+                            "user_id": self.user_id,
+                            "assistant_id": self.assistant_id,
+                            "user_name": self.user_name,
+                            "assistant_name": self.assistant_name,
+                            "user_number": self.user_number,
+                            "user_whatsapp_number": self.user_whatsapp_number,
+                            "assistant_number": self.assistant_number,
+                            "user_email": self.user_email,
+                            "assistant_email": self.assistant_email,
+                        }
+                        asyncio.create_task(
+                            asyncio.to_thread(log_job_startup, **kwargs),
+                        )
+                        await self.event_broker.publish(
+                            "app:managers:input",
+                            GetContactsInput().to_json(),
+                        )
                     await self.handle_event(event)
 
     def set_details(self, payload):
@@ -350,26 +540,7 @@ class ConversationManager:
     async def handle_event(self, event: Event):
         self.state.push_event(event)
 
-        if isinstance(event, StartupEvent):
-            payload = event.to_dict()["payload"]
-            self.set_details(payload)
-            kwargs = {
-                "job_name": self.job_name,
-                "timestamp": payload["timestamp"],
-                "medium": payload["medium"],
-                "user_id": self.user_id,
-                "assistant_id": self.assistant_id,
-                "user_name": self.user_name,
-                "assistant_name": self.assistant_name,
-                "user_number": self.user_number,
-                "user_whatsapp_number": self.user_whatsapp_number,
-                "assistant_number": self.assistant_number,
-                "user_email": self.user_email,
-                "assistant_email": self.assistant_email,
-            }
-            asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
-
-        elif isinstance(event, PhoneCallInitiated):
+        if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
             # start phone call process and wait untils its done, we should probably make sure
             # first that any running llm calls are awaited, and any scheduled llm calls are canceled
             # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
@@ -391,7 +562,7 @@ class ConversationManager:
                 self.call_proc = run_script(
                     str(target_path),
                     "dev",
-                    self.user_number,
+                    event.contact,
                     self.assistant_number,
                     self.voice_provider,
                     self.voice_id if self.voice_id else "None",
@@ -400,14 +571,33 @@ class ConversationManager:
                 )
 
         elif isinstance(event, PhoneCallStarted):
+            while not self.phone_contacts_map:
+                await asyncio.sleep(0.1)
             self.mode = "call"
+            contact = self.phone_contacts_map.get(event.contact)
+            self.call_contact = contact
             await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, PhoneCallEnded):
             self.mode = "text"
-            terminate_process(self.call_proc)
+            self.call_contact = None
+            self.cleanup_call_proc()
 
         elif isinstance(event, PhoneUtterance):
+            await self.schedule_llm_run(0, cancel_running=True)
+
+        elif isinstance(event, GetContactsOutput):
+            conversation_contacts = [
+                ConversationContact(
+                    c["id"], c["name"], c["id"] == 1, c["number"], c["email"]
+                )
+                for c in event.contacts
+            ]
+            self.phone_contacts_map = {c.number: c for c in conversation_contacts}
+            self.email_contacts_map = {c.email: c for c in conversation_contacts}
+            self.inverted_contacts_map = {v.id: v for v in conversation_contacts}
+
+        elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)
 
         else:
@@ -426,6 +616,22 @@ class ConversationManager:
                     f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown...",
                 )
                 self.stop.set()
+
+    def cleanup_call_proc(self):
+        if hasattr(self, "call_proc") and self.call_proc:
+            print(f"Terminating call process")
+            try:
+                terminate_process(self.call_proc)
+                self.call_proc = None
+                print(f"Call process terminated")
+            except Exception as e:
+                print(f"Error terminating call process: {e}")
+
+    def cleanup(self):
+        """Clean up any running call processes"""
+        print(f"Marking job {self.job_name} done")
+        mark_job_done(self.job_name)
+        self.cleanup_call_proc()
 
 
 # think about the end behaviour (how the events should look like in the end)

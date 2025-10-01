@@ -208,6 +208,7 @@ class ToolsData:
         sig_accepts_clar_qs = (
             "clarification_up_q" in params and "clarification_down_q" in params
         ) or has_varkw
+        sig_accepts_progress = "notification_up_q" in params or has_varkw
 
         pause_ev: Optional[asyncio.Event] = None
         if sig_accepts_pause_event:
@@ -222,6 +223,14 @@ class ToolsData:
             clar_down_q = asyncio.Queue()
             extra_kwargs["clarification_up_q"] = clar_up_q
             extra_kwargs["clarification_down_q"] = clar_down_q
+
+        progress_q: Optional[asyncio.Queue[dict]] = None
+        if sig_accepts_progress:
+            progress_q = asyncio.Queue()
+            extra_kwargs["notification_up_q"] = progress_q
+        if sig_accepts_progress:
+            progress_q = asyncio.Queue()
+            extra_kwargs["notification_up_q"] = progress_q
 
         sub_q: Optional[asyncio.Queue[str]] = None
         if sig_accepts_interject_q:
@@ -271,6 +280,7 @@ class ToolsData:
             chat_context=extra_kwargs.get("parent_chat_context"),
             clar_up_queue=clar_up_q,
             clar_down_queue=clar_down_q,
+            notification_queue=progress_q,
             pause_event=pause_ev,
             # Debug helpers for failure logging
             tool_schema=method_to_schema(fn, name),
@@ -315,8 +325,7 @@ class ToolsData:
         3.  Patch or insert the correct **tool** message so the transcript
             stays perfectly chronological.
         4.  Emit the event-bus hook (if configured).
-        5.  Record the payload in ``completed_results`` for later
-            `_continue_<id>` helpers.
+        5.  Record the payload in ``completed_results`` for potential post-hoc lookups.
         6.  Enforce the *max_consecutive_failures* safety valve.
         """
 
@@ -347,18 +356,67 @@ class ToolsData:
             from unity.common.async_tool_loop import SteerableToolHandle
 
             if isinstance(raw, SteerableToolHandle):
-                # If the nested handle explicitly requests pass-through behaviour
-                # expose it directly to the outer caller *immediately* and hand over.
+                # Passthrough: do NOT hand over control to the nested handle.
+                # Keep the outer loop alive. We still want to forward early
+                # interjections and synchronise pause/stop state with the
+                # newly created handle, but without adopting it as a delegate.
                 if (
                     getattr(raw, "__passthrough__", False)
                     and outer_handle_container
                     and outer_handle_container[0] is not None
                 ):
-                    outer_handle_container[0]._adopt(raw)
-                    # Signal to the outer loop that it should stop doing work and
-                    # simply await the delegate's result.
-                    self.handover_delegate = raw
-                    return False  # outer loop will handle return path
+                    try:
+                        _outer = outer_handle_container[0]
+                        # Adopt the handle to enable built-in flushing of any
+                        # pending interjections and to wire through future steering
+                        # calls automatically, while the outer loop keeps running
+                        # (handover/early-return was removed in the new design).
+                        try:
+                            _outer._adopt(raw)  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        # Forward any early interjections that were queued before
+                        # this passthrough handle existed. Do NOT consume the outer
+                        # buffer so that subsequent passthrough handles also receive them.
+                        _early = list(getattr(_outer, "_early_interjects", []))
+                        for _msg in _early:
+                            try:
+                                if isinstance(_msg, dict):
+                                    maybe_coro = raw.interject(  # type: ignore[attr-defined]
+                                        _msg.get("message", ""),
+                                        parent_chat_context_cont=_msg.get(
+                                            "parent_chat_context_continuted",
+                                        ),
+                                    )
+                                else:
+                                    maybe_coro = raw.interject(_msg)  # type: ignore[attr-defined]
+                                if asyncio.iscoroutine(maybe_coro):
+                                    await maybe_coro
+                            except Exception as _exc:
+                                pass
+                        # Synchronise pause/cancel signals with the new handle
+                        try:
+                            if not getattr(
+                                _outer,
+                                "_pause_event",
+                                None,
+                            ).is_set() and hasattr(raw, "pause"):
+                                raw.pause()  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        try:
+                            if getattr(
+                                _outer,
+                                "_cancel_event",
+                                None,
+                            ).is_set() and hasattr(raw, "stop"):
+                                maybe = raw.stop()  # type: ignore[attr-defined]
+                                if asyncio.iscoroutine(maybe):
+                                    asyncio.create_task(maybe)
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
 
                 # ── upgrade interject / clarification flags from handle ─────
                 if hasattr(raw, "interject"):
@@ -374,7 +432,7 @@ class ToolsData:
                         "Both queues are required (or neither).",
                     )
 
-                # 1️⃣ spawn the nested waiter (non-passthrough nested handle)
+                # 1️⃣ spawn the nested waiter (passthrough/non-passthrough nested handle)
                 if inspect.iscoroutinefunction(raw.result):
                     nested_coro = raw.result()  # already a coroutine
                 else:
@@ -411,6 +469,8 @@ class ToolsData:
                     tool_reply_msg=ph,
                     clar_up_queue=h_up_q,
                     clar_down_queue=h_down_q,
+                    notification_queue=info.notification_queue,
+                    is_passthrough=getattr(raw, "__passthrough__", False),
                 )
                 self.save_task(nested_task, metadata)
                 if h_up_q is not None:
@@ -469,31 +529,15 @@ class ToolsData:
                 except Exception:
                     pass
 
-        # 3️⃣  remember so later `_continue_*` helpers can answer instantly
+        # 3️⃣  remember so later lookups can answer instantly
         self.completed_results[call_id] = result
 
         # 4️⃣  update / insert tool-result message --------------------------
         asst_msg = info.assistant_msg
-        continue_msg = info.continue_msg
         clarify_ph = info.clarify_placeholder
         tool_reply_msg = info.tool_reply_msg
 
-        if continue_msg is not None:
-            if _at_tail(continue_msg):  # ✅ safe to overwrite
-                continue_msg["content"] = result
-                continue_msg["name"] = (
-                    f"{fn}({arg}) completed successfully, "
-                    "the return values are in the `content` field below."
-                )
-                tool_msg = continue_msg
-            else:  # 🆕 keep history stable
-                tool_msg = await self._emit_completion_pair(
-                    result,
-                    call_id,
-                    msg_dispatcher,
-                )
-
-        elif clarify_ph is not None:
+        if clarify_ph is not None:
             if _at_tail(clarify_ph):
                 clarify_ph["content"] = result
                 tool_msg = clarify_ph
@@ -506,9 +550,24 @@ class ToolsData:
 
         elif tool_reply_msg is not None:
             if _at_tail(tool_reply_msg):
-                tool_reply_msg["content"] = result
-                tool_msg = tool_reply_msg
+                # If the current tail tool message looks like a progress payload,
+                # do NOT emit another tool reply for the same call_id – instead
+                # create a synthetic assistant→tool pair to carry the final result.
+                try:
+                    _content_str = tool_reply_msg.get("content") or ""
+                except Exception:
+                    _content_str = ""
+                if isinstance(_content_str, str) and '"tool"' in _content_str:
+                    tool_msg = await self._emit_completion_pair(
+                        result,
+                        call_id,
+                        msg_dispatcher,
+                    )
+                else:
+                    tool_reply_msg["content"] = result
+                    tool_msg = tool_reply_msg
             else:
+                # Not at tail: emit a synthetic assistant→tool pair to carry the result
                 tool_msg = await self._emit_completion_pair(
                     result,
                     call_id,
@@ -539,7 +598,7 @@ class ToolsData:
                 ]
             self._logger.info(
                 f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
-                prefix=f"🛠️  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
+                prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
             )
 
         # 6️⃣  failure guard -------------------------------------------------

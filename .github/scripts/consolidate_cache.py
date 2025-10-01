@@ -47,7 +47,9 @@ def concatenate_files(
     # 2) Read all diff files
     diff_lines: List[str] = []
     for input_path in input_files:
-        diff_lines.extend(_read_nonempty_lines(input_path))
+        non_empty_lines = _read_nonempty_lines(input_path)
+        diff_lines.extend(non_empty_lines)
+        print(f"Found {len(non_empty_lines)} diff lines in {input_path}")
 
     # 3) Merge uniquely while preserving first-seen order: base first, then new diffs
     merged_lines = _merge_unique_preserve_order(base_lines, diff_lines)

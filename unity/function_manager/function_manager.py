@@ -1,16 +1,20 @@
 import ast
 import inspect
-import threading
+import functools
+import os
+from pathlib import Path
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column, list_private_fields
 from ..common.sandbox_utils import create_sandbox_globals
 from .types.function import Function
+from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
+from ..file_manager.file_manager import FileManager
 
 
-class FunctionManager(threading.Thread):
+class FunctionManager(BaseFunctionManager):
     """
     Keeps a catalogue of user-supplied Python functions that can reference
     one another.  Each function is stored in the `unify` backend so that it
@@ -23,8 +27,15 @@ class FunctionManager(threading.Thread):
     # ------------------------------------------------------------------ #
     _FUNC_EMB = "_function_embedding"
 
-    def __init__(self, *, daemon: bool = True, traced: bool = False) -> None:
-        super().__init__(daemon=daemon)
+    def __init__(
+        self,
+        *,
+        daemon: bool = True,
+        traced: bool = False,
+        file_manager: Optional[FileManager] = None,
+    ) -> None:
+        # No thread behavior; keep parameter for backward compatibility
+        self._daemon = daemon
         # ToDo: expose tools to LLM once needed
         self._tools: Dict[str, callable] = {}
 
@@ -65,6 +76,32 @@ class FunctionManager(threading.Thread):
         # Add tracing
         if traced:
             self = unify.traced(self)
+
+        # ------------------------------------------------------------------ #
+        #  File system mirroring (functions folder under FileManager tmp)     #
+        # ------------------------------------------------------------------ #
+        try:
+            # Resolve a FileManager instance (DI preferred)
+            self._fm: Optional[FileManager] = (
+                file_manager if file_manager is not None else FileManager()
+            )
+        except Exception:
+            self._fm = None
+
+        self._functions_dir: Optional[Path] = None
+        if self._fm is not None:
+            try:
+                # Create <tmp>/functions
+                tmp_dir = getattr(self._fm, "_tmp_dir", None)
+                if isinstance(tmp_dir, Path):
+                    functions_dir = tmp_dir / "functions"
+                    functions_dir.mkdir(parents=True, exist_ok=True)
+                    self._functions_dir = functions_dir
+                    # Bootstrap: mirror existing functions from context to disk (idempotent)
+                    self._bootstrap_functions_to_disk()
+            except Exception:
+                # Non-fatal – tests without FileManager still pass
+                self._functions_dir = None
 
     @property
     def _dangerous_builtins(self) -> Set[str]:
@@ -222,24 +259,91 @@ class FunctionManager(threading.Thread):
         return logs[0]
 
     # ------------------------------------------------------------------ #
+    #  Filesystem helpers                                                #
+    # ------------------------------------------------------------------ #
+
+    def _function_filename(self, name: str) -> str:
+        """Return canonical filename for a function (no extensions in name)."""
+        safe = name.strip().replace(os.sep, "_")
+        return f"{safe}.py"
+
+    def _function_path(self, name: str) -> Optional[Path]:
+        if self._functions_dir is None:
+            return None
+        return self._functions_dir / self._function_filename(name)
+
+    def _write_function_file(self, name: str, source: str) -> Optional[Path]:
+        """Atomically write the function source into the functions folder."""
+        p = self._function_path(name)
+        if p is None:
+            return None
+        try:
+            tmp = p.with_suffix(p.suffix + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(source)
+            os.replace(tmp, p)
+            return p
+        except Exception:
+            return None
+
+    def _register_function_file(self, name: str, path: Path) -> None:
+        """Register function file with FileManager as protected and visible."""
+        if self._fm is None:
+            return
+        display = f"functions/{path.name}"
+        try:
+            # Idempotent: if already registered under same display, keep it
+            if not self._fm.exists(display):
+                self._fm.register_existing_file(
+                    path,
+                    display_name=display,
+                    protected=True,
+                )
+        except Exception:
+            # Best-effort registration only
+            pass
+
+    def _bootstrap_functions_to_disk(self) -> None:
+        """Ensure all existing functions have a file on disk and are registered."""
+        if self._functions_dir is None:
+            return
+        try:
+            logs = unify.get_logs(
+                context=self._ctx,
+                exclude_fields=list_private_fields(self._ctx),
+            )
+            for lg in logs:
+                name = lg.entries.get("name")
+                impl = lg.entries.get("implementation") or ""
+                if not isinstance(name, str) or not impl:
+                    continue
+                p = self._function_path(name)
+                if p is None:
+                    continue
+                if not p.exists():
+                    wrote = self._write_function_file(name, impl)
+                    if wrote is not None:
+                        self._register_function_file(name, wrote)
+                else:
+                    # Ensure it's registered as protected even if file already exists
+                    self._register_function_file(name, p)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ #
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
     # 1. Add / register ------------------------------------------------- #
 
+    @functools.wraps(BaseFunctionManager.add_functions, updated=())
     def add_functions(
         self,
         *,
         implementations: Union[str, List[str]],
         preconditions: Optional[Dict[str, Dict]] = None,
     ) -> Dict[str, str]:
-        """
-        Validate, compile and persist one or more function implementations.
 
-        Returns
-        -------
-        Dict[str, str]  –  ``{<name>: "added" | "error: <msg>"}``
-        """
         if preconditions is None:
             preconditions = {}
         if isinstance(implementations, str):
@@ -287,26 +391,22 @@ class FunctionManager(threading.Thread):
             )
 
             results[name] = "added"
+
+            # Mirror to filesystem and register with FileManager (protected)
+            p = self._write_function_file(name, source)
+            if p is not None:
+                self._register_function_file(name, p)
         return results
 
     # 2. Listing -------------------------------------------------------- #
 
+    @functools.wraps(BaseFunctionManager.list_functions, updated=())
     def list_functions(
         self,
         *,
         include_implementations: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
-        """
-        Return a dictionary keyed by *function name*.
 
-        Each value contains:
-
-        * **function_id** – unique identifier for the function
-        * **argspec** – full signature, e.g. ``(x: int, y: int) -> int``
-        * **docstring** – cleaned docstring or empty string
-        * **implementation** – full source code (only when
-          ``include_implementations=True``)
-        """
         entries: Dict[str, Dict[str, Any]] = {}
         for log in unify.get_logs(
             context=self._ctx,
@@ -322,16 +422,8 @@ class FunctionManager(threading.Thread):
             entries[log.entries["name"]] = data
         return entries
 
+    @functools.wraps(BaseFunctionManager.get_precondition, updated=())
     def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieves the stored precondition for a given function.
-
-        Args:
-            function_name: The name of the function.
-
-        Returns:
-            The precondition dictionary or None if not found or not applicable.
-        """
         logs = unify.get_logs(
             context=self._ctx,
             filter=f"name == '{function_name}'",
@@ -345,17 +437,14 @@ class FunctionManager(threading.Thread):
 
     # 3. Deletion ------------------------------------------------------- #
 
+    @functools.wraps(BaseFunctionManager.delete_function, updated=())
     def delete_function(
         self,
         *,
         function_id: int,
         delete_dependents: bool = True,
     ) -> Dict[str, str]:
-        """
-        Delete a function by *id*.  If `delete_dependents` is ``True`` (the
-        default) then every function that calls the target is recursively
-        removed as well.
-        """
+
         log = self._get_log_by_function_id(function_id=function_id)
         target_name = log.entries["name"]
 
@@ -381,6 +470,7 @@ class FunctionManager(threading.Thread):
 
     # 4. Search --------------------------------------------------------- #
 
+    @functools.wraps(BaseFunctionManager.search_functions, updated=())
     def search_functions(
         self,
         *,
@@ -388,15 +478,7 @@ class FunctionManager(threading.Thread):
         offset: int = 0,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """
-        Flexible, *Python-expression* filtering over every stored column
-        (`name`, `argspec`, `docstring`, `calls`, …).
 
-        Examples
-        --------
-        >>> mgr.search_functions(filter="'price' in docstring and 'sum' in calls")
-        >>> mgr.search_functions(filter="name.startswith('get_')")
-        """
         logs = unify.get_logs(
             context=self._ctx,
             filter=filter,
@@ -405,6 +487,102 @@ class FunctionManager(threading.Thread):
             exclude_fields=list_private_fields(self._ctx),
         )
         return [lg.entries for lg in logs]
+
+    # ------------------------------------------------------------------ #
+    #  Accessors and disk → context sync                                 #
+    # ------------------------------------------------------------------ #
+
+    def get_function_file_path(self, name: str) -> Optional[str]:
+        p = self._function_path(name)
+        return str(p) if p is not None else None
+
+    def list_function_files(self) -> Dict[str, str]:
+        out: Dict[str, str] = {}
+        try:
+            logs = unify.get_logs(
+                context=self._ctx,
+                exclude_fields=list_private_fields(self._ctx),
+            )
+            for lg in logs:
+                nm = lg.entries.get("name")
+                if not isinstance(nm, str):
+                    continue
+                p = self._function_path(nm)
+                if p is not None:
+                    out[nm] = str(p)
+        except Exception:
+            pass
+        return out
+
+    def sync_from_disk(self, *, prefer_file_when_newer: bool = True) -> List[str]:
+        """
+        Reconcile function files under functions/ with the context rows.
+
+        Policy: if the on-disk file differs from the stored implementation, update
+        the context to the file contents. Returns the list of function names updated.
+        """
+        updated: List[str] = []
+        if self._functions_dir is None:
+            return updated
+        try:
+            # Build a map of name→(log_id, impl)
+            rows = unify.get_logs(
+                context=self._ctx,
+                exclude_fields=list_private_fields(self._ctx),
+            )
+            name_to_log: Dict[str, Tuple[int, str]] = {}
+            for lg in rows:
+                nm = lg.entries.get("name")
+                if isinstance(nm, str):
+                    name_to_log[nm] = (lg.id, lg.entries.get("implementation") or "")
+
+            for name, (log_id, stored_impl) in name_to_log.items():
+                p = self._function_path(name)
+                if p is None or not p.exists():
+                    continue
+                try:
+                    file_text = p.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                if file_text.strip() == (stored_impl or "").strip():
+                    # Ensure it's registered as protected
+                    self._register_function_file(name, p)
+                    continue
+
+                # Parse and validate file to rebuild signature/docstring/calls
+                try:
+                    nm2, tree, node, _src = self._parse_implementation(file_text)
+                    if nm2 != name:
+                        # Skip mismatched names; keep 1:1 name↔file mapping
+                        continue
+                    namespace = create_sandbox_globals()
+                    exec(file_text, namespace)
+                    fn_obj = namespace[name]
+                    signature = str(inspect.signature(fn_obj))
+                    docstring = inspect.getdoc(fn_obj) or ""
+                    calls = list(self._collect_function_calls(node))
+                    embedding_text = f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
+                    # Update unify row
+                    unify.update_logs(
+                        logs=[log_id],
+                        context=self._ctx,
+                        entries={
+                            "argspec": signature,
+                            "docstring": docstring,
+                            "implementation": file_text,
+                            "calls": calls,
+                            "embedding_text": embedding_text,
+                        },
+                        overwrite=True,
+                    )
+                    # Ensure it's registered as protected
+                    self._register_function_file(name, p)
+                    updated.append(name)
+                except Exception:
+                    continue
+        except Exception:
+            return updated
+        return updated
 
     # 5. Semantic Search ------------------------------------------------ #
     def _ensure_function_embedding(self) -> None:
@@ -417,27 +595,14 @@ class FunctionManager(threading.Thread):
             source_column="embedding_text",
         )
 
+    @functools.wraps(BaseFunctionManager.search_functions_by_similarity, updated=())
     def search_functions_by_similarity(
         self,
         *,
         query: str,
         n: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Search for functions by semantic similarity.
 
-        Parameters
-        ----------
-        query : str
-            The natural language query to search for.
-        n : int, default 5
-            The number of similar functions to return.
-
-        Returns
-        -------
-        List[Dict[str, Any]]
-            A list of the n most similar functions.
-        """
         self._ensure_function_embedding()
         escaped_query = query.replace("'", "\\'")
         logs = unify.get_logs(

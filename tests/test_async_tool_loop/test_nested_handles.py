@@ -12,7 +12,12 @@ from tests.helpers import SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
+    _wait_for_assistant_call_prefix,
+    _wait_for_tool_message_prefix,
 )
+
+
+# (prefix-based wait helpers moved to tests/test_async_tool_loop/async_helpers.py)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -177,7 +182,7 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
         "1️⃣  Call `outer_tool` with no arguments.\n"
         "2️⃣  If the *user* later says **stop**, call the appropriate "
         "`_stop_…` helper to stop that running call.\n"
-        "2️⃣b Immediately after that, call the corresponding `continue_…` helper to keep waiting if needed.\n"
+        "2️⃣b Immediately after that, call the `wait` helper to keep waiting if needed.\n"
         "3️⃣  Do not produce any other reply until the stop has taken effect; then reply exactly the single line 'outer stopped'.",
     )
 
@@ -286,7 +291,7 @@ async def test_interject_nested_handle(monkeypatch):
         "1️⃣  Call `outer_tool`.\n"
         "2️⃣  When the *user* says 'switch to dogs', call the helper whose "
         'name starts with `_interject_` and pass `{ "content": "dogs" }`.\n'
-        "2️⃣b Immediately call the corresponding `continue_…` helper to keep waiting.\n"
+        "2️⃣b If waiting is still needed, call the `wait` helper; otherwise continue.\n"
         "3️⃣  Do not produce any other reply until the work completes.\n"
         "4️⃣  Finally, reply with 'outer done'.",
     )
@@ -492,7 +497,7 @@ async def test_clarification_nested_handle():
     )
     client.set_system_message(
         "Call `outer_tool`.  When the tool asks a question, answer **only** with 'blue' via the provided helper.\n"
-        "Immediately call the corresponding `continue_…` helper to keep waiting and do not reply to the user yet.\n"
+        "If waiting is still needed, call the `wait` helper; do not reply to the user yet.\n"
         "Finally say 'all done'.",
     )
 
@@ -509,6 +514,94 @@ async def test_clarification_nested_handle():
     # Assertions ---------------------------------------------------------
     assert "all done" in final_reply.strip().lower()
     assert exec_log == ["blue"], "Inner loop must receive 'blue' from outer helper."
+
+
+@pytest.mark.asyncio
+async def test_notification_nested_handle():
+    """
+    Inner tool emits notifications via ``notification_up_q``; the outer loop must
+    surface these as notification events while continuing to completion.
+
+    We assert that a notification event is observed via ``handle.next_notification()`` and
+    that the conversation completes with the instructed final reply.
+    """
+
+    # ── inner tool that emits progress updates ───────────────────────────
+    async def inner_progress(
+        *,
+        notification_up_q: asyncio.Queue | None = None,
+    ) -> str:
+        if notification_up_q is None:
+            raise RuntimeError("notification queue missing")
+        await notification_up_q.put({"message": "Inner loop: preparing widget"})
+        await asyncio.sleep(0)
+        await notification_up_q.put({"message": "Inner loop: halfway"})
+        return "✅ inner finished"
+
+    inner_progress.__name__ = "inner_progress"
+    inner_progress.__qualname__ = "inner_progress"
+
+    # ── outer tool launches a nested loop and bridges progress via parent's queue ──
+    async def outer_tool(
+        *,
+        notification_up_q: asyncio.Queue | None = None,
+    ) -> AsyncToolUseLoopHandle:
+        inner_client = unify.AsyncUnify(
+            "gpt-4o@openai",
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
+        )
+        inner_client.set_system_message(
+            "1️⃣  Call `inner_progress`.\n"
+            "2️⃣  Surface any internal progress updates as they occur.\n"
+            "3️⃣  Reply with exactly 'done'.",
+        )
+
+        async def inner_bridge() -> str:
+            return await inner_progress(notification_up_q=notification_up_q)
+
+        return start_async_tool_use_loop(
+            client=inner_client,
+            message="start",
+            tools={"inner_progress": inner_bridge},
+            log_steps=False,
+        )
+
+    outer_tool.__name__ = "outer_tool"
+    outer_tool.__qualname__ = "outer_tool"
+
+    # ── top-level loop – must surface progress then finish ─────────────────
+    client = unify.AsyncUnify(
+        "gpt-4o@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. Perform the steps exactly:\n"
+        "1️⃣  Call `outer_tool` with no arguments.\n"
+        "2️⃣  If any internal work makes progress, you may acknowledge it briefly but continue to completion.\n"
+        "3️⃣  Once it is completed, respond with exactly 'outer done'.",
+    )
+
+    handle = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        log_steps=False,
+        max_steps=10,
+        timeout=240,
+    )
+
+    # Receive a bubbled notification event from the INNER loop via the outer tool
+    event = await asyncio.wait_for(handle.next_notification(), timeout=60)
+    assert event["type"] == "notification"
+    assert event["tool_name"] == "outer_tool"
+    if isinstance(event.get("message"), str):
+        assert any(k in event["message"].lower() for k in ["prepar", "halfway", "inner loop"])  # type: ignore[arg-type]
+
+    # Finish
+    final = await asyncio.wait_for(handle.result(), timeout=120)
+    assert final.strip().lower() == "outer done"
 
 
 @pytest.mark.asyncio
@@ -563,7 +656,7 @@ async def test_handle_interject_method_appears_late():
         "the helper whose name starts with `_interject_` *exactly once*, "
         'passing `{ "content": "ping" }`.\n'
         "3️⃣  Do **NOT** reply 'done' until after the helper returns.\n"
-        "3️⃣b After calling the interject helper, call the corresponding `continue_…` helper to keep waiting if the tool is still running.\n"
+        "3️⃣b After calling the interject helper, call the `wait` helper to keep waiting if the tool is still running.\n"
         "4️⃣  Finally, respond with the single word **done**.",
     )
 
@@ -628,7 +721,7 @@ async def test_pause_nested_loop_calls_pause():
         "1️⃣  Call `dummy_long_job`.\n"
         "2️⃣  When the *user* says **pause**, call the helper whose name "
         "starts with `_pause_`.\n"
-        "2️⃣b Immediately call the corresponding `continue_…` helper to keep waiting.\n"
+        "2️⃣b If waiting is still needed, call the `wait` helper.\n"
         "3️⃣  Keep waiting for the job to finish and do not produce any other reply; then reply with 'paused done'.",
     )
 
@@ -682,16 +775,20 @@ async def test_resume_nested_loop_calls_resume():
             stop_event=asyncio.Event(),
         )
 
-        # ── public pause / resume on the handle ──────────────────────────────
-        async def _pause(self):
-            if gate.is_set():  # already running → switch to paused
-                gate.clear()
-                counts["pause"] += 1
+        # Drive both the runner and dynamic-tool exposure from the same event
+        handle._pause_event = gate  # let default .pause/.resume toggle the same gate
 
-        async def _resume(self):
-            if not gate.is_set():  # currently paused → resume
-                gate.set()
-                counts["resume"] += 1
+        # Count calls but preserve default semantics that flip _pause_event
+        orig_pause = handle.pause
+        orig_resume = handle.resume
+
+        def _pause(self):
+            counts["pause"] += 1
+            return orig_pause()
+
+        def _resume(self):
+            counts["resume"] += 1
+            return orig_resume()
 
         setattr(handle, "pause", _pause.__get__(handle, AsyncToolUseLoopHandle))
         setattr(handle, "resume", _resume.__get__(handle, AsyncToolUseLoopHandle))
@@ -708,8 +805,7 @@ async def test_resume_nested_loop_calls_resume():
     client.set_system_message(
         "1️⃣  Call `dummy_job`.\n"
         "2️⃣  When the *user* says **hold on**, call the `_pause_…` helper.\n"
-        "3️⃣  When the *user* then says **continue**, call the `_resume_…` helper.\n"
-        "3️⃣b Use the appropriate `continue_…` helper to keep waiting while the job runs.\n"
+        "3️⃣  When the *user* then says **resume**, call the `_resume_…` helper.\n"
         "4️⃣  Finally reply **only** with 'all done' once the job completes.",
     )
 
@@ -721,10 +817,18 @@ async def test_resume_nested_loop_calls_resume():
         timeout=300,
     )
 
-    await asyncio.sleep(4)
+    # Ensure the tool has been scheduled so helpers exist
+    await _wait_for_tool_request(client, "dummy_job")
+
+    # Pause deterministically
     await h.interject("hold on")
-    await asyncio.sleep(4)
-    await h.interject("continue")
+    await _wait_for_assistant_call_prefix(client, "pause")
+    await _wait_for_tool_message_prefix(client, "pause ")
+
+    # Resume deterministically
+    await h.interject("resume")
+    await _wait_for_assistant_call_prefix(client, "resume")
+    await _wait_for_tool_message_prefix(client, "resume ")
 
     final = await h.result()
 
@@ -751,11 +855,15 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     original_resume = AsyncToolUseLoopHandle.resume
 
     def patched_pause(self):
-        counts["pause"] += 1
+        # Count only pauses invoked on the root outer handle; nested handles are propagated and should not increment here
+        if getattr(self, "_is_root_handle", False):
+            counts["pause"] += 1
         return original_pause(self)
 
     def patched_resume(self):
-        counts["resume"] += 1
+        # Count only resumes invoked on the root outer handle; nested handles are propagated and should not increment here
+        if getattr(self, "_is_root_handle", False):
+            counts["resume"] += 1
         return original_resume(self)
 
     monkeypatch.setattr(AsyncToolUseLoopHandle, "pause", patched_pause, raising=True)
@@ -771,6 +879,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
             task=asyncio.create_task(_run()),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
     long_tool.__name__ = "long_tool"
@@ -784,7 +893,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     )
     client.set_system_message(
         "1️⃣ Call `long_tool`.\n"
-        "2️⃣ Wait for completion (use a `continue_…` helper if exposed) and do not produce any other reply.\n"
+        "2️⃣ Wait for completion (use the `wait` helper if exposed) and do not produce any other reply.\n"
         "3️⃣ Reply with exactly **finished**.",
     )
 
@@ -920,7 +1029,7 @@ async def test_dynamic_handle_public_method():
         "2️⃣  When the *user* asks **progress?**, call the helper whose name "
         "starts with `ask_` exactly once.\n"
         "3️⃣  After calling the `ask_…` helper, do not reply to the user yet. "
-        "Immediately call the helper whose name starts with `continue_` to keep waiting.\n"
+        "If waiting is still needed, call the `wait` helper.\n"
         "4️⃣  Only once the computation finishes, answer **only** with 'all done'",
     )
 
@@ -1025,9 +1134,9 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     # Now stop the OUTER loop directly – should propagate to inner
     outer.stop("test-stop")
 
-    # The outer handle result should raise (non-persist cancel mode)
-    with pytest.raises(asyncio.CancelledError):
-        await outer.result()
+    # The outer handle now returns a standardized notice instead of raising
+    final = await outer.result()
+    assert final == "processed stopped early, no result"
 
     # Assert that the inner handle's stop() was invoked exactly once
     assert stop_calls["count"] == 1, "inner handle stop() was not propagated"

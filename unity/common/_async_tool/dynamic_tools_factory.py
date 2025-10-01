@@ -87,17 +87,30 @@ class DynamicToolFactory:
         fn.__qualname__ = func_name[:64]
         self.dynamic_tools[func_name.lstrip("_")] = fn
 
-    def _create_continue_tool(
-        self,
-        tool_context: _ToolContext,
-    ) -> None:
-        async def _continue() -> Dict[str, str]:
-            return {"status": "continue", "call_id": tool_context.call_id}
+    def _create_wait_tool(self) -> None:
+        """
+        Expose a single global helper tool `wait` that performs a no-op.
+
+        Purpose
+        -------
+        Use this when you do not want to take any new action at this time.
+        Calling `wait` explicitly instructs the agent to keep waiting for
+        any currently running tool calls to finish (or for an interjection
+        to arrive) before deciding whether to act next. It does not start,
+        stop, pause, resume, or modify any in-flight work.
+        """
+
+        async def _wait() -> Dict[str, str]:
+            return {"status": "waiting"}
 
         self._register_tool(
-            func_name=f"continue_{tool_context.fn_name}_{tool_context.safe_call_id}",
-            fallback_doc=f"Continue waiting for {tool_context.fn_name}({tool_context.arg_repr}).",
-            fn=_continue,
+            func_name="wait",
+            fallback_doc=(
+                "No-op: keep waiting on the currently running tool calls. "
+                "Use this when you don't need to start/stop/pause/resume anything right now; "
+                "decide what to do after the next tool completes or a new interjection arrives."
+            ),
+            fn=_wait,
         )
 
     def _create_stop_tool(
@@ -289,13 +302,6 @@ class DynamicToolFactory:
     def _expose_public_methods(self, tool_context: _ToolContext, handle: Any):
         public_methods = self._discover_custom_public_methods(handle)
 
-        # ── honour handle.valid_tools, if present ──────────────
-        if hasattr(handle, "valid_tools"):
-            allowed: set[str] = set(getattr(handle, "valid_tools", []))
-            public_methods = {
-                name: bound for name, bound in public_methods.items() if name in allowed
-            }
-
         # Identify write-only helpers declared by the handle
         write_only_set: set[str] = set()
         with suppress(Exception):
@@ -439,9 +445,6 @@ class DynamicToolFactory:
             safe_call_id=_safe_call_id,
         )
 
-        if not info.waiting_for_clarification:
-            self._create_continue_tool(create_tool_ctx)
-
         self._create_stop_tool(
             create_tool_ctx,
             task,
@@ -458,23 +461,47 @@ class DynamicToolFactory:
         if info.clar_up_queue is not None:
             self._create_clarify_tool(create_tool_ctx)
 
-        can_pause = (handle_available and hasattr(handle, "pause")) or task_pause_event
-        if can_pause:
-            self._create_pause_tool(
-                create_tool_ctx,
-                handle,
-                task_pause_event,
-            )
+        # Determine capability and current pause state; expose only one helper at a time
+        cap_pause = (handle_available and hasattr(handle, "pause")) or (
+            task_pause_event is not None
+        )
+        cap_resume = (handle_available and hasattr(handle, "resume")) or (
+            task_pause_event is not None
+        )
 
-        can_resume = (
-            handle_available and hasattr(handle, "resume")
-        ) or task_pause_event
-        if can_resume:
-            self._create_resume_tool(
-                create_tool_ctx,
-                handle,
-                task_pause_event,
-            )
+        paused_state = None
+        try:
+            # Prefer downstream handle's pause event if available
+            pev = getattr(handle, "_pause_event", None) if handle_available else None
+            if pev is not None and hasattr(pev, "is_set"):
+                paused_state = not pev.is_set()  # running ⇢ set, paused ⇢ cleared
+        except Exception:
+            pass
+        if (
+            paused_state is None
+            and task_pause_event is not None
+            and hasattr(task_pause_event, "is_set")
+        ):
+            try:
+                paused_state = not task_pause_event.is_set()
+            except Exception:
+                paused_state = None
+
+        # Default to "running" when unknown → expose pause first
+        if paused_state is True:
+            if cap_resume:
+                self._create_resume_tool(
+                    create_tool_ctx,
+                    handle,
+                    task_pause_event,
+                )
+        else:
+            if cap_pause:
+                self._create_pause_tool(
+                    create_tool_ctx,
+                    handle,
+                    task_pause_event,
+                )
 
         # 7.  expose *all* other public methods of the handle
         if handle_available:
@@ -483,3 +510,6 @@ class DynamicToolFactory:
     def generate(self):
         for task in list(self.tools_data.pending):
             self._process_task(task)
+        # Expose a single global `wait` helper when anything is in flight
+        if self.tools_data.pending:
+            self._create_wait_tool()

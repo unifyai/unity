@@ -8,12 +8,15 @@ from typing import Any, Dict, List, Optional
 
 import unify
 from .prompt_builders import build_ask_prompt, build_simulated_method_prompt
+from ..common.simulated import mirror_web_searcher_tools
+from .base import BaseWebSearcher
 from ..common.async_tool_loop import SteerableToolHandle
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
+import functools
 
 
 class _SimulatedWebSearcherHandle(SteerableToolHandle):
@@ -57,7 +60,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle):
 
     async def result(self):
         if self._cancelled:
-            raise asyncio.CancelledError()
+            return "processed stopped early, no result"
 
         while self._paused and not self._cancelled:
             await asyncio.sleep(0.05)
@@ -107,20 +110,49 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle):
     def done(self) -> bool:  # type: ignore[override]
         return self._done.is_set()
 
-    @property
-    def valid_tools(self):
-        tools = {
-            self.interject.__name__: self.interject,
-            self.stop.__name__: self.stop,
-        }
-        if self._paused:
-            tools[self.resume.__name__] = self.resume
-        else:
-            tools[self.pause.__name__] = self.pause
-        return tools
+    async def ask(self, question: str) -> "SteerableToolHandle":
+        q_msg = (
+            f"Your only task is to simulate an answer to the following question: {question}\n\n"
+            "However, there is also an ongoing simulated process which had the instructions given below. "
+            "Please make your answer realistic and conceivable given the provided context of the simulated task."
+        )
+        follow_up_prompt = "\n\n---\n\n".join(
+            [q_msg]
+            + [self._initial]
+            + self._extra_msgs
+            + [f"Question to answer (as a reminder!): {question}"],
+        )
+        return _SimulatedWebSearcherHandle(
+            self._llm,
+            follow_up_prompt,
+            _return_reasoning_steps=self._want_steps,
+            _requests_clarification=False,
+            clarification_up_q=self._clar_up_q,
+            clarification_down_q=self._clar_down_q,
+        )
+
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:
+        try:
+            if self._clar_up_q is not None:
+                msg = await self._clar_up_q.get()
+                return {"message": msg}
+        except Exception:
+            pass
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        try:
+            if self._clar_down_q is not None:
+                await self._clar_down_q.put(answer)
+        except Exception:
+            pass
 
 
-class SimulatedWebSearcher:
+class SimulatedWebSearcher(BaseWebSearcher):
     """Drop-in simulated WebSearcher with imaginary results and stateful memory."""
 
     def __init__(
@@ -131,6 +163,8 @@ class SimulatedWebSearcher:
     ) -> None:
         self._description = description
         self._log_events = log_events
+        # Mirror the real manager's tool exposure programmatically for prompts
+        self._ask_tools = mirror_web_searcher_tools()
 
         # Stateful async LLM
         self._llm = unify.AsyncUnify(
@@ -141,7 +175,7 @@ class SimulatedWebSearcher:
         )
 
         # Reference the real prompt as context (no real tools here)
-        ask_msg = build_ask_prompt(tools={})
+        ask_msg = build_ask_prompt(tools=self._ask_tools)
         self._llm.set_system_message(
             "You are a simulated web-search assistant. There is no real browser or API – "
             "invent plausible sources and keep your narrative consistent.\n\n"
@@ -149,6 +183,7 @@ class SimulatedWebSearcher:
             f"\n\n{ask_msg}\n\nBack-story: {self._description}",
         )
 
+    @functools.wraps(BaseWebSearcher.ask, updated=())
     async def ask(
         self,
         text: str,

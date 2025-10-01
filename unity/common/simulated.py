@@ -195,6 +195,57 @@ def mirror_contact_manager_tools(kind: str) -> Dict[str, Any]:
         )
 
 
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SecretManager mirroring
+# ─────────────────────────────────────────────────────────────────────────────
+#
+
+
+def mirror_secret_manager_tools(kind: str) -> Dict[str, Any]:
+    """Build a tool-dict mirroring the real SecretManager's tool lists.
+
+    kind: "ask" or "update". Uses AST reflection with a static fallback.
+    """
+    from unity.secret_manager.secret_manager import SecretManager
+    from unity.common.llm_helpers import methods_to_tool_dict
+
+    target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
+
+    try:
+        pairs = _extract_owner_method_pairs(
+            SecretManager,
+            target_attr,
+            self_external_map=None,
+            extra_class_names={"SecretManager": SecretManager},
+        )
+        if pairs:
+            # All SecretManager-owned methods; never include class name
+            tools = _build_tool_dict(pairs)
+            if tools:
+                return tools
+    except Exception:
+        pass
+
+    # Fallback – keep in sync with SecretManager.__init__
+    if kind == "ask":
+        return methods_to_tool_dict(
+            SecretManager._list_columns,
+            SecretManager._filter_secrets,
+            SecretManager._search_secrets,
+            SecretManager._list_secret_keys,
+            include_class_name=False,
+        )
+    else:
+        return methods_to_tool_dict(
+            SecretManager.ask,
+            SecretManager._create_secret,
+            SecretManager._update_secret,
+            SecretManager._delete_secret,
+            include_class_name=False,
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TranscriptManager mirroring
 # ─────────────────────────────────────────────────────────────────────────────
@@ -443,3 +494,40 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager.import_directory,
             include_class_name=False,
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WebSearcher mirroring
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def mirror_web_searcher_tools() -> Dict[str, Any]:
+    """Build a tool-dict mirroring the real WebSearcher's ask tools.
+
+    Uses AST reflection of WebSearcher.__init__ with a static fallback.
+    """
+    from unity.common.llm_helpers import methods_to_tool_dict
+    from unity.web_searcher.web_searcher import WebSearcher
+
+    try:
+        pairs = _extract_owner_method_pairs(
+            WebSearcher,
+            "_ask_tools",
+            self_external_map=None,
+            extra_class_names={"WebSearcher": WebSearcher},
+        )
+        if pairs:
+            tools = _build_tool_dict(pairs)
+            if tools:
+                return tools
+    except Exception:
+        pass
+
+    # Fallback – current canonical ask tool set
+    return methods_to_tool_dict(
+        WebSearcher._search,
+        WebSearcher._extract,
+        WebSearcher._crawl,
+        WebSearcher._map,
+        include_class_name=False,
+    )

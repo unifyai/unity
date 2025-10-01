@@ -8,6 +8,7 @@
           "program": "${file}",
           "cwd": "${workspaceFolder}",
           "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "envFile": "${workspaceFolder}/.env",
           "console": "integratedTerminal",
           "justMyCode": false
         },
@@ -19,6 +20,7 @@
           "args": ["--project_name", "MemoryManagerSandbox", "--overwrite", "--voice", "--manual_summaries", "--manual_updates"],
           "cwd": "${workspaceFolder}",
           "env": { "PYTHONPATH": "${workspaceFolder}" },
+            "envFile": "${workspaceFolder}/.env",
           "console": "integratedTerminal",
           "justMyCode": false
         },
@@ -30,6 +32,7 @@
             "args": ["--project_name", "ContactManagerSandbox", "--overwrite", "--voice"],
             "cwd": "${workspaceFolder}",
             "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "envFile": "${workspaceFolder}/.env",
             "console": "integratedTerminal",
             "justMyCode": false
         },
@@ -41,6 +44,7 @@
           "args": ["--project_name", "TranscriptManagerSandbox", "--overwrite", "--voice"],
           "cwd": "${workspaceFolder}",
           "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "envFile": "${workspaceFolder}/.env",
           "console": "integratedTerminal",
           "justMyCode": false
         },
@@ -52,6 +56,7 @@
           "args": ["--project_name", "KnowledgeManagerSandbox", "--overwrite", "--voice"],
           "cwd": "${workspaceFolder}",
           "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "envFile": "${workspaceFolder}/.env",
           "console": "integratedTerminal",
           "justMyCode": false
         },
@@ -63,6 +68,7 @@
           "args": ["--project_name", "TaskSchedulerSandbox", "--overwrite", "--voice"],
           "cwd": "${workspaceFolder}",
           "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "envFile": "${workspaceFolder}/.env",
           "console": "integratedTerminal",
           "justMyCode": false
         }

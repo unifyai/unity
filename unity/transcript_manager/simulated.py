@@ -77,7 +77,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
     # ──  API expected by SteerableToolHandle  ──────────────────────────────
     async def result(self):
         if self._cancelled:
-            raise asyncio.CancelledError()
+            return "processed stopped early, no result"
 
         while self._paused and not self._cancelled:
             await asyncio.sleep(0.05)
@@ -127,18 +127,6 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
     def done(self) -> bool:
         return self._done.is_set()
 
-    @property
-    def valid_tools(self):
-        tools = {
-            self.interject.__name__: self.interject,
-            self.stop.__name__: self.stop,
-        }
-        if self._paused:
-            tools[self.resume.__name__] = self.resume
-        else:
-            tools[self.pause.__name__] = self.pause
-        return tools
-
     async def ask(self, question: str) -> "SteerableToolHandle":
         q_msg = (
             f"Your only task is to simulate an answer to the following question: {question}\n\n"
@@ -160,6 +148,26 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
         )
+
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:
+        try:
+            if self._clar_up_q is not None:
+                msg = await self._clar_up_q.get()
+                return {"message": msg}
+        except Exception:
+            pass
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        try:
+            if self._clar_down_q is not None:
+                await self._clar_down_q.put(answer)
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────

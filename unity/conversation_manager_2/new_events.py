@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
 
@@ -53,7 +53,7 @@ class Event:
 
 
 @dataclass
-class PhoneCallInitiated(Event):
+class PhoneCallRecieved(Event):
     contact: str
 
 
@@ -85,6 +85,11 @@ class SMSRecieved(Event):
 
 
 @dataclass
+class PhoneCallSent(Event):
+    contact: str
+
+
+@dataclass
 class EmailRecieved(Event):
     contact: str
     subject: str
@@ -97,6 +102,7 @@ class EmailRecieved(Event):
 class SMSSent(Event):
     contact: str
     content: str
+
 
 @dataclass
 class EmailSent(Event):
@@ -124,9 +130,39 @@ class StartupEvent(Event):
     user_email: str
     voice_id: str
     voice_provider: str = "cartesia"
-    contact: str | None = None
 
 
 @dataclass
 class Ping(Event):
     kind: str
+
+
+@dataclass
+class Error(Event):
+    message: str
+
+
+# managers worker events
+@dataclass
+class LogMessageInput(Event):
+    medium: str
+    sender_id: int
+    receiver_ids: list[int]
+    content: str
+    exchange_id: int
+    metadata: dict[str, Any]
+
+
+@dataclass
+class GetContactsInput(Event):
+    pass
+
+
+@dataclass
+class LogMessageOutput(Event):
+    exchange_id: int
+
+
+@dataclass
+class GetContactsOutput(Event):
+    contacts: list[dict[str, Any]]

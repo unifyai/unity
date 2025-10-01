@@ -11,7 +11,7 @@ the scheduler.
 
 import functools
 import asyncio
-from typing import Optional, Dict, Callable, TYPE_CHECKING, List, Any
+from typing import Optional, Dict, TYPE_CHECKING, List, Any
 
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
@@ -182,6 +182,16 @@ class ActiveTask(BaseActiveTask):
             async def ask(self, question: str) -> "SteerableToolHandle":  # type: ignore[override]
                 return self
 
+            # New abstract event APIs – provide inert stubs for static answer handle
+            async def next_clarification(self) -> dict:
+                return {}
+
+            async def next_notification(self) -> dict:
+                return {}
+
+            async def answer_clarification(self, call_id: str, answer: str) -> None:
+                return None
+
         return _AnswerHandle()
 
     @functools.wraps(BaseActiveTask.interject, updated=())
@@ -330,6 +340,30 @@ class ActiveTask(BaseActiveTask):
         return ret
 
     # ------------------------------------------------------------------ #
+    # Bottom-up event APIs (delegate to underlying actor handle)         #
+    # ------------------------------------------------------------------ #
+    @functools.wraps(SteerableToolHandle.next_clarification, updated=())
+    async def next_clarification(self) -> dict:
+        try:
+            return await self._actor_handle.next_clarification()  # type: ignore[attr-defined]
+        except Exception:
+            return {}
+
+    @functools.wraps(SteerableToolHandle.next_notification, updated=())
+    async def next_notification(self) -> dict:
+        try:
+            return await self._actor_handle.next_notification()  # type: ignore[attr-defined]
+        except Exception:
+            return {}
+
+    @functools.wraps(SteerableToolHandle.answer_clarification, updated=())
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        try:
+            await self._actor_handle.answer_clarification(call_id, answer)  # type: ignore[attr-defined]
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------ #
     # Internal helpers                                                   #
     # ------------------------------------------------------------------ #
 
@@ -363,13 +397,13 @@ class ActiveTask(BaseActiveTask):
             return
         try:
             # Prefer public API when available
-            if hasattr(sched, "reinstate_to_previous_queue"):
+            if hasattr(sched, "_reinstate_to_previous_queue"):
                 try:
                     # Try with allow_active=True
-                    sched.reinstate_to_previous_queue(task_id=task_id, allow_active=True)  # type: ignore[attr-defined]
+                    sched._reinstate_to_previous_queue(task_id=task_id, allow_active=True)  # type: ignore[attr-defined]
                 except TypeError:
                     # Fallback without allow_active (defensive)
-                    sched.reinstate_to_previous_queue(task_id=task_id)  # type: ignore[attr-defined]
+                    sched._reinstate_to_previous_queue(task_id=task_id)  # type: ignore[attr-defined]
                 return
         except Exception:
             pass
@@ -379,18 +413,3 @@ class ActiveTask(BaseActiveTask):
             sched._reinstate_task_to_previous_queue(task_id=task_id, _allow_active=True)  # type: ignore[attr-defined]
         except TypeError:
             sched._reinstate_task_to_previous_queue(task_id=task_id)  # type: ignore[attr-defined]
-
-    @property
-    @functools.wraps(BaseActiveTask.valid_tools, updated=())
-    def valid_tools(self) -> Dict[str, Callable]:
-        tools = {
-            self.interject.__name__: self.interject,
-            self.stop.__name__: self.stop,
-        }
-        # Reflect paused state from the underlying task handle when available.
-        paused_flag = getattr(self._actor_handle, "_paused", False)
-        if paused_flag:
-            tools[self.resume.__name__] = self.resume
-        else:
-            tools[self.pause.__name__] = self.pause
-        return tools

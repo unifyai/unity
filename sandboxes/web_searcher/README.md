@@ -3,6 +3,10 @@ WebSearcher Sandbox
 
 This folder contains an interactive playground for the `WebSearcher` component that lives in `unity/web_searcher/`. The goal of the sandbox is to let you experiment with the manager in isolation – issue natural‑language web queries, observe tool selection (search/extract/crawl/map), and iterate on prompt/policy settings before integrating into larger flows.
 
+### Video walkthrough
+
+- General overview, with clarification requests: [Loom video](https://www.loom.com/share/4b7257d2f13c4e85b4ce97685606346e?sid=2402a5ab-e9ec-4b23-81f2-bfb9356d5324)
+
 What is the `WebSearcher`?
 ---------------------------
 `WebSearcher` exposes a single high‑level natural‑language method:
