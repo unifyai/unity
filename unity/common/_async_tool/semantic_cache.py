@@ -23,7 +23,8 @@ class _Config:
     threshold: float = 0.2
     top_k: int = 1
     embedding_model: str = "text-embedding-3-small"
-    model: str = "gpt-4o@openai"
+    _model: str = "gpt-5@openai"
+    _reasoning_effort = "high"
     _context: str = "Cache"
 
     @property
@@ -31,6 +32,9 @@ class _Config:
         from unity import ASSISTANT_CONTEXT
 
         return f"{ASSISTANT_CONTEXT}/{self._context}"
+
+    def get_client(self):
+        return unify.AsyncUnify(self._model, reasoning_effort=self._reasoning_effort)
 
 
 @dataclass
@@ -88,7 +92,7 @@ Hi, what is the weather in Cairo?
 """
 
     global _CONFIG
-    client = unify.AsyncUnify(_CONFIG.model)
+    client = _CONFIG.get_client()
     client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
     res = await client.generate(
         user_message=f"Messages: {json.dumps(messages_history)}",
@@ -135,7 +139,7 @@ async def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=No
                     )
                     cleaned_trajectory.append(pair)
 
-    client = unify.AsyncUnify(_CONFIG.model)
+    client = _CONFIG.get_client()
     client.set_system_message(
         """
         You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
