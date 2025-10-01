@@ -1702,5 +1702,8 @@ async def async_tool_use_loop_inner(
                 _initial_user_message,
                 last_valid_history,
             )
-            tool_trajectory = await sc.clean_tool_trajectory(client.messages)
+            tool_trajectory = await sc.clean_tool_trajectory(
+                embedding_message,
+                client.messages,
+            )
             sc.store_tool_trajectory(embedding_message, tool_trajectory)

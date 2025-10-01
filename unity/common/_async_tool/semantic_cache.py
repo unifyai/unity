@@ -152,7 +152,7 @@ Hi, what is the weather in Cairo?
     return res
 
 
-async def clean_tool_trajectory(msgs):
+async def clean_tool_trajectory(user_message, msgs):
     class ToolRequestPair(TypedDict):
         request: Mapping[str, Any]
         response: Mapping[str, Any]
@@ -183,12 +183,12 @@ async def clean_tool_trajectory(msgs):
     client = unify.AsyncUnify("gpt-4o@openai")
     client.set_system_message(
         """
-        You are a helpful assistant that cleans redundant tool calls, given a user message and a list of tool calls,
-        you should return indicies of the tool calls to prune, that are redundant/duplicate or not relevant to the user message.
+        You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
+        you should return indicies of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
         """,
     )
     res = await client.generate(
-        user_message=f"Tool trajectory: {json.dumps(cleaned_trajectory, indent=4)}",
+        user_message=f"User query: {user_message}\nTool trajectory: {json.dumps(cleaned_trajectory, indent=2)}",
         response_format=PruneToolsResponseFormat,
     )
 

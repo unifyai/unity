@@ -244,7 +244,12 @@ async def test_prune_tools():
     )
 
     await handle.result()
-    cleaned = await clean_tool_trajectory(client.messages)
+    cleaned = await clean_tool_trajectory(
+        "respond with the result of the find_contact tool",
+        client.messages,
+    )
 
-    assert len(cleaned) == 1
-    assert cleaned[0]["request"]["function"]["name"] == "find_contact"
+    assert len(cleaned) == 1, f"Expected 1 tool call, got {len(cleaned)}"
+    assert (
+        cleaned[0]["request"]["function"]["name"] == "find_contact"
+    ), f"Expected find_contact, got {cleaned[0]['request']['function']['name']}"
