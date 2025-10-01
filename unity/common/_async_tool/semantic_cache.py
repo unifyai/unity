@@ -1,9 +1,13 @@
 import unify
 import json
 import inspect
+import asyncio
+import functools
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, TypedDict
 from pydantic import BaseModel
+from concurrent.futures import ThreadPoolExecutor
 
 if TYPE_CHECKING:
     from unity.common._async_tool.tools_data import ToolsData
@@ -103,19 +107,26 @@ async def get_dummy_tool(
     tools: "ToolsData",
 ):
     history = _simplify_tool_trajectory(semantic_cache_result.tool_trajectory)
-    for tool_call in history:
-        if (tool_name := tool_call.get("name")) in tools.normalized:
-            # TODO use ThreadPoolExecutor to run the tool calls in parallel
-            try:
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(thread_name_prefix="semantic_cache") as executor:
+        awaitables = []
+        for tool_call in history:
+            if (tool_name := tool_call.get("name")) in tools.normalized:
+                fn = tools.normalized[tool_name].fn
                 args = json.loads(tool_call.get("arguments"))
-                if inspect.iscoroutinefunction(tools.normalized[tool_name].fn):
-                    tool_call["result"] = await tools.normalized[tool_name].fn(**args)
+                if inspect.iscoroutinefunction(fn):
+                    awaitables.append(loop.create_task(fn(**args)))
                 else:
-                    tool_call["result"] = tools.normalized[tool_name].fn(**args)
-                tool_call["result_status"] = "new"
-            except Exception:
+                    awaitables.append(
+                        loop.run_in_executor(executor, functools.partial(fn, **args)),
+                    )
+        results = await asyncio.gather(*awaitables, return_exceptions=True)
+        for tool_call, result in zip(history, results):
+            if isinstance(result, Exception):
                 tool_call["result_status"] = "cached"
-                continue
+            else:
+                tool_call["result_status"] = "new"
+                tool_call["result"] = result
 
     call_id = f"call_SemanticSearchCallIdPlaceholder"
     dummy_tool_call = {
