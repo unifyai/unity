@@ -144,7 +144,7 @@ async def get_dummy_tool(
                 tool_call["result_status"] = "cached"
                 continue
 
-    call_id = f"call_MyCall"
+    call_id = f"call_SemanticSearchCallIdPlaceholder"
     dummy_tool_call = {
         "content": None,
         "refusal": None,
