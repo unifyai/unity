@@ -141,13 +141,13 @@ def build_ask_prompt(
    `{filter_messages_fname}(filter="medium == 'email' and timestamp >= '2024-01-01T00:00:00' and timestamp < '2024-02-01T00:00:00'", limit=100)`
 
  ─ Images (vision) ─
- • List images referenced by a specific message (metadata only; no base64)
+ • List images referenced by a specific message (metadata only; no base64). Each item also includes the substring of the message text corresponding to the span that linked the image.
    `{get_imgs_msg_fname}(message_id=123)`
  • Ask a one‑off question about an image (text answer only; DOES NOT persist visual context)
    `{ask_image_fname}(image_id=45, question="What color is dominant?")`
  • Attach a specific image for persistent visual reasoning in this loop
    `{attach_image_fname}(image_id=45, note="Need to inspect the layout")`
- • Attach multiple images linked from a message (limit to first 2)
+ • Attach multiple images linked from a message (limit to first 2). For each attached image, the meta includes `spans` and `substrings` derived from the message content for alignment.
    `{attach_msg_imgs_fname}(message_id=123, limit=2)`
 
  Guidance on when to use which image tool
