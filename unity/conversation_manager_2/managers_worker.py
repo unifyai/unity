@@ -58,6 +58,8 @@ class ManagersWorker:
     # ──────────────────────────────────────────────────────────────────
 
     async def _initialize_unity(self) -> None:
+        # ToDo: need to clean this up to avoid duplication
+        # with ConversationManager.set_details
         assistant_id = os.environ.get("ASSISTANT_ID", "0")
         unity.init(
             assistant_id=int(
