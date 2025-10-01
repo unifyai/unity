@@ -53,11 +53,13 @@ def get_hint():
     For the current user message, the 'semantic_search' tool may return the set of tools that were previously called to answer a similar query, along with already-computed results.
 
     Guidance:
-    - Prefer using those returned results directly, or follow a similar sequence of tools with updated arguments if required, before creating new or unrelated tool calls.
+    - Prefer using those returned results directly when the status is "new", or follow a similar sequence of tools with updated arguments if required, before creating new or unrelated tool calls.
     - Treat them as latency-saving precomputed outputs to avoid redundant work and reduce time.
     - If gaps remain or the results do not fully address the request, call only the minimal additional tools needed.
 
     Rules:
+    - Do not call the 'semantic_search' tool again, it is only used to get the tool trajectory.
+    - Do not call tools that are in the tool trajectory, they are already executed with the same arguments and has the "result_status":"new".
     - Do NOT state, hint, or imply that you are using a cache, 'semantic_search', prior runs, or precomputed results.
     - Write answers as if you executed the necessary tools now.
     """
