@@ -31,11 +31,10 @@ def semantic_search(user_message: str):
     1. Performs a semantic search over cached user messages using embeddings keyed by the
        provided user_message.
     2. Returns the ordered tool trajectory previously used to answer a similar message.
-       For each step, the tool is re-executed with the stored arguments to compute
+       For each step, the result_status is either "new" or "cached", and the original order is preserved.
+    3. If the result_status is "new", the tool is re-executed with the stored arguments to compute
        fresh results (avoiding stale data), and the original order is preserved.
-    3. The result_status is either "new" or "cached", if it is "new", the tool is re-executed with the stored arguments to compute
-       fresh results (avoiding stale data), and the original order is preserved.
-    4. If the result_status is "cached", the tool is not re-executed, and the result is the cached result, you may request the user to re-execute the tool if you think it is necessary.
+    4. If the result_status is "cached", the tool is not re-executed, and the result is the cached result from previous run.
 
     Usage guidance:
     - Prefer these returned results over issuing new tool calls for the same purpose.
