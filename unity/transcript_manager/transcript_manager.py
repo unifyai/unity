@@ -42,6 +42,7 @@ from ..common.semantic_search import (
 import json as _json
 from ..events.event_bus import EVENT_BUS, Event
 from ..image_manager.image_manager import ImageManager
+from ..image_manager.utils import substring_from_span
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -1369,7 +1370,7 @@ class TranscriptManager(BaseTranscriptManager):
             except Exception:
                 ts_str = ""
             # Compute substring based on the span range over the message content
-            substr = self._substring_from_span(str(msg.content), str(span))
+            substr = substring_from_span(str(msg.content), str(span))
             out.append(
                 {
                     "span": str(span),
@@ -1481,7 +1482,7 @@ class TranscriptManager(BaseTranscriptManager):
             # Derive spans and substrings aligned to this image within the message content
             spans_for_img = spans_by_id.get(int(h.image_id), [])
             substrings = [
-                self._substring_from_span(str(msg.content), s) for s in spans_for_img
+                substring_from_span(str(msg.content), s) for s in spans_for_img
             ]
             images.append(
                 {
@@ -1501,42 +1502,7 @@ class TranscriptManager(BaseTranscriptManager):
     # Span → substring helper
     # ────────────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _substring_from_span(content: str, span: str) -> str:
-        """Return the best-effort substring of ``content`` for a slice key ``"[x:y]"``.
-
-        Supports negative and open-ended indices, clamps to valid bounds, and
-        gracefully returns an empty string when the span is malformed.
-        """
-        try:
-            import re as _re
-
-            m = _re.fullmatch(r"\[\s*(-?\d+)?\s*:\s*(-?\d+)?\s*\]", str(span))
-            if not m:
-                return ""
-            start_s, end_s = m.group(1), m.group(2)
-            L = len(content)
-            if start_s is None:
-                start = 0
-            else:
-                start = int(start_s)
-                if start < 0:
-                    start = max(0, L + start)
-                else:
-                    start = min(L, start)
-            if end_s is None:
-                end = L
-            else:
-                end = int(end_s)
-                if end < 0:
-                    end = max(0, L + end)
-                else:
-                    end = min(L, end)
-            if start > end:
-                start, end = end, start
-            return content[start:end]
-        except Exception:
-            return ""
+    # substring_from_span now provided by unity.image_manager.utils
 
     # ────────────────────────────────────────────────────────────────────
     # Column and metrics helpers (paralleling ContactManager)
