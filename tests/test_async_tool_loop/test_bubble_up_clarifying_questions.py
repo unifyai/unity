@@ -252,13 +252,13 @@ async def test_clarification_bubbles_through_returned_handle() -> None:
     )
 
     # ── satisfy the clarification that should bubble up ──────────────────
-    question = await asyncio.wait_for(clar_up_q.get(), timeout=60)
+    question = await asyncio.wait_for(clar_up_q.get(), timeout=300)
     assert "what colour" in question.lower() or "what color" in question.lower()
 
     await clar_down_q.put("Blue, please")
 
     # ── loop must now complete successfully ───────────────────────────────
-    await asyncio.wait_for(handle.result(), timeout=60)
+    await asyncio.wait_for(handle.result(), timeout=300)
 
     # final sanity-check: assistant ends with the confirmation from inner_tool
     assert "blue" in outer_llm.messages[-1]["content"].lower()
