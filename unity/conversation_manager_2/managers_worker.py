@@ -13,7 +13,7 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import UNASSIGNED
 from unity.conversation_manager_2.new_events import (
     Event,
-    ManagersStartupEvent,
+    ManagersStartupInput,
     LogMessageInput,
     GetContactsInput,
     LogMessageOutput,
@@ -94,9 +94,10 @@ class ManagersWorker:
                     )
                 print("[ManagersWorker] Unity initialized")
 
-                # 1. Initialize ContactManager
+                # 1. Initialize ContactManager and get contacts
                 print("[ManagersWorker] Initializing ContactManager...")
                 self._contact_manager = ContactManager()
+                await self._get_contacts()
                 print("[ManagersWorker] ContactManager initialized")
 
                 # 2. Initialize TranscriptManager with ContactManager
@@ -123,20 +124,14 @@ class ManagersWorker:
             except Exception as e:
                 print(f"[ManagersWorker] Error during initialization: {e}")
 
-            if self._initialized:
-                contacts = await self._get_contacts(publish=False)
-            else:
-                contacts = []
             await self._event_broker.publish(
                 self._publish_channel,
-                ManagersStartupOutput(
-                    initialized=self._initialized, contacts=contacts
-                ).to_json(),
+                ManagersStartupOutput(initialized=self._initialized).to_json(),
             )
 
     async def _log_message(self, event: LogMessageInput) -> None:
         """Log a message via TranscriptManager."""
-        if not self._initialized:
+        if not self._transcript_manager:
             print("[ManagersWorker] Not initialized, cannot log message")
             return
 
@@ -179,9 +174,9 @@ class ManagersWorker:
         except Exception as e:
             print(f"[ManagersWorker] Error logging message: {e}")
 
-    async def _get_contacts(self, publish: bool = False) -> None:
+    async def _get_contacts(self) -> None:
         """Fetch all contacts and publish back."""
-        if not self._initialized:
+        if not self._contact_manager:
             print("[ManagersWorker] Not initialized, cannot get contacts")
             return
 
@@ -218,7 +213,7 @@ class ManagersWorker:
     async def _process_message(self, event: Event) -> None:
         """Process a single Event from the queue."""
         # Route to handlers using isinstance
-        if isinstance(event, ManagersStartupEvent):
+        if isinstance(event, ManagersStartupInput):
             await self._startup(event.to_dict()["payload"])
         elif isinstance(event, LogMessageInput):
             await self._log_message(event)

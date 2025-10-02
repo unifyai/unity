@@ -144,7 +144,7 @@ class Error(Event):
 
 # managers worker events
 @dataclass
-class ManagersStartupEvent(Event):
+class ManagersStartupInput(Event):
     agent_id: str
     first_name: str
     age: str
@@ -160,7 +160,6 @@ class ManagersStartupEvent(Event):
 @dataclass
 class ManagersStartupOutput(Event):
     initialized: bool
-    contacts: list[dict[str, Any]]
 
 
 @dataclass
