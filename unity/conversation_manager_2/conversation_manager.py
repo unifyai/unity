@@ -534,11 +534,14 @@ class ConversationManager:
 
     async def handle_event(self, event: Event):
         # add placeholder contact if we're yet to populate the contacts map
-        if (
-            not self.initialized
-            and hasattr(event, "contact")
-        ):
-            contact = ConversationContact(id=1, name="Placeholder", number=event.contact, email=event.contact, is_boss=True)
+        if not self.initialized and hasattr(event, "contact"):
+            contact = ConversationContact(
+                id=1,
+                name="Placeholder",
+                number=event.contact,
+                email=event.contact,
+                is_boss=True,
+            )
             self.update_contact(contact)
             print("Placeholder contact created")
 
