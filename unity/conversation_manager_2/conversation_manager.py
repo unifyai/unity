@@ -21,6 +21,7 @@ from unity.conversation_manager_2.actions import (
 from unity.conversation_manager_2.state import ConversationManagerState
 from unity.conversation_manager_2.prompt_utils import ThreadMessage
 from unity.helpers import run_script, terminate_process
+from unity.transcript_manager.types.message import UNASSIGNED
 from .prompt_utils import ConversationContact
 
 
@@ -516,6 +517,7 @@ class ConversationManager:
         self.state.inverted_contacts_map = self.inverted_contacts_map
 
     async def publish_startup(self):
+        print("publishing startup")
         await self.event_broker.publish(
             "app:managers:input",
             ManagersStartupInput(
@@ -529,6 +531,52 @@ class ConversationManager:
                 user_phone=self.user_number,
                 user_whatsapp_number=self.user_whatsapp_number,
                 assistant_whatsapp_number=self.assistant_number,
+            ).to_json(),
+        )
+
+    async def publish_transcript(self, event: Event):
+        print("publishing transcript")
+        event_name = event.to_dict()["event_name"].lower()
+        medium = (
+            "phone_call"
+            if "phone" in event_name
+            else (
+                "sms_message"
+                if "sms" in event_name
+                else ("email" if "email" in event_name else "whatsapp_message")
+            )
+        )
+        role = (
+            "Assistant"
+            if "received" in event_name or "assistant" in event_name
+            else "User"
+        )
+        if isinstance(event, (EmailSent, EmailRecieved)):
+            content = event.subject + "\n\n" + event.body
+        else:
+            content = event.content
+
+        contact_id = None
+        contacts_map = {
+            **self.state.email_contacts_map,
+            **self.state.phone_contacts_map,
+        }
+        if event.contact in contacts_map:
+            contact_id = contacts_map[event.contact].id
+        if role == "Assistant":
+            sender_id, receiver_ids = 0, [contact_id]
+        else:
+            sender_id, receiver_ids = contact_id, [0]
+
+        await self.event_broker.publish(
+            "app:managers:input",
+            LogMessageInput(
+                medium=medium,
+                sender_id=sender_id,
+                receiver_ids=receiver_ids,
+                content=content,
+                exchange_id=UNASSIGNED,
+                metadata=None,
             ).to_json(),
         )
 
@@ -590,6 +638,7 @@ class ConversationManager:
             self.cleanup_call_proc()
 
         elif isinstance(event, PhoneUtterance):
+            asyncio.create_task(self.publish_transcript(event))
             await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, GetContactsOutput):
@@ -602,6 +651,10 @@ class ConversationManager:
             for c in conversation_contacts:
                 self.update_contact(c)
 
+        elif isinstance(event, LogMessageOutput):
+            # ToDo: get exchange id handled properly
+            pass
+
         elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)
 
@@ -609,6 +662,8 @@ class ConversationManager:
             # otherwise (whatsapp, sms, email) just schedule another llm run after 2 seconds
             # if there is no response at the moment, if there is a response, cancel it, and scheduel
             # check if there is a scheduled response, reschedule
+            if isinstance(event, (SMSSent, SMSRecieved, EmailSent, EmailRecieved)):
+                asyncio.create_task(self.publish_transcript(event))
             await self.schedule_llm_run(2, cancel_running=True)
 
     async def check_inactivity(self):
