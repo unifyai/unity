@@ -259,75 +259,83 @@ class ToolsData:
         allowed_call_args = call_args
         merged_kwargs = {**allowed_call_args, **filtered_extras}
 
-        # ── Normalise arg-scoped image mapping, if the tool accepts `images` ──
+        # ── Normalise arg-scoped image mapping for inner tools, but skip
+        #     source-scoped helpers like `ask_image` which expect `<source>[x:y]`.
         if "images" in params and isinstance(merged_kwargs.get("images"), dict):
-            try:
-                raw_images = dict(merged_kwargs.get("images") or {})
-                registry = LIVE_IMAGES_REGISTRY.get()
-                norm_images: dict[str, Any] = {}
-                for key, val in raw_images.items():
-                    parsed = parse_arg_scoped_span(str(key))
-                    if not parsed:
-                        continue
-                    arg_name, span = parsed
-                    # Only accept if referenced arg is available in the call
-                    if arg_name not in params and arg_name not in merged_kwargs:
-                        continue
-                    # Resolve id → handle or accept provided handle
-                    handle = None
-                    try:
-                        if isinstance(val, int):
-                            handle = (
-                                registry.get(int(val))
-                                if isinstance(registry, dict)
-                                else None
-                            )
-                        elif hasattr(val, "image_id"):
-                            handle = val
-                        elif isinstance(val, dict):
-                            # Accept explicit id fields inside the dict
-                            _id_field = None
-                            for _k in ("image_id", "imageId", "id"):
-                                if _k in val:
-                                    _id_field = val[_k]
-                                    break
-                            if _id_field is not None:
-                                try:
-                                    handle = (
-                                        registry.get(int(_id_field))
-                                        if isinstance(registry, dict)
-                                        else None
-                                    )
-                                except Exception:
-                                    handle = None
-                            elif bool(val.get("__handle__")):
-                                # Fallback: when a single live image exists, use it
-                                if isinstance(registry, dict) and len(registry) == 1:
+            if name == "ask_image":
+                # Keep source-scoped mapping verbatim for the helper to process.
+                pass
+            else:
+                try:
+                    raw_images = dict(merged_kwargs.get("images") or {})
+                    registry = LIVE_IMAGES_REGISTRY.get()
+                    norm_images: dict[str, Any] = {}
+                    for key, val in raw_images.items():
+                        parsed = parse_arg_scoped_span(str(key))
+                        if not parsed:
+                            continue
+                        arg_name, span = parsed
+                        # Only accept if referenced arg is available in the call
+                        if arg_name not in params and arg_name not in merged_kwargs:
+                            continue
+                        # Resolve id → handle or accept provided handle
+                        handle = None
+                        try:
+                            if isinstance(val, int):
+                                handle = (
+                                    registry.get(int(val))
+                                    if isinstance(registry, dict)
+                                    else None
+                                )
+                            elif hasattr(val, "image_id"):
+                                handle = val
+                            elif isinstance(val, dict):
+                                # Accept explicit id fields inside the dict
+                                _id_field = None
+                                for _k in ("image_id", "imageId", "id"):
+                                    if _k in val:
+                                        _id_field = val[_k]
+                                        break
+                                if _id_field is not None:
                                     try:
-                                        handle = next(iter(registry.values()))
+                                        handle = (
+                                            registry.get(int(_id_field))
+                                            if isinstance(registry, dict)
+                                            else None
+                                        )
                                     except Exception:
                                         handle = None
-                    except Exception:
-                        handle = None
-                    if handle is None:
-                        continue
-                    # Validate the span against the referenced argument's text; drop if invalid/empty.
-                    try:
-                        align_txt = extract_alignment_text_from_value(
-                            merged_kwargs.get(arg_name),
-                        )
-                        # Only keep non-empty matches
-                        if align_txt is not None:
-                            matched = substring_from_span(str(align_txt), span)
-                            if isinstance(matched, str) and matched != "":
-                                norm_images[str(key)] = handle
-                    except Exception:
-                        # If validation fails, skip this entry
-                        continue
-                merged_kwargs["images"] = norm_images
-            except Exception:
-                # If anything goes wrong, leave images as-is
-                pass
+                                elif bool(val.get("__handle__")):
+                                    # Fallback: when a single live image exists, use it
+                                    if (
+                                        isinstance(registry, dict)
+                                        and len(registry) == 1
+                                    ):
+                                        try:
+                                            handle = next(iter(registry.values()))
+                                        except Exception:
+                                            handle = None
+                        except Exception:
+                            handle = None
+                        if handle is None:
+                            continue
+                        # Validate the span against the referenced argument's text; drop if invalid/empty.
+                        try:
+                            align_txt = extract_alignment_text_from_value(
+                                merged_kwargs.get(arg_name),
+                            )
+                            # Only keep non-empty matches
+                            if align_txt is not None:
+                                matched = substring_from_span(str(align_txt), span)
+                                if isinstance(matched, str) and matched != "":
+                                    norm_images[str(key)] = handle
+                        except Exception:
+                            # If validation fails, skip this entry
+                            continue
+                    merged_kwargs["images"] = norm_images
+                except Exception:
+                    # If anything goes wrong, leave images as-is
+                    pass
 
         # Build coroutine
         if asyncio.iscoroutinefunction(fn):
