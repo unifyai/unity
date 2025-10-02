@@ -3,12 +3,25 @@ import unify
 import os
 import functools
 import json
-from typing import Optional, Awaitable, Dict, Callable, Tuple, Any, Union, Type
+from typing import (
+    Optional,
+    Awaitable,
+    Dict,
+    Callable,
+    Tuple,
+    Any,
+    Union,
+    Type,
+    TYPE_CHECKING,
+)
 from ..constants import LOGGER
 from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
+
+if TYPE_CHECKING:
+    from ..image_manager.image_manager import ImageHandle
 
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -746,6 +759,7 @@ def start_async_tool_loop(
     max_parallel_tool_calls: Optional[int] = None,
     handle_cls: Optional[Type[AsyncToolLoopHandle]] = None,
     semantic_cache: Optional[bool] = False,
+    images: Optional[dict[str, "ImageHandle"]] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -805,6 +819,7 @@ def start_async_tool_loop(
             response_format=response_format,
             max_parallel_tool_calls=max_parallel_tool_calls,
             semantic_cache=semantic_cache,
+            images=images,
         ),
         name="ToolUseLoop",
     )

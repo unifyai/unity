@@ -3,6 +3,7 @@ import unify
 import json
 import inspect
 import copy
+from datetime import timedelta
 
 from typing import Dict, Union, Callable, Tuple, Any, Set, Optional
 from contextlib import suppress
@@ -123,6 +124,7 @@ async def async_tool_loop_inner(
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
     semantic_cache: Optional[bool] = False,
+    images: Optional[dict[str, Any]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -328,6 +330,246 @@ async def async_tool_loop_inner(
     # • helper that answers "may we launch / advertise *this* tool right now?"
     #   by comparing the live count with max_concurrent.
     # -----------------------------------------------------------------------
+
+    # ── Live image helpers (optional) ─────────────────────────────────────────
+    # When a mapping of span→ImageHandle is supplied, expose three helper tools:
+    #   • live_images_overview() – docstring lists images, spans, substrings, captions
+    #   • ask_image(image_id, question) – returns a nested handle for image Q&A
+    #   • attach_image_raw(image_id, note=None) – attaches the image as vision context
+    # The docstring for `live_images_overview` is visible every turn; calling it is
+    # not required and it's a cheap no-op.
+
+    def _extract_reference_text(src: str | dict | list[str | dict]) -> str:
+        try:
+            if isinstance(src, str):
+                return src
+            if isinstance(src, dict):
+                return str(src.get("content", ""))
+            if isinstance(src, list):
+                # Distinguish between chat messages vs content blocks
+                # Case 1: chat messages (dicts with 'role') → first with role=='user'
+                for m in src:
+                    if isinstance(m, dict) and "role" in m and m.get("role") == "user":
+                        c = m.get("content")
+                        return str(
+                            (
+                                c
+                                if not isinstance(c, list)
+                                else "".join(
+                                    [
+                                        (
+                                            it.get("text")
+                                            if isinstance(it, dict)
+                                            and it.get("type") == "text"
+                                            else str(it)
+                                        )
+                                        for it in c
+                                    ],
+                                )
+                            ),
+                        )
+                # Case 2: content blocks (no roles) → first block's textual portion
+                for it in src:
+                    if isinstance(it, dict) and it.get("type") == "text":
+                        return str(it.get("text", ""))
+                # Fallback: stringify the first element
+                return str(src[0]) if src else ""
+        except Exception:
+            return ""
+
+    # Build live image helpers only when images were supplied and non-empty
+    live_image_tools: Dict[str, Callable] = {}
+    if images:
+        try:
+            from unity.image_manager.utils import substring_from_span  # local import
+        except Exception:
+            substring_from_span = None  # type: ignore[assignment]
+
+        reference_text = _extract_reference_text(message)
+        # Build id → handle map and enriched listings
+        id_to_handle: dict[int, Any] = {}
+        listings: list[str] = []
+        for span_key, ih in list(images.items()):
+            try:
+                img_id = int(getattr(ih, "image_id", -1))
+            except Exception:
+                img_id = -1
+            id_to_handle[img_id] = ih
+            substr = ""
+            if substring_from_span is not None:
+                try:
+                    substr = substring_from_span(str(reference_text), str(span_key))
+                except Exception:
+                    substr = ""
+            try:
+                caption = getattr(ih, "caption", None)
+            except Exception:
+                caption = None
+            listings.append(
+                f"- id={img_id}, span={span_key}, substring={substr!r}, caption={caption!r}",
+            )
+
+        overview_doc = (
+            "Live images aligned to the current user_message (visible in this description; calling is optional).\n"
+            + "\n".join(listings or ["(none)"])
+        )
+
+        async def live_images_overview() -> Dict[str, str]:
+            return {"status": "ok"}
+
+        live_images_overview.__doc__ = overview_doc
+
+        # Keep a set of already-attached ids (idempotent attach)
+        attached_ids: set[int] = set()
+
+        async def ask_image(*, image_id: int, question: str) -> Any:
+            """
+            Ask a question about a live image by its unique id.
+            Returns a nested handle; await its result for the answer.
+            """
+            ih = id_to_handle.get(int(image_id))
+            if ih is None:
+                return {"error": f"image_id {image_id} not found"}
+            try:
+                return await ih.ask(question)
+            except Exception as _exc:  # noqa: BLE001
+                return {"error": str(_exc)}
+
+        async def attach_image_raw(
+            *,
+            image_id: int,
+            note: str | None = None,
+        ) -> Dict[str, Any]:
+            """
+            Attach the selected image to the current chat as an image block so the model can see it.
+            Idempotent: re-attaching the same id has no effect.
+            """
+            iid = int(image_id)
+            if iid in attached_ids:
+                return {"status": "already_attached", "image_id": iid}
+            ih = id_to_handle.get(iid)
+            if ih is None:
+                return {"error": f"image_id {iid} not found"}
+            # Reuse ImageHandle.ask content block building logic inline
+            try:
+                data_str = ih._image.data  # type: ignore[attr-defined]
+                # GCS signed URL path mirrors ImageHandle.ask
+                is_gcs_url = isinstance(data_str, str) and (
+                    data_str.startswith("gs://")
+                    or data_str.startswith("https://storage.googleapis.com/")
+                )
+                content_block: dict
+                if is_gcs_url:
+                    try:
+                        from urllib.parse import urlparse as _urlparse
+
+                        parsed_url = _urlparse(data_str)
+                        bucket_name = ""
+                        object_path = ""
+                        if parsed_url.scheme == "gs":
+                            bucket_name = parsed_url.netloc
+                            object_path = parsed_url.path.lstrip("/")
+                        elif parsed_url.hostname == "storage.googleapis.com":
+                            parts = parsed_url.path.lstrip("/").split("/", 1)
+                            if len(parts) == 2:
+                                bucket_name, object_path = parts
+                        storage_client = ih._manager.storage_client  # type: ignore[attr-defined]
+                        bucket = storage_client.bucket(bucket_name)
+                        blob = bucket.blob(object_path)
+                        signed_url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")  # type: ignore[name-defined]
+                        content_block = {
+                            "type": "image_url",
+                            "image_url": {"url": signed_url},
+                        }
+                    except Exception:
+                        # fallback: try raw bytes
+                        raw = ih.raw()
+                        import base64 as _b64  # local import
+
+                        head = (
+                            bytes(raw[:10])
+                            if isinstance(raw, (bytes, bytearray))
+                            else b""
+                        )
+                        if head.startswith(b"\xff\xd8"):
+                            mime = "image/jpeg"
+                        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                            mime = "image/png"
+                        else:
+                            mime = "image/png"
+                        b64 = _b64.b64encode(raw).decode("ascii")
+                        content_block = {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
+                        }
+                elif isinstance(data_str, str) and (
+                    data_str.startswith("http://")
+                    or data_str.startswith("https://")
+                    or data_str.startswith("data:image/")
+                ):
+                    content_block = {
+                        "type": "image_url",
+                        "image_url": {"url": data_str},
+                    }
+                else:
+                    raw = ih.raw()
+                    import base64 as _b64  # local import
+
+                    head = (
+                        bytes(raw[:10]) if isinstance(raw, (bytes, bytearray)) else b""
+                    )
+                    if head.startswith(b"\xff\xd8"):
+                        mime = "image/jpeg"
+                    elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                        mime = "image/png"
+                    else:
+                        mime = "image/png"
+                    b64 = _b64.b64encode(raw).decode("ascii")
+                    content_block = {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                    }
+
+                # Append as a user content block to current client messages via dispatcher (event bus + timer)
+                await _msg_dispatcher.append_msgs(
+                    [
+                        {
+                            "role": "user",
+                            "content": (
+                                [content_block]
+                                if note is None
+                                else [
+                                    {"type": "text", "text": note},
+                                    content_block,
+                                ]
+                            ),
+                        },
+                    ],
+                )
+                attached_ids.add(iid)
+                return {"status": "attached", "image_id": iid}
+            except Exception as _exc:  # noqa: BLE001
+                return {"error": str(_exc)}
+
+        # Docstrings: include the full overview in a single place; reference it
+        ask_image.__doc__ = (
+            "Ask a question about one of the live images by its numeric id.\n"
+            "See `live_images_overview` (description) for the list of available images."
+        )
+        attach_image_raw.__doc__ = (
+            "Attach an image (by id) into the current chat as vision context.\n"
+            "Idempotent per image_id. See `live_images_overview` for the list."
+        )
+
+        live_image_tools = {
+            "live_images_overview": live_images_overview,
+            "ask_image": ask_image,
+            "attach_image_raw": attach_image_raw,
+        }
+
+    # Merge live-image helpers (if any) with base tools before normalisation
+    if live_image_tools:
+        tools = {**tools, **live_image_tools}
 
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
