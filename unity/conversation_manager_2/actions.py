@@ -1,6 +1,6 @@
 import os
 from typing import Literal, Optional, Union
-
+import asyncio
 import aiohttp
 from pydantic import BaseModel, Field
 
@@ -187,3 +187,53 @@ async def _start_call(
                     "error": f"Failed to initiate call to {to_number}",
                 }
             return await response.json()
+
+
+async def add_email_attachments(
+    attachments: list[dict[str, str]],
+    receiver_email: str,
+    gmail_message_id: str,
+) -> None:
+    """
+    Download attachments via the /attachment endpoint and write placeholder files.
+
+    Each attachment item should be of the form: {"id": str, "filename": str}
+    For now, writes an empty placeholder file with the same filename.
+    """
+    if not attachments:
+        return
+
+    print("Saving email attachments...")
+    async with aiohttp.ClientSession() as session:
+        for att in attachments:
+            try:
+                att_id = att.get("id", "")
+                raw_filename = att.get("filename") or f"attachment_{att_id}"
+                # very basic filename sanitization
+                safe_filename = os.path.basename(raw_filename)
+
+                url = f"{os.getenv('UNITY_COMMS_URL')}/email/attachment"
+                params = {
+                    "receiver_email": receiver_email,
+                    "gmail_message_id": gmail_message_id,
+                    "attachment_id": att_id,
+                    # "filename": safe_filename,
+                }
+
+                async with session.get(url, headers=headers, params=params) as resp:
+                    data = await resp.read()
+
+                from unity.file_manager.file_manager import FileManager
+
+                file_manager = FileManager()
+                await asyncio.to_thread(
+                    file_manager.save_file_to_downloads,
+                    safe_filename,
+                    data,
+                )
+
+                print(
+                    f"Downloaded attachment {safe_filename} (size={len(data)} bytes) — placeholder file written",
+                )
+            except Exception as e:
+                print(f"Failed to fetch/write attachment '{att}': {e}")
