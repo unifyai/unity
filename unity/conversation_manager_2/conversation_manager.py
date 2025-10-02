@@ -115,38 +115,6 @@ class ConversationManager:
         self.event_broker = event_broker
         self.openai_client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-        # this will probs be retrieved from a database or whatever
-        # its hardcoded atm (obviously)
-        # self.phone_contacts_map = {
-        #     "+12697784020": ConversationContact(
-        #         "1",
-        #         "Yasser Ahmed",
-        #         True,
-        #         "+12697784020",
-        #         "yasser@unify.ai",
-        #     ),
-        #     "+13502381308": ConversationContact(
-        #         "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
-        #     ),
-        #     "+16605382869": ConversationContact(
-        #         "3", "Ved", False, "+16605382869", "ved@unify.ai"
-        #     ),
-        # }
-        # self.email_contacts_map = {
-        #     "yasser@unify.ai": ConversationContact(
-        #         "1",
-        #         "Yasser Ahmed",
-        #         True,
-        #         "+12697784020",
-        #         "yasser@unify.ai",
-        #     ),
-        #     "dan@unify.ai": ConversationContact(
-        #         "2", "Dan Lenton", False, "+13502381308", "dan@unify.ai"
-        #     ),
-        #     "ved@unify.ai": ConversationContact(
-        #         "3", "Ved", False, "+16605382869", "ved@unify.ai"
-        #     ),
-        # }
         self.phone_contacts_map = {}
         self.email_contacts_map = {}
 
@@ -159,7 +127,6 @@ class ConversationManager:
         self.chat_history = []
         self.call_proc = None
         self.call_contact = None
-        self.initialized = False
 
     async def run_llm(self):
         now = None
@@ -448,7 +415,7 @@ class ConversationManager:
             )
 
             # fetch contacts if env vars are already set
-            if self.assistant_id and not self.phone_contacts_map:
+            if self.assistant_id:
                 await self.publish_startup()
 
             while True:
@@ -477,8 +444,8 @@ class ConversationManager:
                         print("ping received - keeping conversation manager alive")
                         continue
                     elif isinstance(event, ManagersStartupOutput):
-                        self.initialized = event.initialized
-                        self.set_contacts(event.contacts)
+                        if not event.initialized:
+                            raise Exception("Managers failed to initialize")
                         continue
                     elif isinstance(event, StartupEvent):
                         payload = event.to_dict()["payload"]
@@ -551,7 +518,7 @@ class ConversationManager:
     async def publish_startup(self):
         await self.event_broker.publish(
             "app:managers:input",
-            ManagersStartupEvent(
+            ManagersStartupInput(
                 agent_id=self.assistant_id,
                 first_name=self.assistant_name,
                 age=self.assistant_age,
@@ -566,10 +533,6 @@ class ConversationManager:
         )
 
     async def handle_event(self, event: Event):
-        # wait for initialization of the managers
-        while not self.initialized:
-            await asyncio.sleep(0.1)
-
         self.state.push_event(event)
 
         if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
