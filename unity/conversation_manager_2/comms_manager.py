@@ -10,6 +10,7 @@ import os
 from unity.conversation_manager_2.new_events import *
 from unity.constants import ASYNCIO_DEBUG
 import redis.asyncio as redis
+from unity.conversation_manager_2.actions import add_email_attachments
 
 
 # Subscription IDs
@@ -122,6 +123,22 @@ class CommsManager:
                         ),
                         self.loop,
                     )
+
+                    # add attachments (if any) to Downloads using async helper
+                    try:
+                        attachments = event.get("attachments") or []
+                        if attachments:
+                            asyncio.run_coroutine_threadsafe(
+                                add_email_attachments(
+                                    attachments,
+                                    os.getenv("ASSISTANT_EMAIL"),
+                                    event.get("gmail_message_id", ""),
+                                ),
+                                self.loop,
+                            )
+                    except Exception as e:
+                        print(f"Failed scheduling attachment download: {e}")
+
                 else:
                     topic = event["from_number"].replace("whatsapp:", "").strip()
                     # Put the message in the queue instead of creating a task

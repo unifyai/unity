@@ -190,6 +190,43 @@ class FileManager(BaseFileManager):
         """Import a single file from the filesystem. Returns display name."""
         return self._add_file(Path(file_path))
 
+    def save_file_to_downloads(self, filename: str, contents: bytes) -> str:
+        """
+        Save provided contents as a file into the session "Downloads" directory,
+        ensuring a unique filename within that directory, then register it using
+        the internal _add_file helper.
+
+        Returns the registered display name.
+        """
+        downloads_dir = self._tmp_dir / "Downloads"
+        try:
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        # Sanitize the incoming filename and ensure uniqueness within Downloads
+        desired = Path(filename).name or "downloaded_file"
+        try:
+            existing = {p.name for p in downloads_dir.iterdir() if p.is_file()}
+        except Exception:
+            existing = set()
+        unique_name = _unique_name(existing, desired)
+
+        target_path = downloads_dir / unique_name
+
+        # Write contents to the unique target path
+        try:
+            with open(target_path, "wb") as f:
+                f.write(contents)
+        except Exception as e:
+            raise RuntimeError(f"Failed to write to Downloads: {e}")
+
+        # Register the file to display_to_path
+        return self.register_existing_file(
+            str(target_path),
+            display_name=f"downloads/{unique_name}",
+        )
+
     # Protected/registration helpers ------------------------------------- #
     def register_existing_file(
         self,
