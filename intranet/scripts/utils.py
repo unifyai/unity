@@ -152,22 +152,38 @@ def initialize_script_environment() -> bool:
 
 
 async def initialize_single_table_schema(knowledge_manager):
-    """Create the `Content` table based on *flat_schema.json* (v3)."""
+    """Create the `Content` table based on flat_schema.json using composed columns."""
 
     print("📋 Initializing single-table schema from flat_schema.json …")
 
     try:
-        schema_path = Path(__file__).resolve().parent.parent / "flat_schema.json"
-        with open(schema_path, "r", encoding="utf-8") as f:
-            flat_schema = json.load(f)
+        # Lazy import to avoid circulars
+        from intranet.scripts.schema_utils import (
+            load_flat_schema,
+            compose_table_columns,
+            get_unique_key_name,
+            get_auto_counting_mapping,
+        )
 
-        # Extract column → type mapping from JSON definition
-        col_defs = flat_schema["tables"]["Content"]["columns"]
-        columns = {name: info["type"] for name, info in col_defs.items()}
+        flat_schema = load_flat_schema()
+
+        # Determine table name
+        table_name = "Content"
+
+        # Compose full column mapping: unique + auto + declared
+        columns = compose_table_columns(flat_schema, table_name)
+
+        # Unique key name (fallback to "row_id" if absent, though schema should define it)
+        unique_key_name = get_unique_key_name(flat_schema, table_name) or "row_id"
+
+        # Auto counting mapping
+        auto_counting = get_auto_counting_mapping(flat_schema, table_name)
 
         knowledge_manager._create_table(
-            name="Content",
+            name=table_name,
             columns=columns,
+            unique_key_name=unique_key_name,
+            auto_counting=auto_counting,
         )
 
         print(
@@ -342,14 +358,36 @@ async def ingest_documents_direct(
     print(f"📄 Processing {len(filenames)} documents with batch size {batch_size}...")
 
     try:
+        # Prepare schema-derived helpers to inject into KM
+        from intranet.scripts.schema_utils import (
+            load_flat_schema,
+            get_table_columns_definition,
+            get_embedding_configuration,
+            get_auto_counting_mapping,
+        )
+
+        flat_schema = load_flat_schema()
+        table = "Content"
+        tbl_cols = get_table_columns_definition(flat_schema, table) or {}
+        allowed_columns = list(tbl_cols.keys())
+
+        # Prefer caller-provided embedding_config; otherwise source from schema
+        if embedding_config is None:
+            embedding_config = get_embedding_configuration(flat_schema, table)
+
+        # Retrieve auto-counting mapping for flattening
+        auto_counting = get_auto_counting_mapping(flat_schema, table)
+
         # Use the Knowledge Manager's batch ingestion tool
         result = await knowledge_manager._ingest_documents(
             filenames=filenames,
-            table="Content",
+            table=table,
             replace_existing=True,
             batch_size=batch_size,
             embed_along=embed_along,
             embedding_config=embedding_config,
+            auto_counting=auto_counting,
+            allowed_columns=allowed_columns,
         )
 
         if result.get("success"):
