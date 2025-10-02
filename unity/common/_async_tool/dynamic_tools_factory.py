@@ -9,6 +9,10 @@ from contextlib import suppress
 from .tools_data import ToolsData
 from .messages import forward_handle_call
 from .tools_utils import ToolCallMetadata
+from .tools_utils import (
+    append_source_scoped_images,
+    default_source_label,
+)
 from .utils import maybe_await
 
 
@@ -120,8 +124,14 @@ class DynamicToolFactory:
         handle: Any,
     ) -> None:
         doc = (
-            f"Stop pending call {tool_context.fn_name}({tool_context.arg_repr}). "
-            "Accepts any arguments supported by the underlying handle's `stop` method (e.g. `reason`)."
+            f"Stop pending call {tool_context.fn_name}({tool_context.arg_repr}).\n\n"
+            "Parameters\n"
+            "----------\n"
+            "reason : str | None\n"
+            "    Optional reason for stopping.\n"
+            "images : dict | None\n"
+            "    Optional source-scoped images mapping to append at the time of this command.\n"
+            "    Keys use `<source>[start:end]`. Use `this[:]` to associate images with the stop command itself, even when no text is provided."
         )
 
         async def _stop(
@@ -135,6 +145,14 @@ class DynamicToolFactory:
                     _kw,
                     fallback_positional_keys=["reason"],
                 )
+            # Append any provided images into the live registry/log
+            try:
+                append_source_scoped_images(
+                    _kw.get("images"),
+                    default_source_label("stop"),
+                )
+            except Exception:
+                pass
             if not task.done():
                 task.cancel()  # kill the waiter coroutine
             self.tools_data.pop_task(task)
@@ -157,8 +175,14 @@ class DynamicToolFactory:
         handle: Any,
     ) -> None:
         doc = (
-            f"Inject additional instructions for {tool_context.fn_name}({tool_context.arg_repr}). "
-            "Accepts any arguments supported by the underlying handle's `interject` method (e.g. `content`)."
+            f"Inject additional instructions for {tool_context.fn_name}({tool_context.arg_repr}).\n\n"
+            "Parameters\n"
+            "----------\n"
+            "content/message : str\n"
+            "    Interjection text.\n"
+            "images : dict | None\n"
+            "    Optional source-scoped images mapping to append at the time of this interjection.\n"
+            "    Keys use `<source>[start:end]`. Use `this[:]` to associate images with the interjection text."
         )
 
         if handle is not None:
@@ -172,6 +196,14 @@ class DynamicToolFactory:
                         _kw,
                         fallback_positional_keys=["content", "message"],
                     )
+                # Append any provided images into the live registry/log
+                try:
+                    append_source_scoped_images(
+                        _kw.get("images"),
+                        default_source_label("interjection"),
+                    )
+                except Exception:
+                    pass
                 return {
                     "status": "interjected",
                     "call_id": tool_context.call_id,
@@ -208,10 +240,24 @@ class DynamicToolFactory:
     ) -> None:
         doc = (
             f"Provide an answer to the clarification which was requested by the (currently pending) tool "
-            f"{tool_context.fn_name}({tool_context.arg_repr}). Takes a single argument `answer`."
+            f"{tool_context.fn_name}({tool_context.arg_repr}).\n\n"
+            "Parameters\n"
+            "----------\n"
+            "answer : str\n"
+            "    The answer text.\n"
+            "images : dict | None\n"
+            "    Optional source-scoped images mapping to append at the time of this answer.\n"
+            "    Keys use `<source>[start:end]`. Use `this[:]` to associate images with the answer text."
         )
 
-        async def _clarify(answer: str) -> Dict[str, str]:  # type: ignore[valid-type]
+        async def _clarify(answer: str, images: dict | None = None) -> Dict[str, str]:  # type: ignore[valid-type]
+            try:
+                append_source_scoped_images(
+                    images,
+                    default_source_label("clar_answer"),
+                )
+            except Exception:
+                pass
             return {
                 "status": "clar_answer",
                 "call_id": tool_context.call_id,

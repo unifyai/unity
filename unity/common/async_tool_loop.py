@@ -528,6 +528,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         message: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
+        images: dict | None = None,
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"💬 [{_label}] Interject requested: {message}")
@@ -553,7 +554,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         await self._replay_pending_passthrough_ops()
         await self._try_forward_or_buffer(
             "interject",
-            {"message": message, "parent_chat_context_cont": parent_chat_context_cont},
+            {
+                "message": message,
+                "parent_chat_context_cont": parent_chat_context_cont,
+                "images": images,
+            },
             ("content", "message"),
         )
 
@@ -562,8 +567,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             {
                 "message": message,
                 "parent_chat_context_continuted": parent_chat_context_cont,
+                "images": images,
             }
-            if parent_chat_context_cont is not None
+            if parent_chat_context_cont is not None or images is not None
             else message
         )
         self._early_interjects.append(payload)

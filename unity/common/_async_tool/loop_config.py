@@ -13,6 +13,12 @@ LIVE_IMAGES_REGISTRY: ContextVar[dict[int, Any]] = ContextVar(
     default={},
 )
 
+# Loop-scoped log lines for image overview (source-tagged entries)
+LIVE_IMAGES_LOG: ContextVar[list[str]] = ContextVar(
+    "LIVE_IMAGES_LOG",
+    default=[],
+)
+
 
 class LoopConfig:
     def __init__(self, loop_id, lineage, parent_lineage):
