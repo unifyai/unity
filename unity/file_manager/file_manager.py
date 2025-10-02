@@ -10,6 +10,8 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, AsyncIterator, Tuple, Callable
+
+from unity.file_manager.parser.types.document import Document
 from .types.file import File
 
 import unify
@@ -350,9 +352,11 @@ class FileManager(BaseFileManager):
     def _create_result_dict(
         self,
         filename: str,
-        document: Any,
+        document: Document,
         status: str = "success",
         error: Optional[str] = None,
+        auto_counting: Optional[Dict[str, Optional[str]]] = None,
+        document_index: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Create a standardized result dictionary for a parsed document.
@@ -379,7 +383,14 @@ class FileManager(BaseFileManager):
             }
 
         try:
-            records = document.to_flat_records()
+            # Prefer schema-aware rows when available
+            if hasattr(document, "to_schema_rows"):
+                records = document.to_schema_rows(
+                    auto_counting=auto_counting,
+                    document_index=document_index,
+                )
+            else:
+                records = document.to_flat_records()
             full_text = (
                 document.to_plain_text()
                 if hasattr(document, "to_plain_text")
@@ -754,6 +765,13 @@ class FileManager(BaseFileManager):
                 - error: str error message (if error)
                 - metadata: Dict with document metadata
         """
+        # Extract flattening options (not forwarded to parser)
+        auto_counting: Optional[Dict[str, Optional[str]]] = options.pop(
+            "auto_counting",
+            None,
+        )
+        document_index_offset: int = int(options.pop("document_index_offset", 0))
+
         # Validate and prepare files
         file_paths, filename_to_path, invalid_files = self._validate_and_prepare_files(
             filenames,
@@ -785,7 +803,12 @@ class FileManager(BaseFileManager):
                 for i, document in enumerate(documents):
                     file_path = file_paths[i]
                     filename = filename_to_path[str(file_path)]
-                    result_dict = self._create_result_dict(filename, document)
+                    result_dict = self._create_result_dict(
+                        filename=filename,
+                        document=document,
+                        auto_counting=auto_counting,
+                        document_index=(document_index_offset + i),
+                    )
                     results[filename] = result_dict
 
                     # Log the parsed file to the context table
@@ -803,7 +826,12 @@ class FileManager(BaseFileManager):
                     filename = filename_to_path[str(file_path)]
                     try:
                         document = self._parser.parse(file_path, **options)
-                        result_dict = self._create_result_dict(filename, document)
+                        result_dict = self._create_result_dict(
+                            filename=filename,
+                            document=document,
+                            auto_counting=auto_counting,
+                            document_index=document_index_offset,
+                        )
                         results[filename] = result_dict
 
                         # Log the parsed file to the context table
@@ -856,6 +884,13 @@ class FileManager(BaseFileManager):
                 - error: str error message (if error)
                 - metadata: Dict with document metadata
         """
+        # Extract flattening options (not forwarded to parser)
+        auto_counting: Optional[Dict[str, Optional[str]]] = options.pop(
+            "auto_counting",
+            None,
+        )
+        document_index_offset: int = int(options.pop("document_index_offset", 0))
+
         # Validate and prepare files
         file_paths, filename_to_path, invalid_files = self._validate_and_prepare_files(
             filenames,
@@ -879,7 +914,12 @@ class FileManager(BaseFileManager):
             ):
                 file_path = file_paths[index]
                 filename = filename_to_path[str(file_path)]
-                result_dict = self._create_result_dict(filename, document)
+                result_dict = self._create_result_dict(
+                    filename=filename,
+                    document=document,
+                    auto_counting=auto_counting,
+                    document_index=(document_index_offset + index),
+                )
 
                 # Log the parsed file to the context table
                 try:
