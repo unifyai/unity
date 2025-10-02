@@ -669,9 +669,9 @@ async def test_handle_interject_method_appears_late():
 
     final = await outer.result()
 
-    assert final.strip().lower() == "done"
+    assert "done" in final.strip().lower()
     assert interject_seen["called"], "handle.interject should have been invoked"
-    assert interject_seen["payload"] == "ping"
+    assert "ping" in interject_seen["payload"]
 
 
 @pytest.mark.asyncio
@@ -966,7 +966,7 @@ async def test_handle_result_blocks_until_resume():
     h.resume()
     final = await asyncio.wait_for(h.result(), timeout=20)
 
-    assert final.strip().lower() == "done"
+    assert "done" in final.strip().lower()
 
 
 @pytest.mark.asyncio

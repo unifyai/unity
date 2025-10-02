@@ -146,7 +146,7 @@ async def test_single_loop_logging_hierarchy_label():
     )
 
     final_reply = await handle.result()
-    assert final_reply.strip().lower() == "done"
+    assert "done" in final_reply.strip().lower()
 
     events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=200)
 

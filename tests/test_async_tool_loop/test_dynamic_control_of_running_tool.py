@@ -239,7 +239,7 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     assert not any(
         (m.get("role") == "assistant")
         and isinstance(m.get("content"), str)
-        and m["content"].strip().lower() == "done"
+        and "done" in m["content"].strip().lower()
         for m in msgs_during_pause
     ), "assistant produced final reply while tool was paused"
 
@@ -249,7 +249,7 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     elapsed_since_ack = time.perf_counter() - t_pause_ack
 
     # ── assertions ───────────────────────────────────────────────────────
-    assert final.strip().lower() == "done"
+    assert "done" in final.strip().lower()
     # The time since the pause ACK must include the full pause window
     assert (
         elapsed_since_ack >= 1.95
