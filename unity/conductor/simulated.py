@@ -17,7 +17,7 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
     ToolSpec,
 )
-from ..common.async_tool_loop import start_async_tool_use_loop
+from ..common.async_tool_loop import start_async_tool_loop
 from .prompt_builders import build_ask_prompt, build_request_prompt
 from .base import BaseConductor
 from ..contact_manager.simulated import SimulatedContactManager
@@ -285,7 +285,7 @@ class SimulatedConductor:
             build_ask_prompt(tools, include_activity=include_activity),
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,
@@ -377,7 +377,7 @@ class SimulatedConductor:
             build_request_prompt(tools, include_activity=include_activity),
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,

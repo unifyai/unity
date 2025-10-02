@@ -18,7 +18,7 @@ from typing import Any, List
 
 import pytest
 import unify
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
@@ -113,7 +113,7 @@ async def test_interject_leads_to_second_tool_and_final_result():
     calls and a final plain-text result.
     """
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message=("Use the `echo` tool to output the text 'A'."),
         tools={"echo": echo},
@@ -171,7 +171,7 @@ async def test_interject_leads_to_second_tool_and_final_result():
 async def test_stop_stops_gracefully():
     """handle.stop() cancels the loop and result() returns a standard notice string."""
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Echo something then say 'ok'.",
         {"echo": echo},
@@ -208,7 +208,7 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
     }
     client.append_messages([assistant_msg])
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="Please proceed.",
         tools={},  # helpers are acknowledged during backfill without execution
@@ -252,7 +252,7 @@ async def test_interjections_are_processed_and_loop_completes():
     Fire two interjections (B, then C) and validate FIFO order and sufficient tool work.
     """
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Echo A please, then say 'done' when finished.",
         {"echo": echo},
@@ -293,7 +293,7 @@ async def test_single_tool_result_is_inserted_before_interjection():
     Expect: assistant → tool result → interjection.
     """
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         (
             "Run the tool `slow` exactly once, "
@@ -326,7 +326,7 @@ async def test_parallel_tool_results_shift_interjection_down():
     """
     client = new_client()
     client.set_cache(False)
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         (
             "Call the tools `fast` and `slow` both at the same time, "
@@ -361,7 +361,7 @@ async def test_interjection_stops_ongoing_llm():
     """The first LLM generation is stopped once the user interjects."""
     client = new_client()
     client.set_cache(False)
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Tell me something interesting about whales.",
         {},
@@ -411,7 +411,7 @@ async def test_interjectable_tool_roundtrip() -> None:
     long_running.__name__ = "long_running"
     long_running.__qualname__ = "long_running"
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message=(
             "Follow STRICTLY these steps:\n"
@@ -471,7 +471,7 @@ async def test_immediate_interjection_after_toolcall_has_tool_reply() -> None:
     slow_tool.__name__ = "slow_tool"
     slow_tool.__qualname__ = "slow_tool"
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message=(
             "Follow these steps strictly:\n"
@@ -552,7 +552,7 @@ async def test_backfills_missing_tool_reply_for_prior_assistant_turn() -> None:
     }
     client.append_messages([assistant_msg])
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="Please proceed.",
         tools={"slow_tool": slow_tool},

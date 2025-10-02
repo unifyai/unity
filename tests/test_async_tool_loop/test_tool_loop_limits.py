@@ -4,7 +4,7 @@ import pytest
 import unify
 from typing import Dict, Callable
 
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.tool_spec import ToolSpec
 from tests.helpers import SETTINGS
 
@@ -38,7 +38,7 @@ async def test_max_steps_exceeded():
     client = DummyAsyncUnify()
     # The conversation will contain at least USER + ASSISTANT = 2 messages,
     # so max_steps=1 must raise.
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="hello",
         tools={},
@@ -54,7 +54,7 @@ async def test_max_steps_exceeded():
 @pytest.mark.asyncio
 async def test_timeout_exceeded():
     client = DummyAsyncUnify(delay=0.2)  # ensure > timeout
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="hi",
         tools={},
@@ -155,7 +155,7 @@ async def test_prunes_over_quota_tool_calls():
 
     client = _MultiCallUnify()
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="start",
         tools={
@@ -230,7 +230,7 @@ async def test_prunes_over_quota_serial_calls():
 
     client = _SerialCallsUnify()
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="start",
         tools={
@@ -272,7 +272,7 @@ async def test_timeout_graceful_termination():
     """No exception; pending tool is cancelled when timeout hits."""
     cancel_flag = {}
     client = _ToolCallingUnify()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="go",
         tools={"long_tool": _make_long_tool(cancel_flag)},
@@ -290,7 +290,7 @@ async def test_max_steps_graceful_termination():
     """No exception; pending tool is cancelled when max_steps is exceeded."""
     cancel_flag = {}
     client = _ToolCallingUnify()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="go",
         tools={"long_tool": _make_long_tool(cancel_flag)},
@@ -331,7 +331,7 @@ async def test_default_policy_returns_immediately():
         raise RuntimeError("tool should not have been invoked")
 
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="You are part of a test. Do *not* call any tools, just return to the user immediately",
         tools={"noop_tool": noop_tool},
@@ -353,7 +353,7 @@ async def test_policy_forces_single_tool_invocation():
         return "ok"
 
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="You are part of a test. Do *not* call any tools, just return to the user immediately",
         tools={"dummy_tool": dummy_tool},
@@ -393,7 +393,7 @@ async def test_policy_shows_then_hides_tool():
         return "auto", {}
 
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "You are part of a test. Continue calling `observed_tool` until the tool option disappears, up to a *maximum* of two *consecutive* tool calls.",
         {"observed_tool": observed_tool},
@@ -421,7 +421,7 @@ async def test_policy_two_required_then_auto():
         return ("required" if step < 2 else "auto", tools)
 
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "You are part of a test. Use the tool whenever required but stop when no longer forced.",
         {"counting_tool": counting_tool},
@@ -459,7 +459,7 @@ async def test_max_parallel_tool_calls():
         "replying 'ok'."
     )
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message=prompt,
         tools={"short": short},

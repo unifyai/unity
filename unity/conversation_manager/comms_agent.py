@@ -12,7 +12,7 @@ import unify
 from collections import deque
 from unity.helpers import run_script, terminate_process
 from unity.common.llm_helpers import methods_to_tool_dict
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from unity.memory_manager.broader_context import get_broader_context
 from unity.conversation_manager.debug_logger import log_job_startup, mark_job_done
 from unity.conversation_manager.comms_actions import (
@@ -186,9 +186,9 @@ class CommsAgent:
                 self.contact_manager = ContactManager()
 
     def _build_enabled_tools_dict(self):
-        from unity.common.async_tool_loop import AsyncToolUseLoopHandle
+        from unity.common.async_tool_loop import AsyncToolLoopHandle
 
-        self.tool_use_handles: dict[int, dict[AsyncToolUseLoopHandle, str]] = {}
+        self.tool_use_handles: dict[int, dict[AsyncToolLoopHandle, str]] = {}
 
         if self.enabled_tools[0] is None:
             self.enabled_tools = {}
@@ -567,7 +567,7 @@ class CommsAgent:
         unify_client.set_system_message(
             build_action_prompt(self.enabled_tools, action.query),
         )
-        tool_use_handle = start_async_tool_use_loop(
+        tool_use_handle = start_async_tool_loop(
             unify_client,
             action.query,
             self.enabled_tools,
@@ -852,7 +852,7 @@ class CommsAgent:
         unify_client.set_system_message(
             build_action_prompt(self.enabled_tools, query),
         )
-        tool_use_handle = start_async_tool_use_loop(
+        tool_use_handle = start_async_tool_loop(
             unify_client,
             query,
             self.enabled_tools,

@@ -6,7 +6,7 @@ import json
 
 import pytest
 import unify
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
 
 
@@ -94,7 +94,7 @@ async def test_notification_bubbles_up_two_tiers() -> None:
         "notify_parent": notify_parent,
     }
 
-    outer_handle = start_async_tool_use_loop(  # type: ignore[attr-defined]
+    outer_handle = start_async_tool_loop(  # type: ignore[attr-defined]
         outer_client,
         message="Please email jonathan.smith123@gmail.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
         tools=outer_tools,
@@ -204,7 +204,7 @@ async def delegating_tool(
     async def inner_tool_bridge() -> str:
         return await inner_tool(notification_up_q=notification_up_q)
 
-    handle = start_async_tool_use_loop(  # <-- returns AsyncToolUseLoopHandle
+    handle = start_async_tool_loop(  # <-- returns AsyncToolLoopHandle
         inner_llm,
         message="Run inner_tool please.",
         tools={
@@ -226,7 +226,7 @@ async def test_notification_bubbles_through_returned_handle() -> None:
         "If any internal work makes progress in a nested loop, you may acknowledge it briefly but continue to completion.",
     )
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         outer_llm,
         message="Run delegating_tool please.",
         tools={

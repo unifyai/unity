@@ -5,8 +5,8 @@ import asyncio
 import unify
 
 from unity.common.async_tool_loop import (
-    start_async_tool_use_loop,
-    AsyncToolUseLoopHandle,
+    start_async_tool_loop,
+    AsyncToolLoopHandle,
 )
 from tests.helpers import SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
@@ -36,7 +36,7 @@ def inner_tool() -> str:  # noqa: D401 – simple value
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def outer_tool() -> AsyncToolUseLoopHandle:
+async def outer_tool() -> AsyncToolLoopHandle:
     """Launch an **inner** async‑tool‑use loop and return its *handle*."""
 
     # brand‑new LLM client dedicated to the nested conversation
@@ -55,7 +55,7 @@ async def outer_tool() -> AsyncToolUseLoopHandle:
 
     # Kick off the nested loop – **no interjectable_tools specified** on
     # purpose: the outer loop must deduce that from the returned handle.
-    return start_async_tool_use_loop(
+    return start_async_tool_loop(
         client=inner_client,
         message="start",
         tools={"inner_tool": inner_tool},
@@ -88,7 +88,7 @@ async def test_nested_async_tool_loop():
         "3️⃣  Once it is *completed*, respond with exactly 'all done'.",
     )
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="start",
         tools={"outer_tool": outer_tool},
@@ -158,14 +158,14 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
     # 1.  Instrument `AsyncToolLoopHandle.stop` so we can count invocations
     stop_called = {"count": 0}
 
-    original_stop = AsyncToolUseLoopHandle.stop
+    original_stop = AsyncToolLoopHandle.stop
 
     def patched_stop(self):
         stop_called["count"] += 1
         return original_stop(self)
 
     monkeypatch.setattr(
-        AsyncToolUseLoopHandle,
+        AsyncToolLoopHandle,
         "stop",
         patched_stop,
         raising=True,
@@ -186,7 +186,7 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
         "3️⃣  Do not produce any other reply until the stop has taken effect; then reply exactly the single line 'outer stopped'.",
     )
 
-    outer_handle = start_async_tool_use_loop(
+    outer_handle = start_async_tool_loop(
         client=client,
         message="start",
         tools={"outer_tool": outer_tool},
@@ -232,7 +232,7 @@ async def test_interject_nested_handle(monkeypatch):
     # 1.  Monkey-patch the public interject method so we can detect use
     interject_calls = {"count": 0, "payloads": []}
 
-    orig_interject = AsyncToolUseLoopHandle.interject
+    orig_interject = AsyncToolLoopHandle.interject
 
     async def patched_interject(self, message: str):
         interject_calls["count"] += 1
@@ -240,7 +240,7 @@ async def test_interject_nested_handle(monkeypatch):
         await orig_interject(self, message)
 
     monkeypatch.setattr(
-        AsyncToolUseLoopHandle,
+        AsyncToolLoopHandle,
         "interject",
         patched_interject,
         raising=True,
@@ -261,7 +261,7 @@ async def test_interject_nested_handle(monkeypatch):
     slow_topic.__qualname__ = "slow_topic"
 
     # 3.  Outer tool: launches nested loop and returns its handle
-    async def outer_tool() -> AsyncToolUseLoopHandle:
+    async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=SETTINGS.UNIFY_CACHE,
@@ -272,7 +272,7 @@ async def test_interject_nested_handle(monkeypatch):
             "2️⃣  Wait until the topic changes.\n"
             "3️⃣  Answer with exactly 'done'.",
         )
-        return start_async_tool_use_loop(
+        return start_async_tool_loop(
             client=inner_client,
             message="start",
             tools={"slow_topic": slow_topic},
@@ -296,7 +296,7 @@ async def test_interject_nested_handle(monkeypatch):
         "4️⃣  Finally, reply with 'outer done'.",
     )
 
-    top_handle = start_async_tool_use_loop(
+    top_handle = start_async_tool_loop(
         client=client,
         message="start",
         tools={"outer_tool": outer_tool},
@@ -449,7 +449,7 @@ async def test_clarification_nested_handle():
     ask_colour.__qualname__ = "ask_colour"
 
     # ── outer tool launches a nested loop and *exposes the same queues* ──
-    async def outer_tool() -> AsyncToolUseLoopHandle:
+    async def outer_tool() -> AsyncToolLoopHandle:
         up_q, down_q = asyncio.Queue(), asyncio.Queue()
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
@@ -471,7 +471,7 @@ async def test_clarification_nested_handle():
         _ask_colour_wrapped.__name__ = "ask_colour"
         _ask_colour_wrapped.__qualname__ = "ask_colour"
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client=inner_client,
             message="go",
             tools={"ask_colour": _ask_colour_wrapped},
@@ -501,7 +501,7 @@ async def test_clarification_nested_handle():
         "Finally say 'all done'.",
     )
 
-    top_handle = start_async_tool_use_loop(
+    top_handle = start_async_tool_loop(
         client,
         message="start",
         tools={"outer_tool": outer_tool},
@@ -545,7 +545,7 @@ async def test_notification_nested_handle():
     async def outer_tool(
         *,
         notification_up_q: asyncio.Queue | None = None,
-    ) -> AsyncToolUseLoopHandle:
+    ) -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=SETTINGS.UNIFY_CACHE,
@@ -560,7 +560,7 @@ async def test_notification_nested_handle():
         async def inner_bridge() -> str:
             return await inner_progress(notification_up_q=notification_up_q)
 
-        return start_async_tool_use_loop(
+        return start_async_tool_loop(
             client=inner_client,
             message="start",
             tools={"inner_progress": inner_bridge},
@@ -583,7 +583,7 @@ async def test_notification_nested_handle():
         "3️⃣  Once it is completed, respond with exactly 'outer done'.",
     )
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="start",
         tools={"outer_tool": outer_tool},
@@ -615,7 +615,7 @@ async def test_handle_interject_method_appears_late():
     interject_seen = {"called": False, "payload": None}
 
     # dummy handle that adds .interject later --------------------------
-    class SlowHandle(AsyncToolUseLoopHandle):
+    class SlowHandle(AsyncToolLoopHandle):
         pass  # will monkey-patch .interject later
 
     async def dummy_tool() -> SlowHandle:
@@ -660,7 +660,7 @@ async def test_handle_interject_method_appears_late():
         "4️⃣  Finally, respond with the single word **done**.",
     )
 
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client,
         message="start",
         tools={"dummy_tool": dummy_tool},
@@ -688,9 +688,9 @@ async def test_pause_nested_loop_calls_pause():
     pause_called = {"count": 0}
 
     async def dummy_long_job() -> (
-        AsyncToolUseLoopHandle
+        AsyncToolLoopHandle
     ):  # returns quickly, but "long" enough to pause
-        handle = AsyncToolUseLoopHandle(
+        handle = AsyncToolLoopHandle(
             task=asyncio.create_task(asyncio.sleep(16)),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
@@ -704,8 +704,8 @@ async def test_pause_nested_loop_calls_pause():
         async def _resume(self):  # noqa: D401
             pass  # no-op for this test
 
-        setattr(handle, "pause", _pause.__get__(handle, AsyncToolUseLoopHandle))
-        setattr(handle, "resume", _resume.__get__(handle, AsyncToolUseLoopHandle))
+        setattr(handle, "pause", _pause.__get__(handle, AsyncToolLoopHandle))
+        setattr(handle, "resume", _resume.__get__(handle, AsyncToolLoopHandle))
         return handle
 
     dummy_long_job.__name__ = "dummy_long_job"
@@ -725,7 +725,7 @@ async def test_pause_nested_loop_calls_pause():
         "3️⃣  Keep waiting for the job to finish and do not produce any other reply; then reply with 'paused done'.",
     )
 
-    top = start_async_tool_use_loop(
+    top = start_async_tool_loop(
         client=client,
         message="start",
         tools={"dummy_long_job": dummy_long_job},
@@ -752,7 +752,7 @@ async def test_resume_nested_loop_calls_resume():
     """
     counts = {"pause": 0, "resume": 0}
 
-    async def dummy_job() -> AsyncToolUseLoopHandle:
+    async def dummy_job() -> AsyncToolLoopHandle:
         """Return a handle whose underlying coroutine can be paused / resumed."""
 
         # ── internal pausable sleeper ─────────────────────────────────────────
@@ -768,7 +768,7 @@ async def test_resume_nested_loop_calls_resume():
         gate.set()  # start in *running* state
         task = asyncio.create_task(_run(8, gate))
 
-        handle = AsyncToolUseLoopHandle(
+        handle = AsyncToolLoopHandle(
             task=task,
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
@@ -790,8 +790,8 @@ async def test_resume_nested_loop_calls_resume():
             counts["resume"] += 1
             return orig_resume()
 
-        setattr(handle, "pause", _pause.__get__(handle, AsyncToolUseLoopHandle))
-        setattr(handle, "resume", _resume.__get__(handle, AsyncToolUseLoopHandle))
+        setattr(handle, "pause", _pause.__get__(handle, AsyncToolLoopHandle))
+        setattr(handle, "resume", _resume.__get__(handle, AsyncToolLoopHandle))
         return handle
 
     dummy_job.__name__ = "dummy_job"
@@ -809,7 +809,7 @@ async def test_resume_nested_loop_calls_resume():
         "4️⃣  Finally reply **only** with 'all done' once the job completes.",
     )
 
-    h = start_async_tool_use_loop(
+    h = start_async_tool_loop(
         client=client,
         message="start",
         tools={"dummy_job": dummy_job},
@@ -851,8 +851,8 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     counts = {"pause": 0, "resume": 0}
 
     # ── 1.  Count invocations of the public API  ─────────────────────────
-    original_pause = AsyncToolUseLoopHandle.pause
-    original_resume = AsyncToolUseLoopHandle.resume
+    original_pause = AsyncToolLoopHandle.pause
+    original_resume = AsyncToolLoopHandle.resume
 
     def patched_pause(self):
         # Count only pauses invoked on the root outer handle; nested handles are propagated and should not increment here
@@ -866,16 +866,16 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
             counts["resume"] += 1
         return original_resume(self)
 
-    monkeypatch.setattr(AsyncToolUseLoopHandle, "pause", patched_pause, raising=True)
-    monkeypatch.setattr(AsyncToolUseLoopHandle, "resume", patched_resume, raising=True)
+    monkeypatch.setattr(AsyncToolLoopHandle, "pause", patched_pause, raising=True)
+    monkeypatch.setattr(AsyncToolLoopHandle, "resume", patched_resume, raising=True)
 
     # ── 2.  A very short tool (1 s) – proves that waiting is *because* of pause
-    async def long_tool() -> AsyncToolUseLoopHandle:
+    async def long_tool() -> AsyncToolLoopHandle:
         async def _run():
             await asyncio.sleep(1)  # completes quickly
             return "done-inside"
 
-        return AsyncToolUseLoopHandle(
+        return AsyncToolLoopHandle(
             task=asyncio.create_task(_run()),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
@@ -897,7 +897,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
         "3️⃣ Reply with exactly **finished**.",
     )
 
-    outer_handle = start_async_tool_use_loop(
+    outer_handle = start_async_tool_loop(
         client,
         message="start",
         tools={"long_tool": long_tool},
@@ -952,7 +952,7 @@ async def test_handle_result_blocks_until_resume():
         "Call `noop_tool` then answer **only** with 'done'. Do not answer while the loop is paused or while tools are running; only answer after completion.",
     )
 
-    h = start_async_tool_use_loop(
+    h = start_async_tool_loop(
         client,
         message="go",
         tools={"noop_tool": noop_tool},
@@ -986,7 +986,7 @@ async def test_dynamic_handle_public_method():
     progress_calls = {"count": 0}
 
     # ── tool that returns a handle with `.ask` ──────────────────────────
-    async def long_compute() -> AsyncToolUseLoopHandle:
+    async def long_compute() -> AsyncToolLoopHandle:
         """
         • Runs a 3-second dummy job in the background.
         • Provides `.ask()` so external callers can query the elapsed time.
@@ -998,7 +998,7 @@ async def test_dynamic_handle_public_method():
             await asyncio.sleep(8)
             return "compute-done"
 
-        handle = AsyncToolUseLoopHandle(
+        handle = AsyncToolLoopHandle(
             task=asyncio.create_task(_job()),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
@@ -1012,7 +1012,7 @@ async def test_dynamic_handle_public_method():
             return f"{elapsed:.1f}s elapsed"
 
         # Bind and expose
-        setattr(handle, "ask", _ask.__get__(handle, AsyncToolUseLoopHandle))
+        setattr(handle, "ask", _ask.__get__(handle, AsyncToolLoopHandle))
         return handle
 
     long_compute.__name__ = "long_compute"
@@ -1033,7 +1033,7 @@ async def test_dynamic_handle_public_method():
         "4️⃣  Only once the computation finishes, answer **only** with 'all done'",
     )
 
-    top = start_async_tool_use_loop(
+    top = start_async_tool_loop(
         client,
         message="start",
         tools={"long_compute": long_compute},
@@ -1066,7 +1066,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     """
 
     # Holder for the inner handle so we can instrument its stop()
-    holder: dict[str, AsyncToolUseLoopHandle | None] = {"handle": None}
+    holder: dict[str, AsyncToolLoopHandle | None] = {"handle": None}
     stop_calls = {"count": 0}
 
     async def inner_long_job() -> str:
@@ -1077,7 +1077,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     inner_long_job.__name__ = "inner_long_job"
     inner_long_job.__qualname__ = "inner_long_job"
 
-    async def outer_tool() -> AsyncToolUseLoopHandle:
+    async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=SETTINGS.UNIFY_CACHE,
@@ -1086,7 +1086,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
-        h = start_async_tool_use_loop(
+        h = start_async_tool_loop(
             client=inner_client,
             message="start",
             tools={"inner_long_job": inner_long_job},
@@ -1117,7 +1117,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
 
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client=client,
         message="start",
         tools={"outer_tool": outer_tool},
@@ -1158,7 +1158,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     inner_long_job.__name__ = "inner_long_job"
     inner_long_job.__qualname__ = "inner_long_job"
 
-    async def outer_tool() -> AsyncToolUseLoopHandle:
+    async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=SETTINGS.UNIFY_CACHE,
@@ -1167,7 +1167,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
-        h = start_async_tool_use_loop(
+        h = start_async_tool_loop(
             client=inner_client,
             message="start",
             tools={"inner_long_job": inner_long_job},
@@ -1197,7 +1197,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
 
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client=client,
         message="start",
         tools={"outer_tool": outer_tool},
@@ -1237,7 +1237,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     inner_long_job.__name__ = "inner_long_job"
     inner_long_job.__qualname__ = "inner_long_job"
 
-    async def outer_tool() -> AsyncToolUseLoopHandle:
+    async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=SETTINGS.UNIFY_CACHE,
@@ -1246,7 +1246,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
-        h = start_async_tool_use_loop(
+        h = start_async_tool_loop(
             client=inner_client,
             message="start",
             tools={"inner_long_job": inner_long_job},
@@ -1282,7 +1282,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
 
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client=client,
         message="start",
         tools={"outer_tool": outer_tool},

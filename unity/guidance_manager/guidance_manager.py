@@ -20,7 +20,7 @@ from ..common.llm_helpers import (
     make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
-    start_async_tool_use_loop,
+    start_async_tool_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
@@ -189,7 +189,7 @@ class GuidanceManager(BaseGuidanceManager):
                 include_activity=include_activity,
             ),
         )
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,
@@ -278,7 +278,7 @@ class GuidanceManager(BaseGuidanceManager):
                 include_activity=include_activity,
             ),
         )
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,

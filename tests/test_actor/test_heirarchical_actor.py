@@ -13,7 +13,7 @@ from unity.actor.action_provider import ActionProvider
 from unity.controller.browser import Browser
 from unity.function_manager.function_manager import FunctionManager
 import unity.actor.hierarchical_actor as hierarchical_actor_module
-from unity.common.async_tool_loop import AsyncToolUseLoopHandle
+from unity.common.async_tool_loop import AsyncToolLoopHandle
 
 
 # --- Mocks for Dependencies ---
@@ -619,11 +619,11 @@ async def main_plan():
         return expected_summary
 
     # 1. Create the mock handle specifically for the exploration phase
-    mock_exploration_handle = MagicMock(spec=AsyncToolUseLoopHandle)
+    mock_exploration_handle = MagicMock(spec=AsyncToolLoopHandle)
     mock_exploration_handle.result = AsyncMock(side_effect=mock_exploration_result)
 
     # 2. Store the original function so we can call it for the main loop
-    original_start_loop = hierarchical_actor_module.start_async_tool_use_loop
+    original_start_loop = hierarchical_actor_module.start_async_tool_loop
 
     def smart_mock_start_loop(*args, **kwargs):
         """
@@ -639,7 +639,7 @@ async def main_plan():
     # 3. Apply the new, smarter mock function
     monkeypatch.setattr(
         hierarchical_actor_module,
-        "start_async_tool_use_loop",
+        "start_async_tool_loop",
         smart_mock_start_loop,
     )
 

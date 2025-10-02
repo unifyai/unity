@@ -5,7 +5,7 @@ import logging
 import pytest
 import unify
 
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(caplog) -> No
 
     tools = {"fast_task": fast_task, "very_slow_task": very_slow_task}
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="Please run fast_task and slow_task, triggering them both **immediately** (at the same time)",
         tools=tools,
@@ -175,7 +175,7 @@ async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
 
     tools = {"fast_task": fast_task, "slow_task": slow_task}
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message="Please run fast_task and slow_task, triggering them both **immediately** (at the same time)",
         tools=tools,

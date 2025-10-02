@@ -20,7 +20,7 @@ from ..common.llm_helpers import (
     make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
-    start_async_tool_use_loop,
+    start_async_tool_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
@@ -745,7 +745,7 @@ class ContactManager(BaseContactManager):
                 include_activity=include_activity,
             ),
         )
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,
@@ -834,7 +834,7 @@ class ContactManager(BaseContactManager):
                 include_activity=include_activity,
             ),
         )
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,
@@ -1685,7 +1685,7 @@ class ContactManager(BaseContactManager):
     def _inject_broader_context(msgs: list[dict]) -> list[dict]:
         """Replace the ``{broader_context}`` placeholder in *system* messages.
 
-        The helper is fed into ``start_async_tool_use_loop`` via the
+        The helper is fed into ``start_async_tool_loop`` via the
         ``preprocess_msgs`` parameter so that **every** LLM invocation sees a
         *fresh* broader-context snippet pulled from ``MemoryManager`` just
         before the request is dispatched.

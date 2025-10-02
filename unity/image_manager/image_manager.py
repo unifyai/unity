@@ -14,7 +14,7 @@ from google.cloud.exceptions import NotFound
 
 
 from ..common.async_tool_loop import (
-    start_async_tool_use_loop,
+    start_async_tool_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
@@ -54,7 +54,7 @@ class ImageHandle:
         """
         data_str = self._image.data
         is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
-            "https://storage.googleapis.com/"
+            "https://storage.googleapis.com/",
         )
 
         if is_gcs_url:
@@ -86,7 +86,7 @@ class ImageHandle:
                 return blob.download_as_bytes()
             except Exception as exc:
                 raise RuntimeError(
-                    f"Failed to download image from GCS: {data_str}"
+                    f"Failed to download image from GCS: {data_str}",
                 ) from exc
         else:
             # Fallback to assuming it's base64
@@ -130,7 +130,7 @@ class ImageHandle:
 
         # Check if the data string is a GCS URL
         is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
-            "https://storage.googleapis.com/"
+            "https://storage.googleapis.com/",
         )
 
         if is_gcs_url:
@@ -175,7 +175,7 @@ class ImageHandle:
             except Exception as e:
                 # If signing fails, raise an error as the image is inaccessible
                 raise RuntimeError(
-                    f"Failed to generate signed URL for GCS image: {e}"
+                    f"Failed to generate signed URL for GCS image: {e}",
                 ) from e
 
         elif isinstance(data_str, str) and (
@@ -222,7 +222,7 @@ class ImageHandle:
             ],
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client=client,
             message=question,
             tools={},
@@ -276,12 +276,12 @@ class ImageManager(BaseImageManager):
                 "application_default_credentials.json",
             )
             credentials = service_account.Credentials.from_service_account_file(
-                credentials_path
+                credentials_path,
             )
             self.storage_client = storage.Client(credentials=credentials)
         except Exception as e:
             raise RuntimeError(
-                f"Failed to initialize Google Cloud Storage client: {e}"
+                f"Failed to initialize Google Cloud Storage client: {e}",
             ) from e
 
         # Ensure context/fields exist deterministically
