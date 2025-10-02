@@ -47,6 +47,7 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     # Run ManagersWorker on a background thread via asyncio.to_thread
     def run_managers_worker():
         from unity.conversation_manager_2.event_broker import create_event_broker
+
         # Create a fresh Redis client bound to the thread's event loop
         manager_event_broker = create_event_broker()
         asyncio.run(ManagersWorker(manager_event_broker).wait_for_events())
