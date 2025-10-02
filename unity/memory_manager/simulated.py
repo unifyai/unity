@@ -22,7 +22,7 @@ from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
 from ..common.llm_helpers import methods_to_tool_dict
-from ..common.async_tool_loop import start_async_tool_use_loop
+from ..common.async_tool_loop import start_async_tool_loop
 from . import prompt_builders as pb
 from .base import BaseMemoryManager
 
@@ -77,7 +77,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             pb.build_contact_update_prompt(tools, guidance=guidance),
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             self._llm,
             transcript,
             tools,
@@ -164,7 +164,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
 
         payload = json.dumps(payload_dict, indent=2)
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             self._llm,
             payload,
             tools,
@@ -262,7 +262,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             indent=2,
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             self._llm,
             payload,
             tools,
@@ -346,7 +346,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             indent=2,
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             self._llm,
             payload,
             tools,
@@ -379,7 +379,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             pb.build_knowledge_prompt(tools, guidance=guidance),
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             self._llm,
             transcript,
             tools,
@@ -408,7 +408,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             pb.build_task_prompt(tools, guidance=guidance),
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             self._llm,
             transcript,
             tools,

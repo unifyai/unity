@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 import asyncio
 import unify
 from unity.common.async_tool_loop import (
-    start_async_tool_use_loop,
+    start_async_tool_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
@@ -96,7 +96,7 @@ class WebSearcher(BaseWebSearcher):
             prompt_builders.build_ask_prompt(tools=tools),
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,

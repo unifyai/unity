@@ -18,7 +18,7 @@ from typing import Any, List
 
 import pytest
 import unify
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
@@ -113,7 +113,7 @@ async def test_interject_leads_to_second_tool_and_final_result():
     calls and a final plain-text result.
     """
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message=("Use the `echo` tool to output the text 'A'."),
         tools={"echo": echo},
@@ -171,7 +171,7 @@ async def test_interject_leads_to_second_tool_and_final_result():
 async def test_stop_stops_gracefully():
     """handle.stop() cancels the loop and result() returns a standard notice string."""
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Echo something then say 'ok'.",
         {"echo": echo},
@@ -187,9 +187,9 @@ async def test_stop_stops_gracefully():
 @_handle_project
 async def test_backfills_missing_tool_reply_for_helper_call() -> None:
     """
-    Pre-seed transcript with an assistant helper tool_call (e.g. wait)
-    but no tool reply. The loop must backfill an acknowledgement tool message
-    directly after that assistant turn so API ordering is satisfied.
+    Pre-seed transcript with an assistant helper tool_call (e.g. wait).
+    New behaviour: helper `wait` is pruned (no backfilled tool reply, no chat clutter).
+    The pre-seeded assistant helper turn should be removed, and no tool reply should appear.
     """
     client = new_client()
 
@@ -208,40 +208,34 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
     }
     client.append_messages([assistant_msg])
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="Please proceed.",
         tools={},  # helpers are acknowledged during backfill without execution
     )
 
-    # Wait until the assistant turn is present and a backfilled tool reply appears after it
-    assistant_idx: int | None = None
+    # Allow the loop to process backfill/pruning
     for _ in range(60):
         await asyncio.sleep(0.05)
-        for i, m in enumerate(client.messages or []):
-            if (
-                m.get("role") == "assistant"
-                and m.get("tool_calls")
-                and any(tc.get("id") == helper_call_id for tc in m["tool_calls"])
-            ):
-                assistant_idx = i
-                break
-        if assistant_idx is not None and len(client.messages) > assistant_idx + 1:
+        if client.messages:
             break
 
-    assert assistant_idx is not None, "helper assistant turn not found in transcript"
-    assert (assistant_idx + 1) < len(client.messages)
+    # The pre-seeded helper assistant turn should be pruned
+    assert assistant_msg not in client.messages
 
-    next_msg = client.messages[assistant_idx + 1]
-    assert (
-        next_msg.get("role") == "tool"
-    ), "expected a backfilled tool reply after helper call"
-    assert (
-        next_msg.get("tool_call_id") == helper_call_id
-    ), "backfilled tool reply must match helper tool_call_id"
-    assert (
-        next_msg.get("name") == helper_name
-    ), "ack tool message should use the helper tool name"
+    # No assistant message should contain the helper tool_call id
+    assert not any(
+        m.get("role") == "assistant"
+        and m.get("tool_calls")
+        and any(tc.get("id") == helper_call_id for tc in m["tool_calls"])
+        for m in client.messages
+    )
+
+    # No tool reply should reference the helper call id
+    assert not any(
+        m.get("role") == "tool" and m.get("tool_call_id") == helper_call_id
+        for m in client.messages
+    )
 
     # Cleanly stop the loop
     handle.stop()
@@ -258,7 +252,7 @@ async def test_interjections_are_processed_and_loop_completes():
     Fire two interjections (B, then C) and validate FIFO order and sufficient tool work.
     """
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Echo A please, then say 'done' when finished.",
         {"echo": echo},
@@ -274,9 +268,18 @@ async def test_interjections_are_processed_and_loop_completes():
     assert isinstance(final, str) and final.strip()
 
     msgs = client.messages
-    idx_B = _interjection_index(msgs, "B please")
-    idx_C = _interjection_index(msgs, "C please")
-    assert idx_B < idx_C
+    # New behaviour: multiple interjections can be consolidated into the same
+    # system message block. Instead of requiring distinct message indices,
+    # assert that both snippets appear and that "B please" precedes "C please"
+    # within the combined interjection text.
+    inter_sys_msgs = [
+        m.get("content", "")
+        for m in msgs
+        if m.get("role") == "system" and "user: **" in (m.get("content", "") or "")
+    ]
+    combined = "\n".join(inter_sys_msgs)
+    assert "B please" in combined and "C please" in combined
+    assert combined.find("B please") < combined.find("C please")
 
     tool_msgs = [m for m in client.messages if m["role"] == "tool"]
     assert len(tool_msgs) >= 3
@@ -290,7 +293,7 @@ async def test_single_tool_result_is_inserted_before_interjection():
     Expect: assistant → tool result → interjection.
     """
     client = new_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         (
             "Run the tool `slow` exactly once, "
@@ -323,7 +326,7 @@ async def test_parallel_tool_results_shift_interjection_down():
     """
     client = new_client()
     client.set_cache(False)
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         (
             "Call the tools `fast` and `slow` both at the same time, "
@@ -358,7 +361,7 @@ async def test_interjection_stops_ongoing_llm():
     """The first LLM generation is stopped once the user interjects."""
     client = new_client()
     client.set_cache(False)
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Tell me something interesting about whales.",
         {},
@@ -408,7 +411,7 @@ async def test_interjectable_tool_roundtrip() -> None:
     long_running.__name__ = "long_running"
     long_running.__qualname__ = "long_running"
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message=(
             "Follow STRICTLY these steps:\n"
@@ -468,7 +471,7 @@ async def test_immediate_interjection_after_toolcall_has_tool_reply() -> None:
     slow_tool.__name__ = "slow_tool"
     slow_tool.__qualname__ = "slow_tool"
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message=(
             "Follow these steps strictly:\n"
@@ -549,7 +552,7 @@ async def test_backfills_missing_tool_reply_for_prior_assistant_turn() -> None:
     }
     client.append_messages([assistant_msg])
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="Please proceed.",
         tools={"slow_tool": slow_tool},

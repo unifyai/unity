@@ -30,3 +30,11 @@ class Function(BaseModel):
         None,
         description="A dictionary representing the state required before the function can be run, e.g., {'url': '...'}.",
     )
+
+    guidance_ids: List[int] = Field(
+        default_factory=list,
+        description=(
+            "List of Guidance.guidance_id values that reference this function; "
+            "represents the inverse many-to-many relationship."
+        ),
+    )

@@ -4,7 +4,7 @@ import json
 import pytest
 import unify
 
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 
 
 class _StubUnify:
@@ -80,11 +80,10 @@ async def test_all_llm_kwargs_are_forwarded_verbatim():
 
     client = _StubUnify()
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,  # type: ignore[arg-type]
         message="Start",
         tools={"accept_any": accept_any},
-        log_steps=False,
     )
 
     final = await handle.result()

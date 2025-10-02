@@ -20,6 +20,9 @@ from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
 from ..llm_helpers import method_to_schema, _collect_images, _strip_image_keys, _dumps
 from contextlib import suppress
+from .loop_config import LIVE_IMAGES_REGISTRY
+from .tools_utils import parse_arg_scoped_span, extract_alignment_text_from_value
+from unity.image_manager.utils import substring_from_span
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
@@ -208,7 +211,7 @@ class ToolsData:
         sig_accepts_clar_qs = (
             "clarification_up_q" in params and "clarification_down_q" in params
         ) or has_varkw
-        sig_accepts_progress = "progress_up_q" in params or has_varkw
+        sig_accepts_progress = "notification_up_q" in params or has_varkw
 
         pause_ev: Optional[asyncio.Event] = None
         if sig_accepts_pause_event:
@@ -227,7 +230,10 @@ class ToolsData:
         progress_q: Optional[asyncio.Queue[dict]] = None
         if sig_accepts_progress:
             progress_q = asyncio.Queue()
-            extra_kwargs["progress_up_q"] = progress_q
+            extra_kwargs["notification_up_q"] = progress_q
+        if sig_accepts_progress:
+            progress_q = asyncio.Queue()
+            extra_kwargs["notification_up_q"] = progress_q
 
         sub_q: Optional[asyncio.Queue[str]] = None
         if sig_accepts_interject_q:
@@ -253,6 +259,76 @@ class ToolsData:
         allowed_call_args = call_args
         merged_kwargs = {**allowed_call_args, **filtered_extras}
 
+        # ── Normalise arg-scoped image mapping, if the tool accepts `images` ──
+        if "images" in params and isinstance(merged_kwargs.get("images"), dict):
+            try:
+                raw_images = dict(merged_kwargs.get("images") or {})
+                registry = LIVE_IMAGES_REGISTRY.get()
+                norm_images: dict[str, Any] = {}
+                for key, val in raw_images.items():
+                    parsed = parse_arg_scoped_span(str(key))
+                    if not parsed:
+                        continue
+                    arg_name, span = parsed
+                    # Only accept if referenced arg is available in the call
+                    if arg_name not in params and arg_name not in merged_kwargs:
+                        continue
+                    # Resolve id → handle or accept provided handle
+                    handle = None
+                    try:
+                        if isinstance(val, int):
+                            handle = (
+                                registry.get(int(val))
+                                if isinstance(registry, dict)
+                                else None
+                            )
+                        elif hasattr(val, "image_id"):
+                            handle = val
+                        elif isinstance(val, dict):
+                            # Accept explicit id fields inside the dict
+                            _id_field = None
+                            for _k in ("image_id", "imageId", "id"):
+                                if _k in val:
+                                    _id_field = val[_k]
+                                    break
+                            if _id_field is not None:
+                                try:
+                                    handle = (
+                                        registry.get(int(_id_field))
+                                        if isinstance(registry, dict)
+                                        else None
+                                    )
+                                except Exception:
+                                    handle = None
+                            elif bool(val.get("__handle__")):
+                                # Fallback: when a single live image exists, use it
+                                if isinstance(registry, dict) and len(registry) == 1:
+                                    try:
+                                        handle = next(iter(registry.values()))
+                                    except Exception:
+                                        handle = None
+                    except Exception:
+                        handle = None
+                    if handle is None:
+                        continue
+                    # Validate the span against the referenced argument's text; drop if invalid/empty.
+                    try:
+                        align_txt = extract_alignment_text_from_value(
+                            merged_kwargs.get(arg_name),
+                        )
+                        # Only keep non-empty matches
+                        if align_txt is not None:
+                            matched = substring_from_span(str(align_txt), span)
+                            if isinstance(matched, str) and matched != "":
+                                norm_images[str(key)] = handle
+                    except Exception:
+                        # If validation fails, skip this entry
+                        continue
+                merged_kwargs["images"] = norm_images
+            except Exception:
+                # If anything goes wrong, leave images as-is
+                pass
+
         # Build coroutine
         if asyncio.iscoroutinefunction(fn):
             coro = fn(**merged_kwargs)
@@ -277,7 +353,7 @@ class ToolsData:
             chat_context=extra_kwargs.get("parent_chat_context"),
             clar_up_queue=clar_up_q,
             clar_down_queue=clar_down_q,
-            progress_queue=progress_q,
+            notification_queue=progress_q,
             pause_event=pause_ev,
             # Debug helpers for failure logging
             tool_schema=method_to_schema(fn, name),
@@ -353,18 +429,67 @@ class ToolsData:
             from unity.common.async_tool_loop import SteerableToolHandle
 
             if isinstance(raw, SteerableToolHandle):
-                # If the nested handle explicitly requests pass-through behaviour
-                # expose it directly to the outer caller *immediately* and hand over.
+                # Passthrough: do NOT hand over control to the nested handle.
+                # Keep the outer loop alive. We still want to forward early
+                # interjections and synchronise pause/stop state with the
+                # newly created handle, but without adopting it as a delegate.
                 if (
                     getattr(raw, "__passthrough__", False)
                     and outer_handle_container
                     and outer_handle_container[0] is not None
                 ):
-                    outer_handle_container[0]._adopt(raw)
-                    # Signal to the outer loop that it should stop doing work and
-                    # simply await the delegate's result.
-                    self.handover_delegate = raw
-                    return False  # outer loop will handle return path
+                    try:
+                        _outer = outer_handle_container[0]
+                        # Adopt the handle to enable built-in flushing of any
+                        # pending interjections and to wire through future steering
+                        # calls automatically, while the outer loop keeps running
+                        # (handover/early-return was removed in the new design).
+                        try:
+                            _outer._adopt(raw)  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        # Forward any early interjections that were queued before
+                        # this passthrough handle existed. Do NOT consume the outer
+                        # buffer so that subsequent passthrough handles also receive them.
+                        _early = list(getattr(_outer, "_early_interjects", []))
+                        for _msg in _early:
+                            try:
+                                if isinstance(_msg, dict):
+                                    maybe_coro = raw.interject(  # type: ignore[attr-defined]
+                                        _msg.get("message", ""),
+                                        parent_chat_context_cont=_msg.get(
+                                            "parent_chat_context_continuted",
+                                        ),
+                                    )
+                                else:
+                                    maybe_coro = raw.interject(_msg)  # type: ignore[attr-defined]
+                                if asyncio.iscoroutine(maybe_coro):
+                                    await maybe_coro
+                            except Exception as _exc:
+                                pass
+                        # Synchronise pause/cancel signals with the new handle
+                        try:
+                            if not getattr(
+                                _outer,
+                                "_pause_event",
+                                None,
+                            ).is_set() and hasattr(raw, "pause"):
+                                raw.pause()  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        try:
+                            if getattr(
+                                _outer,
+                                "_cancel_event",
+                                None,
+                            ).is_set() and hasattr(raw, "stop"):
+                                maybe = raw.stop()  # type: ignore[attr-defined]
+                                if asyncio.iscoroutine(maybe):
+                                    asyncio.create_task(maybe)
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
 
                 # ── upgrade interject / clarification flags from handle ─────
                 if hasattr(raw, "interject"):
@@ -380,7 +505,7 @@ class ToolsData:
                         "Both queues are required (or neither).",
                     )
 
-                # 1️⃣ spawn the nested waiter (non-passthrough nested handle)
+                # 1️⃣ spawn the nested waiter (passthrough/non-passthrough nested handle)
                 if inspect.iscoroutinefunction(raw.result):
                     nested_coro = raw.result()  # already a coroutine
                 else:
@@ -417,7 +542,8 @@ class ToolsData:
                     tool_reply_msg=ph,
                     clar_up_queue=h_up_q,
                     clar_down_queue=h_down_q,
-                    progress_queue=info.progress_queue,
+                    notification_queue=info.notification_queue,
+                    is_passthrough=getattr(raw, "__passthrough__", False),
                 )
                 self.save_task(nested_task, metadata)
                 if h_up_q is not None:

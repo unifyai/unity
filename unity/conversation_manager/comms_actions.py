@@ -16,7 +16,6 @@ from unity.conversation_manager.events import (
     PhoneCallInitiatedEvent,
     PhoneCallStopEvent,
     InterruptEvent,
-    SMSMessageSentEvent,
     WhatsappMessageSentEvent,
 )
 from unity.conversation_manager.prompt_builders import (
@@ -44,7 +43,7 @@ from unity.common.llm_helpers import (
 )
 from unity.common.async_tool_loop import (
     SteerableToolHandle,
-    start_async_tool_use_loop,
+    start_async_tool_loop,
 )
 
 load_dotenv()
@@ -335,7 +334,7 @@ async def _send_email_via_address(
     from_email = os.getenv("ASSISTANT_EMAIL")
 
     print(
-        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}"
+        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}",
     )
     async with aiohttp.ClientSession() as session:
         async with session.post(
@@ -491,7 +490,7 @@ async def send_whatsapp_message(
         include_class_name=True,
     )
     client.set_system_message(build_message_prompt(tools, description, "whatsapp"))
-    return start_async_tool_use_loop(
+    return start_async_tool_loop(
         client,
         description,
         tools,
@@ -519,7 +518,7 @@ async def send_sms_message(
         include_class_name=True,
     )
     client.set_system_message(build_message_prompt(tools, description, "sms"))
-    return start_async_tool_use_loop(
+    return start_async_tool_loop(
         client,
         description,
         tools,
@@ -547,7 +546,7 @@ async def send_email(
         include_class_name=True,
     )
     client.set_system_message(build_message_prompt(tools, description, "email"))
-    return start_async_tool_use_loop(
+    return start_async_tool_loop(
         client,
         description,
         tools,
@@ -629,7 +628,7 @@ class Call(SteerableToolHandle):
             build_local_chat_search_prompt(build_local_chat_history()),
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             f"This is the user's question: {question}.",
             {},
@@ -684,7 +683,7 @@ class Call(SteerableToolHandle):
         if response_format:
             response_format, is_enum = _wrap_response_format(response_format)
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             self.client,
             f"The user is answering this question: {question}. Use available tools to get information of the user's answer.",
             self.tools,
@@ -778,6 +777,16 @@ class Call(SteerableToolHandle):
     def done(self) -> bool:
         return self.status == "ended"
 
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        return None
+
 
 class GoogleMeet(SteerableToolHandle):
     def __init__(
@@ -838,7 +847,7 @@ class GoogleMeet(SteerableToolHandle):
             build_local_chat_search_prompt(build_local_chat_history()),
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             f"This is the user's question: {question}.",
             {},
@@ -893,7 +902,7 @@ class GoogleMeet(SteerableToolHandle):
         if response_format:
             response_format, is_enum = _wrap_response_format(response_format)
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             self.client,
             f"The user is answering this question: {question}. Use available tools to get information of the user's answer.",
             self.tools,
@@ -992,3 +1001,13 @@ class GoogleMeet(SteerableToolHandle):
 
     def done(self) -> bool:
         return self.status == "ended"
+
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        return None

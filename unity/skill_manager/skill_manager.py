@@ -14,7 +14,7 @@ from ..common.llm_helpers import (
     inject_broader_context,
 )
 from ..common.async_tool_loop import (
-    start_async_tool_use_loop,
+    start_async_tool_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
@@ -155,7 +155,7 @@ class SkillManager(BaseSkillManager):
             ),
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,

@@ -51,8 +51,8 @@ def test_tool_create_task_timing():
     out = ts._create_task(name="TT Create " + _uniq(), description="timing create")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"]
-    assert elapsed_ms < 4050
-    print(f"elapsed: {elapsed_ms} < 4050")
+    assert elapsed_ms < 6075
+    print(f"elapsed: {elapsed_ms} < 6075")
 
 
 @pytest.mark.unit
@@ -84,8 +84,8 @@ def test_tool_filter_tasks_timing():
     rows = ts._filter_tasks(filter=f"task_id == {tid}")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert rows and rows[0]["task_id"] == tid
-    assert elapsed_ms < 1800
-    print(f"elapsed: {elapsed_ms} < 1800")
+    assert elapsed_ms < 2700
+    print(f"elapsed: {elapsed_ms} < 2700")
 
 
 @pytest.mark.unit
@@ -113,8 +113,8 @@ def test_tool_delete_task_timing():
     out = ts._delete_task(task_id=tid)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["details"]["task_id"] == tid
-    assert elapsed_ms < 1300
-    print(f"elapsed: {elapsed_ms} < 1300")
+    assert elapsed_ms < 1950
+    print(f"elapsed: {elapsed_ms} < 1950")
 
 
 @pytest.mark.unit

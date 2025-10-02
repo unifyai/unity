@@ -1,6 +1,8 @@
 import ast
 import inspect
 import functools
+import os
+from pathlib import Path
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column, list_private_fields
@@ -9,6 +11,8 @@ from .types.function import Function
 from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
+from ..file_manager.file_manager import FileManager
+from ..image_manager.image_manager import ImageManager, ImageHandle
 
 
 class FunctionManager(BaseFunctionManager):
@@ -24,7 +28,13 @@ class FunctionManager(BaseFunctionManager):
     # ------------------------------------------------------------------ #
     _FUNC_EMB = "_function_embedding"
 
-    def __init__(self, *, daemon: bool = True, traced: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        daemon: bool = True,
+        traced: bool = False,
+        file_manager: Optional[FileManager] = None,
+    ) -> None:
         # No thread behavior; keep parameter for backward compatibility
         self._daemon = daemon
         # ToDo: expose tools to LLM once needed
@@ -67,6 +77,32 @@ class FunctionManager(BaseFunctionManager):
         # Add tracing
         if traced:
             self = unify.traced(self)
+
+        # ------------------------------------------------------------------ #
+        #  File system mirroring (functions folder under FileManager tmp)     #
+        # ------------------------------------------------------------------ #
+        try:
+            # Resolve a FileManager instance (DI preferred)
+            self._fm: Optional[FileManager] = (
+                file_manager if file_manager is not None else FileManager()
+            )
+        except Exception:
+            self._fm = None
+
+        self._functions_dir: Optional[Path] = None
+        if self._fm is not None:
+            try:
+                # Create <tmp>/functions
+                tmp_dir = getattr(self._fm, "_tmp_dir", None)
+                if isinstance(tmp_dir, Path):
+                    functions_dir = tmp_dir / "functions"
+                    functions_dir.mkdir(parents=True, exist_ok=True)
+                    self._functions_dir = functions_dir
+                    # Bootstrap: mirror existing functions from context to disk (idempotent)
+                    self._bootstrap_functions_to_disk()
+            except Exception:
+                # Non-fatal – tests without FileManager still pass
+                self._functions_dir = None
 
     @property
     def _dangerous_builtins(self) -> Set[str]:
@@ -224,6 +260,78 @@ class FunctionManager(BaseFunctionManager):
         return logs[0]
 
     # ------------------------------------------------------------------ #
+    #  Filesystem helpers                                                #
+    # ------------------------------------------------------------------ #
+
+    def _function_filename(self, name: str) -> str:
+        """Return canonical filename for a function (no extensions in name)."""
+        safe = name.strip().replace(os.sep, "_")
+        return f"{safe}.py"
+
+    def _function_path(self, name: str) -> Optional[Path]:
+        if self._functions_dir is None:
+            return None
+        return self._functions_dir / self._function_filename(name)
+
+    def _write_function_file(self, name: str, source: str) -> Optional[Path]:
+        """Atomically write the function source into the functions folder."""
+        p = self._function_path(name)
+        if p is None:
+            return None
+        try:
+            tmp = p.with_suffix(p.suffix + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(source)
+            os.replace(tmp, p)
+            return p
+        except Exception:
+            return None
+
+    def _register_function_file(self, name: str, path: Path) -> None:
+        """Register function file with FileManager as protected and visible."""
+        if self._fm is None:
+            return
+        display = f"functions/{path.name}"
+        try:
+            # Idempotent: if already registered under same display, keep it
+            if not self._fm.exists(display):
+                self._fm.register_existing_file(
+                    path,
+                    display_name=display,
+                    protected=True,
+                )
+        except Exception:
+            # Best-effort registration only
+            pass
+
+    def _bootstrap_functions_to_disk(self) -> None:
+        """Ensure all existing functions have a file on disk and are registered."""
+        if self._functions_dir is None:
+            return
+        try:
+            logs = unify.get_logs(
+                context=self._ctx,
+                exclude_fields=list_private_fields(self._ctx),
+            )
+            for lg in logs:
+                name = lg.entries.get("name")
+                impl = lg.entries.get("implementation") or ""
+                if not isinstance(name, str) or not impl:
+                    continue
+                p = self._function_path(name)
+                if p is None:
+                    continue
+                if not p.exists():
+                    wrote = self._write_function_file(name, impl)
+                    if wrote is not None:
+                        self._register_function_file(name, wrote)
+                else:
+                    # Ensure it's registered as protected even if file already exists
+                    self._register_function_file(name, p)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ #
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
@@ -280,10 +388,16 @@ class FunctionManager(BaseFunctionManager):
                 calls=calls,
                 embedding_text=embedding_text,
                 precondition=precondition,
+                guidance_ids=[],
                 new=True,
             )
 
             results[name] = "added"
+
+            # Mirror to filesystem and register with FileManager (protected)
+            p = self._write_function_file(name, source)
+            if p is not None:
+                self._register_function_file(name, p)
         return results
 
     # 2. Listing -------------------------------------------------------- #
@@ -304,6 +418,7 @@ class FunctionManager(BaseFunctionManager):
                 "function_id": log.entries["function_id"],
                 "argspec": log.entries["argspec"],
                 "docstring": log.entries["docstring"],
+                "guidance_ids": log.entries.get("guidance_ids", []),
             }
             if include_implementations:
                 data["implementation"] = log.entries["implementation"]
@@ -376,6 +491,102 @@ class FunctionManager(BaseFunctionManager):
         )
         return [lg.entries for lg in logs]
 
+    # ------------------------------------------------------------------ #
+    #  Accessors and disk → context sync                                 #
+    # ------------------------------------------------------------------ #
+
+    def get_function_file_path(self, name: str) -> Optional[str]:
+        p = self._function_path(name)
+        return str(p) if p is not None else None
+
+    def list_function_files(self) -> Dict[str, str]:
+        out: Dict[str, str] = {}
+        try:
+            logs = unify.get_logs(
+                context=self._ctx,
+                exclude_fields=list_private_fields(self._ctx),
+            )
+            for lg in logs:
+                nm = lg.entries.get("name")
+                if not isinstance(nm, str):
+                    continue
+                p = self._function_path(nm)
+                if p is not None:
+                    out[nm] = str(p)
+        except Exception:
+            pass
+        return out
+
+    def sync_from_disk(self, *, prefer_file_when_newer: bool = True) -> List[str]:
+        """
+        Reconcile function files under functions/ with the context rows.
+
+        Policy: if the on-disk file differs from the stored implementation, update
+        the context to the file contents. Returns the list of function names updated.
+        """
+        updated: List[str] = []
+        if self._functions_dir is None:
+            return updated
+        try:
+            # Build a map of name→(log_id, impl)
+            rows = unify.get_logs(
+                context=self._ctx,
+                exclude_fields=list_private_fields(self._ctx),
+            )
+            name_to_log: Dict[str, Tuple[int, str]] = {}
+            for lg in rows:
+                nm = lg.entries.get("name")
+                if isinstance(nm, str):
+                    name_to_log[nm] = (lg.id, lg.entries.get("implementation") or "")
+
+            for name, (log_id, stored_impl) in name_to_log.items():
+                p = self._function_path(name)
+                if p is None or not p.exists():
+                    continue
+                try:
+                    file_text = p.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                if file_text.strip() == (stored_impl or "").strip():
+                    # Ensure it's registered as protected
+                    self._register_function_file(name, p)
+                    continue
+
+                # Parse and validate file to rebuild signature/docstring/calls
+                try:
+                    nm2, tree, node, _src = self._parse_implementation(file_text)
+                    if nm2 != name:
+                        # Skip mismatched names; keep 1:1 name↔file mapping
+                        continue
+                    namespace = create_sandbox_globals()
+                    exec(file_text, namespace)
+                    fn_obj = namespace[name]
+                    signature = str(inspect.signature(fn_obj))
+                    docstring = inspect.getdoc(fn_obj) or ""
+                    calls = list(self._collect_function_calls(node))
+                    embedding_text = f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
+                    # Update unify row
+                    unify.update_logs(
+                        logs=[log_id],
+                        context=self._ctx,
+                        entries={
+                            "argspec": signature,
+                            "docstring": docstring,
+                            "implementation": file_text,
+                            "calls": calls,
+                            "embedding_text": embedding_text,
+                        },
+                        overwrite=True,
+                    )
+                    # Ensure it's registered as protected
+                    self._register_function_file(name, p)
+                    updated.append(name)
+                except Exception:
+                    continue
+        except Exception:
+            return updated
+        return updated
+
     # 5. Semantic Search ------------------------------------------------ #
     def _ensure_function_embedding(self) -> None:
         """
@@ -406,3 +617,147 @@ class FunctionManager(BaseFunctionManager):
             exclude_fields=list_private_fields(self._ctx),
         )
         return [lg.entries for lg in logs]
+
+    # ------------------------------------------------------------------ #
+    #  Inverse linkage: Functions → Guidance                              #
+    # ------------------------------------------------------------------ #
+
+    def _guidance_context(self) -> str:
+        ctxs = unify.get_active_context()
+        read_ctx = ctxs.get("read")
+        return f"{read_ctx}/Guidance" if read_ctx else "Guidance"
+
+    def _get_guidance_ids_for_function(self, *, function_id: int) -> List[int]:
+        # Prefer reading from the function row if present
+        try:
+            log = self._get_log_by_function_id(function_id=function_id)
+            gids = log.entries.get("guidance_ids") or []
+            if isinstance(gids, list) and gids:
+                return [int(g) for g in gids]
+        except Exception:
+            pass
+
+        # Fallback: scan Guidance rows that reference this function via function_ids
+        gctx = self._guidance_context()
+        try:
+            rows = unify.get_logs(
+                context=gctx,
+                filter=f"{int(function_id)} in function_ids",
+                exclude_fields=list_private_fields(gctx),
+            )
+            return [
+                int(r.entries.get("guidance_id"))
+                for r in rows
+                if r.entries.get("guidance_id") is not None
+            ]
+        except Exception:
+            return []
+
+    def _get_guidance_for_function(
+        self,
+        *,
+        function_id: int,
+        include_images: bool = True,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return guidance records linked to the function.
+
+        Each dict includes: guidance_id, title, content, images (optional).
+        """
+        gids = self._get_guidance_ids_for_function(function_id=function_id)
+        if not gids:
+            return []
+        if limit is not None:
+            try:
+                limit = int(limit)
+            except Exception:
+                limit = None
+            if isinstance(limit, int) and limit >= 0:
+                gids = gids[:limit]
+        cond = " or ".join(f"guidance_id == {int(g)}" for g in gids)
+        gctx = self._guidance_context()
+        rows = unify.get_logs(
+            context=gctx,
+            filter=cond or "False",
+            exclude_fields=list_private_fields(gctx),
+        )
+        out: List[Dict[str, Any]] = []
+        for lg in rows:
+            ent = lg.entries
+            rec: Dict[str, Any] = {
+                "guidance_id": ent.get("guidance_id"),
+                "title": ent.get("title"),
+                "content": ent.get("content"),
+            }
+            if include_images:
+                rec["images"] = ent.get("images") or {}
+            out.append(rec)
+        return out
+
+    def _get_image_handles_for_function_guidance(
+        self,
+        *,
+        function_id: int,
+        limit: Optional[int] = None,
+    ) -> List[ImageHandle]:
+        """Return ImageHandle objects for images referenced by guidance linked to the function."""
+        guids = self._get_guidance_for_function(
+            function_id=function_id,
+            include_images=True,
+        )
+        image_ids: List[int] = []
+        for g in guids:
+            for _, img_id in (g.get("images") or {}).items():
+                try:
+                    image_ids.append(int(img_id))
+                except Exception:
+                    continue
+        # Preserve order while de-duplicating
+        image_ids = list(dict.fromkeys(image_ids))
+        if limit is not None:
+            try:
+                limit = int(limit)
+            except Exception:
+                limit = None
+            if isinstance(limit, int) and limit >= 0:
+                image_ids = image_ids[:limit]
+
+        im = ImageManager()
+        return im.get_images(image_ids)
+
+    def _attach_guidance_images_for_function_to_context(
+        self,
+        *,
+        function_id: int,
+        limit: Optional[int] = 3,
+    ) -> Dict[str, Any]:
+        """Attach images referenced by related guidance into the loop context.
+
+        Returns a dict with keys:
+            attached_count: int
+            images: list of { meta: {...}, image: <base64> }
+        """
+        handles = self._get_image_handles_for_function_guidance(
+            function_id=function_id,
+            limit=limit,
+        )
+        images: List[Dict[str, Any]] = []
+        for h in handles:
+            try:
+                raw_bytes = h.raw()
+            except Exception:
+                continue
+            import base64
+
+            b64 = base64.b64encode(raw_bytes).decode("utf-8")
+            images.append(
+                {
+                    "meta": {
+                        "image_id": int(h.image_id),
+                        "caption": h.caption,
+                        "timestamp": getattr(h.timestamp, "isoformat", lambda: "")(),
+                    },
+                    "image": b64,
+                },
+            )
+        return {"attached_count": len(images), "images": images}

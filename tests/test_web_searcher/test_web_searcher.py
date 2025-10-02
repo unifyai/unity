@@ -134,7 +134,7 @@ async def test_ask_with_reasoning_steps_wrapper(monkeypatch):
         return mock_handle
 
     monkeypatch.setattr(
-        "unity.web_searcher.web_searcher.start_async_tool_use_loop",
+        "unity.web_searcher.web_searcher.start_async_tool_loop",
         fake_loop,
         raising=True,
     )
@@ -178,7 +178,7 @@ async def test_ask_forwards_parent_context_and_preprocess(monkeypatch):
         return DummyHandle()
 
     monkeypatch.setattr(
-        "unity.web_searcher.web_searcher.start_async_tool_use_loop",
+        "unity.web_searcher.web_searcher.start_async_tool_loop",
         capture_loop,
         raising=True,
     )

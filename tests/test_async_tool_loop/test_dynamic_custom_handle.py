@@ -10,8 +10,8 @@ import unify
 
 from unity.common.async_tool_loop import (
     SteerableToolHandle,
-    AsyncToolUseLoopHandle,
-    start_async_tool_use_loop,
+    AsyncToolLoopHandle,
+    start_async_tool_loop,
 )
 from tests.helpers import _handle_project, SETTINGS
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
@@ -117,6 +117,16 @@ class CustomArgsHandle(SteerableToolHandle):
         await self._done_ev.wait()
         return self._result_text
 
+    # New abstract event APIs – simple stubs for tests
+    async def next_clarification(self) -> dict:
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        return None
+
 
 @unify.traced
 async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
@@ -146,7 +156,7 @@ async def test_dynamic_helper_args_are_exposed_and_forwarded(client):
         "Call `spawn_custom_handle` to start a task that exposes dynamic helpers.",
     )
 
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client,
         message="start",
         tools={"spawn_custom_handle": spawn_custom_handle},
@@ -231,7 +241,7 @@ async def test_write_only_custom_abort_method_finishes_nested_handle(client):
         "Call `spawn_custom_handle` to start a task that exposes dynamic helpers.",
     )
 
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client,
         message="start",
         tools={"spawn_custom_handle": spawn_custom_handle},
@@ -276,7 +286,7 @@ async def test_handle_cls_custom_outer_handle_is_instantiated(client):
     usable immediately (e.g., accepts cancel=...).
     """
 
-    class CustomOuterHandle(AsyncToolUseLoopHandle):
+    class CustomOuterHandle(AsyncToolLoopHandle):
         def stop(self, *, cancel: bool | None = None, reason: Optional[str] = None) -> None:  # type: ignore[override]
             # Delegate to base stop for cancellation; accepting `cancel` is the point of this test
             super().stop(reason=reason)
@@ -284,7 +294,7 @@ async def test_handle_cls_custom_outer_handle_is_instantiated(client):
     # Minimal prompt; we don't need tools for this test – just verify instantiation & signature
     client.set_system_message("Reply briefly.")
 
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client,
         message="hi",
         tools={},

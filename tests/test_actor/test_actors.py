@@ -5,7 +5,7 @@ import functools
 import unify
 import os
 
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from unity.actor.base import BaseActor
 from unity.task_scheduler.base import BaseActiveTask
 from unity.actor.browser_use_actor import BrowserUseActor, BrowserUsePlan
@@ -124,7 +124,7 @@ async def test_start_and_ask_plan(monkeypatch, actor_and_plan_types):
     client = make_client(system)
     tools = {"execute": actor.execute}
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="begin",
         tools=tools,
@@ -241,13 +241,12 @@ async def test_interject_plan(monkeypatch, actor_and_plan_types):
     client = make_client(system)
     tools = {"execute": actor.execute}
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="begin",
         tools=tools,
         max_steps=15,  # Plan → Interject → Done
         timeout=120,
-        log_steps=False,
     )
     await asyncio.sleep(2)
     await handle.interject("adjust")
@@ -361,13 +360,12 @@ async def test_pause_and_resume_plan(
     client = make_client(system)
     tools = {"execute": actor.execute}
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="run_pause_resume_test",
         tools=tools,
         max_steps=20,  # Plan → Pause → Resume → Stop → Done
         timeout=180,
-        log_steps=False,
     )
 
     await asyncio.sleep(3)

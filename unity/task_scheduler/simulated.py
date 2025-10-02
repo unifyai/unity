@@ -143,6 +143,26 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
     def done(self) -> bool:
         return self._done_event.is_set()
 
+    # --- event APIs required by SteerableToolHandle ---------------------
+    async def next_clarification(self) -> dict:
+        try:
+            if self._clar_up_q is not None:
+                msg = await self._clar_up_q.get()
+                return {"message": msg}
+        except Exception:
+            pass
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        try:
+            if self._clar_down_q is not None:
+                await self._clar_down_q.put(answer)
+        except Exception:
+            pass
+
     async def ask(
         self,
         question: str,

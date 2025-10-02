@@ -2,6 +2,8 @@ import asyncio
 import unify
 import json
 import inspect
+import copy
+from datetime import timedelta
 
 from typing import Dict, Union, Callable, Tuple, Any, Set, Optional
 from contextlib import suppress
@@ -17,10 +19,19 @@ from .messages import (
     generate_with_preprocess,
 )
 from .message_dispatcher import LoopMessageDispatcher
-from .tools_utils import ToolCallMetadata, create_tool_call_message
+from .tools_utils import (
+    ToolCallMetadata,
+    create_tool_call_message,
+    append_source_scoped_images,
+    default_source_label,
+)
 from ..llm_helpers import method_to_schema, _dumps
-from .loop_config import LoopConfig, TOOL_LOOP_LINEAGE
-from .tools_utils import ToolCallMetadata, create_tool_call_message
+from .loop_config import (
+    LoopConfig,
+    TOOL_LOOP_LINEAGE,
+    LIVE_IMAGES_REGISTRY,
+    LIVE_IMAGES_LOG,
+)
 from .timeout_timer import TimeoutTimer
 from .messages import (
     insert_tool_message_after_assistant,
@@ -32,6 +43,7 @@ from .messages import (
 )
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
+from . import semantic_cache as sc
 
 
 class LoopLogger:
@@ -92,14 +104,14 @@ def _check_valid_response_format(response_format: Any):
     return response_format.model_json_schema()
 
 
-async def async_tool_use_loop_inner(
+async def async_tool_loop_inner(
     client: unify.AsyncUnify,
     message: str | dict | list[str | dict],
     tools: Dict[str, Union[Callable, ToolSpec]],
     *,
     loop_id: Optional[str] = None,
     lineage: Optional[list[str]] = None,
-    interject_queue: asyncio.Queue[str],
+    interject_queue: asyncio.Queue[dict | str],
     cancel_event: asyncio.Event,
     stop_event: asyncio.Event | None = None,
     pause_event: asyncio.Event,
@@ -120,6 +132,8 @@ async def async_tool_use_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
+    semantic_cache: Optional[bool] = False,
+    images: Optional[dict[str, Any]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -166,10 +180,11 @@ async def async_tool_use_loop_inner(
         docstring – these are automatically converted to an OpenAI *tool
         schema* via :pyfunc:`method_to_schema`.
 
-    interject_queue : ``asyncio.Queue[str]``
+    interject_queue : ``asyncio.Queue[str | dict]``
         Thread-safe channel through which the *outer* application can push
         additional user turns at any time (e.g. the human changes their
-        mind mid-generation).
+        mind mid-generation). When a dict is provided it should follow the
+        shape {"message": str, "parent_chat_context_continuted": list[dict]}.
 
     cancel_event : ``asyncio.Event``
         Flips to *set* when the outer caller wants graceful shutdown.  The
@@ -239,9 +254,40 @@ async def async_tool_use_loop_inner(
         pass
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
+    _img_token = None
+    _imglog_token = None
+    # If live images are provided, set the registry for this loop's scope
+    try:
+        if images:
+            id_map: dict[int, Any] = {}
+            for _k, _ih in images.items():
+                try:
+                    _iid = int(getattr(_ih, "image_id", -1))
+                    if _iid >= 0:
+                        id_map[_iid] = _ih
+                except Exception:
+                    continue
+            _img_token = LIVE_IMAGES_REGISTRY.set(id_map)
+            # Seed the overview log with user_message sourced images
+            seed_log: list[str] = []
+            try:
+                for _k, _ih in images.items():
+                    try:
+                        _iid = int(getattr(_ih, "image_id", -1))
+                    except Exception:
+                        _iid = -1
+                    seed_log.append(f"user_message:{_iid}:{_k}")
+            except Exception:
+                pass
+            _imglog_token = LIVE_IMAGES_LOG.set(seed_log)
+    except Exception:
+        _img_token = None
+        _imglog_token = None
 
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
+
+    _initial_user_message = copy.deepcopy(message)
 
     # If structured output is expected, inform the model up-front so it can
     # plan its reasoning with the final JSON shape in mind.  Enforcement via
@@ -323,8 +369,452 @@ async def async_tool_use_loop_inner(
     #   by comparing the live count with max_concurrent.
     # -----------------------------------------------------------------------
 
+    # ── Live image helpers (optional) ─────────────────────────────────────────
+    # When a mapping of span→ImageHandle is supplied, expose three helper tools:
+    #   • live_images_overview() – docstring lists images, spans, substrings, captions
+    #   • ask_image(image_id, question) – returns a nested handle for image Q&A
+    #   • attach_image_raw(image_id, note=None) – attaches the image as vision context
+    # The docstring for `live_images_overview` is visible every turn; calling it is
+    # not required and it's a cheap no-op.
+
+    def _extract_reference_text(src: str | dict | list[str | dict]) -> str:
+        try:
+            if isinstance(src, str):
+                return src
+            if isinstance(src, dict):
+                return str(src.get("content", ""))
+            if isinstance(src, list):
+                # Distinguish between chat messages vs content blocks
+                # Case 1: chat messages (dicts with 'role') → first with role=='user'
+                for m in src:
+                    if isinstance(m, dict) and "role" in m and m.get("role") == "user":
+                        c = m.get("content")
+                        return str(
+                            (
+                                c
+                                if not isinstance(c, list)
+                                else "".join(
+                                    [
+                                        (
+                                            it.get("text")
+                                            if isinstance(it, dict)
+                                            and it.get("type") == "text"
+                                            else str(it)
+                                        )
+                                        for it in c
+                                    ],
+                                )
+                            ),
+                        )
+                # Case 2: content blocks (no roles) → first block's textual portion
+                for it in src:
+                    if isinstance(it, dict) and it.get("type") == "text":
+                        return str(it.get("text", ""))
+                # Fallback: stringify the first element
+                return str(src[0]) if src else ""
+        except Exception:
+            return ""
+
+    # Build live image helpers only when images were supplied and non-empty
+    live_image_tools: Dict[str, Callable] = {}
+    if images:
+        try:
+            from unity.image_manager.utils import substring_from_span  # local import
+        except Exception:
+            substring_from_span = None  # type: ignore[assignment]
+
+        reference_text = _extract_reference_text(message)
+        # Build id → handle map and enriched listings
+        id_to_handle: dict[int, Any] = {}
+        listings: list[str] = []
+        for span_key, ih in list(images.items()):
+            try:
+                img_id = int(getattr(ih, "image_id", -1))
+            except Exception:
+                img_id = -1
+            id_to_handle[img_id] = ih
+            substr = ""
+            if substring_from_span is not None:
+                try:
+                    substr = substring_from_span(str(reference_text), str(span_key))
+                except Exception:
+                    substr = ""
+            try:
+                caption = getattr(ih, "caption", None)
+            except Exception:
+                caption = None
+            listings.append(
+                f"- id={img_id}, span={span_key}, substring={substr!r}, caption={caption!r}",
+            )
+
+        overview_doc = (
+            "Live images aligned to the current user_message (visible in this description; calling is optional).\n"
+            + "\n".join(listings or ["(none)"])
+            + "\n\n"
+            + "Arg-scoped image keys for inner tools\n"
+            + "-----------------------------------\n"
+            + "When calling an inner tool that accepts `images`, reference each image with an arg-scoped span key: `<arg>[start:end]`.\n"
+            + "- `<arg>` is the name of the tool's string parameter (e.g., `question`, `text`, `prompt`).\n"
+            + "- `[start:end]` uses Python-slice semantics over that parameter's text.\n"
+            + "- Values are image ids (or handles) that should align to that substring.\n\n"
+            + "Example (manual):\n"
+            + "  images = { 'question[10:23]': 42 }\n\n"
+            + "Example (recommended with helper):\n"
+            + "  align_images_for(\n"
+            + "    args={ 'question': 'Please compare the Cairo skyline images for clarity' },\n"
+            + "    hints=[ { 'arg': 'question', 'substring': 'Cairo skyline', 'image_id': 42 } ]\n"
+            + "  )  →  { 'images': { 'question[15:28]': 42 } }\n"
+            + "\n"
+            + "Source-scoped image keys for dynamic methods\n"
+            + "-------------------------------------------\n"
+            + "When sending images with dynamic methods (ask, interject, stop, clarify, notifications), use `<source>[start:end]` keys:\n"
+            + "- Supported sources: `this`, `user_message`, `interjectionN`, `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`.\n"
+            + "- `this[:]` is a shorthand that refers to the current outgoing payload (e.g., the very text of this interjection/ask/clarify/notify).\n"
+            + "- Values are image ids (or handles). These images are appended to the loop’s live registry and reflected below.\n"
+        )
+
+        async def live_images_overview() -> Dict[str, str]:
+            return {"status": "ok"}
+
+        # Merge previously appended images (if any)
+        try:
+            prior = LIVE_IMAGES_LOG.get()
+        except Exception:
+            prior = []
+        if prior:
+            # Enrich prior entries for display (best-effort; do not re-fetch substrings)
+            prior_lines = []
+            for rec in prior:
+                try:
+                    src, iid_s, span_key = rec.split(":", 2)
+                    prior_lines.append(
+                        f"- source={src}, id={int(iid_s)}, span={span_key}",
+                    )
+                except Exception:
+                    continue
+            if prior_lines:
+                overview_doc = (
+                    overview_doc
+                    + "\n\nAppended images (this session):\n"
+                    + "\n".join(
+                        prior_lines,
+                    )
+                )
+
+        live_images_overview.__doc__ = overview_doc
+
+        # Keep a set of already-attached ids (idempotent attach)
+        attached_ids: set[int] = set()
+
+        async def ask_image(
+            *,
+            image_id: int,
+            question: str,
+            images: dict | None = None,
+        ) -> Any:
+            """
+            Ask a question about a live image by its unique id.
+            Returns a nested handle; await its result for the answer.
+            """
+            ih = id_to_handle.get(int(image_id))
+            if ih is None:
+                return {"error": f"image_id {image_id} not found"}
+            # If incoming images are provided with source-scoped spans, append them
+            try:
+                append_source_scoped_images(
+                    images,
+                    default_source_label("ask"),
+                )
+            except Exception:
+                pass
+            try:
+                return await ih.ask(question)
+            except Exception as _exc:  # noqa: BLE001
+                return {"error": str(_exc)}
+
+        async def attach_image_raw(
+            *,
+            image_id: int,
+            note: str | None = None,
+        ) -> Dict[str, Any]:
+            """
+            Attach the selected image to the current chat as an image block so the model can see it.
+            Idempotent: re-attaching the same id has no effect.
+            """
+            iid = int(image_id)
+            if iid in attached_ids:
+                return {"status": "already_attached", "image_id": iid}
+            ih = id_to_handle.get(iid)
+            if ih is None:
+                return {"error": f"image_id {iid} not found"}
+            # Reuse ImageHandle.ask content block building logic inline
+            try:
+                data_str = ih._image.data  # type: ignore[attr-defined]
+                # GCS signed URL path mirrors ImageHandle.ask
+                is_gcs_url = isinstance(data_str, str) and (
+                    data_str.startswith("gs://")
+                    or data_str.startswith("https://storage.googleapis.com/")
+                )
+                content_block: dict
+                if is_gcs_url:
+                    try:
+                        from urllib.parse import urlparse as _urlparse
+
+                        parsed_url = _urlparse(data_str)
+                        bucket_name = ""
+                        object_path = ""
+                        if parsed_url.scheme == "gs":
+                            bucket_name = parsed_url.netloc
+                            object_path = parsed_url.path.lstrip("/")
+                        elif parsed_url.hostname == "storage.googleapis.com":
+                            parts = parsed_url.path.lstrip("/").split("/", 1)
+                            if len(parts) == 2:
+                                bucket_name, object_path = parts
+                        storage_client = ih._manager.storage_client  # type: ignore[attr-defined]
+                        bucket = storage_client.bucket(bucket_name)
+                        blob = bucket.blob(object_path)
+                        signed_url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")  # type: ignore[name-defined]
+                        content_block = {
+                            "type": "image_url",
+                            "image_url": {"url": signed_url},
+                        }
+                    except Exception:
+                        # fallback: try raw bytes
+                        raw = ih.raw()
+                        import base64 as _b64  # local import
+
+                        head = (
+                            bytes(raw[:10])
+                            if isinstance(raw, (bytes, bytearray))
+                            else b""
+                        )
+                        if head.startswith(b"\xff\xd8"):
+                            mime = "image/jpeg"
+                        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                            mime = "image/png"
+                        else:
+                            mime = "image/png"
+                        b64 = _b64.b64encode(raw).decode("ascii")
+                        content_block = {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
+                        }
+                elif isinstance(data_str, str) and (
+                    data_str.startswith("http://")
+                    or data_str.startswith("https://")
+                    or data_str.startswith("data:image/")
+                ):
+                    content_block = {
+                        "type": "image_url",
+                        "image_url": {"url": data_str},
+                    }
+                else:
+                    raw = ih.raw()
+                    import base64 as _b64  # local import
+
+                    head = (
+                        bytes(raw[:10]) if isinstance(raw, (bytes, bytearray)) else b""
+                    )
+                    if head.startswith(b"\xff\xd8"):
+                        mime = "image/jpeg"
+                    elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                        mime = "image/png"
+                    else:
+                        mime = "image/png"
+                    b64 = _b64.b64encode(raw).decode("ascii")
+                    content_block = {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                    }
+
+                # Append as a user content block to current client messages via dispatcher (event bus + timer)
+                await _msg_dispatcher.append_msgs(
+                    [
+                        {
+                            "role": "user",
+                            "content": (
+                                [content_block]
+                                if note is None
+                                else [
+                                    {"type": "text", "text": note},
+                                    content_block,
+                                ]
+                            ),
+                        },
+                    ],
+                )
+                attached_ids.add(iid)
+                # If incoming images are provided with source-scoped spans, append them
+                try:
+                    append_source_scoped_images(
+                        images,
+                        default_source_label("attach"),
+                    )
+                except Exception:
+                    pass
+                return {"status": "attached", "image_id": iid}
+            except Exception as _exc:  # noqa: BLE001
+                return {"error": str(_exc)}
+
+        # Docstrings: include the full overview in a single place; reference it
+        ask_image.__doc__ = (
+            "Ask a question about one of the live images by its numeric id.\n\n"
+            "Parameters\n"
+            "----------\n"
+            "image_id : int\n"
+            "    The unique id of the image (see overview).\n"
+            "question : str\n"
+            "    The question to ask about the image.\n"
+            "images : dict | None\n"
+            "    Optional source-scoped images mapping to append at the time of this call.\n"
+            "    Keys use `<source>[start:end]` (see overview). Use `this[:]` to associate images with the `question` text.\n\n"
+            "Behaviour\n"
+            "---------\n"
+            "- Resolves ids to handles, appends them to this loop’s live registry, and surfaces them in the overview.\n"
+            "- Returns a nested handle; await its result for the answer."
+        )
+        attach_image_raw.__doc__ = (
+            "Attach an image (by id) into the current chat as vision context.\n\n"
+            "Parameters\n"
+            "----------\n"
+            "image_id : int\n"
+            "    The unique id of the image (see overview).\n"
+            "note : str | None\n"
+            "    Optional text note; if provided the note and image will be appended in one user message.\n"
+            "images : dict | None\n"
+            "    Optional source-scoped images mapping to append at the time of this call.\n"
+            "    Keys use `<source>[start:end]` (see overview). Use `this[:]` to associate images with `note` (or with an empty string when `note` is None).\n\n"
+            "Behaviour\n"
+            "---------\n"
+            "- Idempotent per image_id (re-attaching the same id is a no-op).\n"
+            "- Resolves ids to handles, appends them to this loop’s live registry, and surfaces them in the overview."
+        )
+
+        live_image_tools = {
+            "live_images_overview": live_images_overview,
+            "ask_image": ask_image,
+            "attach_image_raw": attach_image_raw,
+        }
+
+    # ── Helper to prepare arg-scoped images mapping for inner tool calls ─────
+    async def align_images_for(
+        *,
+        args: dict,
+        hints: list[dict],
+    ) -> dict:
+        """
+        Prepare arg‑scoped `images` for an upcoming inner tool call, without manual counting.
+
+        Purpose
+        -------
+        Convert human-friendly substring hints into arg-scoped span keys of the form
+        `<arg>[start:end]`, which inner tools that accept `images` can consume directly.
+
+        Parameters
+        ----------
+        args : dict
+            Mapping of argument names to the target text to align against.
+            Example: {"question": "Please compare the Cairo skyline images for clarity"}.
+        hints : list[dict]
+            Each item can be one of the following shapes (synonyms accepted):
+              - {"arg": <arg_name>, "substring": <text>, "image_id": <int>}
+              - {"arg": <arg_name>, "text": <text>, "id": <int>}
+              - {"arg_name": <arg_name>, "span_text": <text>, "imageId": <int>}
+
+        Returns
+        -------
+        dict
+            {"images": {"arg[start:end]": image_id, ...}}
+
+        Usage
+        -----
+        - Use the returned dict directly as the `images` argument in the next tool call that
+          accepts `images` (with arg-scoped keys). This avoids manual index counting.
+        - If a substring does not occur in the specified arg text, it is skipped.
+        - Only include image ids relevant to the inner call (subset control stays explicit).
+        """
+        out: dict[str, int] = {}
+        try:
+            arg_texts = {str(k): str(v) for k, v in dict(args or {}).items()}
+        except Exception:
+            arg_texts = {}
+
+        def _extract_id(obj: dict) -> int | None:
+            for k in ("image_id", "imageId", "id"):
+                if k in obj:
+                    try:
+                        return int(obj[k])
+                    except Exception:
+                        return None
+            return None
+
+        def _extract_arg(obj: dict) -> str | None:
+            for k in ("arg", "argument", "arg_name", "name"):
+                if k in obj:
+                    return str(obj[k])
+            return None
+
+        def _extract_substring(obj: dict) -> str | None:
+            for k in ("substring", "text", "span_text"):
+                if k in obj:
+                    return str(obj[k])
+            return None
+
+        for item in list(hints or []):
+            if not isinstance(item, dict):
+                continue
+            iid = _extract_id(item)
+            arg_name = _extract_arg(item)
+            sub = _extract_substring(item)
+            if iid is None or not arg_name or sub is None:
+                continue
+            base = arg_texts.get(arg_name)
+            if not isinstance(base, str):
+                continue
+            try:
+                start = base.find(sub)
+                if start < 0:
+                    continue
+                end = start + len(sub)
+                key = f"{arg_name}[{start}:{end}]"
+                out[key] = iid
+            except Exception:
+                continue
+
+        return {"images": out}
+
+    # Only add align_images_for when images are actually provided
+    general_helpers = {"align_images_for": align_images_for} if images else {}
+
+    # Merge helpers (if any) with base tools before normalisation
+    tools = {**tools, **(live_image_tools or {}), **general_helpers}
+
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
+    semantic_closest_match = None
+    last_valid_user_history = []
+    if semantic_cache:
+        if semantic_closest_match := sc.search_semantic_cache(message):
+            msgs = await sc.get_dummy_tool(semantic_closest_match, tools_data)
+            if log_steps == "full":
+                logger.info(
+                    f"Semantic cache hit ({semantic_closest_match.closest_user_message}): {json.dumps(msgs[1]['content'], indent=2)}",
+                    prefix="🔍",
+                )
+            client.append_messages(msgs)
+            client.set_system_message(
+                (client.system_message or "") + sc.get_system_msg_hint(),
+            )
+            tools_data.normalized["semantic_search"] = ToolSpec(
+                fn=sc.semantic_search_placeholder,
+            )
+        else:
+            if log_steps == "full":
+                logger.info(
+                    "Semantic cache miss, no entry for the user message",
+                    prefix="🔍",
+                )
+
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
@@ -416,40 +906,7 @@ async def async_tool_use_loop_inner(
             # set, the outer loop must stop doing any further work and simply
             # await the delegate's result. This guarantees no extra assistant
             # turns, tools, or events are emitted by the outer loop.
-            try:
-                _delegate = getattr(tools_data, "handover_delegate", None)
-            except Exception:
-                _delegate = None
-            if _delegate is not None:
-                if log_steps:
-                    logger.info(
-                        "Handing over to passthrough delegate – outer loop exiting.",
-                        prefix="↪️",
-                    )
-                # Proactively stop any remaining outer pending tasks, and also ask the
-                # delegated handle to stop if the outer loop has been cancelled already.
-                try:
-                    if tools_data.pending:
-                        # Forward a stop to any nested steerable handles first to allow graceful shutdown
-                        with suppress(Exception):
-                            _stop_forwarded_once = await propagate_stop_once(
-                                tools_data.info,
-                                _stop_forwarded_once,
-                                "outer-loop handover",
-                            )
-                        await tools_data.cancel_pending_tasks()
-                    # If the outer loop has been cancelled already, we will not await the delegate here;
-                    # result() will return immediately in the outer handle when cancel is set.
-                except Exception:
-                    pass
-                # Await the delegate and return its answer as the final reply for the outer loop.
-                # Use asyncio.shield so that cancelling the OUTER loop task does not cancel
-                # the delegated inner handle – the inner should continue and produce its result.
-                try:
-                    return await asyncio.shield(_delegate.result())
-                finally:
-                    # Ensure lineage contextvar is reset even on early return
-                    pass
+            # Passthrough mode no longer hands over control; outer loop continues.
 
             # ── 0-α-P. Global *pause* gate  ────────────────────────────
             # Keep handling tool completions & cancellation, but *never*
@@ -593,9 +1050,13 @@ async def async_tool_use_loop_inner(
                     )
                     for _m in uvh:
                         role = _m.get("role")
-                        content = (_m.get("content") or "").strip()
-                        if role in ("user", "assistant") and content:
-                            history_lines.append(f"{role}: {content}")
+                        _content = _m.get("content")
+                        if isinstance(_content, dict):
+                            _text = str(_content.get("message", "")).strip()
+                        else:
+                            _text = str(_content or "").strip()
+                        if role in ("user", "assistant") and _text:
+                            history_lines.append(f"{role}: {_text}")
                 except Exception:
                     # Fallback to just the original user prompt if available
                     try:
@@ -612,24 +1073,85 @@ async def async_tool_use_loop_inner(
                     except Exception:
                         history_lines = []
 
-                sys_content = (
-                    "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
-                    "They have just interjected with the following message (in bold at the bottom). "
-                    "From their perspective, the conversation thus far is as follows:\n"
-                    "--\n" + ("\n".join(history_lines)) + f"\nuser: **{extra}**\n"
-                    "--\n"
-                    "Please consider and incorporate *all* interjections in your final response to the user. "
-                    "Later interjections should always override earlier interjections if there are "
-                    "any conflicting comments/requests across the different interjections."
-                )
+                # Support dict-style interjections carrying continued parent context
+                if isinstance(extra, dict):
+                    _msg_text = str(extra.get("message", "")).strip()
+                    _ctx_cont = extra.get("parent_chat_context_continuted")
+                    _incoming_images = extra.get("images")
+                    try:
+                        _ctx_str = (
+                            json.dumps(_ctx_cont, indent=2)
+                            if _ctx_cont is not None
+                            else None
+                        )
+                    except Exception:
+                        _ctx_str = None
+
+                    sys_content = (
+                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                        "They have just interjected with the following message (in bold at the bottom). "
+                        "From their perspective, the conversation thus far is as follows:\n"
+                        "--\n"
+                        + ("\n".join(history_lines))
+                        + f"\nuser: **{_msg_text}**\n"
+                        "--\n"
+                        + (
+                            "A continued parent chat context has been provided for this interjection.\n"
+                            + (_ctx_str or "(unserializable)")
+                            + "\n"
+                            if _ctx_cont is not None
+                            else ""
+                        )
+                        + "Please consider and incorporate *all* interjections in your final response to the user. "
+                        + "Later interjections should always override earlier interjections if there are "
+                        + "any conflicting comments/requests across the different interjections."
+                    )
+                else:
+                    _msg_text = str(extra)
+                    _incoming_images = None
+                    sys_content = (
+                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                        "They have just interjected with the following message (in bold at the bottom). "
+                        "From their perspective, the conversation thus far is as follows:\n"
+                        "--\n"
+                        + ("\n".join(history_lines))
+                        + f"\nuser: **{_msg_text}**\n"
+                        "--\n"
+                        "Please consider and incorporate *all* interjections in your final response to the user. "
+                        "Later interjections should always override earlier interjections if there are "
+                        "any conflicting comments/requests across the different interjections."
+                    )
+
                 interjection_msg = {"role": "system", "content": sys_content}
                 await _msg_dispatcher.append_msgs([interjection_msg])
+                last_valid_user_history = history_lines + [f"user: {extra}"]
+
+                # If images accompany this interjection, accept source-scoped keys and append
+                try:
+                    append_source_scoped_images(
+                        _incoming_images,
+                        default_source_label("interjection"),
+                    )
+                except Exception:
+                    pass
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
                     if outer_handle:
                         outer_handle._user_visible_history.append(
-                            {"role": "user", "content": extra},
+                            {
+                                "role": "user",
+                                "content": (
+                                    {
+                                        "message": _msg_text,
+                                        "parent_chat_context_continuted": extra.get(
+                                            "parent_chat_context_continuted",
+                                        ),
+                                    }
+                                    if isinstance(extra, dict)
+                                    else _msg_text
+                                ),
+                            },
                         )
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
@@ -650,28 +1172,34 @@ async def async_tool_use_loop_inner(
                     name="CancelEventWait",
                 )
                 clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
-                prog_waiters: Dict[asyncio.Task, asyncio.Task] = {}
+                notif_waiters: Dict[asyncio.Task, asyncio.Task] = {}
                 for _t in tools_data.pending:
                     # Only listen for *new* clarification questions.
                     # If the task is already awaiting an answer,
                     # `waiting_for_clarification` will be True.
-                    if tools_data.info[_t].waiting_for_clarification:
+                    info = tools_data.info[_t]
+                    if info.waiting_for_clarification:
                         continue
 
-                    cuq = tools_data.info[_t].clar_up_queue
-                    if cuq is not None:
-                        w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
+                    # Always listen for clarification requests when a queue is provided
+                    if info.clar_up_queue is not None:
+                        w = asyncio.create_task(
+                            info.clar_up_queue.get(),
+                            name="ClarificationQueueGet",
+                        )
                         clar_waiters[w] = _t
-                    # Progress updates are non-blocking one-way signals; we always
-                    # listen for them, independent of clarification state.
-                    pq = tools_data.info[_t].progress_queue
-                    if pq is not None:
-                        pw = asyncio.create_task(pq.get(), name="ProgressQueueGet")
-                        prog_waiters[pw] = _t
+
+                    # Always listen for notifications when a queue is provided
+                    if info.notification_queue is not None:
+                        pw = asyncio.create_task(
+                            info.notification_queue.get(),
+                            name="NotificationQueueGet",
+                        )
+                        notif_waiters[pw] = _t
                 waiters = (
                     tools_data.pending
                     | set(clar_waiters)
-                    | set(prog_waiters)
+                    | set(notif_waiters)
                     | {cancel_waiter, interject_w}
                 )
 
@@ -706,7 +1234,7 @@ async def async_tool_use_loop_inner(
                     interject_w,
                     cancel_waiter,
                     *clar_waiters.keys(),
-                    *prog_waiters.keys(),
+                    *notif_waiters.keys(),
                 ):
                     if aux not in done and not aux.done():
                         aux.cancel()
@@ -730,7 +1258,13 @@ async def async_tool_use_loop_inner(
                 # ── clarification request bubbled up from a child tool ──────────────
                 if done & clar_waiters.keys():
                     for cw in done & clar_waiters.keys():
-                        question = cw.result()  # the text from the child
+                        question = (
+                            cw.result()
+                        )  # may be str or dict with {question, images}
+                        images_from_child = None
+                        if isinstance(question, dict):
+                            images_from_child = question.get("images")
+                            question = question.get("question", "")
                         src_task = clar_waiters[cw]
                         call_id = tools_data.info[src_task].call_id
                         tool_name = tools_data.info[src_task].name
@@ -783,19 +1317,28 @@ async def async_tool_use_loop_inner(
                         except Exception:
                             pass
 
+                        # Handle images sent alongside the clarification request
+                        try:
+                            append_source_scoped_images(
+                                images_from_child,
+                                default_source_label("clar_request"),
+                            )
+                        except Exception:
+                            pass
+
                     # let the assistant answer immediately
                     llm_turn_required = True
                     continue
 
                 # ── progress update bubbled up from a child tool (non-blocking) ─────
-                if done & prog_waiters.keys():
-                    for pw in done & prog_waiters.keys():
+                if done & notif_waiters.keys():
+                    for pw in done & notif_waiters.keys():
                         payload = pw.result()
-                        src_task = prog_waiters[pw]
+                        src_task = notif_waiters[pw]
                         call_id = tools_data.info[src_task].call_id
                         tool_name = tools_data.info[src_task].name
 
-                        # Acknowledge bottom‑up progress for this call_id; keep one tool reply per call_id
+                        # Acknowledge bottom‑up notification for this call_id; keep one tool reply per call_id
                         try:
                             content_payload = (
                                 payload
@@ -838,21 +1381,35 @@ async def async_tool_use_loop_inner(
                                 if outer_handle_container
                                 else None
                             )
-                            if outer is not None and hasattr(outer, "_progress_q"):
+                            if outer is not None and hasattr(outer, "_notification_q"):
                                 # Prefer dict payload, else wrap string
                                 event_payload = (
                                     payload
                                     if isinstance(payload, dict)
                                     else {"message": str(payload)}
                                 )
-                                await outer._progress_q.put(
+                                await outer._notification_q.put(
                                     {
-                                        "type": "progress",
+                                        "type": "notification",
                                         "call_id": call_id,
                                         "tool_name": tool_name,
                                         **event_payload,
                                     },
                                 )
+                        except Exception:
+                            pass
+
+                        # Handle images sent alongside notification payloads
+                        try:
+                            images_from_child = (
+                                payload.get("images")
+                                if isinstance(payload, dict)
+                                else None
+                            )
+                            append_source_scoped_images(
+                                images_from_child,
+                                default_source_label("notification"),
+                            )
                         except Exception:
                             pass
                     # Require an immediate LLM turn (same behaviour as clarification)
@@ -871,9 +1428,9 @@ async def async_tool_use_loop_inner(
                         needs_turn = True
 
                 # Other tools may still be running.
+                if needs_turn:
+                    llm_turn_required = True
                 if tools_data.pending:
-                    if needs_turn:  # only when something new
-                        llm_turn_required = True
                     continue  # jump to top-of-loop
 
             # ── B: wait for remaining tools before asking the LLM again,
@@ -892,12 +1449,7 @@ async def async_tool_use_loop_inner(
                 )
                 continue  # still waiting for other tool tasks
 
-            try:
-                _delegate = getattr(tools_data, "handover_delegate", None)
-            except Exception:
-                _delegate = None
-            if _delegate is not None:
-                continue
+            # No handover delegate in the new passthrough design
 
             # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
             #       any still‑running tool calls ────────────────────────────────
@@ -974,6 +1526,19 @@ async def async_tool_use_loop_inner(
             dynamic_tool_factory = DynamicToolFactory(tools_data)
             dynamic_tool_factory.generate()
             dynamic_tools = dynamic_tool_factory.dynamic_tools
+
+            # If any task is currently waiting for clarification, hide the
+            # global `wait` helper to ensure the model proceeds to request
+            # clarification rather than idling. This avoids deadlocks where
+            # no interjection arrives and a tool is blocked awaiting input.
+            try:
+                if any(
+                    getattr(_inf, "waiting_for_clarification", False)
+                    for _inf in tools_data.info.values()
+                ):
+                    dynamic_tools.pop("wait", None)
+            except Exception:
+                pass
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
@@ -1225,40 +1790,38 @@ async def async_tool_use_loop_inner(
                     # • wait        → acknowledge, list running tasks, no scheduling
                     # • cancel_*    → cancel underlying task & purge metadata
                     if name == "wait":
-                        # Build a compact summary of everything currently pending
-                        if tools_data.pending:
-                            lines = []
-                            for t in list(tools_data.pending):
-                                _inf = tools_data.info.get(t)
-                                if not _inf:
-                                    continue
-                                try:
-                                    fnm = _inf.name
-                                    args_json = _inf.call_dict["function"]["arguments"]
-                                except Exception:
-                                    fnm, args_json = "unknown", "{}"
-                                lines.append(f"• {fnm}({args_json})")
-
-                            content = (
-                                "Still running… keeping current tool calls in flight. "
-                                "You can choose to stop, pause, resume, interject, or wait again.\n"
-                                + "\n".join(lines)
+                        # Log the no-op and prune it from the transcript to avoid clutter.
+                        try:
+                            logger.info(
+                                "Assistant chose `wait` – no-op; not persisting to transcript.",
+                                prefix="🕒",
                             )
-                        else:
-                            content = "No tool calls are currently running."
+                        except Exception:
+                            pass
 
-                        tool_msg = create_tool_call_message(
-                            name="wait",
-                            call_id=call["id"],
-                            content=content,
-                        )
-                        await insert_tool_message_after_assistant(
-                            assistant_meta,
-                            msg,
-                            tool_msg,
-                            client,
-                            _msg_dispatcher,
-                        )
+                        # Remove this `wait` tool call from the assistant message. If it
+                        # was the only call and there is no content, drop the assistant msg.
+                        try:
+                            calls = msg.get("tool_calls") or []
+                            remaining_calls = [
+                                c
+                                for c in calls
+                                if c.get("function", {}).get("name") != "wait"
+                            ]
+                            content_present = bool((msg.get("content") or "").strip())
+                            if not remaining_calls:
+                                if not content_present:
+                                    if client.messages and client.messages[-1] is msg:
+                                        client.messages.pop()
+                                else:
+                                    msg.pop("tool_calls", None)
+                            else:
+                                msg["tool_calls"] = remaining_calls
+                        except Exception:
+                            pass
+
+                        # After acknowledging a wait, do NOT grant an immediate LLM turn.
+                        # The loop should now wait for any pending tools or interjections.
                         continue
 
                     if name.startswith("stop_") and not name.startswith(
@@ -1327,6 +1890,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
 
                         continue  # nothing else to schedule
 
@@ -1379,6 +1944,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
@@ -1430,6 +1997,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
                         continue  # helper handled
 
                     if name.startswith("clarify_"):
@@ -1467,6 +2036,7 @@ async def async_tool_use_loop_inner(
                                 ):
                                     _inf.waiting_for_clarification = False
                                     break
+                        # Always publish a tool reply acknowledging the clarify helper
                         tool_reply_msg = create_tool_call_message(
                             name=name,
                             call_id=call["id"],
@@ -1486,6 +2056,8 @@ async def async_tool_use_loop_inner(
                             tools_data.info[tgt_task].clarify_placeholder = (
                                 tool_reply_msg
                             )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
                         continue
 
                     if name.startswith("interject_"):
@@ -1546,6 +2118,8 @@ async def async_tool_use_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
+                        # Trigger an immediate LLM turn after helper action
+                        llm_turn_required = True
 
                         continue  # nothing else to schedule
 
@@ -1705,27 +2279,8 @@ async def async_tool_use_loop_inner(
             #     flight; loop back to wait for them.
             #   • `pending` empty        → the model just produced a plain
             #     assistant message; nothing more to do – return it.
-            if tools_data.pending:  # still running – stop them proactively, then finish
-                try:
-                    for t in list(tools_data.pending):
-                        with suppress(Exception):
-                            info_t = tools_data.info.get(t)
-                            if (
-                                info_t is not None
-                                and (nested_handle := info_t.handle) is not None
-                                and hasattr(
-                                    nested_handle,
-                                    "stop",
-                                )
-                            ):
-                                await maybe_await(nested_handle.stop())
-                        if not t.done():
-                            t.cancel()
-                    await asyncio.gather(*tools_data.pending, return_exceptions=True)
-                except Exception:
-                    pass
-                finally:
-                    tools_data.pending.clear()
+            if tools_data.pending:  # still running
+                continue  # wait for completions, then prompt LLM
 
             # ── timeout guard (final turn) ──────────────────────────────────
             if timer.has_exceeded_time():
@@ -1759,3 +2314,23 @@ async def async_tool_use_loop_inner(
     finally:
         with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
+        with suppress(Exception):
+            if _img_token is not None:
+                LIVE_IMAGES_REGISTRY.reset(_img_token)
+        with suppress(Exception):
+            if _imglog_token is not None:
+                LIVE_IMAGES_LOG.reset(_imglog_token)
+
+        if semantic_cache:
+            # TODO: ideally, should not be blocking and more of a background task
+            # but ensure it is saved before the session ends
+            await sc.save_semantic_cache(
+                _initial_user_message,
+                last_valid_user_history,
+                client.messages,
+                previous_tool_trajectory=(
+                    semantic_closest_match.tool_trajectory
+                    if semantic_closest_match
+                    else None
+                ),
+            )

@@ -440,7 +440,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
             --- STDOUT ---
             Initiated call to Jane Doe. Handle ID: a4b1
             --- RESULT ---
-            <AsyncToolUseLoopHandle object ...>
+            <AsyncToolLoopHandle object ...>
             ```
 
         *Turn 3: Interact with the live call using the handle*

@@ -327,9 +327,10 @@ async def test_execute_creates_new_task_and_executes(monkeypatch):
     # task whose *name* or *description* contains our original phrase without
     # the trailing period.
     created_tasks = ts._filter_tasks()
-    phrase = description.rstrip(".")
+    phrase = description.rstrip(".").casefold()
     assert any(
-        phrase in t.get("name", "") or phrase in t.get("description", "")
+        phrase in (t.get("name", "") or "").casefold()
+        or phrase in (t.get("description", "") or "").casefold()
         for t in created_tasks
     ), "A new task with the provided description should have been created"
 

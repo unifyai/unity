@@ -53,25 +53,27 @@ class Notification:
 
 class ConversationManagerState:
     def __init__(self):
+
+        # These should not be harcoded
         self.phone_contacts_map = {
-            "+12697784020": Contact(
-                "1",
-                "Yasser",
-                "Ahmed",
-                True,
-                "+12697784020",
-                "yasser@unify.ai",
-            )
+            # "+12697784020": Contact(
+            #     "1",
+            #     "Yasser",
+            #     "Ahmed",
+            #     True,
+            #     "+12697784020",
+            #     "yasser@unify.ai",
+            # )
         }
         self.email_contacts_map = {
-            "yasser@unify.ai": Contact(
-                "1",
-                "Yasser",
-                "Ahmed",
-                True,
-                "+12697784020",
-                "yasser@unify.ai",
-            )
+            # "yasser@unify.ai": Contact(
+            #     "1",
+            #     "Yasser",
+            #     "Ahmed",
+            #     True,
+            #     "+12697784020",
+            #     "yasser@unify.ai",
+            # )
         }
 
         self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
@@ -212,6 +214,16 @@ class ConversationManagerState:
             # made by assistant
             case Error() as e:
                 self.push_notif(Notification("error", e.message, e.timestamp))
+            
+            case GetContactsOutput() as e:
+                for c in e.contacts:
+                    self.inverted_contacts_map[c["id"]] = Contact(c["id"], c["first_name"], c["last_name"], None, c["phone_number"], c["email"])
+                    if c.get("email"):
+                        # is_boss = True
+                        self.email_contacts_map[c["email"]] = Contact(c["id"], c["first_name"], c["last_name"], None, c["phone_number"], c["email"])
+                    if c.get("phone_number"):
+                        self.email_contacts_map[c["phone_number"]] = Contact(c["id"], c["first_name"], c["last_name"], None, c["phone_number"], c["email"])
+
 
     def snapshot(self):
         self._current_snapshot_time = datetime.now()

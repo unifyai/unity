@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Optional
 
 from ..constants import LOGGER
-from ..common.async_tool_loop import AsyncToolUseLoopHandle
+from ..common.async_tool_loop import AsyncToolLoopHandle
 
 
-class ExecuteLoopHandle(AsyncToolUseLoopHandle):
+class ExecuteLoopHandle(AsyncToolLoopHandle):
     """
     Specialized outer handle used by TaskScheduler.execute.
 

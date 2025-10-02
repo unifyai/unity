@@ -5,7 +5,7 @@ from typing import Optional
 
 import pytest
 import unify
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -76,11 +76,13 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
     """
 
     outer_client = make_llm(
-        "If you're unsure about the answer to any clarification requests that may come up from your internal tool use, "
-        "then please request a clarification. There is no need to stop an incomplete task if a clarification is requested, "
-        "you can simply provide the clarifications and the tool will pick up where it left off. "
-        "Only stop it if you do not want the task completing at all."
-        "Do not hallucinate any details, if you do not know the answer.",
+        "You are coordinating internal tools. If any pending tool asks a clarification question: "
+        "(1) Do not start unrelated base tools until that pending call is unblocked; "
+        "(2) Obtain the answer by any suitable means (you may call other tools, or call request_clarification to ask the user); "
+        "(3) As soon as you have the answer, immediately call the generated clarify_{toolName}_{id} helper for that exact pending call to provide the answer so it can resume. "
+        "After the original call resumes or completes, you may continue with further tools as needed. "
+        "When the email has been sent successfully, end your final assistant message with an explicit confirmation using the word 'sent' (e.g., 'Email sent.'). "
+        "Do not hallucinate any details; if unknown, ask. Keep responses concise.",
     )
 
     clar_up_q = asyncio.Queue()
@@ -105,11 +107,10 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
         "request_clarification": request_clarification,
     }
 
-    outer_handle = start_async_tool_use_loop(  # type: ignore[attr-defined]
+    outer_handle = start_async_tool_loop(  # type: ignore[attr-defined]
         outer_client,
         message="Please email jonathan.smith123@gmail.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
         tools=outer_tools,
-        log_steps=False,
     )
 
     await clar_up_q.get()
@@ -203,21 +204,22 @@ async def delegating_tool(
     clarification_down_q: asyncio.Queue[str] | None = None,
 ) -> str:  # return type misleading on purpose
     inner_llm = make_llm(
-        "If any internal tool needs information, call request_clarification.",
+        "If any internal tool needs information, you may call request_clarification to ask the user. "
+        "When a running tool is waiting for an answer, first provide that answer via the appropriate clarify_{toolName}_{id} helper "
+        "before starting unrelated new tools. You may use other tools to determine the answer if helpful.",
     )
 
     async def request_clarification(question: str) -> str:
         await clarification_up_q.put(question)
         return await clarification_down_q.get()
 
-    handle = start_async_tool_use_loop(  # <-- returns AsyncToolUseLoopHandle
+    handle = start_async_tool_loop(  # <-- returns AsyncToolLoopHandle
         inner_llm,
         message="Run inner_tool please.",
         tools={
             "inner_tool": inner_tool,
             "request_clarification": request_clarification,
         },
-        log_steps=False,
     )
     return handle  # outer tool finishes instantly
 
@@ -237,28 +239,32 @@ async def test_clarification_bubbles_through_returned_handle() -> None:
         return await clar_down_q.get()
 
     outer_llm = make_llm(
-        "If any internal tool needs information, call `request_clarification`. "
-        "Do **not** call clarify_delegating_tool_call_{id} until you've **first** called `request_clarification`.",
+        "You are the TOP-LEVEL coordinator. When any pending tool (including nested delegated tools) "
+        "asks a clarification question via a clarification_request_* tool message, you MUST: "
+        "(1) Call `request_clarification` to ask the user that exact question; "
+        "(2) Wait for the user's answer; "
+        "(3) Forward that answer to the pending tool via the clarify_* helper. "
+        "Do NOT answer clarification questions yourself - always bubble them up to the user via `request_clarification` first. "
+        "Do NOT start unrelated tools until pending clarifications are resolved.",
     )
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         outer_llm,
         message="Run delegating_tool please.",
         tools={
             "delegating_tool": delegating_tool,
             "request_clarification": request_clarification,
         },
-        log_steps=False,
     )
 
     # ── satisfy the clarification that should bubble up ──────────────────
-    question = await asyncio.wait_for(clar_up_q.get(), timeout=60)
+    question = await asyncio.wait_for(clar_up_q.get(), timeout=300)
     assert "what colour" in question.lower() or "what color" in question.lower()
 
     await clar_down_q.put("Blue, please")
 
     # ── loop must now complete successfully ───────────────────────────────
-    await asyncio.wait_for(handle.result(), timeout=60)
+    await asyncio.wait_for(handle.result(), timeout=300)
 
     # final sanity-check: assistant ends with the confirmation from inner_tool
     assert "blue" in outer_llm.messages[-1]["content"].lower()

@@ -8,6 +8,7 @@ import asyncio
 
 from unity.conversation_manager_2.conversation_manager import ConversationManager
 from unity.conversation_manager_2.comms_manager import CommsManager
+from unity.conversation_manager_2.managers_worker import ManagersWorker
 from unity.conversation_manager_2.event_broker import get_event_broker
 
 
@@ -35,13 +36,23 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     global stop, conversation_manager
 
     # Set up signal handlers
-    # signal.signal(signal.SIGTERM, signal_handler)
-    # signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
     stop = asyncio.Event()
 
     # passes events around, uses redis
     event_broker = get_event_broker()
+
+    # Run ManagersWorker on a background thread via asyncio.to_thread
+    def run_managers_worker():
+        from unity.conversation_manager_2.event_broker import create_event_broker
+
+        # Create a fresh Redis client bound to the thread's event loop
+        manager_event_broker = create_event_broker()
+        asyncio.run(ManagersWorker(manager_event_broker).wait_for_events())
+
+    asyncio.create_task(asyncio.to_thread(run_managers_worker))
 
     # directly talks with the user
     conversation_manager = ConversationManager(
@@ -76,7 +87,7 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     await stop.wait()
 
     print("Cleaning up conversation manager...")
-    # conversation_manager.cleanup()
+    conversation_manager.cleanup()
     print("Cleanup finished")
 
 

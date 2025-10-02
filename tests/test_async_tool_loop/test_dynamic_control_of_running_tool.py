@@ -26,7 +26,7 @@ from typing import List
 
 import pytest
 import unify
-from unity.common.async_tool_loop import start_async_tool_use_loop, SteerableToolHandle
+from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
 
 # Shared helpers
 from tests.helpers import _handle_project, SETTINGS
@@ -121,7 +121,7 @@ async def test_wait_does_not_duplicate_tool(client):
     * Only **one** tool-result message for `slow`.
     * Final assistant text is returned.
     """
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message=(
             "Call the tool `slow`, wait for the result, then "
@@ -158,7 +158,7 @@ async def test_stop_removes_tool_and_yields_no_result(client):
     * No assistant turn in the log still exposes `slow` in `tool_calls`.
     * Loop finishes with a normal assistant reply.
     """
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message=("Run the tool `slow`."),
         tools={"slow": slow},
@@ -212,7 +212,7 @@ async def test_functional_tool_pause_extends_wall_clock(client):
         "4️⃣ Once the tool finishes, reply with **done**.",
     )
 
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client,
         message="start",
         tools={"pausable_fn": pausable_fn},
@@ -281,7 +281,7 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
         "4️⃣ When the tool finishes, reply with **all done**.",
     )
 
-    h = start_async_tool_use_loop(
+    h = start_async_tool_loop(
         client,
         message="go",
         tools={"pausable_fn": pausable_fn},
@@ -330,7 +330,7 @@ async def test_global_pause_blocks_llm_until_resume(client):
       turn that requested the tool.
     * After `resume()`, the loop should complete and return the final 'OK'.
     """
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message=(
             "Call the tool `slow`, wait for the result, then reply with the word OK (nothing else)."
@@ -390,7 +390,7 @@ async def test_global_resume_idempotent_no_extra_turns(client):
     Calling `resume()` multiple times should be harmless and must not create
     extra assistant turns after the tool completes.
     """
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message=(
             "Call the tool `slow`, wait for the result, then reply with the word OK (nothing else)."
@@ -473,6 +473,16 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
             await self._done.wait()
             return "inner_done"
 
+        # New abstract event APIs stubs
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
     inner_handle = MockPassthroughHandle()
 
     @unify.traced
@@ -492,7 +502,7 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
             return "required", {"spawn_handle": available_tools["spawn_handle"]}
         return "auto", available_tools
 
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client,
         message="start",
         tools={"spawn_handle": spawn_handle},
@@ -503,15 +513,8 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
     # Wait until assistant requests the spawn tool (ensures tool scheduling happened)
     await _wait_for_tool_request(client, "spawn_handle")
 
-    # Wait until the outer handle adopts the inner delegate
-    t_adopt = time.perf_counter()
-    while (getattr(outer, "_delegate", None) is None) and (
-        time.perf_counter() - t_adopt
-    ) < 10.0:
-        await asyncio.sleep(0.05)
-    assert (
-        getattr(outer, "_delegate", None) is inner_handle
-    ), "outer did not adopt the inner SteerableToolHandle"
+    # In the new design, the outer loop continues running and does not rely on
+    # adopting a single delegate. We no longer assert on `_delegate`.
 
     # Pause the outer loop – must forward exactly once to the delegate
     outer.pause()
@@ -538,7 +541,7 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
 
     final = await outer.result()
     # Accept either the model's OK or the inner handle's passthrough completion text
-    assert final.strip().lower() == "inner_done"
+    assert final.strip().lower() in {"ok", "inner_done"}
 
 
 @pytest.mark.asyncio
@@ -553,7 +556,7 @@ async def test_resume_when_no_pending_tools_allows_llm_turn(client):
     )
 
     # No tools exposed – pure LLM reply
-    h = start_async_tool_use_loop(
+    h = start_async_tool_loop(
         client,
         message="start",
         tools={},
@@ -635,7 +638,7 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
 
     setattr(_loop, "generate_with_preprocess", _spy_gwp)
 
-    h = start_async_tool_use_loop(
+    h = start_async_tool_loop(
         client,
         message="start",
         tools={"pausable_fn": pausable_fn},

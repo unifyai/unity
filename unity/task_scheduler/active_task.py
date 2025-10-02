@@ -182,6 +182,16 @@ class ActiveTask(BaseActiveTask):
             async def ask(self, question: str) -> "SteerableToolHandle":  # type: ignore[override]
                 return self
 
+            # New abstract event APIs – provide inert stubs for static answer handle
+            async def next_clarification(self) -> dict:
+                return {}
+
+            async def next_notification(self) -> dict:
+                return {}
+
+            async def answer_clarification(self, call_id: str, answer: str) -> None:
+                return None
+
         return _AnswerHandle()
 
     @functools.wraps(BaseActiveTask.interject, updated=())
@@ -328,6 +338,30 @@ class ActiveTask(BaseActiveTask):
                 self._mirror_status("completed")
         self._clear_active_pointer()
         return ret
+
+    # ------------------------------------------------------------------ #
+    # Bottom-up event APIs (delegate to underlying actor handle)         #
+    # ------------------------------------------------------------------ #
+    @functools.wraps(SteerableToolHandle.next_clarification, updated=())
+    async def next_clarification(self) -> dict:
+        try:
+            return await self._actor_handle.next_clarification()  # type: ignore[attr-defined]
+        except Exception:
+            return {}
+
+    @functools.wraps(SteerableToolHandle.next_notification, updated=())
+    async def next_notification(self) -> dict:
+        try:
+            return await self._actor_handle.next_notification()  # type: ignore[attr-defined]
+        except Exception:
+            return {}
+
+    @functools.wraps(SteerableToolHandle.answer_clarification, updated=())
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        try:
+            await self._actor_handle.answer_clarification(call_id, answer)  # type: ignore[attr-defined]
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------ #
     # Internal helpers                                                   #

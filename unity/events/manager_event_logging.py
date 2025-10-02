@@ -126,6 +126,25 @@ def wrap_handle_with_logging(
             def __getattr__(self, item):
                 return getattr(self._inner, item)
 
+            # --- event APIs -------------------------------------------------
+            async def next_clarification(self) -> dict:
+                try:
+                    return await self._inner.next_clarification()
+                except Exception:
+                    return {}
+
+            async def next_notification(self) -> dict:
+                try:
+                    return await self._inner.next_notification()
+                except Exception:
+                    return {}
+
+            async def answer_clarification(self, call_id: str, answer: str) -> None:
+                try:
+                    return await self._inner.answer_clarification(call_id, answer)
+                except Exception:
+                    return None
+
         inner = _StopAdapter(inner)
 
     class _LoggedHandle(SteerableToolHandle):  # type: ignore[misc]
@@ -195,6 +214,36 @@ def wrap_handle_with_logging(
         # fallback for everything else
         def __getattr__(self, item):
             return getattr(self._inner, item)
+
+        # --- event APIs -----------------------------------------------------
+        async def next_clarification(self) -> dict:
+            try:
+                evt = await self._inner.next_clarification()
+                asyncio.create_task(
+                    self._publish(action="next_clarification", event=evt),
+                )
+                return evt
+            except Exception:
+                return {}
+
+        async def next_notification(self) -> dict:
+            try:
+                evt = await self._inner.next_notification()
+                asyncio.create_task(
+                    self._publish(action="next_notification", event=evt),
+                )
+                return evt
+            except Exception:
+                return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            asyncio.create_task(
+                self._publish(action="answer_clarification", call_id=call_id),
+            )
+            try:
+                return await self._inner.answer_clarification(call_id, answer)
+            except Exception:
+                return None
 
     return _LoggedHandle(inner)
 

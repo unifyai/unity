@@ -12,7 +12,7 @@ from unity.common.llm_helpers import (
     _strip_image_keys,
 )
 from unity.common.async_tool_loop import (
-    start_async_tool_use_loop,
+    start_async_tool_loop,
     SteerableToolHandle,
 )
 from ..task_scheduler.base import BaseActiveTask
@@ -173,7 +173,7 @@ class BrowserUsePlan(BaseActiveTask):
                 current_parent_chat_context = None
 
                 internal_tools = self._get_internal_tools()
-                self._loop_handle = start_async_tool_use_loop(
+                self._loop_handle = start_async_tool_loop(
                     client=self._plan_client,
                     message=current_task_description,
                     tools=internal_tools,
@@ -468,7 +468,7 @@ class BrowserUsePlan(BaseActiveTask):
         ]
         self._ask_client.set_system_message(system_message)
         self._ask_client.append_messages(messages_to_send)
-        return start_async_tool_use_loop(
+        return start_async_tool_loop(
             client=self._ask_client,
             message=question,
             tools={},

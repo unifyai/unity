@@ -441,7 +441,32 @@ async def schedule_missing_for_message(
 
             # Handle dynamic helpers similarly to main path
             if _is_helper_tool(name):
-                # Do not execute helpers during backfill, only acknowledge
+                # Special-case: `wait` should not clutter the transcript.
+                if name == "wait":
+                    # Prune the wait tool call from the assistant message; if it was the
+                    # only tool call and content is empty, drop the assistant message.
+                    try:
+                        tool_calls = asst_msg.get("tool_calls") or []
+                        remaining = [c for c in tool_calls if c.get("id") != cid]
+                        content_present = bool((asst_msg.get("content") or "").strip())
+                        if not remaining:
+                            if not content_present:
+                                try:
+                                    idx_in_log = client.messages.index(asst_msg)
+                                    client.messages.pop(idx_in_log)
+                                except Exception:
+                                    pass
+                            else:
+                                asst_msg.pop("tool_calls", None)
+                        else:
+                            asst_msg["tool_calls"] = remaining
+                    except Exception:
+                        pass
+                    # Mark as handled without emitting any tool reply
+                    scheduled.append(cid)
+                    continue
+
+                # Other helpers: acknowledge but do not execute during backfill
                 try:
                     await acknowledge_helper_call(
                         asst_msg,

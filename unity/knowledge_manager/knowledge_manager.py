@@ -18,7 +18,7 @@ from ..common.llm_helpers import (
     make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
-    start_async_tool_use_loop,
+    start_async_tool_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
@@ -356,7 +356,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         # 3️⃣  Launch interactive tool-use loop
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,
@@ -493,7 +493,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ),
         )
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,
@@ -637,7 +637,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 include_join_info=include_join_info,
             ),
         )
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             text,
             tools,

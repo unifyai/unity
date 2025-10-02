@@ -19,6 +19,8 @@ from unity.conversation_manager_2.actions import (
 from unity.conversation_manager_2.state import ConversationManagerState
 from unity.helpers import run_script, terminate_process
 from unity.conversation_manager_2.llm_utils import stream_llm_call, llm_call
+from unity.transcript_manager.types.message import UNASSIGNED
+
 
 import redis.asyncio as redis
 from openai import AsyncOpenAI
@@ -104,9 +106,10 @@ class ConversationManager:
         self.openai_client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
         self.state = ConversationManagerState()
-        self.call_contact = None
-        self.chat_history = []
 
+        self.chat_history = []
+        self.call_proc = None
+        self.initialized = False
 
     async def run_llm(self):
         self.state.snapshot()
@@ -269,7 +272,15 @@ class ConversationManager:
 
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:comms:*", "app:conductor:*")
+            await pubsub.psubscribe(
+                "app:comms:*", "app:conductor:*", "app:managers:output"
+            )
+
+            # fetch contacts if env vars are already set
+            if self.assistant_id:
+                asyncio.create_task(self.publish_startup())
+                print("Default startup")
+
             while True:
                 msg = await pubsub.get_message(
                     timeout=2,
@@ -295,6 +306,11 @@ class ConversationManager:
                     if isinstance(event, Ping):
                         print("ping received - keeping conversation manager alive")
                         continue
+                    elif isinstance(event, ManagersStartupOutput):
+                        if not event.initialized:
+                            raise Exception("Managers failed to initialize")
+                        self.initialized = True
+                        continue
                     elif isinstance(event, StartupEvent):
                         payload = event.to_dict()["payload"]
                         self.set_details(payload)
@@ -312,9 +328,11 @@ class ConversationManager:
                             "user_email": self.user_email,
                             "assistant_email": self.assistant_email,
                         }
+                        await self.publish_startup()
                         asyncio.create_task(
                             asyncio.to_thread(log_job_startup, **kwargs),
                         )
+                        continue
                     await self.handle_event(event)
 
     def set_details(self, payload):
@@ -350,14 +368,95 @@ class ConversationManager:
         os.environ["VOICE_PROVIDER"] = self.voice_provider
         os.environ["VOICE_ID"] = self.voice_id
 
+    def update_contact(self, contact):
+        self.phone_contacts_map[contact.number] = contact
+        self.email_contacts_map[contact.email] = contact
+        self.inverted_contacts_map[contact.id] = contact
+        self.state.phone_contacts_map = self.phone_contacts_map
+        self.state.email_contacts_map = self.email_contacts_map
+        self.state.inverted_contacts_map = self.inverted_contacts_map
+
+    async def publish_startup(self):
+        print("publishing startup")
+        await self.event_broker.publish(
+            "app:managers:input",
+            ManagersStartupInput(
+                agent_id=self.assistant_id,
+                first_name=self.assistant_name,
+                age=self.assistant_age,
+                region=self.assistant_region,
+                about=self.assistant_about,
+                phone=self.assistant_number,
+                email=self.assistant_email,
+                user_phone=self.user_number,
+                user_whatsapp_number=self.user_whatsapp_number,
+                assistant_whatsapp_number=self.assistant_number,
+            ).to_json(),
+        )
+
+    async def publish_transcript(self, event: Event):
+        event_name = event.to_dict()["event_name"].lower()
+        print("publishing transcript", event_name)
+        medium = (
+            "phone_call"
+            if "phone" in event_name
+            else (
+                "sms_message"
+                if "sms" in event_name
+                else ("email" if "email" in event_name else "whatsapp_message")
+            )
+        )
+        role = (
+            "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
+        )
+        if isinstance(event, (EmailSent, EmailRecieved)):
+            content = event.subject + "\n\n" + event.body
+        else:
+            content = event.content
+
+        contact_id = None
+        contacts_map = {
+            **self.state.email_contacts_map,
+            **self.state.phone_contacts_map,
+        }
+        if event.contact in contacts_map:
+            contact_id = contacts_map[event.contact].id
+        if role == "Assistant":
+            sender_id, receiver_ids = 0, [contact_id]
+        else:
+            sender_id, receiver_ids = contact_id, [0]
+
+        await self.event_broker.publish(
+            "app:managers:input",
+            LogMessageInput(
+                medium=medium,
+                sender_id=sender_id,
+                receiver_ids=receiver_ids,
+                content=content,
+                exchange_id=UNASSIGNED,
+                metadata=None,
+            ).to_json(),
+        )
+
     async def handle_event(self, event: Event):
         self.state.update_state(event)
+        # add placeholder contact if we're yet to populate the contacts map
+        # if not self.initialized and hasattr(event, "contact"):
+        #     contact = ConversationContact(
+        #         id=1,
+        #         name="Placeholder",
+        #         number=event.contact,
+        #         email=event.contact,
+        #         is_boss=True,
+        #     )
+        #     self.update_contact(contact)
+        #     print("Placeholder contact created")
 
         if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
             # start phone call process and wait untils its done, we should probably make sure
             # first that any running llm calls are awaited, and any scheduled llm calls are canceled
             # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
-            if self.mode in ["call", "gmeet"]:
+            if self.state.mode in ["call", "gmeet"]:
                 # can't make the call
                 ...
             else:
@@ -395,10 +494,27 @@ class ConversationManager:
             self.cleanup_call_proc()
 
         elif isinstance(event, PhoneUtterance):
+            asyncio.create_task(self.publish_transcript(event))
             await self.schedule_llm_run(0, cancel_running=True)
         
         elif isinstance(event, AssistantPhoneUtterance):
             # do not do anything here, let the user reply back or whatever
+            pass
+        
+        # Yasser: let conversation manager state handle this event
+
+        # elif isinstance(event, GetContactsOutput):
+        #     conversation_contacts = [
+        #         ConversationContact(
+        #             c["id"], c["name"], c["id"] == 1, c["number"], c["email"]
+        #         )
+        #         for c in event.contacts
+        #     ]
+        #     for c in conversation_contacts:
+        #         self.update_contact(c)
+
+        elif isinstance(event, LogMessageOutput):
+            # ToDo: get exchange id handled properly
             pass
 
         elif isinstance(event, Error):
@@ -408,7 +524,9 @@ class ConversationManager:
             # otherwise (whatsapp, sms, email) just schedule another llm run after 2 seconds
             # if there is no response at the moment, if there is a response, cancel it, and scheduel
             # check if there is a scheduled response, reschedule
-            await self.schedule_llm_run(2, cancel_running=True)
+            if isinstance(event, (SMSSent, SMSRecieved, EmailSent, EmailRecieved)):
+                asyncio.create_task(self.publish_transcript(event))
+                await self.schedule_llm_run(2, cancel_running=True)
 
     async def check_inactivity(self):
         """Monitor for inactivity and shut down gracefully after timeout"""

@@ -4,7 +4,7 @@ import pytest
 import unify
 from pydantic import BaseModel, Field
 
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
 
 
@@ -41,12 +41,11 @@ async def test_structured_output_response_format() -> None:
         "include any extra keys or commentary.",
     )
 
-    handle = start_async_tool_use_loop(  # type: ignore[attr-defined]
+    handle = start_async_tool_loop(  # type: ignore[attr-defined]
         client,
         message="Please introduce yourself and pick a lucky number.",
         tools={},  # no tools needed
         response_format=SimpleGreeting,
-        log_steps=False,
         max_steps=8,
         timeout=120,
     )
@@ -97,12 +96,11 @@ async def test_no_additional_formatting_roundtrip() -> None:  # noqa: D401
         "string. Do NOT add any extra keys, numbers, or commentary.",
     )
 
-    handle = start_async_tool_use_loop(  # type: ignore[attr-defined]
+    handle = start_async_tool_loop(  # type: ignore[attr-defined]
         client,
         message="Say hi!",
         tools={},
         response_format=SimpleEcho,
-        log_steps=False,
         max_steps=6,
         timeout=60,
     )

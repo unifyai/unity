@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
 
@@ -146,3 +146,48 @@ class Ping(Event):
 @dataclass
 class Error(Event):
     message: str
+
+
+# managers worker events
+@dataclass
+class ManagersStartupInput(Event):
+    agent_id: str
+    first_name: str
+    age: str
+    region: str
+    about: str
+    phone: str
+    email: str
+    user_phone: str
+    user_whatsapp_number: str
+    assistant_whatsapp_number: str
+
+
+@dataclass
+class ManagersStartupOutput(Event):
+    initialized: bool
+
+
+@dataclass
+class LogMessageInput(Event):
+    medium: str
+    sender_id: int
+    receiver_ids: list[int]
+    content: str
+    exchange_id: int
+    metadata: dict[str, Any]
+
+
+@dataclass
+class GetContactsInput(Event):
+    pass
+
+
+@dataclass
+class LogMessageOutput(Event):
+    exchange_id: int
+
+
+@dataclass
+class GetContactsOutput(Event):
+    contacts: list[dict[str, Any]]

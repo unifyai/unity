@@ -85,6 +85,11 @@ def build_ask_prompt(
     filter_messages_fname = _tool_name(tools, "filter_messages")
     search_messages_fname = _tool_name(tools, "search_messages")
     request_clar_fname = _tool_name(tools, "request_clarification")
+    # Image-aware helpers (may be absent; document if present)
+    get_imgs_msg_fname = _tool_name(tools, "get_images_for_message")
+    ask_image_fname = _tool_name(tools, "ask_image")
+    attach_image_fname = _tool_name(tools, "attach_image_to_context")
+    attach_msg_imgs_fname = _tool_name(tools, "attach_message_images_to_context")
 
     # Validate required tools (clarification is optional)
     _require_tools(
@@ -135,6 +140,24 @@ def build_ask_prompt(
  • Last month’s emails (if datetime comparisons are supported by your backend)
    `{filter_messages_fname}(filter="medium == 'email' and timestamp >= '2024-01-01T00:00:00' and timestamp < '2024-02-01T00:00:00'", limit=100)`
 
+ ─ Images (vision) ─
+ • List images referenced by a specific message (metadata only; no base64). Each item also includes the substring of the message text corresponding to the span that linked the image.
+   `{get_imgs_msg_fname}(message_id=123)`
+ • Ask a one‑off question about an image (text answer only; DOES NOT persist visual context)
+   `{ask_image_fname}(image_id=45, question="What color is dominant?")`
+ • Attach a specific image for persistent visual reasoning in this loop
+   `{attach_image_fname}(image_id=45, note="Need to inspect the layout")`
+ • Attach multiple images linked from a message (limit to first 2). For each attached image, the meta includes `spans` and `substrings` derived from the message content for alignment.
+   `{attach_msg_imgs_fname}(message_id=123, limit=2)`
+
+ Guidance on when to use which image tool
+ ---------------------------------------
+ • Prefer `{ask_image_fname}` when you need a quick textual observation about a single image, without changing the current loop context.
+  • Use `{attach_image_fname}` or `{attach_msg_imgs_fname}` when follow‑up turns should continue to see the image(s) as visual context in this loop.
+  • For multi‑image reasoning, side‑by‑side comparisons, or multi‑attribute judgments (e.g., relative brightness, visual complexity, or counts of UI elements), attach the relevant image(s) so they are visible within the same loop before answering.
+  • When images are already linked to a message, prefer `{attach_msg_imgs_fname}` with an appropriate `limit` to attach them in one step; otherwise attach specific image ids individually using `{attach_image_fname}`.
+  • Avoid issuing several independent one‑off image questions when the answer depends on considering multiple images together; attach once, then reason over the attached visual context.
+
  Anti‑patterns to avoid
  ---------------------
  • Avoid the default search behaviour of concatenating every column into one long string and comparing a single embedding of the whole question. Instead, pass multiple, focused reference texts keyed by their specific columns. The ranking minimises the sum of cosine distances and is more robust.
@@ -144,7 +167,44 @@ def build_ask_prompt(
  • Do not automatically chain a `{filter_messages_fname}` call immediately after a successful `{search_messages_fname}` result unless you genuinely need an exact, structured constraint that the semantic search did not provide.
  • If you call ContactManager tools during transcript analysis, avoid repeating those calls in the same reasoning chain when earlier results already identified the necessary contacts and no new ambiguity has arisen.
      """
-    usage_examples = textwrap.dedent(usage_examples_base).strip()
+    # Hide image sections gracefully when tools are absent
+    examples_text = textwrap.dedent(usage_examples_base)
+    if not get_imgs_msg_fname or not ask_image_fname:
+        examples_text = examples_text.replace("\n ─ Images (vision) ─\n", "\n")
+    if not get_imgs_msg_fname:
+        examples_text = examples_text.replace(
+            f"\n • List images referenced by a specific message (metadata only; no base64)\n   `{{get_imgs}}(message_id=123)`".replace(
+                "{get_imgs}",
+                str(get_imgs_msg_fname),
+            ),
+            "",
+        )
+    if not ask_image_fname:
+        examples_text = examples_text.replace(
+            f'\n • Ask a one‑off question about an image (text answer only; DOES NOT persist visual context)\n   `{{ask_img}}(image_id=45, question="What color is dominant?")`'.replace(
+                "{ask_img}",
+                str(ask_image_fname),
+            ),
+            "",
+        )
+    if not attach_image_fname:
+        examples_text = examples_text.replace(
+            f'\n • Attach a specific image for persistent visual reasoning in this loop\n   `{{attach_img}}(image_id=45, note="Need to inspect the layout")`'.replace(
+                "{attach_img}",
+                str(attach_image_fname),
+            ),
+            "",
+        )
+    if not attach_msg_imgs_fname:
+        examples_text = examples_text.replace(
+            f"\n • Attach multiple images linked from a message (limit to first 2)\n   `{{attach_msg}}(message_id=123, limit=2)`".replace(
+                "{attach_msg}",
+                str(attach_msg_imgs_fname),
+            ),
+            "",
+        )
+
+    usage_examples = textwrap.dedent(examples_text).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
     else:
@@ -177,6 +237,7 @@ def build_ask_prompt(
         • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
         • When you need multiple independent reads, plan them together and run them in parallel rather than a serial drip of micro‑calls.
         • Batch arguments where possible and avoid confirmatory re‑queries unless new ambiguity arises.
+        • When visual context is required across multiple steps, attach the needed images once at the start (ideally in a single call if available) and proceed with analysis using the persistent visual context, instead of repeating isolated per‑image queries.
         """,
     ).strip()
 
