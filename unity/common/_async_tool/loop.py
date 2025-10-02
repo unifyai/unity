@@ -1487,6 +1487,38 @@ async def async_tool_loop_inner(
                 tool_choice_mode = "auto"
                 policy_tools_norm = tools_data.normalized
 
+            # Refresh live-images overview with the latest appended images
+            try:
+                if images and "live_images_overview" in tools_data.normalized:
+                    from unity.common._async_tool.loop_config import (
+                        LIVE_IMAGES_LOG as _LOG,
+                    )
+
+                    fn = tools_data.normalized["live_images_overview"].fn
+                    base_doc = getattr(fn, "__doc__", "") or ""
+                    sep = "\n\nAppended images (this session):\n"
+                    if sep in base_doc:
+                        base_doc = base_doc.split(sep, 1)[0]
+
+                    prior_lines = []
+                    try:
+                        for rec in _LOG.get() or []:
+                            try:
+                                src, iid_s, span_key = rec.split(":", 2)
+                                prior_lines.append(
+                                    f"- source={src}, id={int(iid_s)}, span={span_key}",
+                                )
+                            except Exception:
+                                continue
+                    except Exception:
+                        prior_lines = []
+
+                    fn.__doc__ = base_doc + (
+                        sep + "\n".join(prior_lines) if prior_lines else ""
+                    )
+            except Exception:
+                pass
+
             visible_base_tools_schema = [
                 method_to_schema(spec.fn, name)
                 for name, spec in policy_tools_norm.items()
@@ -1878,6 +1910,15 @@ async def async_tool_loop_inner(
                         if task_to_cancel:
                             tools_data.pop_task(task_to_cancel)
 
+                        # Record any images provided with the stop helper
+                        try:
+                            append_source_scoped_images(
+                                payload.get("images"),
+                                default_source_label("stop"),
+                            )
+                        except Exception:
+                            pass
+
                         tool_msg = create_tool_call_message(
                             name=pretty_name,
                             call_id=call["id"],
@@ -2036,6 +2077,15 @@ async def async_tool_loop_inner(
                                 ):
                                     _inf.waiting_for_clarification = False
                                     break
+
+                        # Record any images provided with the clarification answer
+                        try:
+                            append_source_scoped_images(
+                                args.get("images") if isinstance(args, dict) else None,
+                                default_source_label("clar_answer"),
+                            )
+                        except Exception:
+                            pass
                         # Always publish a tool reply acknowledging the clarify helper
                         tool_reply_msg = create_tool_call_message(
                             name=name,
@@ -2104,6 +2154,15 @@ async def async_tool_loop_inner(
                                     payload,
                                     fallback_positional_keys=["content", "message"],
                                 )
+
+                        # Record any images provided with the interjection helper
+                        try:
+                            append_source_scoped_images(
+                                payload.get("images"),
+                                default_source_label("interjection"),
+                            )
+                        except Exception:
+                            pass
 
                         # ― emit a tool message so the chat log stays tidy ---
                         tool_msg = create_tool_call_message(
