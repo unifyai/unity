@@ -499,3 +499,191 @@ async def test_ask_image_with_images_param_appends_log(monkeypatch) -> None:
     desc = live_tool["function"]["description"]
     assert "source=ask" in desc
     assert "id=42" in desc
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dynamic_sources_multi_append_overview(monkeypatch) -> None:
+    """
+    Single session appends images from multiple dynamic sources and verifies
+    the overview reflects each source: interjection, ask, clar_request,
+    clar_answer, notification, stop.
+    """
+
+    tools_snapshots: list[list[dict]] = []
+    step = {"n": 0}
+
+    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):
+        tools = gen_kwargs.get("tools") or []
+        tools_snapshots.append(tools)
+
+        if step["n"] == 0:
+            step["n"] += 1
+            # Start long-running tool that will emit a notification and a
+            # clarification request with images.
+            msg = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_RUN",
+                        "type": "function",
+                        "function": {"name": "do_run", "arguments": "{}"},
+                    },
+                ],
+            }
+        elif step["n"] == 1:
+            step["n"] += 1
+            # Ask about the image (appends source=ask)
+            msg = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_IMG_ASK",
+                        "type": "function",
+                        "function": {
+                            "name": "ask_image",
+                            "arguments": json.dumps(
+                                {
+                                    "image_id": 42,
+                                    "question": "What color?",
+                                    "images": {"this[:]": 42},
+                                },
+                            ),
+                        },
+                    },
+                ],
+            }
+        elif step["n"] == 2:
+            step["n"] += 1
+            # Interject into the running tool (appends source=interjection)
+            interject_name = _find_tool_name(tools, "interject_")
+            assert interject_name, "interject helper not exposed"
+            msg = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_INTERJECT",
+                        "type": "function",
+                        "function": {
+                            "name": interject_name,
+                            "arguments": json.dumps(
+                                {
+                                    "content": "keep going",
+                                    "images": {"this[:]": 42},
+                                },
+                            ),
+                        },
+                    },
+                ],
+            }
+        elif step["n"] == 3:
+            step["n"] += 1
+            # Answer the clarification (appends source=clar_answer)
+            clarify_name = _find_tool_name(tools, "clarify_")
+            assert clarify_name, "clarify helper not exposed"
+            msg = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_CLARIFY",
+                        "type": "function",
+                        "function": {
+                            "name": clarify_name,
+                            "arguments": json.dumps(
+                                {"answer": "blue", "images": {"this[:]": 42}},
+                            ),
+                        },
+                    },
+                ],
+            }
+        elif step["n"] == 4:
+            step["n"] += 1
+            # Stop the long-running tool (appends source=stop)
+            stop_name = _find_tool_name(tools, "stop_")
+            assert stop_name, "stop helper not exposed"
+            msg = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_STOP",
+                        "type": "function",
+                        "function": {
+                            "name": stop_name,
+                            "arguments": json.dumps({"images": {"this[:]": 42}}),
+                        },
+                    },
+                ],
+            }
+        else:
+            msg = {"role": "assistant", "content": "done", "tool_calls": []}
+        client.messages.append(msg)
+        return msg
+
+    from unity.common._async_tool import loop as _loop
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
+
+    # Base tool that emits notification and clarification with images, then
+    # waits for interjection and clarify-answer.
+    async def do_run(
+        *,
+        interject_queue: asyncio.Queue[str],
+        clarification_up_q: asyncio.Queue[str],
+        clarification_down_q: asyncio.Queue[str],
+        notification_up_q: asyncio.Queue[dict],
+    ) -> dict:
+        # Emit a notification first so the loop attaches a notification entry
+        await notification_up_q.put({"message": "progress", "images": {"this[:]": 42}})
+        # Request clarification with images
+        await clarification_up_q.put(
+            {"question": "What is the dominant color?", "images": {"this[:]": 42}},
+        )
+        # Wait for interjection and clarify answer
+        _ = await interject_queue.get()
+        ans = await clarification_down_q.get()
+        # Keep the tool running until an explicit stop so the stop helper can act
+        await asyncio.Event().wait()
+        return {"answer": ans}
+
+    client = _SpyClient()
+    images = {
+        "[0:5]": DummyImageHandle(
+            image_id=42,
+            caption="blue square",
+            raw_bytes=_solid_png_bytes(0, 0, 255),
+        ),
+    }
+
+    h = start_async_tool_loop(
+        client=client,
+        message="Hello world",
+        tools={"do_run": do_run},
+        images=images,
+    )
+
+    await h.result()
+
+    # Verify the overview includes source lines for all dynamic events
+    assert tools_snapshots, "No LLM call captured; expected at least one exposure set."
+    names = [t.get("function", {}).get("name") for t in tools_snapshots[-1]]
+    assert "live_images_overview" in names
+    live_tool = next(
+        t
+        for t in tools_snapshots[-1]
+        if t["function"]["name"] == "live_images_overview"
+    )
+    desc = live_tool["function"]["description"]
+    # Initial seed is always present
+    assert "source=user_message" in desc
+    # Dynamic appends
+    assert "source=notification" in desc
+    assert "source=clar_request" in desc
+    assert "source=interjection" in desc
+    assert "source=clar_answer" in desc
+    assert "source=ask" in desc
+    assert "source=stop" in desc
