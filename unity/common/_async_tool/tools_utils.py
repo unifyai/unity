@@ -4,6 +4,7 @@ import asyncio
 import time
 from typing import Any
 import re
+from .loop_config import LIVE_IMAGES_REGISTRY, LIVE_IMAGES_LOG
 
 
 @dataclass
@@ -129,3 +130,90 @@ def extract_alignment_text_from_value(value: Any) -> str:
         return str(value)
     except Exception:
         return ""
+
+
+# ── Helpers for source-scoped keys (e.g. "user_message[0:10]", "this[:]") ───
+_SRC_SPAN_RX = re.compile(
+    r"^(?P<src>(this|user_message|interjection\d+|ask\d+|clar_request\d+|clar_answer\d+|notification\d+))\[(?P<start>-?\d+)?\:(?P<end>-?\d+)?\]$",
+)
+
+
+def parse_source_scoped_span(key: str) -> tuple[str, str] | None:
+    """
+    Parse a key of the form "<source>[start:end]" where <source> is one of:
+    this, user_message, interjectionN, askN, clar_requestN, clar_answerN, notificationN.
+    Return (source, "[start:end]") when valid; else None.
+    """
+    try:
+        m = _SRC_SPAN_RX.fullmatch(str(key))
+        if not m:
+            return None
+        source = m.group("src")
+        span = key[key.find("[") :]
+        return source, span
+    except Exception:
+        return None
+
+
+def append_source_scoped_images(images: dict | None, default_source_label: str) -> None:
+    """
+    Append `images` (source-scoped mapping) into the loop's live image registry and log.
+
+    Behaviour
+    ---------
+    - Accepts mapping of key → value where key is either `<source>[start:end]` or omitted
+      (treated as `this[:]`), and value is an image id or an ImageHandle.
+    - Resolves ids using LIVE_IMAGES_REGISTRY, appends handles idempotently.
+    - Records a compact log entry "<source>:<id>:[start:end]" for overview display.
+    - If `<source>` is literally `this`, it is mapped to `default_source_label`.
+    """
+    try:
+        if not isinstance(images, dict) or not images:
+            return
+        reg = LIVE_IMAGES_REGISTRY.get()
+        log = LIVE_IMAGES_LOG.get()
+        for k, v in images.items():
+            parsed = parse_source_scoped_span(str(k))
+            if parsed:
+                src, span = parsed
+                if src == "this":
+                    src = default_source_label
+            else:
+                src, span = default_source_label, "[:]"
+
+            handle = None
+            try:
+                if isinstance(v, int):
+                    handle = reg.get(int(v)) if isinstance(reg, dict) else None
+                elif hasattr(v, "image_id"):
+                    handle = v
+            except Exception:
+                handle = None
+            if handle is None:
+                continue
+            try:
+                reg[int(getattr(handle, "image_id", -1))] = handle
+            except Exception:
+                pass
+            try:
+                log.append(f"{src}:{int(getattr(handle, 'image_id', -1))}:{span}")
+            except Exception:
+                pass
+    except Exception:
+        return
+
+
+def next_source_index(prefix: str) -> int:
+    """Return the next numeric index for a given source prefix based on LIVE_IMAGES_LOG."""
+    try:
+        log = LIVE_IMAGES_LOG.get()
+        if not isinstance(log, list):
+            return 0
+        return sum(1 for e in log if isinstance(e, str) and e.startswith(prefix))
+    except Exception:
+        return 0
+
+
+def default_source_label(prefix: str) -> str:
+    """Return a default `<prefix>N` label using the next available index."""
+    return f"{prefix}{next_source_index(prefix)}"

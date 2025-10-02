@@ -19,9 +19,19 @@ from .messages import (
     generate_with_preprocess,
 )
 from .message_dispatcher import LoopMessageDispatcher
-from .tools_utils import ToolCallMetadata, create_tool_call_message
+from .tools_utils import (
+    ToolCallMetadata,
+    create_tool_call_message,
+    append_source_scoped_images,
+    default_source_label,
+)
 from ..llm_helpers import method_to_schema, _dumps
-from .loop_config import LoopConfig, TOOL_LOOP_LINEAGE, LIVE_IMAGES_REGISTRY
+from .loop_config import (
+    LoopConfig,
+    TOOL_LOOP_LINEAGE,
+    LIVE_IMAGES_REGISTRY,
+    LIVE_IMAGES_LOG,
+)
 from .timeout_timer import TimeoutTimer
 from .messages import (
     insert_tool_message_after_assistant,
@@ -245,6 +255,7 @@ async def async_tool_loop_inner(
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
     _img_token = None
+    _imglog_token = None
     # If live images are provided, set the registry for this loop's scope
     try:
         if images:
@@ -257,8 +268,21 @@ async def async_tool_loop_inner(
                 except Exception:
                     continue
             _img_token = LIVE_IMAGES_REGISTRY.set(id_map)
+            # Seed the overview log with user_message sourced images
+            seed_log: list[str] = []
+            try:
+                for _k, _ih in images.items():
+                    try:
+                        _iid = int(getattr(_ih, "image_id", -1))
+                    except Exception:
+                        _iid = -1
+                    seed_log.append(f"user_message:{_iid}:{_k}")
+            except Exception:
+                pass
+            _imglog_token = LIVE_IMAGES_LOG.set(seed_log)
     except Exception:
         _img_token = None
+        _imglog_token = None
 
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
@@ -440,17 +464,54 @@ async def async_tool_loop_inner(
             + "    args={ 'question': 'Please compare the Cairo skyline images for clarity' },\n"
             + "    hints=[ { 'arg': 'question', 'substring': 'Cairo skyline', 'image_id': 42 } ]\n"
             + "  )  →  { 'images': { 'question[15:28]': 42 } }\n"
+            + "\n"
+            + "Source-scoped image keys for dynamic methods\n"
+            + "-------------------------------------------\n"
+            + "When sending images with dynamic methods (ask, interject, stop, clarify, notifications), use `<source>[start:end]` keys:\n"
+            + "- Supported sources: `this`, `user_message`, `interjectionN`, `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`.\n"
+            + "- `this[:]` is a shorthand that refers to the current outgoing payload (e.g., the very text of this interjection/ask/clarify/notify).\n"
+            + "- Values are image ids (or handles). These images are appended to the loop’s live registry and reflected below.\n"
         )
 
         async def live_images_overview() -> Dict[str, str]:
             return {"status": "ok"}
+
+        # Merge previously appended images (if any)
+        try:
+            prior = LIVE_IMAGES_LOG.get()
+        except Exception:
+            prior = []
+        if prior:
+            # Enrich prior entries for display (best-effort; do not re-fetch substrings)
+            prior_lines = []
+            for rec in prior:
+                try:
+                    src, iid_s, span_key = rec.split(":", 2)
+                    prior_lines.append(
+                        f"- source={src}, id={int(iid_s)}, span={span_key}",
+                    )
+                except Exception:
+                    continue
+            if prior_lines:
+                overview_doc = (
+                    overview_doc
+                    + "\n\nAppended images (this session):\n"
+                    + "\n".join(
+                        prior_lines,
+                    )
+                )
 
         live_images_overview.__doc__ = overview_doc
 
         # Keep a set of already-attached ids (idempotent attach)
         attached_ids: set[int] = set()
 
-        async def ask_image(*, image_id: int, question: str) -> Any:
+        async def ask_image(
+            *,
+            image_id: int,
+            question: str,
+            images: dict | None = None,
+        ) -> Any:
             """
             Ask a question about a live image by its unique id.
             Returns a nested handle; await its result for the answer.
@@ -458,6 +519,14 @@ async def async_tool_loop_inner(
             ih = id_to_handle.get(int(image_id))
             if ih is None:
                 return {"error": f"image_id {image_id} not found"}
+            # If incoming images are provided with source-scoped spans, append them
+            try:
+                append_source_scoped_images(
+                    images,
+                    default_source_label("ask"),
+                )
+            except Exception:
+                pass
             try:
                 return await ih.ask(question)
             except Exception as _exc:  # noqa: BLE001
@@ -575,18 +644,50 @@ async def async_tool_loop_inner(
                     ],
                 )
                 attached_ids.add(iid)
+                # If incoming images are provided with source-scoped spans, append them
+                try:
+                    append_source_scoped_images(
+                        images,
+                        default_source_label("attach"),
+                    )
+                except Exception:
+                    pass
                 return {"status": "attached", "image_id": iid}
             except Exception as _exc:  # noqa: BLE001
                 return {"error": str(_exc)}
 
         # Docstrings: include the full overview in a single place; reference it
         ask_image.__doc__ = (
-            "Ask a question about one of the live images by its numeric id.\n"
-            "See `live_images_overview` (description) for the list of available images."
+            "Ask a question about one of the live images by its numeric id.\n\n"
+            "Parameters\n"
+            "----------\n"
+            "image_id : int\n"
+            "    The unique id of the image (see overview).\n"
+            "question : str\n"
+            "    The question to ask about the image.\n"
+            "images : dict | None\n"
+            "    Optional source-scoped images mapping to append at the time of this call.\n"
+            "    Keys use `<source>[start:end]` (see overview). Use `this[:]` to associate images with the `question` text.\n\n"
+            "Behaviour\n"
+            "---------\n"
+            "- Resolves ids to handles, appends them to this loop’s live registry, and surfaces them in the overview.\n"
+            "- Returns a nested handle; await its result for the answer."
         )
         attach_image_raw.__doc__ = (
-            "Attach an image (by id) into the current chat as vision context.\n"
-            "Idempotent per image_id. See `live_images_overview` for the list."
+            "Attach an image (by id) into the current chat as vision context.\n\n"
+            "Parameters\n"
+            "----------\n"
+            "image_id : int\n"
+            "    The unique id of the image (see overview).\n"
+            "note : str | None\n"
+            "    Optional text note; if provided the note and image will be appended in one user message.\n"
+            "images : dict | None\n"
+            "    Optional source-scoped images mapping to append at the time of this call.\n"
+            "    Keys use `<source>[start:end]` (see overview). Use `this[:]` to associate images with `note` (or with an empty string when `note` is None).\n\n"
+            "Behaviour\n"
+            "---------\n"
+            "- Idempotent per image_id (re-attaching the same id is a no-op).\n"
+            "- Resolves ids to handles, appends them to this loop’s live registry, and surfaces them in the overview."
         )
 
         live_image_tools = {
@@ -602,20 +703,35 @@ async def async_tool_loop_inner(
         hints: list[dict],
     ) -> dict:
         """
-        Compute arg‑scoped span keys for an inner tool call without manual counting.
+        Prepare arg‑scoped `images` for an upcoming inner tool call, without manual counting.
 
-        Inputs
-        ------
-        - args: mapping of arg_name → text to align against (e.g., {"question": "..."}).
-        - hints: list of items; each item should contain:
-            {"arg": <arg_name>, "substring": <text>, "image_id": <int>}
-          Field names are flexible; synonyms accepted: id/imageId for image_id.
+        Purpose
+        -------
+        Convert human-friendly substring hints into arg-scoped span keys of the form
+        `<arg>[start:end]`, which inner tools that accept `images` can consume directly.
 
-        Output
-        ------
-        {"images": {"arg[start:end]": image_id, ...}}
+        Parameters
+        ----------
+        args : dict
+            Mapping of argument names to the target text to align against.
+            Example: {"question": "Please compare the Cairo skyline images for clarity"}.
+        hints : list[dict]
+            Each item can be one of the following shapes (synonyms accepted):
+              - {"arg": <arg_name>, "substring": <text>, "image_id": <int>}
+              - {"arg": <arg_name>, "text": <text>, "id": <int>}
+              - {"arg_name": <arg_name>, "span_text": <text>, "imageId": <int>}
 
-        Use the returned dict directly as the `images` argument in the next tool call.
+        Returns
+        -------
+        dict
+            {"images": {"arg[start:end]": image_id, ...}}
+
+        Usage
+        -----
+        - Use the returned dict directly as the `images` argument in the next tool call that
+          accepts `images` (with arg-scoped keys). This avoids manual index counting.
+        - If a substring does not occur in the specified arg text, it is skipped.
+        - Only include image ids relevant to the inner call (subset control stays explicit).
         """
         out: dict[str, int] = {}
         try:
@@ -957,55 +1073,62 @@ async def async_tool_loop_inner(
                         history_lines = []
 
                 # Support dict-style interjections carrying continued parent context
-                if isinstance(extra, dict):
-                    _msg_text = str(extra.get("message", "")).strip()
-                    _ctx_cont = extra.get("parent_chat_context_continuted")
-                    try:
-                        _ctx_str = (
-                            json.dumps(_ctx_cont, indent=2)
-                            if _ctx_cont is not None
-                            else None
-                        )
-                    except Exception:
-                        _ctx_str = None
+            if isinstance(extra, dict):
+                _msg_text = str(extra.get("message", "")).strip()
+                _ctx_cont = extra.get("parent_chat_context_continuted")
+                _incoming_images = extra.get("images")
+                try:
+                    _ctx_str = (
+                        json.dumps(_ctx_cont, indent=2)
+                        if _ctx_cont is not None
+                        else None
+                    )
+                except Exception:
+                    _ctx_str = None
 
-                    sys_content = (
-                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
-                        "They have just interjected with the following message (in bold at the bottom). "
-                        "From their perspective, the conversation thus far is as follows:\n"
-                        "--\n"
-                        + ("\n".join(history_lines))
-                        + f"\nuser: **{_msg_text}**\n"
-                        "--\n"
-                        + (
-                            "A continued parent chat context has been provided for this interjection.\n"
-                            + (_ctx_str or "(unserializable)")
-                            + "\n"
-                            if _ctx_cont is not None
-                            else ""
-                        )
-                        + "Please consider and incorporate *all* interjections in your final response to the user. "
-                        + "Later interjections should always override earlier interjections if there are "
-                        + "any conflicting comments/requests across the different interjections."
+                sys_content = (
+                    "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                    "They have just interjected with the following message (in bold at the bottom). "
+                    "From their perspective, the conversation thus far is as follows:\n"
+                    "--\n" + ("\n".join(history_lines)) + f"\nuser: **{_msg_text}**\n"
+                    "--\n"
+                    + (
+                        "A continued parent chat context has been provided for this interjection.\n"
+                        + (_ctx_str or "(unserializable)")
+                        + "\n"
+                        if _ctx_cont is not None
+                        else ""
                     )
-                else:
-                    _msg_text = str(extra)
-                    sys_content = (
-                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
-                        "They have just interjected with the following message (in bold at the bottom). "
-                        "From their perspective, the conversation thus far is as follows:\n"
-                        "--\n"
-                        + ("\n".join(history_lines))
-                        + f"\nuser: **{_msg_text}**\n"
-                        "--\n"
-                        "Please consider and incorporate *all* interjections in your final response to the user. "
-                        "Later interjections should always override earlier interjections if there are "
-                        "any conflicting comments/requests across the different interjections."
-                    )
+                    + "Please consider and incorporate *all* interjections in your final response to the user. "
+                    + "Later interjections should always override earlier interjections if there are "
+                    + "any conflicting comments/requests across the different interjections."
+                )
+            else:
+                _msg_text = str(extra)
+                _incoming_images = None
+                sys_content = (
+                    "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                    "They have just interjected with the following message (in bold at the bottom). "
+                    "From their perspective, the conversation thus far is as follows:\n"
+                    "--\n" + ("\n".join(history_lines)) + f"\nuser: **{_msg_text}**\n"
+                    "--\n"
+                    "Please consider and incorporate *all* interjections in your final response to the user. "
+                    "Later interjections should always override earlier interjections if there are "
+                    "any conflicting comments/requests across the different interjections."
+                )
 
                 interjection_msg = {"role": "system", "content": sys_content}
                 await _msg_dispatcher.append_msgs([interjection_msg])
                 last_valid_user_history = history_lines + [f"user: {extra}"]
+
+                # If images accompany this interjection, accept source-scoped keys and append
+                try:
+                    append_source_scoped_images(
+                        _incoming_images,
+                        default_source_label("interjection"),
+                    )
+                except Exception:
+                    pass
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
@@ -1130,7 +1253,13 @@ async def async_tool_loop_inner(
                 # ── clarification request bubbled up from a child tool ──────────────
                 if done & clar_waiters.keys():
                     for cw in done & clar_waiters.keys():
-                        question = cw.result()  # the text from the child
+                        question = (
+                            cw.result()
+                        )  # may be str or dict with {question, images}
+                        images_from_child = None
+                        if isinstance(question, dict):
+                            images_from_child = question.get("images")
+                            question = question.get("question", "")
                         src_task = clar_waiters[cw]
                         call_id = tools_data.info[src_task].call_id
                         tool_name = tools_data.info[src_task].name
@@ -1180,6 +1309,15 @@ async def async_tool_loop_inner(
                                         "question": question,
                                     },
                                 )
+                        except Exception:
+                            pass
+
+                        # Handle images sent alongside the clarification request
+                        try:
+                            append_source_scoped_images(
+                                images_from_child,
+                                default_source_label("clar_request"),
+                            )
                         except Exception:
                             pass
 
@@ -1253,6 +1391,20 @@ async def async_tool_loop_inner(
                                         **event_payload,
                                     },
                                 )
+                        except Exception:
+                            pass
+
+                        # Handle images sent alongside notification payloads
+                        try:
+                            images_from_child = (
+                                payload.get("images")
+                                if isinstance(payload, dict)
+                                else None
+                            )
+                            append_source_scoped_images(
+                                images_from_child,
+                                default_source_label("notification"),
+                            )
                         except Exception:
                             pass
                     # Require an immediate LLM turn (same behaviour as clarification)
@@ -2160,6 +2312,9 @@ async def async_tool_loop_inner(
         with suppress(Exception):
             if _img_token is not None:
                 LIVE_IMAGES_REGISTRY.reset(_img_token)
+        with suppress(Exception):
+            if _imglog_token is not None:
+                LIVE_IMAGES_LOG.reset(_imglog_token)
 
         if semantic_cache:
             # TODO: ideally, should not be blocking and more of a background task
