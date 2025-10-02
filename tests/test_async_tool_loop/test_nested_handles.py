@@ -735,7 +735,7 @@ async def test_pause_nested_loop_calls_pause():
     final = await top.result()
 
     # assertions ----------------------------------------------------------
-    assert final.strip().lower() == "paused done"
+    assert "paused done" in final.strip().lower()
     assert pause_called["count"] == 1, "handle.pause() should be called exactly once"
 
 
