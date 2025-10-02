@@ -21,8 +21,7 @@ from .messages import (
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import ToolCallMetadata, create_tool_call_message
 from ..llm_helpers import method_to_schema, _dumps
-from .loop_config import LoopConfig, TOOL_LOOP_LINEAGE
-from .tools_utils import ToolCallMetadata, create_tool_call_message
+from .loop_config import LoopConfig, TOOL_LOOP_LINEAGE, LIVE_IMAGES_REGISTRY
 from .timeout_timer import TimeoutTimer
 from .messages import (
     insert_tool_message_after_assistant,
@@ -245,6 +244,21 @@ async def async_tool_loop_inner(
         pass
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
+    _img_token = None
+    # If live images are provided, set the registry for this loop's scope
+    try:
+        if images:
+            id_map: dict[int, Any] = {}
+            for _k, _ih in images.items():
+                try:
+                    _iid = int(getattr(_ih, "image_id", -1))
+                    if _iid >= 0:
+                        id_map[_iid] = _ih
+                except Exception:
+                    continue
+            _img_token = LIVE_IMAGES_REGISTRY.set(id_map)
+    except Exception:
+        _img_token = None
 
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
@@ -412,6 +426,20 @@ async def async_tool_loop_inner(
         overview_doc = (
             "Live images aligned to the current user_message (visible in this description; calling is optional).\n"
             + "\n".join(listings or ["(none)"])
+            + "\n\n"
+            + "Arg-scoped image keys for inner tools\n"
+            + "-----------------------------------\n"
+            + "When calling an inner tool that accepts `images`, reference each image with an arg-scoped span key: `<arg>[start:end]`.\n"
+            + "- `<arg>` is the name of the tool's string parameter (e.g., `question`, `text`, `prompt`).\n"
+            + "- `[start:end]` uses Python-slice semantics over that parameter's text.\n"
+            + "- Values are image ids (or handles) that should align to that substring.\n\n"
+            + "Example (manual):\n"
+            + "  images = { 'question[10:23]': 42 }\n\n"
+            + "Example (recommended with helper):\n"
+            + "  align_images_for(\n"
+            + "    args={ 'question': 'Please compare the Cairo skyline images for clarity' },\n"
+            + "    hints=[ { 'arg': 'question', 'substring': 'Cairo skyline', 'image_id': 42 } ]\n"
+            + "  )  →  { 'images': { 'question[15:28]': 42 } }\n"
         )
 
         async def live_images_overview() -> Dict[str, str]:
@@ -567,9 +595,82 @@ async def async_tool_loop_inner(
             "attach_image_raw": attach_image_raw,
         }
 
-    # Merge live-image helpers (if any) with base tools before normalisation
-    if live_image_tools:
-        tools = {**tools, **live_image_tools}
+    # ── Helper to prepare arg-scoped images mapping for inner tool calls ─────
+    async def align_images_for(
+        *,
+        args: dict,
+        hints: list[dict],
+    ) -> dict:
+        """
+        Compute arg‑scoped span keys for an inner tool call without manual counting.
+
+        Inputs
+        ------
+        - args: mapping of arg_name → text to align against (e.g., {"question": "..."}).
+        - hints: list of items; each item should contain:
+            {"arg": <arg_name>, "substring": <text>, "image_id": <int>}
+          Field names are flexible; synonyms accepted: id/imageId for image_id.
+
+        Output
+        ------
+        {"images": {"arg[start:end]": image_id, ...}}
+
+        Use the returned dict directly as the `images` argument in the next tool call.
+        """
+        out: dict[str, int] = {}
+        try:
+            arg_texts = {str(k): str(v) for k, v in dict(args or {}).items()}
+        except Exception:
+            arg_texts = {}
+
+        def _extract_id(obj: dict) -> int | None:
+            for k in ("image_id", "imageId", "id"):
+                if k in obj:
+                    try:
+                        return int(obj[k])
+                    except Exception:
+                        return None
+            return None
+
+        def _extract_arg(obj: dict) -> str | None:
+            for k in ("arg", "argument", "arg_name", "name"):
+                if k in obj:
+                    return str(obj[k])
+            return None
+
+        def _extract_substring(obj: dict) -> str | None:
+            for k in ("substring", "text", "span_text"):
+                if k in obj:
+                    return str(obj[k])
+            return None
+
+        for item in list(hints or []):
+            if not isinstance(item, dict):
+                continue
+            iid = _extract_id(item)
+            arg_name = _extract_arg(item)
+            sub = _extract_substring(item)
+            if iid is None or not arg_name or sub is None:
+                continue
+            base = arg_texts.get(arg_name)
+            if not isinstance(base, str):
+                continue
+            try:
+                start = base.find(sub)
+                if start < 0:
+                    continue
+                end = start + len(sub)
+                key = f"{arg_name}[{start}:{end}]"
+                out[key] = iid
+            except Exception:
+                continue
+
+        return {"images": out}
+
+    general_helpers = {"align_images_for": align_images_for}
+
+    # Merge helpers (if any) with base tools before normalisation
+    tools = {**tools, **(live_image_tools or {}), **general_helpers}
 
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
@@ -2056,6 +2157,9 @@ async def async_tool_loop_inner(
     finally:
         with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
+        with suppress(Exception):
+            if _img_token is not None:
+                LIVE_IMAGES_REGISTRY.reset(_img_token)
 
         if semantic_cache:
             # TODO: ideally, should not be blocking and more of a background task

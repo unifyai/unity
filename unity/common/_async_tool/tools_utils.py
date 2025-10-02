@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import asyncio
 import time
 from typing import Any
+import re
 
 
 @dataclass
@@ -66,3 +67,65 @@ class NotificationEvent(TypedDict, total=False):
     message: str
     percent: float
     meta: Any
+
+
+# ── Helpers for arg-scoped span keys (e.g. "question[2:9]") ─────────────———
+_ARG_SPAN_RX = re.compile(
+    r"^(?P<arg>[A-Za-z_]\w*)\[(?P<start>-?\d+)?\:(?P<end>-?\d+)?\]$",
+)
+
+
+def parse_arg_scoped_span(key: str) -> tuple[str, str] | None:
+    """
+    Parse a key of the form "<arg_name>[start:end]" and return
+    (arg_name, "[start:end]") when valid; else None.
+
+    The bracket portion preserves the original indices; downstream helpers can
+    compute concrete ranges or substrings with Python-slice semantics.
+    """
+    try:
+        m = _ARG_SPAN_RX.fullmatch(str(key))
+        if not m:
+            return None
+        arg = m.group("arg")
+        span = key[key.find("[") :]
+        return arg, span
+    except Exception:
+        return None
+
+
+def extract_alignment_text_from_value(value: Any) -> str:
+    """
+    Return a best-effort string to align spans against using the shared rules:
+      - str: use as-is
+      - dict: use str(value.get("content", ""))
+      - list: if chat messages → first with role=="user"; else first text block
+    """
+    try:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            return str(value.get("content", ""))
+        if isinstance(value, list):
+            # Case 1: chat messages
+            for m in value:
+                if isinstance(m, dict) and m.get("role") == "user":
+                    c = m.get("content")
+                    if isinstance(c, list):
+                        parts: list[str] = []
+                        for it in c:
+                            if isinstance(it, dict) and it.get("type") == "text":
+                                parts.append(str(it.get("text", "")))
+                            else:
+                                parts.append(str(it))
+                        return "".join(parts)
+                    return str(c)
+            # Case 2: content blocks (no roles)
+            for it in value:
+                if isinstance(it, dict) and it.get("type") == "text":
+                    return str(it.get("text", ""))
+            return str(value[0]) if value else ""
+        # Fallback best-effort stringification
+        return str(value)
+    except Exception:
+        return ""

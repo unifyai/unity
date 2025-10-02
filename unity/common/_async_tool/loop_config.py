@@ -1,9 +1,17 @@
 from contextvars import ContextVar
 from secrets import token_hex
 from ..llm_helpers import short_id
+from typing import Any
 
 # Hierarchical lineage of nested async tool loops (propagates via contextvars)
 TOOL_LOOP_LINEAGE: ContextVar[list[str]] = ContextVar("TOOL_LOOP_LINEAGE", default=[])
+
+# Loop-scoped registry of live images (id -> ImageHandle) for validation/lookup.
+# This is intentionally typed as dict[int, Any] to avoid import cycles.
+LIVE_IMAGES_REGISTRY: ContextVar[dict[int, Any]] = ContextVar(
+    "LIVE_IMAGES_REGISTRY",
+    default={},
+)
 
 
 class LoopConfig:
