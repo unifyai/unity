@@ -547,9 +547,7 @@ class ConversationManager:
             )
         )
         role = (
-            "Assistant"
-            if "sent" in event_name or "assistant" in event_name
-            else "User"
+            "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
         )
         if isinstance(event, (EmailSent, EmailRecieved)):
             content = event.subject + "\n\n" + event.body
