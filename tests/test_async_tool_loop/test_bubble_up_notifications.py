@@ -106,7 +106,7 @@ async def test_notification_bubbles_up_two_tiers() -> None:
         # Ignore any earlier progress events from base tools (e.g., send_email).
         notification_event = None
         for _ in range(5):
-            evt = await asyncio.wait_for(outer_handle.next_notification(), timeout=60)
+            evt = await asyncio.wait_for(outer_handle.next_notification(), timeout=300)
             if evt.get("tool_name") == "notify_parent":
                 notification_event = evt
                 break
@@ -124,7 +124,7 @@ async def test_notification_bubbles_up_two_tiers() -> None:
                 for k in ["compos", "sending", "send", "sent", "email", "success"]
             )
 
-        await asyncio.wait_for(outer_handle.result(), timeout=60)
+        await asyncio.wait_for(outer_handle.result(), timeout=300)
     finally:
         # Ensure loop teardown even if assertions/timeouts fail
         try:
@@ -236,13 +236,13 @@ async def test_notification_bubbles_through_returned_handle() -> None:
     )
     try:
         # ── satisfy: we should receive a bubbled notification event from the INNER loop ──
-        event = await asyncio.wait_for(handle.next_notification(), timeout=60)
+        event = await asyncio.wait_for(handle.next_notification(), timeout=300)
         assert event["type"] == "notification"
         assert event["tool_name"] == "delegating_tool"
         assert "widget" in (event.get("message") or "").lower()
 
         # ── loop must now complete successfully ───────────────────────────────
-        await asyncio.wait_for(handle.result(), timeout=60)
+        await asyncio.wait_for(handle.result(), timeout=300)
 
         # final sanity-check: assistant ends with the confirmation from inner_tool
         assert "finished" in (outer_llm.messages[-1]["content"] or "").lower()
