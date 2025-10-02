@@ -44,7 +44,14 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     # passes events around, uses redis
     event_broker = get_event_broker()
 
-    managers_worker = ManagersWorker(event_broker)
+    # Run ManagersWorker on a background thread via asyncio.to_thread
+    def run_managers_worker():
+        from unity.conversation_manager_2.event_broker import create_event_broker
+        # Create a fresh Redis client bound to the thread's event loop
+        manager_event_broker = create_event_broker()
+        asyncio.run(ManagersWorker(manager_event_broker).wait_for_events())
+
+    asyncio.create_task(asyncio.to_thread(run_managers_worker))
 
     # directly talks with the user
     conversation_manager = ConversationManager(
@@ -71,7 +78,6 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
 
-    asyncio.create_task(managers_worker.wait_for_events())
     asyncio.create_task(conversation_manager.wait_for_events())
     asyncio.create_task(conversation_manager.check_inactivity())
     asyncio.create_task(comms_manager.start())

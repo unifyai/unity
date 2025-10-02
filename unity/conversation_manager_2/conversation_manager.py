@@ -127,6 +127,7 @@ class ConversationManager:
         self.chat_history = []
         self.call_proc = None
         self.call_contact = None
+        self.initialized = False
 
     async def run_llm(self):
         now = None
@@ -416,7 +417,8 @@ class ConversationManager:
 
             # fetch contacts if env vars are already set
             if self.assistant_id:
-                await self.publish_startup()
+                asyncio.create_task(self.publish_startup())
+                print("Default startup")
 
             while True:
                 msg = await pubsub.get_message(
@@ -446,6 +448,7 @@ class ConversationManager:
                     elif isinstance(event, ManagersStartupOutput):
                         if not event.initialized:
                             raise Exception("Managers failed to initialize")
+                        self.initialized = True
                         continue
                     elif isinstance(event, StartupEvent):
                         payload = event.to_dict()["payload"]
@@ -504,16 +507,10 @@ class ConversationManager:
         os.environ["VOICE_PROVIDER"] = self.voice_provider
         os.environ["VOICE_ID"] = self.voice_id
 
-    def set_contacts(self, contacts):
-        conversation_contacts = [
-            ConversationContact(
-                c["id"], c["name"], c["id"] == 1, c["number"], c["email"]
-            )
-            for c in contacts
-        ]
-        self.phone_contacts_map = {c.number: c for c in conversation_contacts}
-        self.email_contacts_map = {c.email: c for c in conversation_contacts}
-        self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
+    def update_contact(self, contact):
+        self.phone_contacts_map[contact.number] = contact
+        self.email_contacts_map[contact.email] = contact
+        self.inverted_contacts_map[contact.id] = contact
         self.state.phone_contacts_map = self.phone_contacts_map
         self.state.email_contacts_map = self.email_contacts_map
         self.state.inverted_contacts_map = self.inverted_contacts_map
@@ -536,6 +533,16 @@ class ConversationManager:
         )
 
     async def handle_event(self, event: Event):
+        # add placeholder contact if we're yet to populate the contacts map
+        if (
+            not self.initialized
+            and hasattr(event, "contact")
+        ):
+            contact = ConversationContact(id=1, name="Placeholder", number=event.contact, email=event.contact, is_boss=True)
+            self.update_contact(contact)
+            print("Placeholder contact created")
+
+        # push event to state
         self.state.push_event(event)
 
         if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
@@ -583,7 +590,14 @@ class ConversationManager:
             await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, GetContactsOutput):
-            self.set_contacts(event.contacts)
+            conversation_contacts = [
+                ConversationContact(
+                    c["id"], c["name"], c["id"] == 1, c["number"], c["email"]
+                )
+                for c in event.contacts
+            ]
+            for c in conversation_contacts:
+                self.update_contact(c)
 
         elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)

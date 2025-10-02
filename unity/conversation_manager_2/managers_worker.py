@@ -214,11 +214,11 @@ class ManagersWorker:
         """Process a single Event from the queue."""
         # Route to handlers using isinstance
         if isinstance(event, ManagersStartupInput):
-            await self._startup(event.to_dict()["payload"])
+            asyncio.create_task(self._startup(event.to_dict()["payload"]))
         elif isinstance(event, LogMessageInput):
-            await self._log_message(event)
+            asyncio.create_task(self._log_message(event))
         elif isinstance(event, GetContactsInput):
-            await self._get_contacts()
+            asyncio.create_task(self._get_contacts())
         else:
             print(f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}")
 
