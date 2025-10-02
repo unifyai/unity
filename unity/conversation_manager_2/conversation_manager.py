@@ -385,14 +385,6 @@ class ConversationManager:
         os.environ["VOICE_PROVIDER"] = self.voice_provider
         os.environ["VOICE_ID"] = self.voice_id
 
-    def update_contact(self, contact):
-        self.phone_contacts_map[contact.number] = contact
-        self.email_contacts_map[contact.email] = contact
-        self.inverted_contacts_map[contact.id] = contact
-        self.state.phone_contacts_map = self.phone_contacts_map
-        self.state.email_contacts_map = self.email_contacts_map
-        self.state.inverted_contacts_map = self.inverted_contacts_map
-
     async def publish_startup(self):
         print("publishing startup")
         await self.event_broker.publish(
@@ -571,7 +563,3 @@ class ConversationManager:
         print(f"Marking job {self.job_name} done")
         mark_job_done(self.job_name)
         self.cleanup_call_proc()
-
-
-# think about the end behaviour (how the events should look like in the end)
-# and design the system around it
