@@ -87,6 +87,7 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install $(spacy info en_core_web_sm --url)
 
 # Copy all application files
 COPY . /app
