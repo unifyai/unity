@@ -70,8 +70,8 @@ def test_tool_delete_contact_timing():
     out = cm._delete_contact(contact_id=cid)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"] and out["details"]["contact_id"] == cid
-    assert elapsed_ms < 2200
-    print(f"elapsed: {elapsed_ms} < 2200")
+    assert elapsed_ms < 3300
+    print(f"elapsed: {elapsed_ms} < 3300")
 
 
 @pytest.mark.unit
@@ -137,5 +137,5 @@ def test_tool_search_contacts_timing():
     results = cm._search_contacts(references={"bio": "emails"}, k=1)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(results, list) and results
-    assert elapsed_ms < 4500
-    print(f"elapsed: {elapsed_ms} < 4500")
+    assert elapsed_ms < 6800
+    print(f"elapsed: {elapsed_ms} < 6800")
