@@ -93,7 +93,7 @@ async def test_update_contacts_merges_duplicate_contacts(monkeypatch):
 
     monkeypatch.setattr(
         mm_mod,
-        "start_async_tool_use_loop",
+        "start_async_tool_loop",
         _fake_tool_loop,
         raising=True,
     )

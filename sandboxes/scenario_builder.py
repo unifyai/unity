@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, Any, Optional
 
 import unify
-from unity.common.async_tool_loop import start_async_tool_use_loop, SteerableToolHandle
+from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
 from sandboxes.utils import await_with_interrupt
 
 __all__ = ["ScenarioBuilder"]
@@ -199,7 +199,7 @@ class ScenarioBuilder:
         #     as the initial *user* turn. Enforce that the LLM *must* call
         #     at least one tool (index 0) so generators like TranscriptGenerator
         #     are guaranteed to receive data.
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             self._client,
             self._description,
             wrapped_tools,

@@ -20,7 +20,7 @@ from ..common.llm_helpers import (
     make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
-    start_async_tool_use_loop,
+    start_async_tool_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
@@ -900,7 +900,7 @@ class FileManager(BaseFileManager):
         # Launch tool loop with the question formatted to reference the file
         user_blob = json.dumps({"filename": filename, "question": question}, indent=2)
 
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client,
             user_blob,
             tools,

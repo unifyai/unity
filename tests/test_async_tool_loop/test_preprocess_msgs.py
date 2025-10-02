@@ -5,7 +5,7 @@ from typing import List
 import pytest
 import unify
 
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
 
 
@@ -121,7 +121,7 @@ async def test_preprocess_msgs_dynamic_placeholder():
         return "OK"
 
     # Kick off the async-tool loop.
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,  # type: ignore[arg-type]
         message="Please run dummy_tool then respond with {context}.",
         tools={"dummy_tool": dummy_tool},

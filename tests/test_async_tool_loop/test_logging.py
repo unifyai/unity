@@ -6,8 +6,8 @@ import pytest
 import unify
 
 from unity.common.async_tool_loop import (
-    start_async_tool_use_loop,
-    AsyncToolUseLoopHandle,
+    start_async_tool_loop,
+    AsyncToolLoopHandle,
 )
 from unity.events.event_bus import EVENT_BUS
 from tests.helpers import SETTINGS
@@ -31,7 +31,7 @@ async def test_nested_logging_hierarchy_labels():
         return "inner-ok"
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
-    async def outer_tool() -> AsyncToolUseLoopHandle:
+    async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=SETTINGS.UNIFY_CACHE,
@@ -44,7 +44,7 @@ async def test_nested_logging_hierarchy_labels():
             "3️⃣  Reply with exactly 'done'.",
         )
 
-        return start_async_tool_use_loop(
+        return start_async_tool_loop(
             client=inner_client,
             message="start",
             tools={"inner_tool": inner_tool},
@@ -70,7 +70,7 @@ async def test_nested_logging_hierarchy_labels():
         "3️⃣  Once it is completed, respond with exactly 'outer done'.",
     )
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="start",
         tools={"outer_tool": outer_tool},
@@ -138,7 +138,7 @@ async def test_single_loop_logging_hierarchy_label():
         "1️⃣  Call `noop_tool`. 2️⃣ Then reply exactly 'done'.",
     )
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="start",
         tools={"noop_tool": noop_tool},

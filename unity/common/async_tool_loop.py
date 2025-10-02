@@ -8,7 +8,7 @@ from ..constants import LOGGER
 from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
-from ._async_tool.loop import async_tool_use_loop_inner
+from ._async_tool.loop import async_tool_loop_inner
 
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,9 +131,9 @@ class SteerableToolHandle(SteerableHandle):
         """
 
 
-class AsyncToolUseLoopHandle(SteerableToolHandle):
+class AsyncToolLoopHandle(SteerableToolHandle):
     """
-    Returned by `start_async_tool_use_loop`.  Lets you
+    Returned by `start_async_tool_loop`.  Lets you
       • queue extra user messages while the loop runs and
       • stop the loop at any time.
     """
@@ -306,7 +306,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         #     loop.
         if self.done():
             LOGGER.warning(
-                "AsyncToolUseLoopHandle.ask() called on an already-finished "
+                "AsyncToolLoopHandle.ask() called on an already-finished "
                 "loop – returning a synthetic handle with a static answer.",
             )
 
@@ -464,7 +464,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         else:
             _ask_message = question
 
-        helper_handle = start_async_tool_use_loop(
+        helper_handle = start_async_tool_loop(
             inspection_client,
             _ask_message,
             recursive_tools,  # may be empty
@@ -721,7 +721,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 # 3.  A convenience wrapper that *starts* the loop and returns the handle
 # ─────────────────────────────────────────────────────────────────────────────
-def start_async_tool_use_loop(
+def start_async_tool_loop(
     client: unify.AsyncUnify,
     message: str | dict | list[str | dict],
     tools: Dict[str, Callable],
@@ -744,9 +744,9 @@ def start_async_tool_use_loop(
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    handle_cls: Optional[Type[AsyncToolUseLoopHandle]] = None,
+    handle_cls: Optional[Type[AsyncToolLoopHandle]] = None,
     semantic_cache: Optional[bool] = False,
-) -> AsyncToolUseLoopHandle:
+) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
     a handle for live interaction.
@@ -779,7 +779,7 @@ def start_async_tool_use_loop(
     _lineage = [*_parent, loop_id]
 
     task = asyncio.create_task(
-        async_tool_use_loop_inner(
+        async_tool_loop_inner(
             client,
             message,
             tools,
@@ -824,7 +824,7 @@ def start_async_tool_use_loop(
     else:
         init_content = message
 
-    HandleType = handle_cls or AsyncToolUseLoopHandle
+    HandleType = handle_cls or AsyncToolLoopHandle
     handle = HandleType(
         task=task,
         interject_queue=interject_queue,

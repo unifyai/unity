@@ -94,7 +94,7 @@ def _check_valid_response_format(response_format: Any):
     return response_format.model_json_schema()
 
 
-async def async_tool_use_loop_inner(
+async def async_tool_loop_inner(
     client: unify.AsyncUnify,
     message: str | dict | list[str | dict],
     tools: Dict[str, Union[Callable, ToolSpec]],

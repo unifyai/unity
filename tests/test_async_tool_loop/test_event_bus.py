@@ -1,7 +1,7 @@
 # tests/test_tool_loop_event_bus.py
 #
 # These tests assume the project already contains
-# ─  async_tool_use_loop.py   (with _async_tool_use_loop_inner / start_async_tool_use_loop)
+# ─  async_tool_use_loop.py   (with _async_tool_use_loop_inner / start_async_tool_loop)
 # ─  event_bus.py            (with EventBus / Event)
 #
 # No stubs for “unify” are provided – the real library is expected to be
@@ -15,9 +15,9 @@ import asyncio
 import pytest
 
 from unity.common.async_tool_loop import (
-    start_async_tool_use_loop,
+    start_async_tool_loop,
 )
-from unity.common._async_tool.loop import async_tool_use_loop_inner
+from unity.common._async_tool.loop import async_tool_loop_inner
 from unity.events.event_bus import EVENT_BUS
 from tests.helpers import _handle_project, SETTINGS
 
@@ -51,7 +51,7 @@ async def test_basic_event_flow() -> None:
     pause_event = asyncio.Event()
     pause_event.set()  # start un-paused
 
-    await async_tool_use_loop_inner(
+    await async_tool_loop_inner(
         client=client,
         message="world",
         tools={"echo": echo},
@@ -103,7 +103,7 @@ async def test_interjection_publishes_user_event() -> None:
         "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said most recently, and do not include the quoation marks in your response.",
     )
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="first",
         tools={},  # no tools needed

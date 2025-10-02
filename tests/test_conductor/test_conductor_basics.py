@@ -6,7 +6,7 @@ import pytest
 import unify
 
 from unity.conductor.simulated import SimulatedConductor
-from unity.common.async_tool_loop import AsyncToolUseLoopHandle
+from unity.common.async_tool_loop import AsyncToolLoopHandle
 
 # keeps each test isolated in its own Unify project / trace context
 from tests.helpers import _handle_project
@@ -128,14 +128,14 @@ async def test_cond_request_then_ask_stateful():
 @_handle_project
 async def test_handle_interject(monkeypatch):
     calls = {"interject": 0}
-    orig = AsyncToolUseLoopHandle.interject
+    orig = AsyncToolLoopHandle.interject
 
     @functools.wraps(orig)
     async def wrapped(self, message: str):  # type: ignore[override]
         calls["interject"] += 1
         return await orig(self, message)
 
-    monkeypatch.setattr(AsyncToolUseLoopHandle, "interject", wrapped, raising=True)
+    monkeypatch.setattr(AsyncToolLoopHandle, "interject", wrapped, raising=True)
 
     cond = SimulatedConductor(
         description=(
@@ -239,7 +239,7 @@ async def test_cond_supports_optional_clarification_channels():
 async def test_handle_pause_and_resume(monkeypatch):
     counts = {"pause": 0, "resume": 0}
 
-    original_pause = AsyncToolUseLoopHandle.pause
+    original_pause = AsyncToolLoopHandle.pause
 
     @functools.wraps(original_pause)
     def _patched_pause(self):  # type: ignore[override]
@@ -247,13 +247,13 @@ async def test_handle_pause_and_resume(monkeypatch):
         return original_pause(self)
 
     monkeypatch.setattr(
-        AsyncToolUseLoopHandle,
+        AsyncToolLoopHandle,
         "pause",
         _patched_pause,
         raising=True,
     )
 
-    original_resume = AsyncToolUseLoopHandle.resume
+    original_resume = AsyncToolLoopHandle.resume
 
     @functools.wraps(original_resume)
     def _patched_resume(self):  # type: ignore[override]
@@ -261,7 +261,7 @@ async def test_handle_pause_and_resume(monkeypatch):
         return original_resume(self)
 
     monkeypatch.setattr(
-        AsyncToolUseLoopHandle,
+        AsyncToolLoopHandle,
         "resume",
         _patched_resume,
         raising=True,

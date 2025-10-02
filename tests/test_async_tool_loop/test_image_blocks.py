@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 import unify
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
 
 # --------------------------------------------------------------------------- #
@@ -62,7 +62,7 @@ async def test_initial_user_image_is_promoted() -> None:
         "text": "What animal is shown? ONE word only.",
     }
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         message=[img_block, txt_block],  # 👈 ready-made content blocks
         tools={},
@@ -114,7 +114,7 @@ async def test_tool_result_image_is_promoted_and_reasoned_over() -> None:
         "Call image_tool exactly once and, after it finishes, reply with the one-word three-letter animal you saw.",
     )
 
-    primary_handle = start_async_tool_use_loop(
+    primary_handle = start_async_tool_loop(
         client,
         message="go",
         tools={"image_tool": image_tool},

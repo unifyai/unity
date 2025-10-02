@@ -14,7 +14,7 @@ from unity.task_scheduler.simulated import SimulatedTaskScheduler
 # ---------------------------------------------------------------------------
 
 
-def _patch_start_async_tool_use_loop(monkeypatch):
+def _patch_start_async_tool_loop(monkeypatch):
     """Replace the heavy LLM tool-loop with a minimal stub that simply
     invokes the `create_contact` tool (if present) and returns a dummy handle
     whose `.result()` coroutine finishes immediately.
@@ -22,7 +22,7 @@ def _patch_start_async_tool_use_loop(monkeypatch):
     import unity.memory_manager.memory_manager as mm_mod
 
     def _fake_loop(client, message, tools, *_, **__):  # noqa: D401 – imperative helper
-        class _Handle:  # minimal stand-in for AsyncToolUseLoopHandle
+        class _Handle:  # minimal stand-in for AsyncToolLoopHandle
             async def result(self):  # noqa: D401 – imperative helper
                 # Simulate *one* new contact creation so the wrapper logic
                 # inside `update_contacts` captures the freshly assigned id.
@@ -36,7 +36,7 @@ def _patch_start_async_tool_use_loop(monkeypatch):
         return _Handle()
 
     # Apply patch to *the exact symbol* imported in memory_manager.py
-    monkeypatch.setattr(mm_mod, "start_async_tool_use_loop", _fake_loop, raising=True)
+    monkeypatch.setattr(mm_mod, "start_async_tool_loop", _fake_loop, raising=True)
 
 
 def _patch_create_contact(monkeypatch):
@@ -108,7 +108,7 @@ async def test_update_contacts_triggers_followups(monkeypatch):
     )
 
     _patch_create_contact(monkeypatch)
-    _patch_start_async_tool_use_loop(monkeypatch)
+    _patch_start_async_tool_loop(monkeypatch)
 
     # Instantiate MemoryManager with simulated sub-managers so no I/O occurs
     mm = MemoryManager(
@@ -162,7 +162,7 @@ async def test_update_contacts_respects_flags(monkeypatch):
     )
 
     _patch_create_contact(monkeypatch)
-    _patch_start_async_tool_use_loop(monkeypatch)
+    _patch_start_async_tool_loop(monkeypatch)
 
     mm = MemoryManager(
         contact_manager=SimulatedContactManager(description="flag-test"),

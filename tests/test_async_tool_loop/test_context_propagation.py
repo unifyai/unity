@@ -12,7 +12,7 @@ from typing import List
 
 import pytest
 import unify
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
 
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
@@ -41,7 +41,7 @@ async def test_chat_context_propagation() -> None:
     record_context.__name__ = "record_context"
     record_context.__qualname__ = "record_context"
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message="Please call the function `record_context()` once, then reply 'done'.",
         tools={"record_context": record_context},
@@ -77,7 +77,7 @@ async def test_ask_uses_continued_parent_context() -> None:
     client = new_client()
 
     # Start a trivial outer loop (no tools needed for this test).
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message=("We will later follow-up with a question requiring broader context."),
         tools={},
@@ -116,7 +116,7 @@ async def test_interject_with_continued_parent_context_influences_decision() -> 
 
     client = new_client()
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client=client,
         message=(
             "We need to pick a fruit between APPLE and BANANA. "

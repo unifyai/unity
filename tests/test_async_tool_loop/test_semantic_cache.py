@@ -2,7 +2,7 @@ import unify
 import asyncio
 import pytest
 
-from unity.common.async_tool_loop import start_async_tool_use_loop
+from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common._async_tool.semantic_cache import (
     _construct_new_user_message,
     _clean_tool_trajectory,
@@ -35,7 +35,7 @@ async def test_single_tool_exact_match():
         return "Hello from Unity!"
 
     client = create_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Hello, how are you? call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
@@ -57,7 +57,7 @@ async def test_single_tool_exact_match():
     ), f"Expected 1 say_hello tool call in first run, got {say_hello_first_count}"
 
     client = create_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Hello, how are you? call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
@@ -87,7 +87,7 @@ async def test_single_tool_no_exact_match():
         return "Hello from Unity!"
 
     client = create_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
@@ -109,7 +109,7 @@ async def test_single_tool_no_exact_match():
     ), f"Expected 1 say_hello tool call in first run, got {say_hello_first_count}"
 
     client = create_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Could you please call the say_hello tool?",
         tools={"say_hello": say_hello},
@@ -143,7 +143,7 @@ async def test_tool_with_different_arguments():
         return f"Contact not found: {name}"
 
     client = create_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Can you search for a contact with the name 'John Doe'?",
         tools={"search_contact": search_contact},
@@ -153,7 +153,7 @@ async def test_tool_with_different_arguments():
     assert "John Doe" in res
 
     client = create_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Can you look for a contact with the name 'Jane Doe'?",
         tools={"search_contact": search_contact, "find_contact": find_contact},
@@ -180,7 +180,7 @@ async def test_tool_is_re_called():
         return ret
 
     client = create_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "How is the weather?",
         tools={"current_weather": current_weather},
@@ -191,7 +191,7 @@ async def test_tool_is_re_called():
     assert _call_count == 1
 
     client = create_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "How is the weather?",
         tools={"current_weather": current_weather},
@@ -214,7 +214,7 @@ async def test_construct_new_user_message():
 
     client = create_client()
     initial_user_message = "Call the say_hello tool and reply with the result only"
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         initial_user_message,
         tools={"say_hello": say_hello, "say_goodbye": say_goodbye},
@@ -253,7 +253,7 @@ async def test_prune_tools():
         "3) After all tools complete, respond with ONLY the result of `find_contact` (no extra text)."
     )
 
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         instruction,
         tools={
@@ -282,7 +282,7 @@ async def test_tool_call_signature_updated():
         return "Hello from Unity!"
 
     client = create_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
@@ -295,7 +295,7 @@ async def test_tool_call_signature_updated():
         return f"Hello from {user}!"
 
     client = create_client()
-    handle = start_async_tool_use_loop(
+    handle = start_async_tool_loop(
         client,
         "Call the say_hello tool with the argument 'Unify' and reply with the result only",
         tools={"say_hello": _say_hello_new},

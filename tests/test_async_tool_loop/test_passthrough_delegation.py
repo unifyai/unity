@@ -4,8 +4,8 @@ import pytest
 import unify
 
 from unity.common.async_tool_loop import (
-    start_async_tool_use_loop,
-    AsyncToolUseLoopHandle,
+    start_async_tool_loop,
+    AsyncToolLoopHandle,
     SteerableToolHandle,
 )
 from tests.helpers import _handle_project, SETTINGS
@@ -24,7 +24,7 @@ async def sleeper(delay: float = 1.0) -> str:  # noqa: D401 – simple async
     return "slept"
 
 
-async def delegating_tool() -> AsyncToolUseLoopHandle:  # type: ignore[valid-type]
+async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
     """Return a nested async-tool loop *handle* that requests pass-through."""
     inner_client = unify.AsyncUnify(
         endpoint="o4-mini@openai",
@@ -32,7 +32,7 @@ async def delegating_tool() -> AsyncToolUseLoopHandle:  # type: ignore[valid-typ
         traced=SETTINGS.UNIFY_TRACED,
     )
     # Start an inner loop that runs one sleeper tool.
-    inner_handle = start_async_tool_use_loop(
+    inner_handle = start_async_tool_loop(
         inner_client,
         message="Run sleeper please.",
         tools={"sleeper": sleeper},
@@ -75,7 +75,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
     # Gate the return of the nested handle until after we send the early interjection
     return_handle_gate = asyncio.Event()
 
-    async def delegating_tool() -> AsyncToolUseLoopHandle:  # type: ignore[valid-type]
+    async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
         """Return a nested handle marked for pass-through with patched interject."""
         inner_client = unify.AsyncUnify(
             endpoint="o4-mini@openai",
@@ -83,7 +83,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
             traced=SETTINGS.UNIFY_TRACED,
         )
 
-        inner_handle = start_async_tool_use_loop(
+        inner_handle = start_async_tool_loop(
             inner_client,
             message="Run sleeper please.",
             tools={"sleeper": sleeper},
@@ -156,7 +156,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
 
     client = _SingleToolSpy()
 
-    outer_handle = start_async_tool_use_loop(
+    outer_handle = start_async_tool_loop(
         client,
         message="go",
         tools={"delegating_tool_interject": delegating_tool},
@@ -252,10 +252,10 @@ async def test_interject_multicasts_to_multiple_passthrough_handles():
     recv_one: list[str] = []
     recv_two: list[str] = []
 
-    class _InnerHandle(AsyncToolUseLoopHandle):  # type: ignore[misc]
+    class _InnerHandle(AsyncToolLoopHandle):  # type: ignore[misc]
         __passthrough__ = True  # signal passthrough mode
 
-    async def _make_inner(counter: list[str]) -> AsyncToolUseLoopHandle:
+    async def _make_inner(counter: list[str]) -> AsyncToolLoopHandle:
         client = unify.AsyncUnify(
             endpoint="o4-mini@openai",
             cache=SETTINGS.UNIFY_CACHE,
@@ -265,7 +265,7 @@ async def test_interject_multicasts_to_multiple_passthrough_handles():
         async def _noop():
             return "ok"
 
-        h = start_async_tool_use_loop(
+        h = start_async_tool_loop(
             client,
             message="noop",
             tools={"noop": _noop},
@@ -292,11 +292,11 @@ async def test_interject_multicasts_to_multiple_passthrough_handles():
     # Use an event gate to ensure the outer interjection is sent before returning handles
     gate = asyncio.Event()
 
-    async def delegating_one() -> AsyncToolUseLoopHandle:  # type: ignore[valid-type]
+    async def delegating_one() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
         await gate.wait()
         return inner_one
 
-    async def delegating_two() -> AsyncToolUseLoopHandle:  # type: ignore[valid-type]
+    async def delegating_two() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
         await gate.wait()
         return inner_two
 
@@ -327,7 +327,7 @@ async def test_interject_multicasts_to_multiple_passthrough_handles():
 
     client = _DualToolSpy()
 
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client=client,  # type: ignore[arg-type]
         message="start",
         tools={"delegate_one": delegating_one, "delegate_two": delegating_two},
@@ -455,7 +455,7 @@ async def test_ask_multicasts_to_all_passthrough_handles():
             return self.messages[-1]
 
     client = _DualSpy()
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client=client,  # type: ignore[arg-type]
         message="start",
         tools={"d1": d1, "d2": d2},
@@ -580,7 +580,7 @@ async def test_passthrough_clarification_bubbles_and_can_be_answered():
             return self.messages[-1]
 
     client = _OneToolSpy()
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client=client,  # type: ignore[arg-type]
         message="start",
         tools={"spawn": spawn},
@@ -698,7 +698,7 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
             return self.messages[-1]
 
     client = _DualSpy()
-    outer = start_async_tool_use_loop(
+    outer = start_async_tool_loop(
         client=client,  # type: ignore[arg-type]
         message="start",
         tools={"t1": t1, "t2": t2},
@@ -796,9 +796,9 @@ async def test_no_extra_llm_turn_during_passthrough_handover():
         return "slept"
 
     # Delegating tool: returns a pass-through inner handle immediately
-    async def delegating_tool_regression() -> AsyncToolUseLoopHandle:  # type: ignore[valid-type]
+    async def delegating_tool_regression() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
         inner_client = _InnerSpyClient()
-        inner_handle = start_async_tool_use_loop(
+        inner_handle = start_async_tool_loop(
             inner_client,
             message="Run sleeper then finish",
             tools={"sleeper": sleeper},
@@ -814,7 +814,7 @@ async def test_no_extra_llm_turn_during_passthrough_handover():
     # Outer spy client drives only one assistant turn (tool request)
     outer_client = _SpyAsyncUnify()
 
-    outer_handle = start_async_tool_use_loop(
+    outer_handle = start_async_tool_loop(
         client=outer_client,  # type: ignore[arg-type]
         message="please delegate",
         tools={"delegating_tool_regression": delegating_tool_regression},

@@ -25,7 +25,7 @@ from ..common.llm_helpers import (
     inject_broader_context,
 )
 from ..common.async_tool_loop import (
-    start_async_tool_use_loop,
+    start_async_tool_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
@@ -901,7 +901,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Use a specialized outer handle so stop(cancel=...) is supported for execute
         from .execute_handle import ExecuteLoopHandle  # local import to avoid cycles
 
-        outer_handle = start_async_tool_use_loop(
+        outer_handle = start_async_tool_loop(
             client,
             freeform_text,
             tools,
@@ -4052,8 +4052,8 @@ class TaskScheduler(BaseTaskScheduler):
         ] = None,
         handle_cls: Optional["type[SteerableToolHandle]"] = None,
     ) -> SteerableToolHandle:
-        """Centralised wrapper around start_async_tool_use_loop."""
-        return start_async_tool_use_loop(
+        """Centralised wrapper around start_async_tool_loop."""
+        return start_async_tool_loop(
             client,
             text,
             tools,

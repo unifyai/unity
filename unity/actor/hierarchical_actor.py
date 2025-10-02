@@ -29,7 +29,7 @@ from pathlib import Path
 import contextvars
 from unity.common.async_tool_loop import (
     SteerableToolHandle,
-    start_async_tool_use_loop,
+    start_async_tool_loop,
 )
 from unity.function_manager.function_manager import FunctionManager
 from unity.actor.base import (
@@ -2973,7 +2973,7 @@ class HierarchicalPlan(BaseActiveTask):
                 return f"Error querying browser: {e}"
 
         tools = {"query": query_tool}
-        handle = start_async_tool_use_loop(
+        handle = start_async_tool_loop(
             client=self.ask_client,
             message=question,
             tools=tools,

@@ -36,7 +36,7 @@ async def test_ask_with_mocked_llm(supported_file_examples: dict):
 
         # Mock the tool loop to return immediately
         with patch(
-            "unity.file_manager.file_manager.start_async_tool_use_loop",
+            "unity.file_manager.file_manager.start_async_tool_loop",
         ) as mock_loop:
             # Create a mock handle
             mock_handle = MagicMock()
@@ -79,7 +79,7 @@ async def test_ask_with_reasoning_steps(supported_file_examples: dict):
 
         # Mock the tool loop
         with patch(
-            "unity.file_manager.file_manager.start_async_tool_use_loop",
+            "unity.file_manager.file_manager.start_async_tool_loop",
         ) as mock_loop:
             # Create a mock handle
             mock_handle = MagicMock()
@@ -118,7 +118,7 @@ async def test_ask_with_clarification_queues(supported_file_examples: dict):
 
         # Mock the tool loop
         with patch(
-            "unity.file_manager.file_manager.start_async_tool_use_loop",
+            "unity.file_manager.file_manager.start_async_tool_loop",
         ) as mock_loop:
             # Create a mock handle
             mock_handle = MagicMock()
@@ -156,7 +156,7 @@ async def test_ask_with_rolling_summary(supported_file_examples: dict):
 
         # Mock the tool loop
         with patch(
-            "unity.file_manager.file_manager.start_async_tool_use_loop",
+            "unity.file_manager.file_manager.start_async_tool_loop",
         ) as mock_loop:
             # Create a mock handle
             mock_handle = MagicMock()
