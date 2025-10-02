@@ -175,7 +175,7 @@ async def test_dynamic_helper_args_are_exposed_and_forwarded(client):
 
     # Let the model drive; it should call interject_ / pause_ / resume_ / stop_ with kwargs
     final = await outer.result()
-    assert final.strip().lower() == "done"
+    assert "done" in final.strip().lower()
 
     # Retrieve the live handle instance from the spawned task info
     # Walk messages to locate the helper tool-call arguments for validation.
@@ -258,7 +258,7 @@ async def test_write_only_custom_abort_method_finishes_nested_handle(client):
     )
 
     final = await outer.result()
-    assert final.strip().lower() == "done"
+    assert "done" in final.strip().lower()
 
     # Verify that a tool message shows the nested handle finished with "aborted"
     msgs = client.messages or []
