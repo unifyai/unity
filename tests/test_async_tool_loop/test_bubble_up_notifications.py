@@ -82,10 +82,13 @@ async def test_notification_bubbles_up_two_tiers() -> None:
     """
 
     outer_client = make_llm(
-        "When long-running internal tools make progress, surface concise, non-blocking updates. "
-        "If you see a tool progress update in the transcript, actively surface it one level up "
-        "by calling the tool notify_parent(message=...). Continue and finish the task without "
-        "waiting for acknowledgement.",
+        "You are coordinating internal tools that may emit progress notifications while running. "
+        "When any pending tool emits a progress update: "
+        "(1) Immediately surface a concise, non-blocking update one level up by calling notify_parent(message=...). "
+        "(2) Do not wait for any acknowledgement; let the running tool continue. "
+        "(3) Avoid starting unrelated tools while the original call is in progress, unless required to complete the task. "
+        "As soon as the email has been sent successfully, end your final assistant message with an explicit confirmation "
+        "using the word 'sent' (e.g., 'Email sent.'). Do not invent details; keep responses concise.",
     )
 
     outer_tools = {
@@ -221,7 +224,11 @@ async def test_notification_bubbles_through_returned_handle() -> None:
     """Notification raised inside the returned handle must still reach the user."""
 
     outer_llm = make_llm(
-        "If any internal work makes progress in a nested loop, you may acknowledge it briefly but continue to completion.",
+        "You are the TOP-LEVEL coordinator. When any delegated or nested tool emits progress notifications, "
+        "you may acknowledge them briefly but do not wait for any acknowledgement; continue until the delegated work completes. "
+        "Do not start unrelated tools while there is pending delegated work unless necessary to complete the task. "
+        "When the inner work completes, end your final assistant message by including the word 'finished'. "
+        "Keep responses concise.",
     )
 
     handle = start_async_tool_loop(
