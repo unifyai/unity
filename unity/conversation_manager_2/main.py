@@ -35,8 +35,8 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     global stop, conversation_manager
 
     # Set up signal handlers
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
+    # signal.signal(signal.SIGTERM, signal_handler)
+    # signal.signal(signal.SIGINT, signal_handler)
 
     stop = asyncio.Event()
 
@@ -76,7 +76,7 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     await stop.wait()
 
     print("Cleaning up conversation manager...")
-    conversation_manager.cleanup()
+    # conversation_manager.cleanup()
     print("Cleanup finished")
 
 

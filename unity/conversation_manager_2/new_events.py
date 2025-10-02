@@ -88,6 +88,11 @@ class SMSRecieved(Event):
 class PhoneCallSent(Event):
     contact: str
 
+@dataclass
+class AssistantPhoneUtterance(Event):
+    contact: str
+    content: str
+
 
 @dataclass
 class EmailRecieved(Event):
