@@ -3,6 +3,10 @@ Secret Manager Sandbox
 
 This folder contains an interactive playground for the `SecretManager` component in `unity/secret_manager/`. Use it to experiment with the manager in isolation – create or update secrets, resolve placeholders into real values (for trusted local use), and observe how the tool-loop behaves before integrating elsewhere.
 
+### Video walkthroughs
+
+- General overview, with in-flight steering: [Loom video](https://www.loom.com/share/bcdb0559d08e4f34a16e57583152bbcc?sid=38b04604-9578-4468-aa8b-4815955dd49e)
+
 What is the `SecretManager`?
 ----------------------------
 `SecretManager` stores fixed-schema secret records (`name`, `value`, `description`, `description_emb`) and exposes two high-level natural‑language methods:
