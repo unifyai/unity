@@ -214,16 +214,36 @@ class ConversationManagerState:
             # made by assistant
             case Error() as e:
                 self.push_notif(Notification("error", e.message, e.timestamp))
-            
+
             case GetContactsOutput() as e:
                 for c in e.contacts:
-                    self.inverted_contacts_map[c["id"]] = Contact(c["id"], c["first_name"], c["last_name"], None, c["phone_number"], c["email"])
+                    self.inverted_contacts_map[c["id"]] = Contact(
+                        c["id"],
+                        c["first_name"],
+                        c["last_name"],
+                        None,
+                        c["phone_number"],
+                        c["email"],
+                    )
                     if c.get("email"):
                         # is_boss = True
-                        self.email_contacts_map[c["email"]] = Contact(c["id"], c["first_name"], c["last_name"], None, c["phone_number"], c["email"])
+                        self.email_contacts_map[c["email"]] = Contact(
+                            c["id"],
+                            c["first_name"],
+                            c["last_name"],
+                            None,
+                            c["phone_number"],
+                            c["email"],
+                        )
                     if c.get("phone_number"):
-                        self.email_contacts_map[c["phone_number"]] = Contact(c["id"], c["first_name"], c["last_name"], None, c["phone_number"], c["email"])
-
+                        self.email_contacts_map[c["phone_number"]] = Contact(
+                            c["id"],
+                            c["first_name"],
+                            c["last_name"],
+                            None,
+                            c["phone_number"],
+                            c["email"],
+                        )
 
     def snapshot(self):
         self._current_snapshot_time = datetime.now()

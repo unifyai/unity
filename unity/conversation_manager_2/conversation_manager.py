@@ -117,57 +117,66 @@ class ConversationManager:
         print(prompt)
         input_message = {"role": "user", "content": prompt}
         system_message = Template(SYS).render(
-                    name=self.user_name,
-                    number=self.user_number,
-                )
+            name=self.user_name,
+            number=self.user_number,
+        )
         if self.mode in ["call", "gmeet"]:
             print("running...")
             first_chunk = True
-            async for event in stream_llm_call(self.openai_client, system_message, 
-                                               self.chat_history + [input_message], 
-                                               RESPONSES_MODEL[self.mode], 
-                                               "phone_utterance"):
+            async for event in stream_llm_call(
+                self.openai_client,
+                system_message,
+                self.chat_history + [input_message],
+                RESPONSES_MODEL[self.mode],
+                "phone_utterance",
+            ):
                 if event["type"] == "chunk":
                     if first_chunk:
                         await self.event_broker.publish(
-                                    "app:call:response_gen",
-                                    json.dumps({"type": "start_gen"}),
-                                )
+                            "app:call:response_gen",
+                            json.dumps({"type": "start_gen"}),
+                        )
                         first_chunk = False
                     await self.event_broker.publish(
-                            "app:call:response_gen",
-                            json.dumps(
-                                {
-                                    "type": "gen_chunk",
-                                    "chunk": event["content"]
-                                },
-                            ),
-                        )
+                        "app:call:response_gen",
+                        json.dumps(
+                            {"type": "gen_chunk", "chunk": event["content"]},
+                        ),
+                    )
                     if event["type"] == "end_streamed_field":
                         await self.event_broker.publish(
-                                "app:call:response_gen",
-                                json.dumps({"type": "end_gen"}),
-                            )
-                    
+                            "app:call:response_gen",
+                            json.dumps({"type": "end_gen"}),
+                        )
+
             parsed_out = event["content"]
-            assistant_phone_utterance_event = AssistantPhoneUtterance(self.state.phone_contact.phone_number, parsed_out["phone_utterance"])
+            assistant_phone_utterance_event = AssistantPhoneUtterance(
+                self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
+            )
             await self.event_broker.publish(
-                                "app:call:response_gen",
-                                assistant_phone_utterance_event.to_json(),
-                            )
+                "app:call:response_gen",
+                assistant_phone_utterance_event.to_json(),
+            )
 
         else:
-            out = await llm_call(self.openai_client, system_message, self.chat_history + [input_message], response_model=RESPONSES_MODEL[self.mode])
+            out = await llm_call(
+                self.openai_client,
+                system_message,
+                self.chat_history + [input_message],
+                response_model=RESPONSES_MODEL[self.mode],
+            )
             parsed_out = json.loads(out)
 
         print(parsed_out)
         if parsed_out["actions"] is not None:
             for action in parsed_out["actions"]:
                 if action["action_name"] == "send_sms":
-                    contact = self.state.update_or_create_new_contact(action["contact_id"], 
-                                                                      action["first_name"], 
-                                                                      action["last_name"],
-                                                                      phone_number=action["number"])                    
+                    contact = self.state.update_or_create_new_contact(
+                        action["contact_id"],
+                        action["first_name"],
+                        action["last_name"],
+                        phone_number=action["number"],
+                    )
                     res = await _send_sms_message_via_number(
                         contact.phone_number,
                         action["message"],
@@ -193,10 +202,12 @@ class ConversationManager:
                         )
                 elif action["action_name"] == "send_email":
                     print("sending email")
-                    contact = self.state.update_or_create_new_contact(action["contact_id"], 
-                                                                      action["first_name"], 
-                                                                      action["last_name"],
-                                                                      email=action["email"])
+                    contact = self.state.update_or_create_new_contact(
+                        action["contact_id"],
+                        action["first_name"],
+                        action["last_name"],
+                        email=action["email"],
+                    )
                     await _send_email_via_address(
                         contact.email,
                         action["subject"],
@@ -216,18 +227,24 @@ class ConversationManager:
                     )
                 elif action["action_name"] == "make_call":
                     print("calling...")
-                    contact = self.state.update_or_create_new_contact(action["contact_id"], 
-                                                                      action["first_name"], 
-                                                                      action["last_name"],
-                                                                      phone_number=action["number"])
+                    contact = self.state.update_or_create_new_contact(
+                        action["contact_id"],
+                        action["first_name"],
+                        action["last_name"],
+                        phone_number=action["number"],
+                    )
                     if self.state.mode == "call":
-                        error = Error("You can not make a call while on a call, wait till the call ends.")
+                        error = Error(
+                            "You can not make a call while on a call, wait till the call ends."
+                        )
                         await self.event_broker.publish(
                             "app:comms:call_initiated",
                             error.to_json(),
                         )
                     else:
-                        res = await _start_call(self.assistant_number, contact.phone_number)
+                        res = await _start_call(
+                            self.assistant_number, contact.phone_number
+                        )
                         if not res["success"]:
                             await self.event_broker.publish(
                                 "app:comms:error",
@@ -496,11 +513,11 @@ class ConversationManager:
         elif isinstance(event, PhoneUtterance):
             asyncio.create_task(self.publish_transcript(event))
             await self.schedule_llm_run(0, cancel_running=True)
-        
+
         elif isinstance(event, AssistantPhoneUtterance):
             # do not do anything here, let the user reply back or whatever
             pass
-        
+
         # Yasser: let conversation manager state handle this event
 
         # elif isinstance(event, GetContactsOutput):

@@ -187,8 +187,8 @@ class ManagersWorker:
             contacts = [
                 {
                     "id": str(c.contact_id),
-                    "first_name": c.first_name or ''.strip(),
-                    "last_name": c.surname or '',
+                    "first_name": c.first_name or "".strip(),
+                    "last_name": c.surname or "",
                     "phone_number": c.phone_number,
                     "email": c.email_address,
                 }
