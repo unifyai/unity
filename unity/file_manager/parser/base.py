@@ -25,9 +25,10 @@ from typing import (
 )
 
 from ...singleton_registry import SingletonABCMeta
+from unity.file_manager.parser.types.document import Document
 
 # Type variable for the return type
-T = TypeVar("T")
+T = TypeVar("T", bound=Document)
 
 
 class BaseParser(ABC, metaclass=SingletonABCMeta):
@@ -40,7 +41,7 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
     def _save_parsed_result_if_enabled(
         self,
         file_path: Union[str, Path],
-        result: Any,
+        result: Document,
     ) -> None:
         """
         Save parsed result to JSON file if UNITY_SAVE_PARSED_RESULTS env var is set.
@@ -116,7 +117,7 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
             return str(obj)
 
     @abstractmethod
-    def parse(self, file_path: Union[str, Path], /, **options: Any) -> Any:
+    def parse(self, file_path: Union[str, Path], /, **options: Any) -> Document:
         """
         Parse a single file and return a structured object.
 
@@ -130,7 +131,7 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
         /,
         batch_size: int = 3,
         **options: Any,
-    ) -> List[Any]:
+    ) -> List[Document]:
         """
         Parse multiple files (sequentially by default).
 
@@ -142,7 +143,7 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
         if not file_paths:
             return []
 
-        results: List[Any] = []
+        results: List[Document] = []
         for path in file_paths:
             try:
                 result = self.parse(path, **options)
@@ -158,7 +159,7 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
         /,
         batch_size: int = 3,
         **options: Any,
-    ) -> AsyncIterator[Tuple[int, Any]]:
+    ) -> AsyncIterator[Tuple[int, Document]]:
         """
         Parse multiple files asynchronously, yielding results as they complete.
 
@@ -187,7 +188,7 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
         async def parse_with_semaphore(
             index: int,
             path: Union[str, Path],
-        ) -> Tuple[int, Any]:
+        ) -> Tuple[int, Document]:
             async with semaphore:
                 try:
                     # Run parse in executor since it's a blocking operation
@@ -225,7 +226,7 @@ class GenericParser(BaseParser, Generic[T], ABC):
     """
 
     @abstractmethod
-    def parse(self, file_path: Union[str, Path], /, **options: Any) -> T:
+    def parse(self, file_path: Union[str, Path], /, **options: Any) -> Document:
         """Parse a file and return the typed result."""
 
     def parse_batch(
@@ -234,7 +235,7 @@ class GenericParser(BaseParser, Generic[T], ABC):
         /,
         batch_size: int = 3,
         **options: Any,
-    ) -> List[T]:
+    ) -> List[Document]:
         """Parse multiple files in parallel, returning typed results."""
         return super().parse_batch(file_paths, batch_size=batch_size, **options)
 
@@ -244,7 +245,7 @@ class GenericParser(BaseParser, Generic[T], ABC):
         /,
         batch_size: int = 3,
         **options: Any,
-    ) -> AsyncIterator[Tuple[int, T]]:
+    ) -> AsyncIterator[Tuple[int, Document]]:
         """Parse multiple files asynchronously, yielding typed results as they complete."""
         async for index, result in super().parse_batch_async(
             file_paths,

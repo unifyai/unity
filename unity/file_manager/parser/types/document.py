@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field as PydanticField
 
 from unity.common.token_utils import has_meaningful_text
-from unity.common.llm_helpers import short_id
 
 
 class DocumentMetadataExtraction(BaseModel):
@@ -333,93 +332,99 @@ class Document(BaseModel):
             "error_message": self.error_message,
         }
 
-    def to_flat_records(self) -> List[Dict[str, Any]]:
+    def to_schema_rows(
+        self,
+        *,
+        auto_counting: Dict[str, Optional[str]] | None = None,
+        document_index: int | None = None,
+    ) -> List[Dict[str, Any]]:
         """
-        Convert hierarchical document to flat records compatible with the unified content schema.
+        Convert hierarchical document to schema-aligned flat rows with hierarchical IDs
+        populated according to the provided auto-counting configuration.
+
+        Rules:
+        - Document rows: no IDs provided; server assigns `document_id`.
+        - Section rows: include only `document_id`.
+        - Paragraph rows: include `document_id` and `section_id`.
+        - Sentence rows: include `document_id`, `section_id`, `paragraph_id`.
+        - Image/Table rows: include `document_id` and `section_id`.
+
+        The `document_index` should be the zero-based index of this document within
+        the current ingestion batch, ensuring child rows reference the correct parent.
 
         Returns:
-            List of dictionaries where each dict represents a row in the content table.
-            Includes document, section, paragraph, and sentence level records.
+            List[dict]: rows ready for insertion.
         """
-        import hashlib
+        records: List[Dict[str, Any]] = []
 
-        records = []
-
-        # # Get current timestamp for ingestion tracking - ensure it's a string
-        # # Format: YYYY-MM-DDTHH:MM:SS.ffffffZ (ISO 8601 with microseconds and Z suffix)
-        # ingested_at = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-
-        # Compute document fingerprint if not already set
-        doc_fingerprint = None
-        if self.metadata.file_path:
-            # Use file path and content to generate fingerprint
-            content_for_hash = f"{self.metadata.file_path}:{self.full_text}"
-            doc_fingerprint = hashlib.sha256(content_for_hash.encode()).hexdigest()
-
-        # Helper to create base record with common fields
+        # Helper to create base record with common fields (schema-aligned only)
         def create_base_record(
-            content_id: str,
             content_type: str,
             title: str,
             summary: Optional[str],
             content_text: str,
-            level: int,
-            parent_id: Optional[str] = None,
-            confidence_score: float = 1.0,
         ) -> Dict[str, Any]:
             title = title or f"Untitled {content_type}"
             return {
-                # Required fields
-                "content_id": content_id,
+                "file_path": self.metadata.file_path or "",
                 "content_type": content_type,
                 "title": title,
                 "summary": summary,
                 "content_text": content_text or title,
-                # Hierarchy fields
-                "level": level,
-                "parent_id": parent_id,
-                # Metadata fields (keep for retrieval)
-                "document_type": self.metadata.document_type,
-                "category": self.metadata.category,
-                "department": self.metadata.extra_metadata.get("department", "general"),
-                "confidence_score": confidence_score,
-                # Provenance fields
-                "schema_id": "unity_docling_v1",
-                "source_uri": self.metadata.file_path or "",
-                "document_fingerprint": doc_fingerprint,
-                "is_active": True,
             }
 
-        # 1. Document-level record (root of the hierarchy)
-        # Prefer a short, readable document id in the content_id path
-        doc_content_id = self.document_id[:5]
+        # Helper: determine the parent chain (excluding the id itself) for an id key
+        # e.g. 'sentence_id' -> ['paragraph_id', 'section_id', 'document_id']
+        def parent_chain(id_key: str) -> List[str]:
+            chain: List[str] = []
+            if not auto_counting:
+                return chain
+            current = id_key
+            while True:
+                parent = auto_counting.get(current)
+                if parent is None:
+                    break
+                chain.append(parent)
+                current = parent
+            return chain
+
+        # Helper: set hierarchy IDs on a row based on the id key for this row
+        def set_ids(
+            row: Dict[str, Any],
+            id_key_for_row: Optional[str],
+            *,
+            sec_index: Optional[int] = None,
+            para_index: Optional[int] = None,
+        ) -> None:
+            if not id_key_for_row:
+                return
+            for key in parent_chain(id_key_for_row):
+                if key == "document_id" and document_index is not None:
+                    row[key] = int(document_index)
+                elif key == "section_id" and sec_index is not None:
+                    row[key] = int(sec_index)
+                elif key == "paragraph_id" and para_index is not None:
+                    row[key] = int(para_index)
+                # All other keys (e.g. deeper ancestors) will be populated via the loop
+
+        # 1. Document-level row (root of the hierarchy)
         doc_title = (self.metadata.title or "").strip()
-        doc_record = create_base_record(
-            content_id=doc_content_id,
+        doc_row = create_base_record(
             content_type="document",
             title=doc_title,
             summary=self.summary,
             content_text=self.full_text,
-            level=1,
-            parent_id=None,
-            confidence_score=self.metadata.confidence_score,
         )
-        records.append(doc_record)
+        # No IDs for document-level row
+        records.append(doc_row)
 
-        # 2. Section-level records
-        # Build helper maps to anchor images/tables under most likely section
-        page_to_section_content_id: Dict[int, str] = {}
-        section_content_ids: Dict[str, str] = {}
-        # Map path-tuple to section_content_id for matching by path
-        path_to_section_content_id: Dict[tuple, str] = {}
+        # 2. Section-level rows
+        # Helper maps to label images/tables and to compute section indices
+        page_to_section_index: Dict[int, int] = {}
+        section_id_to_index: Dict[str, int] = {}
+        path_to_section_index: Dict[tuple, int] = {}
         for section in self.sections:
-            # Use provided section_id (parser now uses short_id). Fallback to trimmed id.
-            sec_short = section.section_id[:5]
-            sec_key = f"{sec_short}"
-            section_content_id = f"{doc_content_id}>{sec_key}"
-            section_content_ids[section.section_id] = section_content_id
-            section_record = create_base_record(
-                content_id=section_content_id,
+            section_row = create_base_record(
                 content_type="section",
                 title=(
                     f"{doc_title} > {section.title}" if doc_title else section.title
@@ -427,11 +432,11 @@ class Document(BaseModel):
                 summary=section.summary,
                 content_text=section.content_text
                 or "\n\n".join(p.text for p in section.paragraphs),
-                level=2,
-                parent_id=doc_content_id,
-                confidence_score=section.metadata.get("confidence_score", 1.0),
             )
-            records.append(section_record)
+            # Include only document_id for section rows
+            set_ids(section_row, "section_id", sec_index=section.section_index)
+            records.append(section_row)
+            section_id_to_index[section.section_id] = section.section_index
 
             # collect pages from paragraph metadata
             try:
@@ -445,7 +450,7 @@ class Document(BaseModel):
                     if isinstance(pn, int):
                         pages.add(pn)
                 for pn in pages:
-                    page_to_section_content_id[pn] = section_content_id
+                    page_to_section_index[pn] = section.section_index
             except Exception:
                 pass
 
@@ -460,18 +465,14 @@ class Document(BaseModel):
                             str(x).strip() for x in maybe_path if str(x).strip()
                         )
                 if path:
-                    path_to_section_content_id[path] = section_content_id
+                    path_to_section_index[path] = section.section_index
             except Exception:
                 pass
 
             # 3. Paragraph-level records
             for paragraph in section.paragraphs:
-                para_short = paragraph.paragraph_id[:5]
-                para_key = f"{para_short}"
-                para_content_id = f"{section_content_id}>{para_key}"
                 para_title = f"Paragraph {paragraph.paragraph_index + 1}"
-                para_record = create_base_record(
-                    content_id=para_content_id,
+                para_row = create_base_record(
                     content_type="paragraph",
                     title=(
                         f"{doc_title} > {section.title} > {para_title}"
@@ -480,20 +481,20 @@ class Document(BaseModel):
                     ),
                     summary=paragraph.summary,
                     content_text=paragraph.text,
-                    level=3,
-                    parent_id=section_content_id,
-                    confidence_score=paragraph.metadata.get("confidence_score", 1.0),
                 )
-                records.append(para_record)
+                # Include document_id and section_id for paragraphs
+                set_ids(
+                    para_row,
+                    "paragraph_id",
+                    sec_index=section.section_index,
+                    para_index=paragraph.paragraph_index,
+                )
+                records.append(para_row)
 
                 # 4. Sentence-level records
                 for sentence in paragraph.sentences:
-                    sent_short = sentence.sentence_id[:5]
-                    sent_key = f"{sent_short}"
-                    sent_content_id = f"{para_content_id}>{sent_key}"
                     sent_title = f"Sentence {sentence.sentence_index + 1}"
-                    sent_record = create_base_record(
-                        content_id=sent_content_id,
+                    sent_row = create_base_record(
                         content_type="sentence",
                         title=(
                             f"{doc_title} > {section.title} > {para_title} > {sent_title}"
@@ -504,11 +505,15 @@ class Document(BaseModel):
                             sentence.text if has_meaningful_text(sentence.text) else ""
                         ),  # For sentences, summary == content_text
                         content_text=sentence.text,
-                        level=4,
-                        parent_id=para_content_id,
-                        confidence_score=sentence.confidence_score,
                     )
-                    records.append(sent_record)
+                    # Include document_id, section_id, paragraph_id for sentences
+                    set_ids(
+                        sent_row,
+                        "sentence_id",
+                        sec_index=section.section_index,
+                        para_index=paragraph.paragraph_index,
+                    )
+                    records.append(sent_row)
 
         # 5. Image-level records (children of sections)
         images = getattr(self.metadata, "images", []) or []
@@ -524,8 +529,9 @@ class Document(BaseModel):
                     continue
 
                 page = getattr(img, "page", None) if hasattr(img, "page") else None
-                section_parent = None
-                # a) path-based placement using parser-provided section_path
+                sec_title_for_img = None
+                sec_index_for_img: Optional[int] = None
+                # a) path-based placement using parser-provided section_path → title
                 try:
                     sec_path = getattr(img, "section_path", None)
                     if isinstance(sec_path, list) and sec_path:
@@ -533,51 +539,50 @@ class Document(BaseModel):
                             str(x).strip() for x in sec_path if str(x).strip()
                         )
                         # try exact, then progressively drop the deepest part
-                        while tuple_path and section_parent is None:
-                            if tuple_path in path_to_section_content_id:
-                                section_parent = path_to_section_content_id[tuple_path]
+                        while tuple_path and sec_title_for_img is None:
+                            if tuple_path in path_to_section_index:
+                                sec_index_for_img = path_to_section_index[tuple_path]
+                                # We no longer keep section titles map; resolve title lazily
+                                matching_sections = [
+                                    s
+                                    for s in self.sections
+                                    if s.section_index == sec_index_for_img
+                                ]
+                                sec_title_for_img = (
+                                    matching_sections[0].title
+                                    if matching_sections
+                                    else None
+                                )
                                 break
                             tuple_path = tuple_path[:-1]
                 except Exception:
                     pass
 
-                # b) page-based placement
+                # b) page-based placement → title
                 if (
-                    section_parent is None
+                    sec_index_for_img is None
                     and isinstance(page, int)
-                    and page in page_to_section_content_id
+                    and page in page_to_section_index
                 ):
-                    section_parent = page_to_section_content_id[page]
-
-                # c) best-effort: put under first section, else root doc
-                if section_parent is None:
-                    section_parent = (
-                        section_content_ids.get(self.sections[0].section_id)
-                        if self.sections
-                        else doc_content_id
+                    sec_index_for_img = page_to_section_index[page]
+                    matching_sections = [
+                        s for s in self.sections if s.section_index == sec_index_for_img
+                    ]
+                    sec_title_for_img = (
+                        matching_sections[0].title if matching_sections else None
                     )
+
+                # c) fallback
+                if sec_index_for_img is None and self.sections:
+                    sec_index_for_img = self.sections[0].section_index
+                    sec_title_for_img = self.sections[0].title
 
                 # Content fields
                 title = (
                     f"Image {idx + 1}{f' (page {page})' if page is not None else ''}"
                 )
-                image_content_id = f"{section_parent}>{short_id(5)}"
 
-                # Resolve section title for this image
-                try:
-                    sec_title_for_img = next(
-                        (
-                            s.title
-                            for s in self.sections
-                            if section_content_ids.get(s.section_id) == section_parent
-                        ),
-                        None,
-                    )
-                except Exception:
-                    sec_title_for_img = None
-
-                img_record = create_base_record(
-                    content_id=image_content_id,
+                img_row = create_base_record(
                     content_type="image",
                     title=(
                         f"{doc_title} > {sec_title_for_img} > {title}"
@@ -590,9 +595,9 @@ class Document(BaseModel):
                     ),
                     summary=content_text,
                     content_text=content_text,
-                    level=3,
-                    parent_id=section_parent,
                 )
+                # Include document_id and section_id
+                set_ids(img_row, "image_id", sec_index=sec_index_for_img)
                 # # include a few metadata points
                 # img_record["page"] = page
                 # img_record["bbox"] = (
@@ -601,7 +606,7 @@ class Document(BaseModel):
                 # img_record["element_type"] = (
                 #     getattr(img, "element_type", None) if hasattr(img, "element_type") else None
                 # )
-                records.append(img_record)
+                records.append(img_row)
             except Exception:
                 continue
 
@@ -610,60 +615,59 @@ class Document(BaseModel):
         for idx, tbl in enumerate(tables):
             try:
                 page = getattr(tbl, "page", None) if hasattr(tbl, "page") else None
-                section_parent = None
-                # a) path-based placement using parser-provided section_path
+                sec_title_for_tbl = None
+                sec_index_for_tbl: Optional[int] = None
+                # a) path-based placement using parser-provided section_path → title
                 try:
                     sec_path = getattr(tbl, "section_path", None)
                     if isinstance(sec_path, list) and sec_path:
                         tuple_path = tuple(
                             str(x).strip() for x in sec_path if str(x).strip()
                         )
-                        while tuple_path and section_parent is None:
-                            if tuple_path in path_to_section_content_id:
-                                section_parent = path_to_section_content_id[tuple_path]
+                        while tuple_path and sec_title_for_tbl is None:
+                            if tuple_path in path_to_section_index:
+                                sec_index_for_tbl = path_to_section_index[tuple_path]
+                                matching_sections = [
+                                    s
+                                    for s in self.sections
+                                    if s.section_index == sec_index_for_tbl
+                                ]
+                                sec_title_for_tbl = (
+                                    matching_sections[0].title
+                                    if matching_sections
+                                    else None
+                                )
                                 break
                             tuple_path = tuple_path[:-1]
                 except Exception:
                     pass
 
-                # b) page-based placement
+                # b) page-based placement → title
                 if (
-                    section_parent is None
+                    sec_index_for_tbl is None
                     and isinstance(page, int)
-                    and page in page_to_section_content_id
+                    and page in page_to_section_index
                 ):
-                    section_parent = page_to_section_content_id[page]
+                    sec_index_for_tbl = page_to_section_index[page]
+                    matching_sections = [
+                        s for s in self.sections if s.section_index == sec_index_for_tbl
+                    ]
+                    sec_title_for_tbl = (
+                        matching_sections[0].title if matching_sections else None
+                    )
 
                 # c) fallback
-                if section_parent is None:
-                    section_parent = (
-                        section_content_ids.get(self.sections[0].section_id)
-                        if self.sections
-                        else doc_content_id
-                    )
+                if sec_index_for_tbl is None and self.sections:
+                    sec_index_for_tbl = self.sections[0].section_index
+                    sec_title_for_tbl = self.sections[0].title
 
                 html = getattr(tbl, "html", None) if hasattr(tbl, "html") else None
                 title = (
                     f"Table {idx + 1}{f' (page {page})' if page is not None else ''}"
                 )
                 content_text = (html or "").strip()
-                table_content_id = f"{section_parent}>{short_id(5)}"
 
-                # Resolve section title for this table
-                try:
-                    sec_title_for_tbl = next(
-                        (
-                            s.title
-                            for s in self.sections
-                            if section_content_ids.get(s.section_id) == section_parent
-                        ),
-                        None,
-                    )
-                except Exception:
-                    sec_title_for_tbl = None
-
-                tbl_record = create_base_record(
-                    content_id=table_content_id,
+                tbl_row = create_base_record(
                     content_type="table",
                     title=(
                         f"{doc_title} > {sec_title_for_tbl} > {title}"
@@ -676,9 +680,9 @@ class Document(BaseModel):
                     ),
                     summary=content_text,
                     content_text=content_text,
-                    level=3,
-                    parent_id=section_parent,
                 )
+                # Include document_id and section_id
+                set_ids(tbl_row, "table_id", sec_index=sec_index_for_tbl)
                 # tbl_record["page"] = page
                 # tbl_record["bbox"] = (
                 #     getattr(tbl, "bbox", None) if hasattr(tbl, "bbox") else None
@@ -686,11 +690,15 @@ class Document(BaseModel):
                 # tbl_record["element_type"] = (
                 #     getattr(tbl, "element_type", None) if hasattr(tbl, "element_type") else None
                 # )
-                records.append(tbl_record)
+                records.append(tbl_row)
             except Exception:
                 continue
 
         return records
+
+    # Backward-compat wrapper (deprecated)
+    def to_flat_records(self) -> List[Dict[str, Any]]:
+        return self.to_schema_rows()
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Document":

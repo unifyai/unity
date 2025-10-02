@@ -822,6 +822,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         description: str | None = None,
         columns: Dict[str, ColumnType] | None = None,
         unique_key_name: str = "row_id",
+        auto_counting: Optional[Dict[str, Optional[str]]] = None,
     ) -> Dict[str, str]:
         """
         **Create** a brand-new table in the knowledge store.
@@ -844,6 +845,15 @@ class KnowledgeManager(BaseKnowledgeManager):
                 `team_id`, `company_id`, `product_id`, or anything else. This is
                 managed automatically, it should not be included in the `columns`
                 argument, and data is *never written* to this unique column.
+        auto_counting : dict[str, Optional[str]] | None, default ``None``
+                Optional auto-counting configuration for the table. If provided,
+                the table will be configured to auto-count the provided columns.
+                Keys are column names to auto-increment, values are parent counter
+                names (None for independent counters) e.g.
+                {
+                    "company_id": None,
+                    "department_id": "company_id",
+                }
 
         Returns
         -------
@@ -855,7 +865,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         unify.create_context(
             ctx,
             unique_keys={unique_key_name: "int"},
-            auto_counting={unique_key_name: None},
+            auto_counting={unique_key_name: None, **auto_counting},
             description=description,
         )
 
@@ -1510,6 +1520,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         batch_size: int = 3,
         embed_along: bool = True,
         embedding_config: Dict[str, Any] | None = None,
+        auto_counting: Dict[str, Optional[str]] | None = None,
+        allowed_columns: List[str] | None = None,
         **parse_options: Any,
     ) -> Dict[str, Any]:
         """
@@ -1551,10 +1563,15 @@ class KnowledgeManager(BaseKnowledgeManager):
             processed_count = 0
             total_inserted_log_event_ids = []
 
+            # Normalise allowed_columns to a set for fast membership tests
+            allowed_columns_set = set(allowed_columns) if allowed_columns else None
+
             # Process documents as they complete parsing
             async for result in self._file_manager.parse_async(
                 filenames,
                 batch_size=batch_size,
+                flatten_auto_counting=auto_counting,
+                document_index_offset=0,
                 **parse_options,
             ):
                 filename = result.get("filename")
@@ -1589,18 +1606,18 @@ class KnowledgeManager(BaseKnowledgeManager):
                     if doc_id := first_record.get("document_id"):
                         doc_filters.append(f"document_id == '{doc_id}'")
 
-                    if source_uri := first_record.get("source_uri"):
+                    if file_path := first_record.get("file_path"):
                         # Clean up temp directory from path for matching
-                        clean_uri = source_uri
-                        if "/tmp/" in clean_uri:
-                            parts = clean_uri.split("/tmp/")
+                        clean_file_path = file_path
+                        if "/tmp/" in clean_file_path:
+                            parts = clean_file_path.split("/tmp/")
                             if len(parts) > 1:
                                 after_tmp = parts[1]
                                 subparts = after_tmp.split("/", 1)
                                 if len(subparts) > 1:
-                                    clean_uri = subparts[1]
+                                    clean_file_path = subparts[1]
                         # Use Python string method for pattern matching
-                        doc_filters.append(f"source_uri.endswith('{clean_uri}')")
+                        doc_filters.append(f"file_path.endswith('{clean_file_path}')")
 
                     if doc_fingerprint := first_record.get("document_fingerprint"):
                         doc_filters.append(
@@ -1622,15 +1639,25 @@ class KnowledgeManager(BaseKnowledgeManager):
                             if deleted_count > 0:
                                 self._delete_rows(tables=[table], filter=filter_expr)
                                 total_deleted += deleted_count
-                                print(
-                                    f"✅ Deleted {deleted_count} old records for {filename}",
-                                )
+                            print(
+                                f"✅ Deleted {deleted_count} old records for {filename}",
+                            )
                         except Exception as e:
                             print(
                                 f"❌ Failed to delete old records for {filename}: {e}",
                             )
 
                 # Add to batch
+                # After deletion, filter records to allowed columns if provided
+                if allowed_columns_set is not None:
+                    filtered_records = []
+                    for rec in records:
+                        filtered = {
+                            k: v for k, v in rec.items() if k in allowed_columns_set
+                        }
+                        filtered_records.append(filtered)
+                    records = filtered_records
+
                 batch_records.extend(records)
                 batch_files.append(
                     {
