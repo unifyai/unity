@@ -241,9 +241,13 @@ async def test_clarification_bubbles_through_returned_handle() -> None:
         return await clar_down_q.get()
 
     outer_llm = make_llm(
-        "If any internal tool needs information, call `request_clarification` to ask the user, or use other tools to find the answer. "
-        "When a delegated inner tool asks a question, provide the answer via the corresponding clarify_{toolName}_{id} helper as soon as you have it, "
-        "then continue. Do not start unrelated new tools until the pending call is unblocked.",
+        "You are the TOP-LEVEL coordinator. When any pending tool (including nested delegated tools) "
+        "asks a clarification question via a clarification_request_* tool message, you MUST: "
+        "(1) Call `request_clarification` to ask the user that exact question; "
+        "(2) Wait for the user's answer; "
+        "(3) Forward that answer to the pending tool via the clarify_* helper. "
+        "Do NOT answer clarification questions yourself - always bubble them up to the user via `request_clarification` first. "
+        "Do NOT start unrelated tools until pending clarifications are resolved.",
     )
 
     handle = start_async_tool_loop(
