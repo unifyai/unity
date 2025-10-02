@@ -49,7 +49,6 @@ async def test_nested_logging_hierarchy_labels():
             message="start",
             tools={"inner_tool": inner_tool},
             loop_id="Inner",
-            log_steps=False,
             max_steps=10,
             timeout=120,
         )
@@ -75,7 +74,6 @@ async def test_nested_logging_hierarchy_labels():
         message="start",
         tools={"outer_tool": outer_tool},
         loop_id="Outer",
-        log_steps=False,
         max_steps=10,
         timeout=240,
     )
@@ -143,7 +141,6 @@ async def test_single_loop_logging_hierarchy_label():
         message="start",
         tools={"noop_tool": noop_tool},
         loop_id="Solo",
-        log_steps=False,
         max_steps=10,
         timeout=120,
     )

@@ -59,7 +59,6 @@ async def test_basic_event_flow() -> None:
         cancel_event=asyncio.Event(),
         pause_event=pause_event,
         prune_tool_duplicates=True,
-        log_steps=False,
     )
 
     # Exactly four events should have been published for the run

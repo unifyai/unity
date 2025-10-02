@@ -60,7 +60,6 @@ async def outer_tool() -> AsyncToolLoopHandle:
         message="start",
         tools={"inner_tool": inner_tool},
         parent_chat_context=None,
-        log_steps=False,
         max_steps=10,
         timeout=120,
     )
@@ -92,7 +91,6 @@ async def test_nested_async_tool_loop():
         client=client,
         message="start",
         tools={"outer_tool": outer_tool},
-        log_steps=False,
         max_steps=10,
         timeout=240,
     )
@@ -190,7 +188,6 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
         client=client,
         message="start",
         tools={"outer_tool": outer_tool},
-        log_steps=False,
         max_steps=20,
         timeout=240,
     )
@@ -564,7 +561,6 @@ async def test_notification_nested_handle():
             client=inner_client,
             message="start",
             tools={"inner_progress": inner_bridge},
-            log_steps=False,
         )
 
     outer_tool.__name__ = "outer_tool"
@@ -587,7 +583,6 @@ async def test_notification_nested_handle():
         client,
         message="start",
         tools={"outer_tool": outer_tool},
-        log_steps=False,
         max_steps=10,
         timeout=240,
     )

@@ -111,7 +111,6 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
         outer_client,
         message="Please email jonathan.smith123@gmail.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
         tools=outer_tools,
-        log_steps=False,
     )
 
     await clar_up_q.get()
@@ -221,7 +220,6 @@ async def delegating_tool(
             "inner_tool": inner_tool,
             "request_clarification": request_clarification,
         },
-        log_steps=False,
     )
     return handle  # outer tool finishes instantly
 
@@ -257,7 +255,6 @@ async def test_clarification_bubbles_through_returned_handle() -> None:
             "delegating_tool": delegating_tool,
             "request_clarification": request_clarification,
         },
-        log_steps=False,
     )
 
     # ── satisfy the clarification that should bubble up ──────────────────

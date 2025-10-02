@@ -126,7 +126,6 @@ async def test_preprocess_msgs_dynamic_placeholder():
         message="Please run dummy_tool then respond with {context}.",
         tools={"dummy_tool": dummy_tool},
         preprocess_msgs=preprocess,
-        log_steps=False,
     )
 
     final = await handle.result()

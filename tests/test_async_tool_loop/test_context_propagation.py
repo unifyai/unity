@@ -81,7 +81,6 @@ async def test_ask_uses_continued_parent_context() -> None:
         client=client,
         message=("We will later follow-up with a question requiring broader context."),
         tools={},
-        log_steps=False,
     )
 
     # Provide a contrived continued parent context that carries the deciding hint.
@@ -123,7 +122,6 @@ async def test_interject_with_continued_parent_context_influences_decision() -> 
             "Decide shortly after considering any additional context."
         ),
         tools={},
-        log_steps=False,
     )
 
     continued_ctx = [
