@@ -1074,49 +1074,53 @@ async def async_tool_loop_inner(
                         history_lines = []
 
                 # Support dict-style interjections carrying continued parent context
-            if isinstance(extra, dict):
-                _msg_text = str(extra.get("message", "")).strip()
-                _ctx_cont = extra.get("parent_chat_context_continuted")
-                _incoming_images = extra.get("images")
-                try:
-                    _ctx_str = (
-                        json.dumps(_ctx_cont, indent=2)
-                        if _ctx_cont is not None
-                        else None
-                    )
-                except Exception:
-                    _ctx_str = None
+                if isinstance(extra, dict):
+                    _msg_text = str(extra.get("message", "")).strip()
+                    _ctx_cont = extra.get("parent_chat_context_continuted")
+                    _incoming_images = extra.get("images")
+                    try:
+                        _ctx_str = (
+                            json.dumps(_ctx_cont, indent=2)
+                            if _ctx_cont is not None
+                            else None
+                        )
+                    except Exception:
+                        _ctx_str = None
 
-                sys_content = (
-                    "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
-                    "They have just interjected with the following message (in bold at the bottom). "
-                    "From their perspective, the conversation thus far is as follows:\n"
-                    "--\n" + ("\n".join(history_lines)) + f"\nuser: **{_msg_text}**\n"
-                    "--\n"
-                    + (
-                        "A continued parent chat context has been provided for this interjection.\n"
-                        + (_ctx_str or "(unserializable)")
-                        + "\n"
-                        if _ctx_cont is not None
-                        else ""
+                    sys_content = (
+                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                        "They have just interjected with the following message (in bold at the bottom). "
+                        "From their perspective, the conversation thus far is as follows:\n"
+                        "--\n"
+                        + ("\n".join(history_lines))
+                        + f"\nuser: **{_msg_text}**\n"
+                        "--\n"
+                        + (
+                            "A continued parent chat context has been provided for this interjection.\n"
+                            + (_ctx_str or "(unserializable)")
+                            + "\n"
+                            if _ctx_cont is not None
+                            else ""
+                        )
+                        + "Please consider and incorporate *all* interjections in your final response to the user. "
+                        + "Later interjections should always override earlier interjections if there are "
+                        + "any conflicting comments/requests across the different interjections."
                     )
-                    + "Please consider and incorporate *all* interjections in your final response to the user. "
-                    + "Later interjections should always override earlier interjections if there are "
-                    + "any conflicting comments/requests across the different interjections."
-                )
-            else:
-                _msg_text = str(extra)
-                _incoming_images = None
-                sys_content = (
-                    "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
-                    "They have just interjected with the following message (in bold at the bottom). "
-                    "From their perspective, the conversation thus far is as follows:\n"
-                    "--\n" + ("\n".join(history_lines)) + f"\nuser: **{_msg_text}**\n"
-                    "--\n"
-                    "Please consider and incorporate *all* interjections in your final response to the user. "
-                    "Later interjections should always override earlier interjections if there are "
-                    "any conflicting comments/requests across the different interjections."
-                )
+                else:
+                    _msg_text = str(extra)
+                    _incoming_images = None
+                    sys_content = (
+                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                        "They have just interjected with the following message (in bold at the bottom). "
+                        "From their perspective, the conversation thus far is as follows:\n"
+                        "--\n"
+                        + ("\n".join(history_lines))
+                        + f"\nuser: **{_msg_text}**\n"
+                        "--\n"
+                        "Please consider and incorporate *all* interjections in your final response to the user. "
+                        "Later interjections should always override earlier interjections if there are "
+                        "any conflicting comments/requests across the different interjections."
+                    )
 
                 interjection_msg = {"role": "system", "content": sys_content}
                 await _msg_dispatcher.append_msgs([interjection_msg])
