@@ -112,7 +112,6 @@ async def test_live_images_helpers_exposed_with_alignment_description(
         message=message_text,
         tools={},
         images=images,  # ← new feature under test
-        log_steps=False,
     )
 
     await handle.result()
@@ -185,7 +184,6 @@ async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> Non
         message="Hello world",
         tools={},
         images=images,
-        log_steps=False,
     )
 
     await h.result()
@@ -251,7 +249,6 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
         message="This is a test",
         tools={},
         images=images,
-        log_steps=False,
     )
 
     await handle.result()

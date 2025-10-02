@@ -36,7 +36,6 @@ async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
         inner_client,
         message="Run sleeper please.",
         tools={"sleeper": sleeper},
-        log_steps=False,
     )
     # 🎯 mark for pass-through so the outer handle *adopts* this one.
     inner_handle.__passthrough__ = True  # type: ignore[attr-defined]
@@ -87,7 +86,6 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
             inner_client,
             message="Run sleeper please.",
             tools={"sleeper": sleeper},
-            log_steps=False,
         )
 
         # Patch the inner handle's interject *before* it is returned so that the
@@ -160,7 +158,6 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
         client,
         message="go",
         tools={"delegating_tool_interject": delegating_tool},
-        log_steps=False,
     )
 
     # ---- send *early* interjection ---------------------------------------
@@ -269,7 +266,6 @@ async def test_interject_multicasts_to_multiple_passthrough_handles():
             client,
             message="noop",
             tools={"noop": _noop},
-            log_steps=False,
             handle_cls=_InnerHandle,
         )
 
@@ -331,7 +327,6 @@ async def test_interject_multicasts_to_multiple_passthrough_handles():
         client=client,  # type: ignore[arg-type]
         message="start",
         tools={"delegate_one": delegating_one, "delegate_two": delegating_two},
-        log_steps=False,
     )
 
     # Early interjection before inner handles are returned
@@ -459,7 +454,6 @@ async def test_ask_multicasts_to_all_passthrough_handles():
         client=client,  # type: ignore[arg-type]
         message="start",
         tools={"d1": d1, "d2": d2},
-        log_steps=False,
     )
 
     # Wait deterministically until both tool requests were made
@@ -584,7 +578,6 @@ async def test_passthrough_clarification_bubbles_and_can_be_answered():
         client=client,  # type: ignore[arg-type]
         message="start",
         tools={"spawn": spawn},
-        log_steps=False,
     )
 
     # Wait for clarification to bubble up
@@ -702,7 +695,6 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
         client=client,  # type: ignore[arg-type]
         message="start",
         tools={"t1": t1, "t2": t2},
-        log_steps=False,
     )
 
     # Deterministically wait until both delegates were requested by the assistant
@@ -802,7 +794,6 @@ async def test_no_extra_llm_turn_during_passthrough_handover():
             inner_client,
             message="Run sleeper then finish",
             tools={"sleeper": sleeper},
-            log_steps=False,
         )
         inner_handle.__passthrough__ = True  # type: ignore[attr-defined]
         return inner_handle
@@ -818,7 +809,6 @@ async def test_no_extra_llm_turn_during_passthrough_handover():
         client=outer_client,  # type: ignore[arg-type]
         message="please delegate",
         tools={"delegating_tool_regression": delegating_tool_regression},
-        log_steps=False,
     )
 
     # Await final result bubbling from the inner loop

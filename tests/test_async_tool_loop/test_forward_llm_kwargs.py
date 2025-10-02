@@ -84,7 +84,6 @@ async def test_all_llm_kwargs_are_forwarded_verbatim():
         client=client,  # type: ignore[arg-type]
         message="Start",
         tools={"accept_any": accept_any},
-        log_steps=False,
     )
 
     final = await handle.result()

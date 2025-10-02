@@ -132,7 +132,6 @@ async def test_align_images_for_helper_builds_arg_scoped_mapping(monkeypatch) ->
         message="Hello world",
         tools={},
         images=images,
-        log_steps=False,
     )
 
     await h.result()
@@ -218,7 +217,6 @@ async def test_inner_tool_receives_and_resolves_arg_scoped_images(monkeypatch) -
         message="Hello world",
         tools={"analyze": analyze},
         images=images,
-        log_steps=False,
     )
 
     await h.result()
@@ -296,7 +294,6 @@ async def test_invalid_arg_or_span_entries_are_dropped(monkeypatch) -> None:
         message="Hello world",
         tools={"analyze": analyze},
         images=images,
-        log_steps=False,
     )
 
     await h.result()
@@ -359,7 +356,6 @@ async def test_no_implicit_images_pass_when_omitted(monkeypatch) -> None:
         message="Hello world",
         tools={"analyze": analyze},
         images=images,
-        log_steps=False,
     )
 
     await h.result()
@@ -426,7 +422,6 @@ async def test_images_value_may_be_handle_objects(monkeypatch) -> None:
         message="Hello world",
         tools={"analyze": analyze},
         images=images,
-        log_steps=False,
     )
 
     await h.result()

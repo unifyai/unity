@@ -46,7 +46,6 @@ async def test_structured_output_response_format() -> None:
         message="Please introduce yourself and pick a lucky number.",
         tools={},  # no tools needed
         response_format=SimpleGreeting,
-        log_steps=False,
         max_steps=8,
         timeout=120,
     )
@@ -102,7 +101,6 @@ async def test_no_additional_formatting_roundtrip() -> None:  # noqa: D401
         message="Say hi!",
         tools={},
         response_format=SimpleEcho,
-        log_steps=False,
         max_steps=6,
         timeout=60,
     )

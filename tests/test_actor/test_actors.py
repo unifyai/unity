@@ -247,7 +247,6 @@ async def test_interject_plan(monkeypatch, actor_and_plan_types):
         tools=tools,
         max_steps=15,  # Plan → Interject → Done
         timeout=120,
-        log_steps=False,
     )
     await asyncio.sleep(2)
     await handle.interject("adjust")
@@ -367,7 +366,6 @@ async def test_pause_and_resume_plan(
         tools=tools,
         max_steps=20,  # Plan → Pause → Resume → Stop → Done
         timeout=180,
-        log_steps=False,
     )
 
     await asyncio.sleep(3)

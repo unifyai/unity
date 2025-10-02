@@ -98,7 +98,6 @@ async def test_notification_bubbles_up_two_tiers() -> None:
         outer_client,
         message="Please email jonathan.smith123@gmail.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
         tools=outer_tools,
-        log_steps=False,
     )
 
     try:
@@ -210,7 +209,6 @@ async def delegating_tool(
         tools={
             "inner_tool": inner_tool_bridge,
         },
-        log_steps=False,
     )
     return handle  # outer tool finishes instantly
 
@@ -232,7 +230,6 @@ async def test_notification_bubbles_through_returned_handle() -> None:
         tools={
             "delegating_tool": delegating_tool,
         },
-        log_steps=False,
     )
     try:
         # ── satisfy: we should receive a bubbled notification event from the INNER loop ──
