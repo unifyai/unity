@@ -514,6 +514,9 @@ class ConversationManager:
         self.phone_contacts_map = {c.number: c for c in conversation_contacts}
         self.email_contacts_map = {c.email: c for c in conversation_contacts}
         self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
+        self.state.phone_contacts_map = self.phone_contacts_map
+        self.state.email_contacts_map = self.email_contacts_map
+        self.state.inverted_contacts_map = self.inverted_contacts_map
 
     async def publish_startup(self):
         await self.event_broker.publish(
