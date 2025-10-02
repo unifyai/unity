@@ -783,7 +783,8 @@ async def async_tool_loop_inner(
 
         return {"images": out}
 
-    general_helpers = {"align_images_for": align_images_for}
+    # Only add align_images_for when images are actually provided
+    general_helpers = {"align_images_for": align_images_for} if images else {}
 
     # Merge helpers (if any) with base tools before normalisation
     tools = {**tools, **(live_image_tools or {}), **general_helpers}
