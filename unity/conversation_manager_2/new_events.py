@@ -90,6 +90,12 @@ class PhoneCallSent(Event):
 
 
 @dataclass
+class AssistantPhoneUtterance(Event):
+    contact: str
+    content: str
+
+
+@dataclass
 class EmailRecieved(Event):
     contact: str
     subject: str
