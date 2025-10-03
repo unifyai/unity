@@ -184,6 +184,14 @@ class GetContactsInput(Event):
 
 
 @dataclass
+class CreateContactInput(Event):
+    first_name: str
+    last_name: str
+    email: str
+    phone_number: str
+
+
+@dataclass
 class LogMessageOutput(Event):
     exchange_id: int
 

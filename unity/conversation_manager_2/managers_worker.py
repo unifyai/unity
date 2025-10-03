@@ -12,6 +12,7 @@ from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import UNASSIGNED
 from unity.conversation_manager_2.new_events import (
+    CreateContactInput,
     Event,
     ManagersStartupInput,
     LogMessageInput,
@@ -208,6 +209,26 @@ class ManagersWorker:
         except Exception as e:
             print(f"[ManagersWorker] Error fetching contacts: {e}")
 
+    async def _create_contact(self, contact: dict) -> None:
+        """Create a contact in the ContactManager."""
+        if not self._contact_manager:
+            print("[ManagersWorker] Not initialized, cannot create contact")
+            return
+
+        try:
+            await self._contact_manager._create_contact(
+                first_name=contact["first_name"],
+                last_name=contact["last_name"],
+                phone_number=contact["phone_number"],
+                email=contact["email"],
+            )
+            print(f"[ManagersWorker] Created contact: {contact}")
+
+            # return back the list of updated contacts
+            await self._get_contacts()
+        except Exception as e:
+            print(f"[ManagersWorker] Error creating contact: {e}")
+
     # ──────────────────────────────────────────────────────────────────
     # Message processing
     # ──────────────────────────────────────────────────────────────────
@@ -221,6 +242,8 @@ class ManagersWorker:
             asyncio.create_task(self._log_message(event))
         elif isinstance(event, GetContactsInput):
             asyncio.create_task(self._get_contacts())
+        elif isinstance(event, CreateContactInput):
+            asyncio.create_task(self._create_contact(event.to_dict()["payload"]))
         else:
             print(f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}")
 
