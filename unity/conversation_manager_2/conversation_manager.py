@@ -126,6 +126,7 @@ class ConversationManager:
                 self.openai_client,
                 system_message,
                 self.chat_history + [input_message],
+                "gpt-4.1",
                 RESPONSES_MODEL[self.state.mode],
                 "phone_utterance",
             ):
