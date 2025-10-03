@@ -40,7 +40,7 @@ async def stream_llm_call(
                         last_phone_utterance = parsed_out[streamed_field]
                     else:
                         {"type": "end_streamed_field"}
-            yield {"type": "output", "content": parsed_out}
+            yield {"type": "output", "content": out}
 
 
 async def llm_call(
