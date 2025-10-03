@@ -508,7 +508,7 @@ class ConversationManager:
 
         elif isinstance(event, AssistantPhoneUtterance):
             # do not do anything here, let the user reply back or whatever
-            pass
+            asyncio.create_task(self.publish_transcript(event))
 
         # Yasser: let conversation manager state handle this event
 
