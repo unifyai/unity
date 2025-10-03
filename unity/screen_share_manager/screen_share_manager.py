@@ -184,6 +184,10 @@ class ScreenShareManager:
 
             key_events = await self._get_llm_analysis(speech_event, visual_events)
             if not key_events:
+                # If there was a speech event but no key events (e.g., LLM error),
+                # we should still log the basic speech message.
+                if speech_event:
+                    await self._log_turn_to_transcript(speech_event, [])
                 return
 
             if speech_event:
@@ -218,12 +222,14 @@ class ScreenShareManager:
             user_content.append(
                 {"type": "text", "text": f"User Speech: \"{payload['content']}\""}
             )
-            user_content.append(
-                {
-                    "type": "text",
-                    "text": f"Speech Timestamps: Start={payload['start_time']:.2f}s, End={payload['end_time']:.2f}s",
-                }
-            )
+            # Check for optional timestamp keys before accessing them
+            if "start_time" in payload and "end_time" in payload:
+                user_content.append(
+                    {
+                        "type": "text",
+                        "text": f"Speech Timestamps: Start={payload['start_time']:.2f}s, End={payload['end_time']:.2f}s",
+                    }
+                )
 
         if visual_events:
             user_content.append({"type": "text", "text": "\n--- Key Visual Frames ---"})
