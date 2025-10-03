@@ -90,18 +90,6 @@ class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
             or ``stop()``.
         """
 
-    @abstractmethod
-    def update_message_screen_share(
-        self,
-        *,
-        message_id: int,
-        new_event: Dict[str, "ScreenShareAnnotation"],
-    ) -> "ToolOutcome":
-        """
-        Updates an existing transcript message by merging new screen share events.
-        """
-        raise NotImplementedError
-
 
 if TYPE_CHECKING:
     # Avoid a runtime import to prevent circular dependencies

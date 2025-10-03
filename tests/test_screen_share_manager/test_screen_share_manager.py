@@ -150,14 +150,16 @@ async def test_speech_event_triggers_analysis_and_logging(mocked_screen_share_ma
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_silent_vision_event_back_patches_on_timeout(mocked_screen_share_manager):
+async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
+    mocked_screen_share_manager,
+):
     """
-    Tests that a silent visual event, after a period of inactivity,
-    correctly back-patches the last known user utterance in the transcript.
+    Tests that a silent visual event is stored and then logged together
+    with the next user utterance.
     """
     manager, mocks = mocked_screen_share_manager
 
-    manager._last_user_utterance_message_id = 123
+    # 1. Simulate a silent visual event on timeout
     manager.INACTIVITY_TIMEOUT_SEC = 0.5
     manager._pending_vision_events.append(
         {
@@ -168,32 +170,77 @@ async def test_silent_vision_event_back_patches_on_timeout(mocked_screen_share_m
     )
     manager._last_activity_time = asyncio.get_event_loop().time() - 1.0
 
-    mock_llm_response = TurnAnalysisResponse(
+    # Mock the LLM response for the silent event
+    silent_event_analysis = TurnAnalysisResponse(
         events=[
             KeyEvent(
                 timestamp=25.0,
                 event_description="User navigated to the 'Profile' page.",
                 screenshot_b64=PNG_RED_B64,
-                triggering_phrase=None,
             )
         ]
     )
-    mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
+    mocks["openai_client"].chat.completions.create.return_value = silent_event_analysis
 
+    # Flush the silent event, which should store it
     await manager._flush_pending_events_on_timeout()
+    await asyncio.sleep(0.1)  # Allow async task to run
+
+    # Assertions for the silent part
+    mocks["openai_client"].chat.completions.create.assert_called_once()
+    assert len(manager._stored_silent_key_events) == 1
+    assert manager._stored_silent_key_events[0].timestamp == 25.0
+    mocks["transcript_manager"].log_messages.assert_not_called()  # Not logged yet
+
+    # 2. Now, simulate a subsequent user utterance
+    speech_event_data = {
+        "payload": {
+            "contact_details": {"contact_id": 1},
+            "timestamp": datetime.now().isoformat(),
+            "content": "Okay, I see my profile.",
+            "start_time": 30.0,
+            "end_time": 31.0,
+        },
+    }
+
+    # Mock the LLM response for the speech event
+    speech_event_analysis = TurnAnalysisResponse(
+        events=[
+            KeyEvent(
+                timestamp=30.0,
+                event_description="User confirmed seeing their profile.",
+                screenshot_b64=PNG_RED_B64,
+                triggering_phrase="see my profile",
+            )
+        ]
+    )
+    mocks["openai_client"].chat.completions.create.return_value = speech_event_analysis
+
+    # Handle the utterance event
+    await manager._handle_utterance_event(speech_event_data)
     await asyncio.sleep(0.1)
 
-    mocks["openai_client"].chat.completions.create.assert_called_once()
-    mocks["transcript_manager"].update_message_screen_share.assert_called_once()
+    # Assertions for the combined logging
+    assert mocks["openai_client"].chat.completions.create.call_count == 2
+    mocks["transcript_manager"].log_messages.assert_called_once()
 
-    call_args = mocks["transcript_manager"].update_message_screen_share.call_args
-    assert call_args.kwargs["message_id"] == 123
-    new_event_data = call_args.kwargs["new_event"]
-    assert "25.00-25.00" in new_event_data
+    logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
+
+    # Check that both the silent and the speech events are in the screen_share dict
+    assert len(logged_message.screen_share) == 2
+    assert "25.00-25.00" in logged_message.screen_share
+    assert "30.00-30.00" in logged_message.screen_share
     assert (
-        new_event_data["25.00-25.00"].caption == "User navigated to the 'Profile' page."
+        logged_message.screen_share["25.00-25.00"].caption
+        == "User navigated to the 'Profile' page."
     )
-    assert len(manager._pending_vision_events) == 0
+    assert (
+        logged_message.screen_share["30.00-30.00"].caption
+        == "User confirmed seeing their profile."
+    )
+
+    # The stored silent events should now be cleared
+    assert len(manager._stored_silent_key_events) == 0
 
 
 @pytest.mark.unit
@@ -285,7 +332,6 @@ async def test_llm_failure_is_handled_gracefully(mocked_screen_share_manager):
 
     mocks["openai_client"].chat.completions.create.assert_called_once()
     mocks["transcript_manager"].log_messages.assert_not_called()
-    mocks["transcript_manager"].update_message_screen_share.assert_not_called()
 
 
 @pytest.mark.unit
@@ -308,7 +354,6 @@ async def test_empty_llm_response_does_nothing(mocked_screen_share_manager):
 
     mocks["openai_client"].chat.completions.create.assert_called_once()
     mocks["transcript_manager"].log_messages.assert_not_called()
-    mocks["transcript_manager"].update_message_screen_share.assert_not_called()
 
 
 @pytest.mark.unit
@@ -342,12 +387,12 @@ async def test_analysis_clears_pending_vision_events(mocked_screen_share_manager
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_silent_event_without_prior_utterance_is_dropped(
+async def test_silent_event_without_prior_utterance_is_stored(
     mocked_screen_share_manager,
 ):
     """
     Tests that if a silent event occurs but there's no last_user_utterance_message_id,
-    the event is not back-patched and a warning is logged.
+    the event is stored for the next turn.
     """
     manager, mocks = mocked_screen_share_manager
 
@@ -371,8 +416,10 @@ async def test_silent_event_without_prior_utterance_is_dropped(
     await manager._analyze_turn(speech_event=None)
 
     mocks["openai_client"].chat.completions.create.assert_called_once()
-    # The key assertion: no attempt should be made to update a non-existent message
-    mocks["transcript_manager"].update_message_screen_share.assert_not_called()
+    # The key assertion: no attempt to log, but the event is stored
+    mocks["transcript_manager"].log_messages.assert_not_called()
+    assert len(manager._stored_silent_key_events) == 1
+    assert manager._stored_silent_key_events[0].timestamp == 25.0
 
 
 @pytest.mark.unit

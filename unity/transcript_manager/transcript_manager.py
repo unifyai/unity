@@ -11,7 +11,7 @@ import unify
 from ..common.embed_utils import ensure_vector_column
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
-from .types.message import Message, ScreenShareAnnotation
+from .types.message import Message
 
 # New: allow Contact objects to appear in messages
 from ..contact_manager.types.contact import Contact
@@ -1617,46 +1617,3 @@ class TranscriptManager(BaseTranscriptManager):
             + "\n\nMessages:\n"
             + _json.dumps(msgs_jsonable, indent=4)
         )
-
-    def update_message_screen_share(
-        self,
-        *,
-        message_id: int,
-        new_event: Dict[str, "ScreenShareAnnotation"],
-    ) -> "ToolOutcome":
-        """
-        Updates an existing transcript message by merging new screen share events.
-        """
-        # Find the log entry by message_id
-        logs = unify.get_logs(
-            context=self._transcripts_ctx,
-            filter=f"message_id == {message_id}",
-            limit=1,
-            return_ids_only=False,
-        )
-        if not logs:
-            raise ValueError(f"No message found with message_id {message_id}")
-
-        log_to_update = logs[0]
-        current_screen_share = log_to_update.entries.get("screen_share") or {}
-
-        # Merge the new event data
-        # Pydantic models in new_event need to be converted to dicts
-        serializable_event = {
-            k: v.model_dump() if isinstance(v, BaseModel) else v
-            for k, v in new_event.items()
-        }
-        updated_screen_share = {**current_screen_share, **serializable_event}
-
-        # Persist the changes
-        unify.update_logs(
-            logs=[log_to_update.id],
-            context=self._transcripts_ctx,
-            entries={"screen_share": updated_screen_share},
-            overwrite=True,
-        )
-
-        return {
-            "outcome": "Screen share events updated successfully",
-            "details": {"message_id": message_id},
-        }

@@ -55,6 +55,7 @@ class ScreenShareManager:
             maxlen=self.FRAME_BUFFER_SIZE
         )
         self._pending_vision_events: List[Dict] = []
+        self._stored_silent_key_events: List[KeyEvent] = []  # Store silent events here
         self._last_significant_frame_b64: Optional[str] = None
         self._last_user_utterance_message_id: Optional[int] = None
         self._last_activity_time: float = asyncio.get_event_loop().time()
@@ -185,11 +186,13 @@ class ScreenShareManager:
             if not key_events:
                 return
 
-            # Process and log the identified key events
             if speech_event:
+                # If there's speech, log everything immediately
                 await self._log_turn_to_transcript(speech_event, key_events)
-            else:  # Vision-only event from timeout
-                await self._back_patch_transcript(key_events)
+            else:
+                # If it's a silent visual event, store it for the next turn
+                logger.info(f"Storing {len(key_events)} silent visual event(s).")
+                self._stored_silent_key_events.extend(key_events)
 
             # Publish real-time annotations for the ConversationManager
             for event in key_events:
@@ -261,12 +264,18 @@ class ScreenShareManager:
     async def _log_turn_to_transcript(
         self, speech_event: dict, key_events: List[KeyEvent]
     ):
-        """Logs a speech-based turn to the TranscriptManager."""
+        """Logs a speech-based turn to the TranscriptManager, including any stored silent events."""
+        # Merge current key events with any stored silent events
+        all_events = sorted(
+            self._stored_silent_key_events + key_events, key=lambda e: e.timestamp
+        )
+        self._stored_silent_key_events.clear()
+
         speech_payload = speech_event["payload"]
         images_dict = {}
         screen_share_dict = {}
 
-        for event in key_events:
+        for event in all_events:
             # 1. Register image, get ID
             image_ids = self._image_manager.add_images(
                 [{"data": event.screenshot_b64, "caption": event.event_description}]
@@ -312,34 +321,3 @@ class ScreenShareManager:
             logger.info(
                 f"Logged turn to transcript with message_id: {self._last_user_utterance_message_id}"
             )
-
-    async def _back_patch_transcript(self, key_events: List[KeyEvent]):
-        """Updates the last transcript entry with new screen share events."""
-        if self._last_user_utterance_message_id is None:
-            logger.warning(
-                "No previous utterance to back-patch silent event to. Event may be lost."
-            )
-            # Optionally, revert to creating a synthetic event here as a fallback
-            return
-
-        logger.info(
-            f"Back-patching silent visual events to message_id: {self._last_user_utterance_message_id}"
-        )
-
-        for event in key_events:
-            ts_key = f"{event.timestamp:.2f}-{event.timestamp:.2f}"
-            new_event_data = {
-                ts_key: ScreenShareAnnotation(
-                    caption=event.event_description, image_b64=event.screenshot_b64
-                )
-            }
-            try:
-                # This method needs to be implemented in TranscriptManager
-                self._transcript_manager.update_message_screen_share(
-                    message_id=self._last_user_utterance_message_id,
-                    new_event=new_event_data,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to back-patch transcript for message_id {self._last_user_utterance_message_id}: {e}"
-                )
