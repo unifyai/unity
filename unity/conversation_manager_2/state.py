@@ -128,7 +128,7 @@ class ConversationManagerState:
                 self.push_message(
                     contact,
                     "phone",
-                    Message(contact.full_name, "<Phone call started...>"),
+                    Message(contact.full_name, "<Phone call started...>", e.timestamp),
                 )
                 self.push_notif(
                     Notification(
@@ -217,33 +217,13 @@ class ConversationManagerState:
 
             case GetContactsOutput() as e:
                 for c in e.contacts:
-                    self.inverted_contacts_map[c["id"]] = Contact(
+                    self.create_new_contact(
                         c["id"],
                         c["first_name"],
                         c["last_name"],
-                        c["id"] == 1,
-                        c["phone_number"],
                         c["email"],
+                        c["phone_number"],
                     )
-                    if c.get("email"):
-                        # is_boss = True
-                        self.email_contacts_map[c["email"]] = Contact(
-                            c["id"],
-                            c["first_name"],
-                            c["last_name"],
-                            c["id"] == 1,
-                            c["phone_number"],
-                            c["email"],
-                        )
-                    if c.get("phone_number"):
-                        self.email_contacts_map[c["phone_number"]] = Contact(
-                            c["id"],
-                            c["first_name"],
-                            c["last_name"],
-                            c["id"] == 1,
-                            c["phone_number"],
-                            c["email"],
-                        )
 
     def snapshot(self):
         self._current_snapshot_time = datetime.now()
@@ -294,6 +274,22 @@ class ConversationManagerState:
             contact = self.email_contacts_map.get(email)
         return contact
 
+    def create_new_contact(
+        self,
+        id: str,
+        first_name: str,
+        last_name: Optional[str] = None,
+        email: Optional[str] = None,
+        phone_number: Optional[str] = None,
+    ):
+        contact = Contact(id, first_name, last_name, id == "1", phone_number, email)
+        self.inverted_contacts_map[id] = contact
+        if email:
+            self.email_contacts_map[email] = contact
+        if phone_number:
+            self.phone_contacts_map[phone_number] = contact
+        return contact
+
     def update_or_create_new_contact(
         self,
         id: str,
@@ -305,27 +301,21 @@ class ConversationManagerState:
         contact = None
         if id != "-1":  # update branch
             contact = self.get_contact(id, phone_number, email)
-            if phone_number and contact.phone_number != phone_number:
-                contact.phone_number = phone_number
-            if email and contact.email != email:
-                contact.email = email
-            contact = contact
+            if contact:
+                if phone_number and contact.phone_number != phone_number:
+                    contact.phone_number = phone_number
+                if email and contact.email != email:
+                    contact.email = email
+            else:
+                self.create_new_contact(id, first_name, last_name, email, phone_number)
         else:
-            new_contact = Contact(
+            new_contact = self.create_new_contact(
                 str(len(self.phone_contacts_map) + 1),
                 first_name,
                 last_name,
-                False,
                 email,
                 phone_number,
             )
-
-            if phone_number:
-                self.phone_contacts_map[phone_number] = new_contact
-            if email:
-                self.email_contacts_map[email] = new_contact
-            self.inverted_contacts_map[new_contact.id] = new_contact
-
             self.active_conversations[new_contact.id] = new_contact
             contact = new_contact
         # self.push_message("comms", f"Adding {contact.full_name} to active conversations.")
