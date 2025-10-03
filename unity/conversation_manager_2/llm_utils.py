@@ -39,7 +39,10 @@ async def stream_llm_call(
                         }
                     last_phone_utterance = parsed_out[streamed_field]
         yield {"type": "end_streamed_field"}
-        yield {"type": "output", "content": from_json(out, allow_partial="trailing-strings")}
+        yield {
+            "type": "output",
+            "content": from_json(out, allow_partial="trailing-strings"),
+        }
 
 
 async def llm_call(
