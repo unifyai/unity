@@ -154,7 +154,7 @@ class ConversationManager:
                 self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
             )
             await self.event_broker.publish(
-                "app:call:response_gen",
+                "app:comms:phone_utterance",
                 assistant_phone_utterance_event.to_json(),
             )
 
