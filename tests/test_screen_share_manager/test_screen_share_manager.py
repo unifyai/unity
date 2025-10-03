@@ -278,7 +278,9 @@ async def test_llm_failure_is_handled_gracefully(mocked_screen_share_manager):
     manager, mocks = mocked_screen_share_manager
     mocks["openai_client"].chat.completions.create.side_effect = Exception("API Error")
 
-    speech_event_data = {"payload": {"content": "test"}}
+    speech_event_data = {
+        "payload": {"contact_details": {"contact_id": 1}, "content": "test"}
+    }
     await manager._analyze_turn(speech_event=speech_event_data)
 
     mocks["openai_client"].chat.completions.create.assert_called_once()
@@ -299,7 +301,9 @@ async def test_empty_llm_response_does_nothing(mocked_screen_share_manager):
         events=[]
     )
 
-    speech_event_data = {"payload": {"content": "test"}}
+    speech_event_data = {
+        "payload": {"contact_details": {"contact_id": 1}, "content": "test"}
+    }
     await manager._analyze_turn(speech_event=speech_event_data)
 
     mocks["openai_client"].chat.completions.create.assert_called_once()
@@ -325,7 +329,11 @@ async def test_analysis_clears_pending_vision_events(mocked_screen_share_manager
         events=[]
     )
 
-    await manager._analyze_turn(speech_event={"payload": {"content": "go"}})
+    await manager._analyze_turn(
+        speech_event={
+            "payload": {"content": "go", "contact_details": {"contact_id": 1}}
+        }
+    )
 
     # The list should be cleared regardless of the LLM output
     assert len(manager._pending_vision_events) == 0
@@ -448,7 +456,9 @@ async def test_realtime_annotation_is_published_for_each_key_event(
     mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
 
     # 2. Define a simple speech event to trigger the analysis
-    speech_event_data = {"payload": {"content": "dummy speech"}}
+    speech_event_data = {
+        "payload": {"contact_details": {"contact_id": 1}, "content": "dummy speech"}
+    }
 
     # 3. Trigger analysis
     await manager._analyze_turn(speech_event=speech_event_data)
