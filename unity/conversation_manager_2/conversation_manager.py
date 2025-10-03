@@ -450,7 +450,7 @@ class ConversationManager:
     async def handle_event(self, event: Event):
         # add placeholder contact if we're yet to populate the contacts map
         if not self.initialized and hasattr(event, "contact"):
-            self.state.update_or_create_new_contact(
+            self.state.create_new_contact(
                 id="1",
                 first_name="Placeholder",
                 last_name="Contact",
