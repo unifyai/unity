@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
@@ -89,3 +89,21 @@ class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
             steer the interaction via ``pause()``, ``resume()``, ``interject()``
             or ``stop()``.
         """
+
+    @abstractmethod
+    def update_message_screen_share(
+        self,
+        *,
+        message_id: int,
+        new_event: Dict[str, "ScreenShareAnnotation"],
+    ) -> "ToolOutcome":
+        """
+        Updates an existing transcript message by merging new screen share events.
+        """
+        raise NotImplementedError
+
+
+if TYPE_CHECKING:
+    # Avoid a runtime import to prevent circular dependencies
+    from .types.message import ScreenShareAnnotation
+    from ..common.tool_outcome import ToolOutcome
