@@ -448,18 +448,19 @@ class ConversationManager:
         )
 
     async def handle_event(self, event: Event):
-        self.state.update_state(event)
         # add placeholder contact if we're yet to populate the contacts map
-        # if not self.initialized and hasattr(event, "contact"):
-        #     contact = ConversationContact(
-        #         id=1,
-        #         name="Placeholder",
-        #         number=event.contact,
-        #         email=event.contact,
-        #         is_boss=True,
-        #     )
-        #     self.update_contact(contact)
-        #     print("Placeholder contact created")
+        if not self.initialized and hasattr(event, "contact"):
+            self.state.update_or_create_new_contact(
+                id="1",
+                first_name="Placeholder",
+                last_name="Contact",
+                email=event.contact,
+                phone_number=event.contact,
+            )
+            print("Placeholder contact created")
+
+        # update state
+        self.state.update_state(event)
 
         if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
             # start phone call process and wait untils its done, we should probably make sure
