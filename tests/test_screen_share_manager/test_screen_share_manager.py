@@ -1,3 +1,5 @@
+# FILE: test_screen_share_manager.py
+
 import asyncio
 import base64
 from datetime import datetime
@@ -320,27 +322,41 @@ async def test_combined_turn_logs_multiple_events(mocked_screen_share_manager):
 async def test_llm_failure_is_handled_gracefully(mocked_screen_share_manager):
     """
     Tests that if the OpenAI client call fails, the error is logged and
-    no transcript messages are created.
+    a transcript message is still created, just without screen events.
     """
     manager, mocks = mocked_screen_share_manager
     mocks["openai_client"].chat.completions.create.side_effect = Exception("API Error")
 
     speech_event_data = {
-        "payload": {"contact_details": {"contact_id": 1}, "content": "test"}
+        "payload": {
+            "contact_details": {"contact_id": 1},
+            "content": "test",
+            "timestamp": datetime.now().isoformat(),  # Added for Message creation
+        }
     }
     await manager._analyze_turn(speech_event=speech_event_data)
 
     mocks["openai_client"].chat.completions.create.assert_called_once()
-    mocks["transcript_manager"].log_messages.assert_not_called()
+
+    # MODIFIED: Assert that a message IS logged, as per product logic.
+    # The message will simply be empty of screen_share annotations.
+    mocks["transcript_manager"].log_messages.assert_called_once()
+
+    # Optional: Verify the logged message has no screen annotations
+    logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
+    assert len(logged_message.screen_share) == 0
+    assert len(logged_message.images) == 0
 
 
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_empty_llm_response_does_nothing(mocked_screen_share_manager):
+async def test_empty_llm_response_logs_message_without_events(
+    mocked_screen_share_manager,
+):
     """
-    Tests that if the LLM returns no events, the system does not attempt
-    to log or back-patch anything.
+    Tests that if the LLM returns no events, the system still logs a message
+    for the utterance, but with no screen share annotations.
     """
     manager, mocks = mocked_screen_share_manager
     mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
@@ -348,12 +364,23 @@ async def test_empty_llm_response_does_nothing(mocked_screen_share_manager):
     )
 
     speech_event_data = {
-        "payload": {"contact_details": {"contact_id": 1}, "content": "test"}
+        "payload": {
+            "contact_details": {"contact_id": 1},
+            "content": "test",
+            "timestamp": datetime.now().isoformat(),  # Added for Message creation
+        }
     }
     await manager._analyze_turn(speech_event=speech_event_data)
 
     mocks["openai_client"].chat.completions.create.assert_called_once()
-    mocks["transcript_manager"].log_messages.assert_not_called()
+
+    # MODIFIED: Assert that a message IS logged, as per product logic.
+    mocks["transcript_manager"].log_messages.assert_called_once()
+
+    # Verify the logged message has no screen annotations
+    logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
+    assert len(logged_message.screen_share) == 0
+    assert len(logged_message.images) == 0
 
 
 @pytest.mark.unit
@@ -376,7 +403,11 @@ async def test_analysis_clears_pending_vision_events(mocked_screen_share_manager
 
     await manager._analyze_turn(
         speech_event={
-            "payload": {"content": "go", "contact_details": {"contact_id": 1}}
+            "payload": {
+                "content": "go",
+                "contact_details": {"contact_id": 1},
+                "timestamp": datetime.now().isoformat(),
+            }
         }
     )
 
@@ -504,7 +535,11 @@ async def test_realtime_annotation_is_published_for_each_key_event(
 
     # 2. Define a simple speech event to trigger the analysis
     speech_event_data = {
-        "payload": {"contact_details": {"contact_id": 1}, "content": "dummy speech"}
+        "payload": {
+            "contact_details": {"contact_id": 1},
+            "content": "dummy speech",
+            "timestamp": datetime.now().isoformat(),
+        }
     }
 
     # 3. Trigger analysis
