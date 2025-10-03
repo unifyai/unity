@@ -221,7 +221,7 @@ class ConversationManagerState:
                         c["id"],
                         c["first_name"],
                         c["last_name"],
-                        None,
+                        c["id"] == 1,
                         c["phone_number"],
                         c["email"],
                     )
@@ -231,7 +231,7 @@ class ConversationManagerState:
                             c["id"],
                             c["first_name"],
                             c["last_name"],
-                            None,
+                            c["id"] == 1,
                             c["phone_number"],
                             c["email"],
                         )
@@ -240,7 +240,7 @@ class ConversationManagerState:
                             c["id"],
                             c["first_name"],
                             c["last_name"],
-                            None,
+                            c["id"] == 1,
                             c["phone_number"],
                             c["email"],
                         )
@@ -315,6 +315,7 @@ class ConversationManagerState:
                 str(len(self.phone_contacts_map) + 1),
                 first_name,
                 last_name,
+                False,
                 email,
                 phone_number,
             )
