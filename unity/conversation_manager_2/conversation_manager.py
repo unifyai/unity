@@ -80,7 +80,6 @@ class ConversationManager:
 
         # events & state(history)
         self.conv_context_length = conv_context_length
-        self.mode: Literal["call", "gmeet", "text"] = "text"
         # self.current_llm_run = None
         self.current_response: asyncio.Task | None = None
         self.scheduled_response: asyncio.Task | None = None
@@ -120,14 +119,14 @@ class ConversationManager:
             name=self.user_name,
             number=self.user_number,
         )
-        if self.mode in ["call", "gmeet"]:
+        if self.state.mode in ["call", "gmeet"]:
             print("running...")
             first_chunk = True
             async for event in stream_llm_call(
                 self.openai_client,
                 system_message,
                 self.chat_history + [input_message],
-                RESPONSES_MODEL[self.mode],
+                RESPONSES_MODEL[self.state.mode],
                 "phone_utterance",
             ):
                 if event["type"] == "chunk":
@@ -163,7 +162,7 @@ class ConversationManager:
                 self.openai_client,
                 system_message,
                 self.chat_history + [input_message],
-                response_model=RESPONSES_MODEL[self.mode],
+                response_model=RESPONSES_MODEL[self.state.mode],
             )
             parsed_out = json.loads(out)
 
@@ -499,7 +498,7 @@ class ConversationManager:
             await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, PhoneCallEnded):
-            self.mode = "text"
+            self.state.mode = "text"
             self.call_contact = None
             self.cleanup_call_proc()
 
