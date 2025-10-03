@@ -35,6 +35,72 @@ class ScreenShareManager:
     A background service that analyzes screen share streams and user speech to
     detect and annotate key events, feeding context to both the live
     ConversationManager and the historical TranscriptManager.
+
+    How It Works
+    ------------
+    The manager operates by listening to a Redis event stream for two main types
+    of events: `app:comms:screen_frame` for video frames and
+    `app:comms:phone_utterance` for user speech. It processes these events
+    asynchronously to build a comprehensive narrative of the user's actions.
+
+    1. Vision Event Detection (SSIM):
+       - The manager maintains a buffer of recent frames.
+       - Each new frame is compared against the last "significant" frame using
+         the Structural Similarity Index (SSIM).
+       - If the SSIM score falls below a threshold (SSIM_THRESHOLD), it signifies
+         a meaningful visual change on the screen.
+       - A "vision event" is created, capturing the timestamp and the frames
+         immediately before and after the change. These are stored in a pending queue.
+
+    2. Speech Event Handling:
+       - When a user speaks, a `phone_utterance` event is received.
+       - This event immediately triggers a full "turn analysis," which gathers the
+         user's speech and any pending vision events that occurred recently.
+
+    Event Processing Scenarios
+    --------------------------
+    The manager is designed to handle three primary scenarios to ensure all
+    actions are captured accurately:
+
+    - Scenario 1: Speech and Vision Events Occur Together
+      When a user speaks while interacting with the screen (e.g., "I'll click
+      this button"), the utterance triggers an analysis that includes both the
+      speech content and the visual evidence of the click. The Language Model (LLM)
+      receives this combined context and generates a rich `KeyEvent` that links
+      the action to the speech.
+
+    - Scenario 2: Only Speech Events Occur
+      If the user speaks without performing a visual action, the utterance still
+      triggers an analysis. The LLM processes the speech to identify the user's
+      intent, and this is logged to the transcript without a corresponding visual.
+
+    - Scenario 3: Only Vision Events Occur (Silent Actions)
+      If the user performs an action without speaking (e.g., clicking a link),
+      the visual change is detected and stored as a pending vision event. If no
+      speech occurs within an inactivity timeout (INACTIVITY_TIMEOUT_SEC), the
+      manager "flushes" these pending events, sending them to the LLM for analysis.
+      The resulting `KeyEvents` are temporarily stored in `_stored_silent_key_events`.
+      They are then merged with the events from the *next* speech utterance,
+      ensuring that the context of the silent action is not lost and is logged
+      alongside the user's subsequent thoughts.
+
+    Semantic Association (`[x:y]` Notation)
+    ---------------------------------------
+    A key feature is the ability to semantically link a visual event (a screenshot)
+    to the exact words the user spoke. This is achieved via the `triggering_phrase`
+    identified by the LLM.
+
+    - The LLM is prompted to find the specific text span in the user's speech
+      that corresponds to a visual action (e.g., for a click on a "Submit" button,
+      the triggering phrase might be "click this").
+    - In the `_log_turn_to_transcript` method, if a `KeyEvent` contains this
+      `triggering_phrase`, the code searches for the phrase in the full speech
+      content to find its start and end character indices.
+    - It then creates a mapping in the format `{'[start:end]': image_id}`.
+    - This mapping is stored in the `images` field of the `Message` object,
+      creating a durable, precise link between the user's words and their actions.
+      This association is only created when speech and vision events are analyzed
+      together.
     """
 
     def __init__(self):
