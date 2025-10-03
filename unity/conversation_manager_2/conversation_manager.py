@@ -143,11 +143,11 @@ class ConversationManager:
                             {"type": "gen_chunk", "chunk": event["content"]},
                         ),
                     )
-                    if event["type"] == "end_streamed_field":
-                        await self.event_broker.publish(
-                            "app:call:response_gen",
-                            json.dumps({"type": "end_gen"}),
-                        )
+                elif event["type"] == "end_streamed_field":
+                    await self.event_broker.publish(
+                        "app:call:response_gen",
+                        json.dumps({"type": "end_gen"}),
+                    )
 
             parsed_out = event["content"]
             assistant_phone_utterance_event = AssistantPhoneUtterance(
