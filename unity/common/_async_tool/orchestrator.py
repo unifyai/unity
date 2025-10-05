@@ -20,12 +20,16 @@ from .messages import (
 from .messages import (
     insert_tool_message_after_assistant as _insert_tool_message_after_assistant,
 )
+from .messages import forward_handle_call as _forward_handle_call
+from .messages import propagate_stop_once as _propagate_stop_once
 from .utils import maybe_await
 from ..llm_helpers import method_to_schema as _method_to_schema
 from ..llm_helpers import _dumps as _json_pretty
 from ..tool_spec import normalise_tools
 from ...constants import LOGGER
 from .tools_utils import create_tool_call_message
+from .tools_utils import append_source_scoped_images as _append_images
+from .tools_utils import default_source_label as _default_img_src
 from .tools_data import ToolsData as _ToolsData
 from .message_dispatcher import LoopMessageDispatcher as _Dispatcher
 from .loop_config import LoopConfig as _LoopConfig
@@ -324,6 +328,55 @@ class Orchestrator:
                 LOGGER.info(f"orchestrator: skip evented first turn due to {reason}")
             except Exception:
                 pass
+
+        # Additional parity gating: disable evented path when semantic cache or images are used
+        try:
+            if self.semantic_cache or (self.images and len(self.images) > 0):
+                do_first_turn = False
+                do_slice = False
+                try:
+                    LOGGER.info(
+                        "orchestrator: skip evented due to %s",
+                        "semantic_cache" if self.semantic_cache else "images",
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        async def _early_exit(
+            reason: str,
+            tools_data: _ToolsData,
+            dispatcher: _Dispatcher,
+        ) -> str:
+            # Gracefully stop any nested handles, cancel tasks, and append notice (legacy parity)
+            for t in list(getattr(tools_data, "pending", [])):
+                try:
+                    inf = tools_data.info.get(t)
+                    if (
+                        inf is not None
+                        and inf.handle is not None
+                        and hasattr(inf.handle, "stop")
+                    ):
+                        await maybe_await(inf.handle.stop())
+                except Exception:
+                    pass
+                try:
+                    if not t.done():
+                        t.cancel()
+                except Exception:
+                    pass
+            try:
+                await asyncio.gather(
+                    *list(getattr(tools_data, "pending", [])),
+                    return_exceptions=True,
+                )
+                tools_data.pending.clear()
+            except Exception:
+                pass
+            notice = {"role": "assistant", "content": f"🔚 Terminating early: {reason}"}
+            await dispatcher.append_msgs([notice])
+            return notice["content"]
 
         if do_first_turn:
             # First-turn: run a single LLM step with optional tool schemas and
@@ -629,6 +682,305 @@ class Orchestrator:
                         logger=logger,
                     )
                     assistant_meta: Dict[int, Dict[str, Any]] = {}
+
+                    async def _handle_helper_call(name: str, call: dict) -> str:
+                        args_json = (call.get("function", {}) or {}).get(
+                            "arguments",
+                            "{}",
+                        )
+                        call_id = call.get("id") or "call"
+                        # wait → drop
+                        if name == "wait":
+                            return "drop"
+                        # stop_*
+                        if name.startswith("stop_") and not name.startswith(
+                            "_stop_tasks",
+                        ):
+                            try:
+                                suffix = name.split("_")[-1]
+                                tgt_task = next(
+                                    (
+                                        t
+                                        for t, info in tools_data.info.items()
+                                        if str(info.call_id).endswith(suffix)
+                                    ),
+                                    None,
+                                )
+                                payload = (
+                                    json.loads(args_json)
+                                    if isinstance(args_json, str)
+                                    else (args_json or {})
+                                )
+                                if tgt_task:
+                                    nested_handle = tools_data.info[tgt_task].handle
+                                    if nested_handle is not None and hasattr(
+                                        nested_handle,
+                                        "stop",
+                                    ):
+                                        await _forward_handle_call(
+                                            nested_handle,
+                                            "stop",
+                                            payload,
+                                            fallback_positional_keys=["reason"],
+                                        )
+                                    if not tgt_task.done():
+                                        tgt_task.cancel()
+                                    tools_data.pop_task(tgt_task)
+                                try:
+                                    _append_images(
+                                        payload.get("images"),
+                                        _default_img_src("stop"),
+                                    )
+                                except Exception:
+                                    pass
+                                pretty_name = (
+                                    f"stop   {tools_data.info[tgt_task].name}({tools_data.info[tgt_task].call_dict['function']['arguments']})"
+                                    if tgt_task
+                                    else name
+                                )
+                                tool_msg = create_tool_call_message(
+                                    name=pretty_name,
+                                    call_id=call_id,
+                                    content=f"The tool call [{suffix}] has been stopped successfully.",
+                                )
+                                await _insert_tool_message_after_assistant(
+                                    assistant_meta,
+                                    msg0,
+                                    tool_msg,
+                                    self.client,
+                                    dispatcher,
+                                )
+                            except Exception:
+                                pass
+                            return "handled"
+                        # pause_*
+                        if name.startswith("pause_") and not name.startswith(
+                            "_pause_tasks",
+                        ):
+                            try:
+                                suffix = name.split("_")[-1]
+                                payload = (
+                                    json.loads(args_json)
+                                    if isinstance(args_json, str)
+                                    else (args_json or {})
+                                )
+                                tgt_task = next(
+                                    (
+                                        t
+                                        for t, info in tools_data.info.items()
+                                        if suffix in info.call_id
+                                    ),
+                                    None,
+                                )
+                                if tgt_task:
+                                    h = tools_data.info[tgt_task].handle
+                                    ev = tools_data.info[tgt_task].pause_event
+                                    if h is not None and hasattr(h, "pause"):
+                                        await _forward_handle_call(h, "pause", payload)
+                                    elif ev is not None:
+                                        ev.clear()
+                                pretty_name = (
+                                    f"pause {tools_data.info[tgt_task].name}({tools_data.info[tgt_task].call_dict['function']['arguments']})"
+                                    if tgt_task
+                                    else name
+                                )
+                                tool_msg = create_tool_call_message(
+                                    name=pretty_name,
+                                    call_id=call_id,
+                                    content=f"The tool call [{suffix}] has been paused successfully.",
+                                )
+                                await _insert_tool_message_after_assistant(
+                                    assistant_meta,
+                                    msg0,
+                                    tool_msg,
+                                    self.client,
+                                    dispatcher,
+                                )
+                            except Exception:
+                                pass
+                            return "handled"
+                        # resume_*
+                        if name.startswith("resume_") and not name.startswith(
+                            "_resume_tasks",
+                        ):
+                            try:
+                                suffix = name.split("_")[-1]
+                                payload = (
+                                    json.loads(args_json)
+                                    if isinstance(args_json, str)
+                                    else (args_json or {})
+                                )
+                                tgt_task = next(
+                                    (
+                                        t
+                                        for t, info in tools_data.info.items()
+                                        if suffix in info.call_id
+                                    ),
+                                    None,
+                                )
+                                if tgt_task:
+                                    h = tools_data.info[tgt_task].handle
+                                    ev = tools_data.info[tgt_task].pause_event
+                                    if h is not None and hasattr(h, "resume"):
+                                        await _forward_handle_call(h, "resume", payload)
+                                    elif ev is not None:
+                                        ev.set()
+                                pretty_name = (
+                                    f"resume {tools_data.info[tgt_task].name}({tools_data.info[tgt_task].call_dict['function']['arguments']})"
+                                    if tgt_task
+                                    else name
+                                )
+                                tool_msg = create_tool_call_message(
+                                    name=pretty_name,
+                                    call_id=call_id,
+                                    content=f"The tool call [{suffix}] has been resumed successfully.",
+                                )
+                                await _insert_tool_message_after_assistant(
+                                    assistant_meta,
+                                    msg0,
+                                    tool_msg,
+                                    self.client,
+                                    dispatcher,
+                                )
+                            except Exception:
+                                pass
+                            return "handled"
+                        # clarify_*
+                        if name.startswith("clarify_"):
+                            try:
+                                payload = (
+                                    json.loads(args_json)
+                                    if isinstance(args_json, str)
+                                    else (args_json or {})
+                                )
+                                ans = payload.get("answer")
+                                suffix = name.split("_")[-1]
+                                clar_key = next(
+                                    (
+                                        k
+                                        for k in tools_data.clarification_channels.keys()
+                                        if k.endswith(suffix)
+                                    ),
+                                    None,
+                                )
+                                if clar_key is not None and ans is not None:
+                                    await tools_data.clarification_channels[clar_key][
+                                        1
+                                    ].put(ans)
+                                    for _t, _inf in tools_data.info.items():
+                                        if str(_inf.call_id).endswith(suffix):
+                                            _inf.waiting_for_clarification = False
+                                            break
+                                try:
+                                    _append_images(
+                                        (
+                                            payload.get("images")
+                                            if isinstance(payload, dict)
+                                            else None
+                                        ),
+                                        _default_img_src("clar_answer"),
+                                    )
+                                except Exception:
+                                    pass
+                                tool_reply_msg = create_tool_call_message(
+                                    name=name,
+                                    call_id=call_id,
+                                    content=(
+                                        f"Clarification answer sent upstream: {ans!r}\n"
+                                        "⏳ Waiting for the original tool to finish…"
+                                    ),
+                                )
+                                await _insert_tool_message_after_assistant(
+                                    assistant_meta,
+                                    msg0,
+                                    tool_reply_msg,
+                                    self.client,
+                                    dispatcher,
+                                )
+                            except Exception:
+                                pass
+                            return "handled"
+                        # interject_*
+                        if name.startswith("interject_"):
+                            try:
+                                payload = (
+                                    json.loads(args_json)
+                                    if isinstance(args_json, str)
+                                    else (args_json or {})
+                                )
+                                new_text = (
+                                    payload.get("content")
+                                    or payload.get("message")
+                                    or ""
+                                )
+                                suffix = name.split("_")[-1]
+                                tgt_task = next(
+                                    (
+                                        t
+                                        for t, inf in tools_data.info.items()
+                                        if str(inf.call_id).endswith(suffix)
+                                    ),
+                                    None,
+                                )
+                                if tgt_task:
+                                    iq = tools_data.info[tgt_task].interject_queue
+                                    h = tools_data.info[tgt_task].handle
+                                    if iq is not None:
+                                        await iq.put(new_text)
+                                    elif h is not None and hasattr(h, "interject"):
+                                        await _forward_handle_call(
+                                            h,
+                                            "interject",
+                                            payload,
+                                            fallback_positional_keys=[
+                                                "content",
+                                                "message",
+                                            ],
+                                        )
+                                try:
+                                    _append_images(
+                                        payload.get("images"),
+                                        _default_img_src("interjection"),
+                                    )
+                                except Exception:
+                                    pass
+                                pretty_name = (
+                                    f"interject {tools_data.info[tgt_task].name}({new_text})"
+                                    if tgt_task
+                                    else name
+                                )
+                                tool_msg = create_tool_call_message(
+                                    name=pretty_name,
+                                    call_id=call_id,
+                                    content=f'Guidance "{new_text}" forwarded to the running tool.',
+                                )
+                                await _insert_tool_message_after_assistant(
+                                    assistant_meta,
+                                    msg0,
+                                    tool_msg,
+                                    self.client,
+                                    dispatcher,
+                                )
+                            except Exception:
+                                pass
+                            return "handled"
+                        return "skip"
+
+                    # Process helper calls (drop/handle) and prune from assistant msg
+                    try:
+                        calls0 = list(msg0.get("tool_calls") or [])
+                        remaining_calls0 = []
+                        for c in calls0:
+                            _nm = (c.get("function", {}) or {}).get("name")
+                            if isinstance(_nm, str) and _is_helper_tool(_nm):
+                                res = await _handle_helper_call(_nm, c)
+                                if res in ("drop", "handled"):
+                                    continue
+                            remaining_calls0.append(c)
+                        if len(remaining_calls0) != len(calls0):
+                            msg0["tool_calls"] = remaining_calls0
+                    except Exception:
+                        pass
                     # Schedule base tool calls (enforce max_parallel_tool_calls)
                     scheduled_count = 0
                     max_calls = (
@@ -687,6 +1039,7 @@ class Orchestrator:
                     )
                     clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
                     notif_waiters: Dict[asyncio.Task, asyncio.Task] = {}
+                    _stop_forwarded_once = False
                     for _t in list(tools_data.pending):
                         _inf = tools_data.info.get(_t)
                         if not _inf:
@@ -724,10 +1077,33 @@ class Orchestrator:
                         )
                         if not waitset:
                             break
+                        # Early-limit checks before waiting
+                        try:
+                            if timer.has_exceeded_time():
+                                return await _early_exit(
+                                    f"timeout ({self.timeout}s) exceeded",
+                                    tools_data,
+                                    dispatcher,
+                                )
+                            if timer.has_exceeded_msgs():
+                                return await _early_exit(
+                                    f"max_steps ({self.max_steps}) exceeded",
+                                    tools_data,
+                                    dispatcher,
+                                )
+                        except Exception:
+                            pass
                         done_first, _ = await asyncio.wait(
                             waitset,
                             return_when=asyncio.FIRST_COMPLETED,
+                            timeout=timer.remaining_time(),
                         )
+                        if not done_first:
+                            return await _early_exit(
+                                f"timeout ({self.timeout}s) exceeded",
+                                tools_data,
+                                dispatcher,
+                            )
                         # Cleanup unused helpers for this iteration
                         try:
                             for aux in (
@@ -750,6 +1126,14 @@ class Orchestrator:
                         # Handle branches
                         if cancel_waiter2 in done_first:
                             try:
+                                try:
+                                    _stop_forwarded_once = await _propagate_stop_once(
+                                        tools_data.info,
+                                        _stop_forwarded_once,
+                                        "outer-loop cancelled",
+                                    )
+                                except Exception:
+                                    pass
                                 await tools_data.cancel_pending_tasks()
                             except Exception:
                                 pass
@@ -823,6 +1207,29 @@ class Orchestrator:
                                     tools_data.info[
                                         src_task
                                     ].waiting_for_clarification = True
+                                    # Forward programmatic event upstream
+                                    try:
+                                        outer = (
+                                            self.outer_handle_container[0]
+                                            if self.outer_handle_container
+                                            else None
+                                        )
+                                        if outer is not None and hasattr(
+                                            outer,
+                                            "_clar_q",
+                                        ):
+                                            await outer._clar_q.put(
+                                                {
+                                                    "type": "clarification",
+                                                    "call_id": call_id,
+                                                    "tool_name": tools_data.info[
+                                                        src_task
+                                                    ].name,
+                                                    "question": q_text,
+                                                },
+                                            )
+                                    except Exception:
+                                        pass
                                 except Exception:
                                     pass
                             llm_turn_required = True
@@ -864,6 +1271,47 @@ class Orchestrator:
                                         )
                                     else:
                                         placeholder["content"] = pretty
+                                    # Append images from child notifications (if any)
+                                    try:
+                                        imgs = (
+                                            payload.get("images")
+                                            if isinstance(payload, dict)
+                                            else None
+                                        )
+                                        _append_images(
+                                            imgs,
+                                            _default_img_src("notification"),
+                                        )
+                                    except Exception:
+                                        pass
+                                    # Forward programmatic event upstream
+                                    try:
+                                        outer = (
+                                            self.outer_handle_container[0]
+                                            if self.outer_handle_container
+                                            else None
+                                        )
+                                        if outer is not None and hasattr(
+                                            outer,
+                                            "_notification_q",
+                                        ):
+                                            event_payload = (
+                                                payload
+                                                if isinstance(payload, dict)
+                                                else {"message": str(payload)}
+                                            )
+                                            await outer._notification_q.put(
+                                                {
+                                                    "type": "notification",
+                                                    "call_id": tools_data.info[
+                                                        src_task
+                                                    ].call_id,
+                                                    "tool_name": tool_name,
+                                                    **event_payload,
+                                                },
+                                            )
+                                    except Exception:
+                                        pass
                                 except Exception:
                                     pass
                             llm_turn_required = True
@@ -1137,17 +1585,28 @@ class Orchestrator:
                                     if isinstance(name2, str) and _is_helper_tool(
                                         name2,
                                     ):
-                                        if name2 == "wait":
-                                            continue
+                                        # Handle helper tools via same semantics as first turn
                                         try:
-                                            self._insert_helper_ack(
-                                                msg_tail,
-                                                name2,
-                                                args_json2,
-                                                str(call_id2),
-                                            )
+
+                                            async def _handle_helper_2(
+                                                nm: str,
+                                                c: dict,
+                                            ) -> str:
+                                                return await _handle_helper_call(nm, c)  # type: ignore[name-defined]
+
+                                            res2 = await _handle_helper_2(name2, call)
+                                            if res2 in ("drop", "handled"):
+                                                continue
                                         except Exception:
-                                            pass
+                                            try:
+                                                self._insert_helper_ack(
+                                                    msg_tail,
+                                                    name2,
+                                                    args_json2,
+                                                    str(call_id2),
+                                                )
+                                            except Exception:
+                                                pass
                                     else:
                                         remaining2.append(call)
                                 if len(remaining2) != len(tool_calls2):
@@ -1292,9 +1751,23 @@ class Orchestrator:
                                 return_when=asyncio.FIRST_COMPLETED,
                                 timeout=timer.remaining_time(),
                             )
+                            if not done2:
+                                return await _early_exit(
+                                    f"timeout ({self.timeout}s) exceeded",
+                                    tools_data2,
+                                    dispatcher2,
+                                )
                             # Handle branches akin to first-turn
                             if cancel2 in done2:
                                 try:
+                                    try:
+                                        _ = await _propagate_stop_once(
+                                            tools_data2.info,
+                                            False,
+                                            "outer-loop cancelled",
+                                        )
+                                    except Exception:
+                                        pass
                                     await tools_data2.cancel_pending_tasks()
                                 except Exception:
                                     pass
