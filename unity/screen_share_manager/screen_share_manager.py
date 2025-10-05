@@ -108,6 +108,8 @@ class ScreenShareManager:
         self.SSIM_THRESHOLD = 0.97
         self.INACTIVITY_TIMEOUT_SEC = 10.0
         self.FRAME_BUFFER_SIZE = 100  # Approx 10 seconds at 10fps
+        self.VISUAL_EVENT_SAMPLING_THRESHOLD = 3
+        self.BURST_DETECTION_THRESHOLD_SEC = 2.0
 
         # Clients and Managers
         self._event_broker: redis.Redis = get_event_broker()
@@ -299,21 +301,68 @@ class ScreenShareManager:
 
         if visual_events:
             user_content.append({"type": "text", "text": "\n--- Key Visual Frames ---"})
-            for i, ve in enumerate(visual_events):
-                user_content.append(
-                    {
-                        "type": "text",
-                        "text": f"\nVisual Change #{i+1} at t={ve['timestamp']:.2f}s:",
-                    }
-                )
-                user_content.append({"type": "text", "text": "BEFORE:"})
-                user_content.append(
-                    {"type": "image_url", "image_url": {"url": ve["before_frame_b64"]}}
-                )
-                user_content.append({"type": "text", "text": "AFTER:"})
-                user_content.append(
-                    {"type": "image_url", "image_url": {"url": ve["after_frame_b64"]}}
-                )
+
+            # Burst detection logic
+            bursts: List[List[Dict]] = []
+            if visual_events:
+                current_burst = [visual_events[0]]
+                for i in range(1, len(visual_events)):
+                    prev_event = visual_events[i - 1]
+                    current_event = visual_events[i]
+                    time_diff = (
+                        current_event["timestamp"] - prev_event["timestamp"]
+                    )
+
+                    if time_diff <= self.BURST_DETECTION_THRESHOLD_SEC:
+                        current_burst.append(current_event)
+                    else:
+                        bursts.append(current_burst)
+                        current_burst = [current_event]
+                bursts.append(current_burst)  # Add the last burst
+
+            # Process each burst (sampling if necessary) and build prompt
+            frame_counter = 0
+            for burst in bursts:
+                events_to_process_for_burst = burst
+                if len(burst) > self.VISUAL_EVENT_SAMPLING_THRESHOLD:
+                    logger.info(
+                        f"Detected a burst of {len(burst)} events. Sampling down to 3."
+                    )
+                    user_content.append(
+                        {
+                            "type": "text",
+                            "text": "\nNOTE: The following frames are a sampled summary (first, middle, last) of a rapid sequence of screen changes.",
+                        }
+                    )
+                    middle_index = len(burst) // 2
+                    events_to_process_for_burst = [
+                        burst[0],
+                        burst[middle_index],
+                        burst[-1],
+                    ]
+
+                for ve in events_to_process_for_burst:
+                    frame_counter += 1
+                    user_content.append(
+                        {
+                            "type": "text",
+                            "text": f"\nVisual Change #{frame_counter} at t={ve['timestamp']:.2f}s:",
+                        }
+                    )
+                    user_content.append({"type": "text", "text": "BEFORE:"})
+                    user_content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": ve["before_frame_b64"]},
+                        }
+                    )
+                    user_content.append({"type": "text", "text": "AFTER:"})
+                    user_content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": ve["after_frame_b64"]},
+                        }
+                    )
 
         if not self._openai_client:
             logger.warning("OpenAI client not initialized. Skipping analysis.")
