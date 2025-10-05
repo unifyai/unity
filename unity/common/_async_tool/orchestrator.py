@@ -214,6 +214,79 @@ class Orchestrator:
             self._normalized_tools = {}
         self._call_counts: dict[str, int] = {}
 
+    def _build_interjection_system_content(self, payload: Any) -> str:
+        # Mirror legacy wording and consolidation semantics
+        try:
+            outer = (
+                self.outer_handle_container[0] if self.outer_handle_container else None
+            )
+        except Exception:
+            outer = None
+        history_lines: list[str] = []
+        try:
+            uvh = getattr(outer, "_user_visible_history", []) if outer else []
+            for _m in uvh:
+                role = _m.get("role")
+                _content = _m.get("content")
+                if isinstance(_content, dict):
+                    _text = str(_content.get("message", "")).strip()
+                else:
+                    _text = str(_content or "").strip()
+                if role in ("user", "assistant") and _text:
+                    history_lines.append(f"{role}: {_text}")
+        except Exception:
+            try:
+                first_user = next(
+                    (
+                        m.get("content", "")
+                        for m in self.client.messages
+                        if m.get("role") == "user"
+                    ),
+                    "",
+                )
+                if first_user:
+                    history_lines = [f"user: {first_user}"]
+            except Exception:
+                history_lines = []
+
+        # Extract interjection text and continued context
+        try:
+            if isinstance(payload, dict):
+                _msg_text = str(payload.get("message", "")).strip()
+                _ctx_cont = payload.get("parent_chat_context_continuted")
+                _ctx_str = None
+                if _ctx_cont is not None:
+                    try:
+                        _ctx_str = json.dumps(_ctx_cont, indent=2)
+                    except Exception:
+                        _ctx_str = None
+            else:
+                _msg_text = str(payload)
+                _ctx_cont = None
+                _ctx_str = None
+        except Exception:
+            _msg_text, _ctx_cont, _ctx_str = "", None, None
+
+        sys_content = (
+            "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+            "They have just interjected with the following message (in bold at the bottom). "
+            "From their perspective, the conversation thus far is as follows:\n"
+            "--\n" + ("\n".join(history_lines)) + f"\nuser: **{_msg_text}**\n"
+            "--\n"
+        )
+        if _ctx_cont is not None:
+            sys_content += (
+                "A continued parent chat context has been provided for this interjection.\n"
+                + (_ctx_str or "(unserializable)")
+                + "\n"
+            )
+        sys_content += (
+            "Please consider and incorporate *all* interjections in your final response to the user. "
+            "Later interjections should always override earlier interjections if there are "
+            "any conflicting comments/requests across the different interjections."
+        )
+        return sys_content
+
     async def run(self) -> str:
         # Experimental: single LLM slice before legacy, gated by UNITY_EVENTED_LLM_SLICE
         try:
@@ -362,23 +435,54 @@ class Orchestrator:
                     except Exception:
                         pass
 
+                # Time/step guard for first-turn LLM
+                timer0 = _Timer(
+                    timeout=self.timeout,
+                    max_steps=self.max_steps,
+                    raise_on_limit=self.raise_on_limit,
+                    client=self.client,
+                )
+                try:
+                    if timer0.has_exceeded_time() or timer0.has_exceeded_msgs():
+                        raise asyncio.TimeoutError("pre-LLM first-turn limits reached")
+                except Exception:
+                    pass
+
                 llm_task = asyncio.create_task(
                     _gwp(self.client, self.preprocess_msgs, **gen_kwargs),
                     name="EventedFirstTurnLLM",
                 )
-                interject_w = asyncio.create_task(
-                    self.interject_queue.get(),
-                    name="EventedFirstTurnInterject",
+                interject_w = (
+                    asyncio.create_task(
+                        self.interject_queue.get(),
+                        name="EventedFirstTurnInterject",
+                    )
+                    if not enable_interject_adapter
+                    else None
                 )
                 cancel_w = asyncio.create_task(
                     self.cancel_event.wait(),
                     name="EventedFirstTurnCancel",
                 )
 
-                done, _ = await asyncio.wait(
-                    {llm_task, interject_w, cancel_w},
-                    return_when=asyncio.FIRST_COMPLETED,
+                waitset0 = {llm_task, cancel_w} | (
+                    {interject_w} if interject_w is not None else set()
                 )
+                done, _ = await asyncio.wait(
+                    waitset0,
+                    return_when=asyncio.FIRST_COMPLETED,
+                    timeout=timer0.remaining_time(),
+                )
+                # Timeout handling: cancel llm and mark stop
+                if not done:
+                    try:
+                        if not llm_task.done():
+                            llm_task.cancel()
+                            await asyncio.gather(llm_task, return_exceptions=True)
+                        if self.stop_event is not None:
+                            self.stop_event.set()
+                    except Exception:
+                        pass
 
             # If cancelled or preempted by interjection, cancel the LLM and fall back
             if cancel_w in done:
@@ -397,7 +501,9 @@ class Orchestrator:
                         await asyncio.gather(interject_w, return_exceptions=True)
                 except Exception:
                     pass
-            elif interject_w in done and self.interrupt_llm_with_interjections:
+            elif (
+                (interject_w in done) if interject_w is not None else False
+            ) and self.interrupt_llm_with_interjections:
                 try:
                     if not llm_task.done():
                         llm_task.cancel()
@@ -406,8 +512,9 @@ class Orchestrator:
                     pass
                 # Re-queue the interjection so the legacy loop processes it identically
                 try:
-                    payload = interject_w.result()
-                    await self.interject_queue.put(payload)
+                    if interject_w is not None:
+                        payload = interject_w.result()
+                        await self.interject_queue.put(payload)
                 except Exception:
                     pass
                 # Cleanup the cancel waiter
@@ -565,10 +672,14 @@ class Orchestrator:
                         )
                     except Exception:
                         pass
-                    # Build watchers
-                    interject_waiter = asyncio.create_task(
-                        self.interject_queue.get(),
-                        name="FirstTurnInterject",
+                    # Build watchers; interject waiter only when adapter disabled
+                    interject_waiter = (
+                        asyncio.create_task(
+                            self.interject_queue.get(),
+                            name="FirstTurnInterject",
+                        )
+                        if not enable_interject_adapter
+                        else None
                     )
                     cancel_waiter2 = asyncio.create_task(
                         self.cancel_event.wait(),
@@ -604,7 +715,12 @@ class Orchestrator:
                             tools_data.pending
                             | set(clar_waiters.keys())
                             | set(notif_waiters.keys())
-                            | {interject_waiter, cancel_waiter2}
+                            | (
+                                {interject_waiter}
+                                if interject_waiter is not None
+                                else set()
+                            )
+                            | {cancel_waiter2}
                         )
                         if not waitset:
                             break
@@ -640,13 +756,25 @@ class Orchestrator:
                             canceled = True
                             break
                         if (
-                            interject_waiter in done_first
-                            and self.interrupt_llm_with_interjections
-                        ):
+                            (interject_waiter in done_first)
+                            if interject_waiter is not None
+                            else False
+                        ) and self.interrupt_llm_with_interjections:
                             try:
-                                await self.interject_queue.put(
-                                    interject_waiter.result(),
+                                interject_payload = (
+                                    interject_waiter.result()
+                                    if interject_waiter
+                                    else None
                                 )
+                                # Append legacy system message for consolidation/visibility
+                                sys_msg = {
+                                    "role": "system",
+                                    "content": self._build_interjection_system_content(
+                                        interject_payload,
+                                    ),
+                                }
+                                await dispatcher.append_msgs([sys_msg])
+                                await self.interject_queue.put(interject_payload)
                             except Exception:
                                 pass
                             interjected = True
@@ -776,9 +904,13 @@ class Orchestrator:
                                 )
                                 notif_waiters[pw] = _t
                         # Recreate interject/cancel waiters for next loop
-                        interject_waiter = asyncio.create_task(
-                            self.interject_queue.get(),
-                            name="FirstTurnInterject",
+                        interject_waiter = (
+                            asyncio.create_task(
+                                self.interject_queue.get(),
+                                name="FirstTurnInterject",
+                            )
+                            if not enable_interject_adapter
+                            else None
                         )
                         cancel_waiter2 = asyncio.create_task(
                             self.cancel_event.wait(),
@@ -1104,9 +1236,13 @@ class Orchestrator:
                             pass
 
                         # Await first event or completion(s) for this turn
-                        interject2 = asyncio.create_task(
-                            self.interject_queue.get(),
-                            name="TurnInterject",
+                        interject2 = (
+                            asyncio.create_task(
+                                self.interject_queue.get(),
+                                name="TurnInterject",
+                            )
+                            if not enable_interject_adapter
+                            else None
                         )
                         cancel2 = asyncio.create_task(
                             self.cancel_event.wait(),
@@ -1137,7 +1273,8 @@ class Orchestrator:
                             tools_data2.pending
                             | set(clar_w2.keys())
                             | set(notif_w2.keys())
-                            | {interject2, cancel2}
+                            | ({interject2} if interject2 is not None else set())
+                            | {cancel2}
                         )
                         if wset2:
                             # Honor rolling time budget while waiting
@@ -1163,11 +1300,22 @@ class Orchestrator:
                                     pass
                                 break
                             if (
-                                interject2 in done2
-                                and self.interrupt_llm_with_interjections
-                            ):
+                                (interject2 in done2)
+                                if interject2 is not None
+                                else False
+                            ) and self.interrupt_llm_with_interjections:
                                 try:
-                                    await self.interject_queue.put(interject2.result())
+                                    interject_payload2 = (
+                                        interject2.result() if interject2 else None
+                                    )
+                                    sys_msg2 = {
+                                        "role": "system",
+                                        "content": self._build_interjection_system_content(
+                                            interject_payload2,
+                                        ),
+                                    }
+                                    await dispatcher2.append_msgs([sys_msg2])
+                                    await self.interject_queue.put(interject_payload2)
                                 except Exception:
                                     pass
                                 break
