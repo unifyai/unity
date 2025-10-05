@@ -26,6 +26,8 @@ from .utils import maybe_await
 from ..llm_helpers import method_to_schema as _method_to_schema
 from ..llm_helpers import _dumps as _json_pretty
 from ..tool_spec import normalise_tools
+from ..tool_spec import ToolSpec
+from . import semantic_cache as sc
 from ...constants import LOGGER
 from .tools_utils import create_tool_call_message
 from .dynamic_tools_factory import DynamicToolFactory
@@ -332,16 +334,13 @@ class Orchestrator:
                 pass
 
         # Additional parity gating: disable evented path when semantic cache or images are used
-        try:
-            if self.semantic_cache:
-                do_first_turn = False
-                do_slice = False
-                try:
-                    LOGGER.info("orchestrator: skip evented due to semantic_cache")
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        # Semantic cache is supported in evented path: inject messages and a dummy tool like legacy
+        sem_cache_hit = None
+        if self.semantic_cache:
+            try:
+                sem_cache_hit = sc.search_semantic_cache(self.message)
+            except Exception:
+                sem_cache_hit = None
 
         async def _early_exit(
             reason: str,
@@ -442,11 +441,50 @@ class Orchestrator:
 
             tools_param: list[dict] = []
             if expose_tools:
-                # Build schemas from the filtered mapping
-                tools_param = [
-                    _method_to_schema(fn, tool_name=name)
-                    for name, fn in filtered_map.items()
-                ]
+                # Build schemas from the filtered mapping with pre-exposure filtering
+                try:
+                    normalized = normalise_tools(
+                        {n: fn for n, fn in filtered_map.items()},
+                    )
+                except Exception:
+                    normalized = {n: ToolSpec(fn=fn) for n, fn in filtered_map.items()}
+                td0 = _ToolsData(
+                    self.tools,
+                    client=self.client,
+                    logger=_LoopLogger(
+                        _LoopConfig(self.loop_id, self.lineage, self.lineage or []),
+                        self.log_steps,
+                    ),
+                )
+                try:
+                    _self_task = asyncio.current_task()
+                    if _self_task is not None and hasattr(_self_task, "task_info"):
+                        td0.info = getattr(_self_task, "task_info", {})
+                except Exception:
+                    pass
+                for name, spec in normalized.items():
+                    try:
+                        limit = getattr(spec, "max_total_calls", None)
+                        used = 0
+                        try:
+                            used = sum(
+                                1 for _t, _inf in td0.info.items() if _inf.name == name
+                            )
+                        except Exception:
+                            used = 0
+                        if limit is not None and used >= int(limit):
+                            continue
+                        max_cc = getattr(spec, "max_concurrent", None)
+                        active = 0
+                        try:
+                            active = td0.active_count(name)
+                        except Exception:
+                            active = 0
+                        if max_cc is not None and active >= int(max_cc):
+                            continue
+                        tools_param.append(_method_to_schema(spec.fn, tool_name=name))
+                    except Exception:
+                        continue
                 # Live image helpers (reuse legacy docstrings; cheap exposure)
                 if self.images:
                     try:
@@ -624,6 +662,40 @@ class Orchestrator:
                             self.client.set_system_message(base_sys + _hint)
                         except Exception:
                             pass
+                except Exception:
+                    pass
+
+            # Inject semantic cache messages & dummy tool (if any hit)
+            if sem_cache_hit:
+                try:
+                    msgs = await sc.get_dummy_tool(
+                        sem_cache_hit,
+                        _ToolsData(
+                            self.tools,
+                            client=self.client,
+                            logger=_LoopLogger(
+                                _LoopConfig(
+                                    self.loop_id,
+                                    self.lineage,
+                                    self.lineage or [],
+                                ),
+                                self.log_steps,
+                            ),
+                        ),
+                    )
+                    self.client.append_messages(msgs)
+                    self.client.set_system_message(
+                        (self.client.system_message or "") + sc.get_system_msg_hint(),
+                    )
+                    try:
+                        tools_param.append(
+                            _method_to_schema(
+                                sc.semantic_search_placeholder,
+                                tool_name="semantic_search",
+                            ),
+                        )
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -1626,6 +1698,44 @@ class Orchestrator:
                                 schemas2.append(_method_to_schema(f, tool_name=n))
                             except Exception:
                                 continue
+                        # Pre-exposure filtering by hidden quotas and concurrency
+                        try:
+                            normalized2 = normalise_tools(
+                                {n: f for n, f in filtered_map2.items()},
+                            )
+                        except Exception:
+                            normalized2 = {
+                                n: ToolSpec(fn=f) for n, f in filtered_map2.items()
+                            }
+                        filtered_schemas2: list[dict] = []
+                        for name, spec in normalized2.items():
+                            try:
+                                limit = getattr(spec, "max_total_calls", None)
+                                used = 0
+                                try:
+                                    used = sum(
+                                        1
+                                        for _t, _inf in tools_data2.info.items()
+                                        if _inf.name == name
+                                    )
+                                except Exception:
+                                    used = 0
+                                if limit is not None and used >= int(limit):
+                                    continue
+                                max_cc = getattr(spec, "max_concurrent", None)
+                                active = 0
+                                try:
+                                    active = tools_data2.active_count(name)
+                                except Exception:
+                                    active = 0
+                                if max_cc is not None and active >= int(max_cc):
+                                    continue
+                                filtered_schemas2.append(
+                                    _method_to_schema(spec.fn, tool_name=name),
+                                )
+                            except Exception:
+                                continue
+                        schemas2 = filtered_schemas2
                         # Live image helpers – expose overview and aligner when images present
                         if self.images:
                             try:
