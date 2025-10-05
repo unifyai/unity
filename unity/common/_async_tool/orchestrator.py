@@ -34,6 +34,7 @@ from .tools_utils import default_source_label as _default_img_src
 from .tools_data import ToolsData as _ToolsData
 from .message_dispatcher import LoopMessageDispatcher as _Dispatcher
 from .loop_config import LoopConfig as _LoopConfig
+from .loop_config import LIVE_IMAGES_LOG as _LIVE_IMAGES_LOG
 from .timeout_timer import TimeoutTimer as _Timer
 from .loop import LoopLogger as _LoopLogger
 from .loop import _LoopToolFailureTracker as _FailureTracker
@@ -332,14 +333,11 @@ class Orchestrator:
 
         # Additional parity gating: disable evented path when semantic cache or images are used
         try:
-            if self.semantic_cache or (self.images and len(self.images) > 0):
+            if self.semantic_cache:
                 do_first_turn = False
                 do_slice = False
                 try:
-                    LOGGER.info(
-                        "orchestrator: skip evented due to %s",
-                        "semantic_cache" if self.semantic_cache else "images",
-                    )
+                    LOGGER.info("orchestrator: skip evented due to semantic_cache")
                 except Exception:
                     pass
         except Exception:
@@ -449,6 +447,105 @@ class Orchestrator:
                     _method_to_schema(fn, tool_name=name)
                     for name, fn in filtered_map.items()
                 ]
+                # Live image helpers (reuse legacy docstrings; cheap exposure)
+                if self.images:
+                    try:
+                        # Build minimal overview doc with any prior appended images
+                        prior_lines = []
+                        try:
+                            for rec in _LIVE_IMAGES_LOG.get() or []:
+                                try:
+                                    src, iid_s, span_key = rec.split(":", 2)
+                                    prior_lines.append(
+                                        f"- source={src}, id={int(iid_s)}, span={span_key}",
+                                    )
+                                except Exception:
+                                    continue
+                        except Exception:
+                            prior_lines = []
+                        overview_doc = (
+                            "Live images aligned to the current user_message (visible in this description; calling is optional).\n"
+                            + ("\n".join(prior_lines) if prior_lines else "(none)")
+                        )
+
+                        async def live_images_overview() -> Dict[str, str]:  # type: ignore[name-defined]
+                            return {"status": "ok"}
+
+                        live_images_overview.__doc__ = overview_doc  # type: ignore[attr-defined]
+
+                        async def align_images_for(*, args: dict, hints: list[dict]) -> dict:  # type: ignore[valid-type]
+                            out: dict[str, int] = {}
+                            try:
+                                arg_texts = {
+                                    str(k): str(v) for k, v in dict(args or {}).items()
+                                }
+                            except Exception:
+                                arg_texts = {}
+
+                            def _extract_id(obj: dict) -> int | None:
+                                for k in ("image_id", "imageId", "id"):
+                                    if k in obj:
+                                        try:
+                                            return int(obj[k])
+                                        except Exception:
+                                            return None
+                                return None
+
+                            def _extract_arg(obj: dict) -> str | None:
+                                for k in ("arg", "argument", "arg_name", "name"):
+                                    if k in obj:
+                                        return str(obj[k])
+                                return None
+
+                            def _extract_substring(obj: dict) -> str | None:
+                                for k in ("substring", "text", "span_text"):
+                                    if k in obj:
+                                        return str(obj[k])
+                                return None
+
+                            for item in list(hints or []):
+                                if not isinstance(item, dict):
+                                    continue
+                                iid = _extract_id(item)
+                                arg_name = _extract_arg(item)
+                                sub = _extract_substring(item)
+                                if iid is None or not arg_name or sub is None:
+                                    continue
+                                base = arg_texts.get(arg_name)
+                                if not isinstance(base, str):
+                                    continue
+                                try:
+                                    start = base.find(sub)
+                                    if start < 0:
+                                        continue
+                                    end = start + len(sub)
+                                    key = f"{arg_name}[{start}:{end}]"
+                                    out[key] = iid
+                                except Exception:
+                                    continue
+                            return {"images": out}
+
+                        # Append schemas
+                        try:
+                            tools_param.append(
+                                _method_to_schema(
+                                    live_images_overview,
+                                    tool_name="live_images_overview",
+                                ),
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            tools_param.append(
+                                _method_to_schema(
+                                    align_images_for,
+                                    tool_name="align_images_for",
+                                ),
+                            )
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
                 # Dynamic helper tools for in-flight calls
                 try:
                     tools_data_tmp = _ToolsData(
@@ -1529,6 +1626,113 @@ class Orchestrator:
                                 schemas2.append(_method_to_schema(f, tool_name=n))
                             except Exception:
                                 continue
+                        # Live image helpers – expose overview and aligner when images present
+                        if self.images:
+                            try:
+                                prior_lines2 = []
+                                try:
+                                    for rec in _LIVE_IMAGES_LOG.get() or []:
+                                        try:
+                                            src, iid_s, span_key = rec.split(":", 2)
+                                            prior_lines2.append(
+                                                f"- source={src}, id={int(iid_s)}, span={span_key}",
+                                            )
+                                        except Exception:
+                                            continue
+                                except Exception:
+                                    prior_lines2 = []
+                                overview_doc2 = (
+                                    "Live images aligned to the current user_message (visible in this description; calling is optional).\n"
+                                    + (
+                                        "\n".join(prior_lines2)
+                                        if prior_lines2
+                                        else "(none)"
+                                    )
+                                )
+
+                                async def live_images_overview() -> Dict[str, str]:  # type: ignore[name-defined]
+                                    return {"status": "ok"}
+
+                                live_images_overview.__doc__ = overview_doc2  # type: ignore[attr-defined]
+
+                                async def align_images_for(*, args: dict, hints: list[dict]) -> dict:  # type: ignore[valid-type]
+                                    out: dict[str, int] = {}
+                                    try:
+                                        arg_texts = {
+                                            str(k): str(v)
+                                            for k, v in dict(args or {}).items()
+                                        }
+                                    except Exception:
+                                        arg_texts = {}
+
+                                    def _extract_id(obj: dict) -> int | None:
+                                        for k in ("image_id", "imageId", "id"):
+                                            if k in obj:
+                                                try:
+                                                    return int(obj[k])
+                                                except Exception:
+                                                    return None
+                                        return None
+
+                                    def _extract_arg(obj: dict) -> str | None:
+                                        for k in (
+                                            "arg",
+                                            "argument",
+                                            "arg_name",
+                                            "name",
+                                        ):
+                                            if k in obj:
+                                                return str(obj[k])
+                                        return None
+
+                                    def _extract_substring(obj: dict) -> str | None:
+                                        for k in ("substring", "text", "span_text"):
+                                            if k in obj:
+                                                return str(obj[k])
+                                        return None
+
+                                    for item in list(hints or []):
+                                        if not isinstance(item, dict):
+                                            continue
+                                        iid = _extract_id(item)
+                                        arg_name = _extract_arg(item)
+                                        sub = _extract_substring(item)
+                                        if iid is None or not arg_name or sub is None:
+                                            continue
+                                        base = arg_texts.get(arg_name)
+                                        if not isinstance(base, str):
+                                            continue
+                                        try:
+                                            start = base.find(sub)
+                                            if start < 0:
+                                                continue
+                                            end = start + len(sub)
+                                            key = f"{arg_name}[{start}:{end}]"
+                                            out[key] = iid
+                                        except Exception:
+                                            continue
+                                    return {"images": out}
+
+                                try:
+                                    schemas2.append(
+                                        _method_to_schema(
+                                            live_images_overview,
+                                            tool_name="live_images_overview",
+                                        ),
+                                    )
+                                except Exception:
+                                    pass
+                                try:
+                                    schemas2.append(
+                                        _method_to_schema(
+                                            align_images_for,
+                                            tool_name="align_images_for",
+                                        ),
+                                    )
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
                         # Dynamic helper tools for current pending set
                         try:
                             dyn_factory2 = DynamicToolFactory(tools_data2)
