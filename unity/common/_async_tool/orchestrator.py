@@ -341,12 +341,13 @@ class Orchestrator:
 
             # Launch adapters under a TaskGroup for future full evented operation
             # (Interject adapter gated to avoid competing with legacy preemption logic)
+            # Interject adapter enabled by default for full evented operation
             try:
                 enable_interject_adapter = json.loads(
-                    os.environ.get("UNITY_EVENTED_INTERJECT_ADAPTER", "false"),
+                    os.environ.get("UNITY_EVENTED_INTERJECT_ADAPTER", "true"),
                 )
             except Exception:
-                enable_interject_adapter = False
+                enable_interject_adapter = True
 
             async with asyncio.TaskGroup() as tg:
                 self._tg = tg
@@ -521,7 +522,13 @@ class Orchestrator:
                         logger=logger,
                     )
                     assistant_meta: Dict[int, Dict[str, Any]] = {}
-                    # Schedule base tool calls
+                    # Schedule base tool calls (enforce max_parallel_tool_calls)
+                    scheduled_count = 0
+                    max_calls = (
+                        int(self.max_parallel_tool_calls)
+                        if self.max_parallel_tool_calls is not None
+                        else None
+                    )
                     for idx, call in enumerate(list(msg0.get("tool_calls") or [])):
                         try:
                             name = (call.get("function", {}) or {}).get("name")
@@ -532,6 +539,8 @@ class Orchestrator:
                                 "{}",
                             )
                             cid = call.get("id") or "call"
+                            if max_calls is not None and scheduled_count >= max_calls:
+                                break
                             await tools_data.schedule_base_tool_call(
                                 msg0,
                                 name=name,
@@ -542,6 +551,7 @@ class Orchestrator:
                                 propagate_chat_context=self.propagate_chat_context,
                                 assistant_meta=assistant_meta,
                             )
+                            scheduled_count += 1
                         except Exception:
                             continue
                     # Ensure placeholders
@@ -868,7 +878,17 @@ class Orchestrator:
                             except Exception:
                                 pass
 
+                        # Enforce time/step limits before generating
+                        try:
+                            if timer.has_exceeded_time() or timer.has_exceeded_msgs():
+                                break
+                        except Exception:
+                            pass
                         await _gwp(self.client, self.preprocess_msgs, **gen_kwargs2)
+                        try:
+                            timer.reset()
+                        except Exception:
+                            pass
 
                         # Handle structured-output final_answer
                         msg_tail = (
@@ -1039,6 +1059,12 @@ class Orchestrator:
                             logger=logger2,
                         )
                         assistant_meta2: Dict[int, Dict[str, Any]] = {}
+                        scheduled2 = 0
+                        max_calls2 = (
+                            int(self.max_parallel_tool_calls)
+                            if self.max_parallel_tool_calls is not None
+                            else None
+                        )
                         for idx2, call in enumerate(
                             list(msg_tail.get("tool_calls") or []),
                         ):
@@ -1051,6 +1077,8 @@ class Orchestrator:
                                     "{}",
                                 )
                                 cid2 = call.get("id") or "call"
+                                if max_calls2 is not None and scheduled2 >= max_calls2:
+                                    break
                                 await tools_data2.schedule_base_tool_call(
                                     msg_tail,
                                     name=nm,
@@ -1061,6 +1089,7 @@ class Orchestrator:
                                     propagate_chat_context=self.propagate_chat_context,
                                     assistant_meta=assistant_meta2,
                                 )
+                                scheduled2 += 1
                             except Exception:
                                 continue
                         try:
@@ -1111,9 +1140,20 @@ class Orchestrator:
                             | {interject2, cancel2}
                         )
                         if wset2:
+                            # Honor rolling time budget while waiting
+                            try:
+                                if (
+                                    timer.has_exceeded_time()
+                                    or timer.has_exceeded_msgs()
+                                ):
+                                    await tools_data2.cancel_pending_tasks()
+                                    break
+                            except Exception:
+                                pass
                             done2, _ = await asyncio.wait(
                                 wset2,
                                 return_when=asyncio.FIRST_COMPLETED,
+                                timeout=timer.remaining_time(),
                             )
                             # Handle branches akin to first-turn
                             if cancel2 in done2:
@@ -1239,12 +1279,13 @@ class Orchestrator:
                     ControlAdapter(self).schedule()
                 except Exception:
                     pass
+                # Interject adapter enabled by default for slice as well
                 try:
                     enable_interject_adapter = json.loads(
-                        os.environ.get("UNITY_EVENTED_INTERJECT_ADAPTER", "false"),
+                        os.environ.get("UNITY_EVENTED_INTERJECT_ADAPTER", "true"),
                     )
                 except Exception:
-                    enable_interject_adapter = False
+                    enable_interject_adapter = True
                 if enable_interject_adapter:
                     try:
                         InterjectAdapter(self).schedule()
