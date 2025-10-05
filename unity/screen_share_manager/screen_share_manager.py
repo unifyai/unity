@@ -309,9 +309,7 @@ class ScreenShareManager:
                 for i in range(1, len(visual_events)):
                     prev_event = visual_events[i - 1]
                     current_event = visual_events[i]
-                    time_diff = (
-                        current_event["timestamp"] - prev_event["timestamp"]
-                    )
+                    time_diff = current_event["timestamp"] - prev_event["timestamp"]
 
                     if time_diff <= self.BURST_DETECTION_THRESHOLD_SEC:
                         current_burst.append(current_event)
