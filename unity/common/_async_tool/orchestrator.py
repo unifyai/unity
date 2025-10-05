@@ -14,11 +14,24 @@ from .loop import _check_valid_response_format as _resp_schema
 from .messages import generate_with_preprocess as _gwp
 from .messages import _is_helper_tool as _is_helper_tool
 from .messages import build_helper_ack_content as _helper_ack
+from .messages import (
+    ensure_placeholders_for_pending as _ensure_placeholders_for_pending,
+)
+from .messages import (
+    insert_tool_message_after_assistant as _insert_tool_message_after_assistant,
+)
 from .utils import maybe_await
 from ..llm_helpers import method_to_schema as _method_to_schema
+from ..llm_helpers import _dumps as _json_pretty
 from ..tool_spec import normalise_tools
 from ...constants import LOGGER
 from .tools_utils import create_tool_call_message
+from .tools_data import ToolsData as _ToolsData
+from .message_dispatcher import LoopMessageDispatcher as _Dispatcher
+from .loop_config import LoopConfig as _LoopConfig
+from .timeout_timer import TimeoutTimer as _Timer
+from .loop import LoopLogger as _LoopLogger
+from .loop import _LoopToolFailureTracker as _FailureTracker
 import inspect
 
 
@@ -410,6 +423,736 @@ class Orchestrator:
                     _ = llm_task.exception()
                 except Exception:
                     pass
+                # Insert placeholders for base tools immediately after the assistant turn
+                try:
+                    msg_ref = (
+                        self.client.messages[-1]
+                        if getattr(self.client, "messages", None)
+                        else None
+                    )
+                    if isinstance(msg_ref, dict):
+                        tcs = list(msg_ref.get("tool_calls") or [])
+                        if tcs:
+                            self._insert_placeholders_for_calls(msg_ref, tcs)
+                except Exception:
+                    pass
+                # Minimal hygiene: prune `wait` and acknowledge other helper tools
+                try:
+                    msg = (
+                        self.client.messages[-1]
+                        if getattr(self.client, "messages", None)
+                        else None
+                    )
+                except Exception:
+                    msg = None
+                if isinstance(msg, dict):
+                    try:
+                        tool_calls = list(msg.get("tool_calls") or [])
+                    except Exception:
+                        tool_calls = []
+                    if tool_calls:
+                        try:
+                            remaining_calls = []
+                            for call in tool_calls:
+                                fn_meta = call.get("function", {}) or {}
+                                name = fn_meta.get("name")
+                                args_json = fn_meta.get("arguments", "{}")
+                                call_id = call.get("id") or "call"
+                                if isinstance(name, str) and _is_helper_tool(name):
+                                    if name == "wait":
+                                        # Drop `wait` from assistant tool_calls to avoid clutter
+                                        continue
+                                    # Insert acknowledgement for other helpers
+                                    try:
+                                        self._insert_helper_ack(
+                                            msg,
+                                            name,
+                                            args_json,
+                                            str(call_id),
+                                        )
+                                    except Exception:
+                                        pass
+                                else:
+                                    remaining_calls.append(call)
+                            if len(remaining_calls) != len(tool_calls):
+                                if remaining_calls:
+                                    msg["tool_calls"] = remaining_calls
+                                else:
+                                    # If nothing remains and no content, drop the assistant message
+                                    try:
+                                        content_present = bool(
+                                            (msg.get("content") or "").strip(),
+                                        )
+                                        if (
+                                            not content_present
+                                            and self.client.messages
+                                            and self.client.messages[-1] is msg
+                                        ):
+                                            self.client.messages.pop()
+                                        else:
+                                            msg.pop("tool_calls", None)
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                # Schedule and await first completion/clarification/notification using ToolsData
+                try:
+                    msg0 = (
+                        self.client.messages[-1]
+                        if getattr(self.client, "messages", None)
+                        else None
+                    )
+                except Exception:
+                    msg0 = None
+                if isinstance(msg0, dict):
+                    # Setup dispatcher and tools data
+                    cfg = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
+                    timer = _Timer(
+                        timeout=self.timeout,
+                        max_steps=self.max_steps,
+                        raise_on_limit=self.raise_on_limit,
+                        client=self.client,
+                    )
+                    dispatcher = _Dispatcher(self.client, cfg, timer)
+                    logger = _LoopLogger(cfg, self.log_steps)
+                    tools_data = _ToolsData(
+                        self.tools,
+                        client=self.client,
+                        logger=logger,
+                    )
+                    assistant_meta: Dict[int, Dict[str, Any]] = {}
+                    # Schedule base tool calls
+                    for idx, call in enumerate(list(msg0.get("tool_calls") or [])):
+                        try:
+                            name = (call.get("function", {}) or {}).get("name")
+                            if not isinstance(name, str) or _is_helper_tool(name):
+                                continue
+                            args_json = (call.get("function", {}) or {}).get(
+                                "arguments",
+                                "{}",
+                            )
+                            cid = call.get("id") or "call"
+                            await tools_data.schedule_base_tool_call(
+                                msg0,
+                                name=name,
+                                args_json=args_json,
+                                call_id=cid,
+                                call_idx=idx,
+                                parent_chat_context=self.parent_chat_context,
+                                propagate_chat_context=self.propagate_chat_context,
+                                assistant_meta=assistant_meta,
+                            )
+                        except Exception:
+                            continue
+                    # Ensure placeholders
+                    try:
+                        await _ensure_placeholders_for_pending(
+                            assistant_msg=msg0,
+                            tools_data=tools_data,
+                            assistant_meta=assistant_meta,
+                            client=self.client,
+                            msg_dispatcher=dispatcher,
+                        )
+                    except Exception:
+                        pass
+                    # Build watchers
+                    interject_waiter = asyncio.create_task(
+                        self.interject_queue.get(),
+                        name="FirstTurnInterject",
+                    )
+                    cancel_waiter2 = asyncio.create_task(
+                        self.cancel_event.wait(),
+                        name="FirstTurnCancel",
+                    )
+                    clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
+                    notif_waiters: Dict[asyncio.Task, asyncio.Task] = {}
+                    for _t in list(tools_data.pending):
+                        _inf = tools_data.info.get(_t)
+                        if not _inf:
+                            continue
+                        if (
+                            not getattr(_inf, "waiting_for_clarification", False)
+                            and _inf.clar_up_queue is not None
+                        ):
+                            cw = asyncio.create_task(
+                                _inf.clar_up_queue.get(),
+                                name="FirstTurnClarification",
+                            )
+                            clar_waiters[cw] = _t
+                        if _inf.notification_queue is not None:
+                            pw = asyncio.create_task(
+                                _inf.notification_queue.get(),
+                                name="FirstTurnNotification",
+                            )
+                            notif_waiters[pw] = _t
+                    # Loop to handle multiple completions before handing off
+                    canceled = False
+                    interjected = False
+                    llm_turn_required = False
+                    while True:
+                        waitset = (
+                            tools_data.pending
+                            | set(clar_waiters.keys())
+                            | set(notif_waiters.keys())
+                            | {interject_waiter, cancel_waiter2}
+                        )
+                        if not waitset:
+                            break
+                        done_first, _ = await asyncio.wait(
+                            waitset,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        # Cleanup unused helpers for this iteration
+                        try:
+                            for aux in (
+                                interject_waiter,
+                                cancel_waiter2,
+                                *clar_waiters.keys(),
+                                *notif_waiters.keys(),
+                            ):
+                                if aux not in done_first and not aux.done():
+                                    aux.cancel()
+                            await asyncio.gather(
+                                interject_waiter,
+                                cancel_waiter2,
+                                *clar_waiters.keys(),
+                                *notif_waiters.keys(),
+                                return_exceptions=True,
+                            )
+                        except Exception:
+                            pass
+                        # Handle branches
+                        if cancel_waiter2 in done_first:
+                            try:
+                                await tools_data.cancel_pending_tasks()
+                            except Exception:
+                                pass
+                            canceled = True
+                            break
+                        if (
+                            interject_waiter in done_first
+                            and self.interrupt_llm_with_interjections
+                        ):
+                            try:
+                                await self.interject_queue.put(
+                                    interject_waiter.result(),
+                                )
+                            except Exception:
+                                pass
+                            interjected = True
+                            break
+                        # Clarification request(s)
+                        if done_first & set(clar_waiters.keys()):
+                            for cw in done_first & set(clar_waiters.keys()):
+                                try:
+                                    q = cw.result()
+                                    q_text = (
+                                        q.get("question")
+                                        if isinstance(q, dict)
+                                        else str(q)
+                                    )
+                                except Exception:
+                                    q_text = ""
+                                src_task = clar_waiters[cw]
+                                try:
+                                    call_id = tools_data.info[src_task].call_id
+                                    placeholder = tools_data.info[
+                                        src_task
+                                    ].tool_reply_msg
+                                    if placeholder is None:
+                                        placeholder = create_tool_call_message(
+                                            name=f"clarification_request_{call_id}",
+                                            call_id=call_id,
+                                            content="",
+                                        )
+                                        await _insert_tool_message_after_assistant(
+                                            assistant_meta,
+                                            msg0,
+                                            placeholder,
+                                            self.client,
+                                            dispatcher,
+                                        )
+                                        tools_data.info[src_task].tool_reply_msg = (
+                                            placeholder
+                                        )
+                                    placeholder["name"] = (
+                                        f"clarification_request_{call_id}"
+                                    )
+                                    placeholder["content"] = (
+                                        "Tool incomplete, please answer the following to continue tool execution:\n"
+                                        + q_text
+                                    )
+                                    tools_data.info[
+                                        src_task
+                                    ].waiting_for_clarification = True
+                                except Exception:
+                                    pass
+                            llm_turn_required = True
+                            break
+                        # Notification(s)
+                        if done_first & set(notif_waiters.keys()):
+                            for pw in done_first & set(notif_waiters.keys()):
+                                try:
+                                    payload = pw.result()
+                                    content_payload = (
+                                        payload
+                                        if isinstance(payload, dict)
+                                        else {"message": str(payload)}
+                                    )
+                                    src_task = notif_waiters[pw]
+                                    tool_name = tools_data.info[src_task].name
+                                    pretty = _json_pretty(
+                                        {"tool": tool_name, **content_payload},
+                                        indent=4,
+                                    )
+                                    placeholder = tools_data.info[
+                                        src_task
+                                    ].tool_reply_msg
+                                    if placeholder is None:
+                                        placeholder = create_tool_call_message(
+                                            name=tool_name,
+                                            call_id=tools_data.info[src_task].call_id,
+                                            content=pretty,
+                                        )
+                                        await _insert_tool_message_after_assistant(
+                                            assistant_meta,
+                                            msg0,
+                                            placeholder,
+                                            self.client,
+                                            dispatcher,
+                                        )
+                                        tools_data.info[src_task].tool_reply_msg = (
+                                            placeholder
+                                        )
+                                    else:
+                                        placeholder["content"] = pretty
+                                except Exception:
+                                    pass
+                            llm_turn_required = True
+                            break
+                        # Completed tool tasks (may be multiple)
+                        tracker = _FailureTracker(self.max_consecutive_failures)
+                        for t in done_first & tools_data.pending:
+                            try:
+                                await tools_data.process_completed_task(
+                                    task=t,
+                                    consecutive_failures=tracker,
+                                    outer_handle_container=self.outer_handle_container,
+                                    assistant_meta=assistant_meta,
+                                    msg_dispatcher=dispatcher,
+                                )
+                            except Exception:
+                                pass
+                        # Rebuild watchers for remaining tasks
+                        clar_waiters.clear()
+                        notif_waiters.clear()
+                        for _t in list(tools_data.pending):
+                            _inf = tools_data.info.get(_t)
+                            if not _inf:
+                                continue
+                            if (
+                                not getattr(_inf, "waiting_for_clarification", False)
+                                and _inf.clar_up_queue is not None
+                            ):
+                                cw = asyncio.create_task(
+                                    _inf.clar_up_queue.get(),
+                                    name="FirstTurnClarification",
+                                )
+                                clar_waiters[cw] = _t
+                            if _inf.notification_queue is not None:
+                                pw = asyncio.create_task(
+                                    _inf.notification_queue.get(),
+                                    name="FirstTurnNotification",
+                                )
+                                notif_waiters[pw] = _t
+                        # Recreate interject/cancel waiters for next loop
+                        interject_waiter = asyncio.create_task(
+                            self.interject_queue.get(),
+                            name="FirstTurnInterject",
+                        )
+                        cancel_waiter2 = asyncio.create_task(
+                            self.cancel_event.wait(),
+                            name="FirstTurnCancel",
+                        )
+
+                    # Optional: if no pending and no cancellations/interjections and no clarification requested,
+                    # we can allow one more LLM turn evented before handoff (broadening subtly)
+                    if (
+                        not canceled
+                        and not interjected
+                        and not llm_turn_required
+                        and not tools_data.pending
+                    ):
+                        try:
+                            # Second-turn assistant – parity: tool_choice per policy step 1
+                            tool_choice_mode2 = "auto"
+                            if self.tool_policy is not None:
+                                try:
+                                    tool_choice_mode2, _ = self.tool_policy(
+                                        1,
+                                        dict(self.tools or {}),
+                                    )
+                                except Exception:
+                                    tool_choice_mode2 = "auto"
+                            await _gwp(
+                                self.client,
+                                self.preprocess_msgs,
+                                return_full_completion=True,
+                                tools=[],
+                                tool_choice=tool_choice_mode2,
+                                stateful=True,
+                            )
+                        except Exception:
+                            pass
+
+                # Subsequent turns: repeat LLM → schedule base tools → wait cycles
+                try:
+                    step_idx = 1
+                    while True:
+                        # Build schemas per policy
+                        tool_choice_mode2 = "auto"
+                        filtered_map2: Dict[str, Callable] = dict(self.tools or {})
+                        if self.tool_policy is not None:
+                            try:
+                                tool_choice_mode2, filtered_map2 = self.tool_policy(
+                                    step_idx,
+                                    dict(self.tools or {}),
+                                )
+                            except Exception:
+                                tool_choice_mode2 = "auto"
+                                filtered_map2 = dict(self.tools or {})
+
+                        schemas2: list[dict] = []
+                        for n, f in filtered_map2.items():
+                            try:
+                                schemas2.append(_method_to_schema(f, tool_name=n))
+                            except Exception:
+                                continue
+                        if self.response_format is not None:
+                            try:
+                                _answer_schema = _resp_schema(self.response_format)
+                                schemas2.append(
+                                    {
+                                        "type": "function",
+                                        "strict": True,
+                                        "function": {
+                                            "name": "final_answer",
+                                            "description": (
+                                                "Submit your final answer in the required JSON format. "
+                                                "Calling this tool marks the conversation as complete."
+                                            ),
+                                            "parameters": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "answer": _answer_schema,
+                                                },
+                                                "required": ["answer"],
+                                            },
+                                        },
+                                    },
+                                )
+                            except Exception:
+                                pass
+
+                        gen_kwargs2 = {
+                            "return_full_completion": True,
+                            "tools": schemas2,
+                            "tool_choice": tool_choice_mode2,
+                            "stateful": True,
+                        }
+                        if self.max_parallel_tool_calls is not None:
+                            try:
+                                gen_kwargs2["max_tool_calls"] = (
+                                    self.max_parallel_tool_calls
+                                )
+                            except Exception:
+                                pass
+
+                        await _gwp(self.client, self.preprocess_msgs, **gen_kwargs2)
+
+                        # Handle structured-output final_answer
+                        msg_tail = (
+                            self.client.messages[-1]
+                            if getattr(self.client, "messages", None)
+                            else None
+                        )
+                        if (
+                            isinstance(msg_tail, dict)
+                            and self.response_format is not None
+                        ):
+                            try:
+                                for call in list(msg_tail.get("tool_calls") or []):
+                                    if (
+                                        (call.get("function", {}) or {}).get("name")
+                                    ) != "final_answer":
+                                        continue
+                                    args = (call.get("function", {}) or {}).get(
+                                        "arguments",
+                                        {},
+                                    )
+                                    payload = (
+                                        args.get("answer")
+                                        if isinstance(args, dict)
+                                        else None
+                                    )
+                                    if payload is None:
+                                        continue
+                                    try:
+                                        self.response_format.model_validate(payload)
+                                        content_txt = json.dumps(payload)
+                                        tool_msg_ok = create_tool_call_message(
+                                            name="final_answer",
+                                            call_id=call.get("id") or "call",
+                                            content=(
+                                                _json_pretty(payload, indent=4)
+                                                if _json_pretty
+                                                else content_txt
+                                            ),
+                                        )
+                                        self.client.append_messages([tool_msg_ok])
+                                        try:
+                                            idx = self.client.messages.index(msg_tail)
+                                            self.client.messages.insert(
+                                                idx + 1,
+                                                self.client.messages.pop(),
+                                            )
+                                        except Exception:
+                                            pass
+                                        return content_txt
+                                    except Exception:
+                                        # Insert validation failure tool message; continue
+                                        try:
+                                            tool_msg = create_tool_call_message(
+                                                name="final_answer",
+                                                call_id=call.get("id") or "call",
+                                                content=(
+                                                    "⚠️ Validation failed – proceeding with standard formatting step."
+                                                ),
+                                            )
+                                            self.client.append_messages([tool_msg])
+                                            try:
+                                                idx = self.client.messages.index(
+                                                    msg_tail,
+                                                )
+                                                self.client.messages.insert(
+                                                    idx + 1,
+                                                    self.client.messages.pop(),
+                                                )
+                                            except Exception:
+                                                pass
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+
+                        # If no tool_calls → final assistant message content
+                        if isinstance(msg_tail, dict) and not (
+                            msg_tail.get("tool_calls") or []
+                        ):
+                            return msg_tail.get("content", "")
+
+                        # Insert placeholders for new assistant turn tool calls
+                        try:
+                            tcs2 = (
+                                list(msg_tail.get("tool_calls") or [])
+                                if isinstance(msg_tail, dict)
+                                else []
+                            )
+                            if tcs2:
+                                self._insert_placeholders_for_calls(msg_tail, tcs2)
+                        except Exception:
+                            pass
+
+                        # Helper hygiene again
+                        try:
+                            tool_calls2 = (
+                                list(msg_tail.get("tool_calls") or [])
+                                if isinstance(msg_tail, dict)
+                                else []
+                            )
+                        except Exception:
+                            tool_calls2 = []
+                        if tool_calls2:
+                            try:
+                                remaining2 = []
+                                for call in tool_calls2:
+                                    name2 = (call.get("function", {}) or {}).get("name")
+                                    args_json2 = (call.get("function", {}) or {}).get(
+                                        "arguments",
+                                        "{}",
+                                    )
+                                    call_id2 = call.get("id") or "call"
+                                    if isinstance(name2, str) and _is_helper_tool(
+                                        name2,
+                                    ):
+                                        if name2 == "wait":
+                                            continue
+                                        try:
+                                            self._insert_helper_ack(
+                                                msg_tail,
+                                                name2,
+                                                args_json2,
+                                                str(call_id2),
+                                            )
+                                        except Exception:
+                                            pass
+                                    else:
+                                        remaining2.append(call)
+                                if len(remaining2) != len(tool_calls2):
+                                    if remaining2:
+                                        msg_tail["tool_calls"] = remaining2
+                                    else:
+                                        try:
+                                            content_present2 = bool(
+                                                (msg_tail.get("content") or "").strip(),
+                                            )
+                                            if (
+                                                not content_present2
+                                                and self.client.messages
+                                                and self.client.messages[-1] is msg_tail
+                                            ):
+                                                self.client.messages.pop()
+                                            else:
+                                                msg_tail.pop("tool_calls", None)
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+
+                        # Schedule base tools for this turn and wait similar to first
+                        cfg2 = _LoopConfig(
+                            self.loop_id,
+                            self.lineage,
+                            self.lineage or [],
+                        )
+                        timer2 = _Timer(
+                            timeout=self.timeout,
+                            max_steps=self.max_steps,
+                            raise_on_limit=self.raise_on_limit,
+                            client=self.client,
+                        )
+                        dispatcher2 = _Dispatcher(self.client, cfg2, timer2)
+                        logger2 = _LoopLogger(cfg2, self.log_steps)
+                        tools_data2 = _ToolsData(
+                            self.tools,
+                            client=self.client,
+                            logger=logger2,
+                        )
+                        assistant_meta2: Dict[int, Dict[str, Any]] = {}
+                        for idx2, call in enumerate(
+                            list(msg_tail.get("tool_calls") or []),
+                        ):
+                            try:
+                                nm = (call.get("function", {}) or {}).get("name")
+                                if not isinstance(nm, str) or _is_helper_tool(nm):
+                                    continue
+                                aj = (call.get("function", {}) or {}).get(
+                                    "arguments",
+                                    "{}",
+                                )
+                                cid2 = call.get("id") or "call"
+                                await tools_data2.schedule_base_tool_call(
+                                    msg_tail,
+                                    name=nm,
+                                    args_json=aj,
+                                    call_id=cid2,
+                                    call_idx=idx2,
+                                    parent_chat_context=self.parent_chat_context,
+                                    propagate_chat_context=self.propagate_chat_context,
+                                    assistant_meta=assistant_meta2,
+                                )
+                            except Exception:
+                                continue
+                        try:
+                            await _ensure_placeholders_for_pending(
+                                assistant_msg=msg_tail,
+                                tools_data=tools_data2,
+                                assistant_meta=assistant_meta2,
+                                client=self.client,
+                                msg_dispatcher=dispatcher2,
+                            )
+                        except Exception:
+                            pass
+
+                        # Await first event or completion(s) for this turn
+                        interject2 = asyncio.create_task(
+                            self.interject_queue.get(),
+                            name="TurnInterject",
+                        )
+                        cancel2 = asyncio.create_task(
+                            self.cancel_event.wait(),
+                            name="TurnCancel",
+                        )
+                        clar_w2: Dict[asyncio.Task, asyncio.Task] = {}
+                        notif_w2: Dict[asyncio.Task, asyncio.Task] = {}
+                        for _t in list(tools_data2.pending):
+                            _inf2 = tools_data2.info.get(_t)
+                            if not _inf2:
+                                continue
+                            if (
+                                not getattr(_inf2, "waiting_for_clarification", False)
+                                and _inf2.clar_up_queue is not None
+                            ):
+                                cw2 = asyncio.create_task(
+                                    _inf2.clar_up_queue.get(),
+                                    name="TurnClarification",
+                                )
+                                clar_w2[cw2] = _t
+                            if _inf2.notification_queue is not None:
+                                pw2 = asyncio.create_task(
+                                    _inf2.notification_queue.get(),
+                                    name="TurnNotification",
+                                )
+                                notif_w2[pw2] = _t
+                        wset2 = (
+                            tools_data2.pending
+                            | set(clar_w2.keys())
+                            | set(notif_w2.keys())
+                            | {interject2, cancel2}
+                        )
+                        if wset2:
+                            done2, _ = await asyncio.wait(
+                                wset2,
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            # Handle branches akin to first-turn
+                            if cancel2 in done2:
+                                try:
+                                    await tools_data2.cancel_pending_tasks()
+                                except Exception:
+                                    pass
+                                break
+                            if (
+                                interject2 in done2
+                                and self.interrupt_llm_with_interjections
+                            ):
+                                try:
+                                    await self.interject_queue.put(interject2.result())
+                                except Exception:
+                                    pass
+                                break
+                            if done2 & set(clar_w2.keys()):
+                                break  # clarification triggers next LLM turn
+                            if done2 & set(notif_w2.keys()):
+                                break  # notification triggers next LLM turn
+                            # Process completions then continue loop to potentially await more or proceed to next LLM turn
+                            tracker2 = _FailureTracker(self.max_consecutive_failures)
+                            for t in done2 & tools_data2.pending:
+                                try:
+                                    await tools_data2.process_completed_task(
+                                        task=t,
+                                        consecutive_failures=tracker2,
+                                        outer_handle_container=self.outer_handle_container,
+                                        assistant_meta=assistant_meta2,
+                                        msg_dispatcher=dispatcher2,
+                                    )
+                                except Exception:
+                                    pass
+                        # Increment step index
+                        step_idx += 1
+                except Exception:
+                    pass
+
                 # Ensure no dangling tasks remain
                 try:
                     for w in (llm_task, interject_w, cancel_w):
