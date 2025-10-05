@@ -23,6 +23,8 @@ from contextlib import suppress
 from .loop_config import LIVE_IMAGES_REGISTRY
 from .tools_utils import parse_arg_scoped_span, extract_alignment_text_from_value
 from unity.image_manager.utils import substring_from_span
+from ...constants import LOGGER
+from ...constants import LOGGER
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
@@ -186,6 +188,14 @@ class ToolsData:
 
         fn = self.normalized[name].fn
 
+        # DEBUG: log raw scheduling info
+        try:
+            LOGGER.info(
+                f"tools_data.schedule_base_tool_call: name={name} call_id={call_id} raw_args={args_json}",
+            )
+        except Exception:
+            pass
+
         # Enforce hidden per-tool total call quota: should be pre-pruned from
         # the assistant message, but guard here as well and simply skip.
         with suppress(Exception):
@@ -202,9 +212,22 @@ class ToolsData:
 
         sig = inspect.signature(fn)
         params = sig.parameters
+        try:
+            LOGGER.info(
+                "tools_data.signature: name=%s has_params=%s params=%s",
+                name,
+                bool(params),
+                list(params.keys()),
+            )
+        except Exception:
+            pass
         has_varkw = any(
             p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
         )
+        try:
+            LOGGER.info("tools_data.signature: name=%s has_varkw=%s", name, has_varkw)
+        except Exception:
+            pass
 
         sig_accepts_interject_q = "interject_queue" in params or has_varkw
         sig_accepts_pause_event = "pause_event" in params or has_varkw
@@ -249,15 +272,68 @@ class ToolsData:
             )
         except Exception:
             call_args = {}
+        try:
+            LOGGER.info(
+                "tools_data.call_args: name=%s keys=%s payload=%s",
+                name,
+                (
+                    list(call_args.keys())
+                    if isinstance(call_args, dict)
+                    else type(call_args).__name__
+                ),
+                call_args,
+            )
+        except Exception:
+            pass
 
         # Filter extras to match fn signature
         filtered_extras = {
             k: v for k, v in extra_kwargs.items() if k in params or has_varkw
         }
+        try:
+            LOGGER.info(
+                "tools_data.filtered_extras: name=%s keys=%s",
+                name,
+                list(filtered_extras.keys()),
+            )
+        except Exception:
+            pass
 
-        # Forward ALL call args verbatim. Let the callee raise if unsupported.
-        allowed_call_args = call_args
+        # Forward base-tool call args, but drop any unknown keys unless **kwargs is accepted.
+        # This mirrors our dynamic helper normalisation and avoids spurious TypeErrors
+        # when the model invents arguments that are not part of the tool schema.
+        if isinstance(call_args, dict) and not has_varkw:
+            allowed_call_args = {k: v for k, v in call_args.items() if k in params}
+            try:
+                dropped = [k for k in call_args.keys() if k not in params]
+                if dropped:
+                    LOGGER.info(
+                        "tools_data.filtered_call_args: name=%s dropped_unknown_keys=%s",
+                        name,
+                        dropped,
+                    )
+            except Exception:
+                pass
+        else:
+            allowed_call_args = call_args
         merged_kwargs = {**allowed_call_args, **filtered_extras}
+        try:
+            LOGGER.info(
+                "tools_data.invoke: name=%s merged_keys=%s",
+                name,
+                list(merged_kwargs.keys()),
+            )
+            if isinstance(allowed_call_args, dict):
+                for _k in allowed_call_args:
+                    if _k not in params and not has_varkw:
+                        LOGGER.info(
+                            "tools_data.invoke: name=%s dropping? has_varkw=%s unknown_key=%s (will pass as-is per current policy)",
+                            name,
+                            has_varkw,
+                            _k,
+                        )
+        except Exception:
+            pass
 
         # ── Normalise arg-scoped image mapping for inner tools, but skip
         #     source-scoped helpers like `ask_image` which expect `<source>[x:y]`.
@@ -419,6 +495,73 @@ class ToolsData:
         call_id = info.call_id
         fn = info.call_dict["function"]["name"]
         arg = info.call_dict["function"]["arguments"]
+
+        # 1️⃣-a. Drain any pending notifications that arrived just before completion
+        #      (prevents missing progress events when the tool finishes quickly).
+        try:
+            q = info.notification_queue
+        except Exception:
+            q = None
+        if q is not None:
+            while True:
+                try:
+                    payload = q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                except Exception:
+                    break
+
+                # Pretty-print content for transcript placeholder
+                try:
+                    content_payload = (
+                        payload
+                        if isinstance(payload, dict)
+                        else {"message": str(payload)}
+                    )
+                    pretty = _dumps({"tool": name, **content_payload}, indent=4)
+                except Exception:
+                    pretty = _dumps({"tool": name, "message": str(payload)}, indent=4)
+
+                # Create/update a single tool-reply placeholder for this call_id
+                placeholder = info.tool_reply_msg
+                if placeholder is None:
+                    placeholder = create_tool_call_message(
+                        name=name,
+                        call_id=call_id,
+                        content=pretty,
+                    )
+                    await insert_tool_message_after_assistant(
+                        assistant_meta,
+                        info.assistant_msg,
+                        placeholder,
+                        self._client,
+                        msg_dispatcher,
+                    )
+                    info.tool_reply_msg = placeholder
+                else:
+                    placeholder["content"] = pretty
+
+                # Forward a programmatic notification event to the outer handle
+                try:
+                    outer = (
+                        outer_handle_container[0] if outer_handle_container else None
+                    )
+                    if outer is not None and hasattr(outer, "_notification_q"):
+                        event_payload = (
+                            payload
+                            if isinstance(payload, dict)
+                            else {"message": str(payload)}
+                        )
+                        await outer._notification_q.put(
+                            {
+                                "type": "notification",
+                                "call_id": call_id,
+                                "tool_name": name,
+                                **event_payload,
+                            },
+                        )
+                except Exception:
+                    pass
 
         # 2️⃣  obtain result -------------------------------------------------
         try:

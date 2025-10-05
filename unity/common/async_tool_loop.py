@@ -19,6 +19,7 @@ from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
+from ._async_tool.orchestrator import evented_tool_loop_inner
 
 if TYPE_CHECKING:
     from ..image_manager.image_manager import ImageHandle
@@ -582,6 +583,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         *,
         parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
+        # Debug: log stop invocation context
+        try:
+            _label = getattr(self, "_log_label", None) or self._loop_id
+            LOGGER.info(
+                "stop_invoked: label=%s is_root=%s reason=%r",
+                _label,
+                getattr(self, "_is_root_handle", False),
+                reason,
+            )
+        except Exception:
+            pass
         # Replay any pending buffered passthrough ops
         try:
             asyncio.get_running_loop().create_task(
@@ -688,6 +700,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         try:
             return await self._task
         except asyncio.CancelledError:
+            # Unconditional debug: record that result() observed cancellation
+            try:
+                _label = getattr(self, "_log_label", None) or self._loop_id
+                LOGGER.info(
+                    f"result_cancelled: handle_label={_label} returning_stopped_notice",
+                )
+            except Exception:
+                pass
             # When callers cancel the OUTER loop without a delegate, return a stable notice.
             return _stopped_notice
 
@@ -766,6 +786,7 @@ def start_async_tool_loop(
     handle_cls: Optional[Type[AsyncToolLoopHandle]] = None,
     semantic_cache: Optional[bool] = False,
     images: Optional[dict[str, "ImageHandle"]] = None,
+    evented: Optional[bool] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -798,37 +819,98 @@ def start_async_tool_loop(
     )
     _lineage = [*_parent, loop_id]
 
-    task = asyncio.create_task(
-        async_tool_loop_inner(
-            client,
-            message,
-            tools,
-            loop_id=loop_id,
-            lineage=_lineage,
-            interject_queue=interject_queue,
-            cancel_event=cancel_event,
-            stop_event=stop_event,
-            pause_event=pause_event,
-            max_consecutive_failures=max_consecutive_failures,
-            prune_tool_duplicates=prune_tool_duplicates,
-            interrupt_llm_with_interjections=interrupt_llm_with_interjections,
-            propagate_chat_context=propagate_chat_context,
-            parent_chat_context=parent_chat_context,
-            log_steps=log_steps,
-            max_steps=max_steps,
-            timeout=timeout,
-            raise_on_limit=raise_on_limit,
-            include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
-            tool_policy=tool_policy,
-            preprocess_msgs=preprocess_msgs,
-            outer_handle_container=outer_handle_container,
-            response_format=response_format,
-            max_parallel_tool_calls=max_parallel_tool_calls,
-            semantic_cache=semantic_cache,
-            images=images,
-        ),
-        name="ToolUseLoop",
-    )
+    # Choose engine based on parameter or environment flag
+    # UNITY_EVENTED_TOOL_LOOP=true enables the event-driven orchestrator.
+    try:
+        use_evented = (
+            bool(evented)
+            if evented is not None
+            else json.loads(os.environ.get("UNITY_EVENTED_TOOL_LOOP", "false"))
+        )
+    except Exception:
+        use_evented = False
+
+    loop_coro = evented_tool_loop_inner if use_evented else async_tool_loop_inner
+
+    try:
+        LOGGER.info(
+            "tool_loop: engine=%s evented_flag=%s env=%s",
+            "evented" if use_evented else "legacy",
+            str(evented),
+            os.environ.get("UNITY_EVENTED_TOOL_LOOP", "unset"),
+        )
+    except Exception:
+        pass
+
+    async def _loop_wrapper():
+        try:
+            return await loop_coro(
+                client,
+                message,
+                tools,
+                loop_id=loop_id,
+                lineage=_lineage,
+                interject_queue=interject_queue,
+                cancel_event=cancel_event,
+                stop_event=stop_event,
+                pause_event=pause_event,
+                max_consecutive_failures=max_consecutive_failures,
+                prune_tool_duplicates=prune_tool_duplicates,
+                interrupt_llm_with_interjections=interrupt_llm_with_interjections,
+                propagate_chat_context=propagate_chat_context,
+                parent_chat_context=parent_chat_context,
+                log_steps=log_steps,
+                max_steps=max_steps,
+                timeout=timeout,
+                raise_on_limit=raise_on_limit,
+                include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
+                tool_policy=tool_policy,
+                preprocess_msgs=preprocess_msgs,
+                outer_handle_container=outer_handle_container,
+                response_format=response_format,
+                max_parallel_tool_calls=max_parallel_tool_calls,
+                semantic_cache=semantic_cache,
+                images=images,
+            )
+        except asyncio.CancelledError:
+            try:
+                LOGGER.info(
+                    "outer_loop_wrapper_cancelled: cancel_event_set=%s stop_event_set=%s",
+                    cancel_event.is_set(),
+                    getattr(stop_event, "is_set", lambda: None)(),
+                )
+            except Exception:
+                pass
+            raise
+
+    task = asyncio.create_task(_loop_wrapper(), name="ToolUseLoop")
+
+    # Attach a done-callback to aid debugging of unexpected cancellations
+    try:
+
+        def _on_tool_loop_done(_t: asyncio.Task):
+            try:
+                cancelled = _t.cancelled()
+            except Exception:
+                cancelled = False
+            exc = None
+            if not cancelled:
+                try:
+                    exc = _t.exception()
+                except Exception:
+                    exc = "<unavailable>"
+            try:
+                LOGGER.info(
+                    "tool_loop_task_done: cancelled=%s exc=%r",
+                    cancelled,
+                    exc,
+                )
+            except Exception:
+                pass
+
+        task.add_done_callback(_on_tool_loop_done)
+    except Exception:
+        pass
 
     # Determine initial_user_message for the handle from diverse input forms
     init_content = None

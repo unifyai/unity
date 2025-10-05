@@ -61,8 +61,24 @@ async def generate_with_preprocess(
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]],
     **gen_kwargs,
 ):
+    # Unconditional debug snapshot for investigation: summarize current transcript roles
+    try:
+        roles_snapshot = [m.get("role") for m in (client.messages or [])]
+        LOGGER.info(
+            f"messages: pre-generate snapshot count={len(roles_snapshot)} roles={roles_snapshot}",
+        )
+    except Exception:
+        pass
     if preprocess_msgs is None:
-        return await maybe_await(client.generate(**gen_kwargs))
+        result = await maybe_await(client.generate(**gen_kwargs))
+        try:
+            roles_after = [m.get("role") for m in (client.messages or [])]
+            LOGGER.info(
+                f"messages: post-generate snapshot count={len(roles_after)} roles={roles_after}",
+            )
+        except Exception:
+            pass
+        return result
 
     original_msgs = client.messages  # reference to canonical log
     msgs_copy = copy.deepcopy(original_msgs)
@@ -74,6 +90,18 @@ async def generate_with_preprocess(
             f"preprocess_msgs raised {exc!r}; using original messages.",
         )
         patched = msgs_copy
+
+    # Also remove a raw leading system prompt from the patched messages (used only for generation)
+    try:
+        if patched and isinstance(patched[0], dict):
+            top_p = patched[0]
+            if top_p.get("role") == "system" and not top_p.get("_ctx_header"):
+                patched.pop(0)
+                LOGGER.info(
+                    "messages: pruned leading system prompt from patched messages (no _ctx_header)",
+                )
+    except Exception:
+        pass
 
     start_len = len(patched)
 
@@ -97,6 +125,14 @@ async def generate_with_preprocess(
         current_msgs = getattr(client, target_attr)
         if len(current_msgs) > start_len:
             original_msgs.extend(copy.deepcopy(current_msgs[start_len:]))
+
+        try:
+            roles_after = [m.get("role") for m in (client.messages or [])]
+            LOGGER.info(
+                f"messages: post-generate snapshot (preprocess) count={len(roles_after)} roles={roles_after}",
+            )
+        except Exception:
+            pass
 
         return result
     finally:
