@@ -755,7 +755,7 @@ async def test_mixed_bursts_and_single_events_are_handled_correctly(
     )
 
     # Verify the total number of frames sent
-    # Expecting: Event 1 + (Sampled Burst of 3) + Event 2 = 5 total frames
+    # Expecting: Event 1 (1) + Sampled Burst (3) + Event 2 (1) = 5 total frames
     image_sections = [
         item for item in user_content if "Visual Change" in item.get("text", "")
     ]
@@ -765,7 +765,7 @@ async def test_mixed_bursts_and_single_events_are_handled_correctly(
     assert "t=10.00s" in image_sections[0]["text"]  # Single event 1
     assert "t=13.00s" in image_sections[1]["text"]  # Burst start
     assert (
-        "t=13.50s" in image_sections[2]["text"]
-    )  # Burst middle (index 1 of a 4-item list)
+        "t=14.00s" in image_sections[2]["text"]
+    )  # Burst middle (correct: index 2 of 4)
     assert "t=14.50s" in image_sections[3]["text"]  # Burst end
     assert "t=18.00s" in image_sections[4]["text"]  # Single event 2
