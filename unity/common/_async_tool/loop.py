@@ -1196,6 +1196,19 @@ async def async_tool_loop_inner(
                             name="NotificationQueueGet",
                         )
                         notif_waiters[pw] = _t
+                        # Debug: log initial qsize for notification queue
+                        try:
+                            _qs = 0
+                            if hasattr(info.notification_queue, "qsize"):
+                                _qs = int(info.notification_queue.qsize())
+                            LOGGER.info(
+                                "notify: watcher created for call_id=%s tool=%s qsize=%s",
+                                info.call_id,
+                                info.name,
+                                _qs,
+                            )
+                        except Exception:
+                            pass
                 waiters = (
                     tools_data.pending
                     | set(clar_waiters)
@@ -1214,6 +1227,18 @@ async def async_tool_loop_inner(
                     timeout=timer.remaining_time(),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                # Debug: summarise which waiters completed
+                try:
+                    _names = []
+                    for tsk in done:
+                        try:
+                            _names.append(getattr(tsk, "get_name", lambda: str(tsk))())
+                        except Exception:
+                            _names.append(str(tsk))
+                    LOGGER.info("waiters_done: %s", _names)
+                except Exception:
+                    pass
 
                 # ── hit the timeout while waiting? ────────────────────────────
                 if not done:
@@ -1239,6 +1264,14 @@ async def async_tool_loop_inner(
                     if aux not in done and not aux.done():
                         aux.cancel()
                         await asyncio.gather(aux, return_exceptions=True)
+                        # Debug: log cancellation of helper waiters
+                        try:
+                            LOGGER.info(
+                                "cancel_aux_waiter: %s",
+                                getattr(aux, "get_name", lambda: str(aux))(),
+                            )
+                        except Exception:
+                            pass
 
                 if interject_w in done:
                     # re-queue so branch 0 will handle user turn immediately
@@ -1246,6 +1279,13 @@ async def async_tool_loop_inner(
                     continue  # → loop, will be processed in 0.
 
                 if cancel_waiter in done:
+                    try:
+                        LOGGER.info(
+                            "raise_cancel: branch=A cancel_waiter_done cancel_set=%s",
+                            cancel_event.is_set(),
+                        )
+                    except Exception:
+                        pass
                     with suppress(Exception):
                         _stop_forwarded_once = await propagate_stop_once(
                             tools_data.info,
@@ -1443,6 +1483,16 @@ async def async_tool_loop_inner(
                                     if isinstance(payload, dict)
                                     else {"message": str(payload)}
                                 )
+                                # Debug: log forwarding event
+                                try:
+                                    LOGGER.info(
+                                        "notify: forward outer event tool=%s call_id=%s keys=%s",
+                                        tool_name,
+                                        call_id,
+                                        list((event_payload or {}).keys()),
+                                    )
+                                except Exception:
+                                    pass
                                 await outer._notification_q.put(
                                     {
                                         "type": "notification",
@@ -1711,6 +1761,18 @@ async def async_tool_loop_inner(
                     | {llm_task, interject_w, cancel_waiter},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+                try:
+                    LOGGER.info(
+                        "preemptive_wait_done: llm_done=%s interject_done=%s cancel_done=%s pending_done=%s clar_done=%s notif_done=%s",
+                        llm_task in done,
+                        interject_w in done,
+                        cancel_waiter in done,
+                        len(done & pending_snapshot),
+                        len(done & set(clar_waiters2.keys())),
+                        len(done & set(notif_waiters2.keys())),
+                    )
+                except Exception:
+                    pass
 
                 # helper cleanup
                 for tsk in (
@@ -1771,10 +1833,20 @@ async def async_tool_loop_inner(
 
                 # 2️⃣ cancellation requested
                 if cancel_waiter in done:
-                    if not llm_task.done():
-                        llm_task.cancel()
-                        await asyncio.gather(llm_task, return_exceptions=True)
-                    raise asyncio.CancelledError
+                    # Only escalate when the cancellation flag is actually set.
+                    if not cancel_event.is_set():
+                        try:
+                            logger.info(
+                                "ignore_spurious_cancel_waiter_preemptive: flag_unset label=%s",
+                                logger.log_label,
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        if not llm_task.done():
+                            llm_task.cancel()
+                            await asyncio.gather(llm_task, return_exceptions=True)
+                        raise asyncio.CancelledError
 
                 # 3️⃣ LLM finished normally
                 if llm_task.exception():
@@ -2590,6 +2662,27 @@ async def async_tool_loop_inner(
         # resources cleanly.  Only after every task has finished/aborted do
         # we re-raise the same `CancelledError`, preserving expected asyncio
         # semantics for upstream callers.
+        try:
+            _pending_count = (
+                len(tools_data.pending) if hasattr(tools_data, "pending") else "-"
+            )
+            _task_info_count = len(getattr(tools_data, "info", {}))
+            _call_ids = []
+            try:
+                for _t, _inf in getattr(tools_data, "info", {}).items():
+                    _call_ids.append(f"{_inf.name}:{_inf.call_id}")
+            except Exception:
+                _call_ids = []
+            LOGGER.info(
+                "loop_cancelled: label=%s pending_count=%s task_info_count=%s calls=%s cancel_set=%s",
+                getattr(cfg, "label", "<unknown>"),
+                _pending_count,
+                _task_info_count,
+                _call_ids,
+                getattr(cancel_event, "is_set", lambda: None)(),
+            )
+        except Exception:
+            pass
         with suppress(Exception):
             _stop_forwarded_once = await propagate_stop_once(
                 tools_data.info,

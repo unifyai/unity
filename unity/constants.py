@@ -63,4 +63,30 @@ if ASYNCIO_VERBOSE_DEBUG:
         _handler._asyncio_debug = True  # Mark to detect duplication
         _root.addHandler(_handler)
 
-        # (Removed) global LogRecordFactory override to keep logging minimal
+        # (Verbose mode uses a logger filter instead of a global record factory.)
+
+# --------------------------------------------------------------------------- #
+#  Defensive record factory: ensure optional fields exist to avoid KeyError     #
+#  in formatters that reference %(task)s or %(thread)s even when verbose mode   #
+#  is off or filters are not attached.                                         #
+# --------------------------------------------------------------------------- #
+
+_orig_factory = logging.getLogRecordFactory()
+
+
+def _safe_record_factory(*args, **kwargs):  # pragma: no cover - trivial shim
+    rec = _orig_factory(*args, **kwargs)
+    # Provide defaults if absent so formatters never raise KeyError.
+    if not hasattr(rec, "task"):
+        rec.task = "-"
+    if not hasattr(rec, "thread"):
+        try:
+            import threading as _th
+
+            rec.thread = _th.current_thread().name
+        except Exception:
+            rec.thread = "-"
+    return rec
+
+
+logging.setLogRecordFactory(_safe_record_factory)
