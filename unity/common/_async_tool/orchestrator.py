@@ -28,6 +28,7 @@ from ..llm_helpers import _dumps as _json_pretty
 from ..tool_spec import normalise_tools
 from ...constants import LOGGER
 from .tools_utils import create_tool_call_message
+from .dynamic_tools_factory import DynamicToolFactory
 from .tools_utils import append_source_scoped_images as _append_images
 from .tools_utils import default_source_label as _default_img_src
 from .tools_data import ToolsData as _ToolsData
@@ -383,6 +384,44 @@ class Orchestrator:
             # honour interjection preemption. Do not mutate the transcript beyond
             # what the LLM produces; let the legacy loop handle scheduling,
             # placeholders, helper-acks, and all ordering semantics for parity.
+            # Inject parent chat context header (legacy parity)
+            try:
+                if self.parent_chat_context:
+                    cfg0 = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
+                    timer0 = _Timer(
+                        timeout=self.timeout,
+                        max_steps=self.max_steps,
+                        raise_on_limit=self.raise_on_limit,
+                        client=self.client,
+                    )
+                    dispatcher0 = _Dispatcher(self.client, cfg0, timer0)
+                    sys_msg = {
+                        "role": "system",
+                        "_ctx_header": True,
+                        "content": (
+                            "Broader context (read-only):\n"
+                            + json.dumps(self.parent_chat_context, indent=2)
+                            + "\n\nResolve the *next* user request in light of this."
+                        ),
+                    }
+                    await dispatcher0.append_msgs([sys_msg])
+                    # Pre-LLM early-exit: enforce limits before starting LLM
+                    if timer0.has_exceeded_time():
+                        notice = {
+                            "role": "assistant",
+                            "content": f"🔚 Terminating early: timeout ({self.timeout}s) exceeded",
+                        }
+                        await dispatcher0.append_msgs([notice])
+                        return notice["content"]
+                    if timer0.has_exceeded_msgs():
+                        notice = {
+                            "role": "assistant",
+                            "content": f"🔚 Terminating early: max_steps ({self.max_steps}) exceeded",
+                        }
+                        await dispatcher0.append_msgs([notice])
+                        return notice["content"]
+            except Exception:
+                pass
             # Determine tool exposure and policy for the first LLM turn
             try:
                 expose_tools = json.loads(
@@ -410,6 +449,45 @@ class Orchestrator:
                     _method_to_schema(fn, tool_name=name)
                     for name, fn in filtered_map.items()
                 ]
+                # Dynamic helper tools for in-flight calls
+                try:
+                    tools_data_tmp = _ToolsData(
+                        self.tools,
+                        client=self.client,
+                        logger=_LoopLogger(
+                            _LoopConfig(self.loop_id, self.lineage, self.lineage or []),
+                            self.log_steps,
+                        ),
+                    )
+                    # Populate with any pending tasks already visible on current task (if any)
+                    try:
+                        _self_task = asyncio.current_task()
+                        if _self_task is not None and hasattr(_self_task, "task_info"):
+                            tools_data_tmp.info = getattr(_self_task, "task_info", {})
+                            tools_data_tmp.pending = set(
+                                list(getattr(_self_task, "task_info", {}).keys()),
+                            )
+                    except Exception:
+                        pass
+                    dyn_factory = DynamicToolFactory(tools_data_tmp)
+                    dyn_factory.generate()
+                    # Hide `wait` if any task awaits clarification
+                    try:
+                        if any(
+                            getattr(_inf, "waiting_for_clarification", False)
+                            for _inf in tools_data_tmp.info.values()
+                        ):
+                            dyn_factory.dynamic_tools.pop("wait", None)
+                    except Exception:
+                        pass
+                    # Merge dynamic helpers into tools_param schema
+                    for _nm, _fn in dyn_factory.dynamic_tools.items():
+                        try:
+                            tools_param.append(_method_to_schema(_fn, tool_name=_nm))
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
                 # Inject final_answer tool when a response_format is provided
                 if self.response_format is not None:
                     try:
@@ -488,6 +566,43 @@ class Orchestrator:
                     except Exception:
                         pass
 
+                # Global pause gating – do not allow LLM turns while paused
+                try:
+                    if not self.pause_event.is_set():
+                        # Wait until resume or cancel, but still allow cancel to win
+                        cancel_gate = asyncio.create_task(
+                            self.cancel_event.wait(),
+                            name="EventedPauseCancelGate",
+                        )
+                        resume_gate = asyncio.create_task(
+                            self.pause_event.wait(),
+                            name="EventedPauseResumeGate",
+                        )
+                        done_gate, _ = await asyncio.wait(
+                            {cancel_gate, resume_gate},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        # Cancel whichever helper didn’t complete
+                        for g in (cancel_gate, resume_gate):
+                            if g not in done_gate and not g.done():
+                                g.cancel()
+                        await asyncio.gather(
+                            cancel_gate,
+                            resume_gate,
+                            return_exceptions=True,
+                        )
+                        # If cancelled while paused, respect cancellation before LLM step
+                        if self.cancel_event.is_set():
+                            if self.stop_event is not None:
+                                try:
+                                    self.stop_event.set()
+                                except Exception:
+                                    pass
+                            # Mirror legacy: no extra assistant message here; handoff to legacy cancel path
+                            raise asyncio.CancelledError
+                except Exception:
+                    pass
+
                 # Time/step guard for first-turn LLM
                 timer0 = _Timer(
                     timeout=self.timeout,
@@ -495,11 +610,7 @@ class Orchestrator:
                     raise_on_limit=self.raise_on_limit,
                     client=self.client,
                 )
-                try:
-                    if timer0.has_exceeded_time() or timer0.has_exceeded_msgs():
-                        raise asyncio.TimeoutError("pre-LLM first-turn limits reached")
-                except Exception:
-                    pass
+                # Limits already enforced above when header was injected; keep here as a guard without raising
 
                 llm_task = asyncio.create_task(
                     _gwp(self.client, self.preprocess_msgs, **gen_kwargs),
@@ -1418,6 +1529,28 @@ class Orchestrator:
                                 schemas2.append(_method_to_schema(f, tool_name=n))
                             except Exception:
                                 continue
+                        # Dynamic helper tools for current pending set
+                        try:
+                            dyn_factory2 = DynamicToolFactory(tools_data2)
+                            dyn_factory2.generate()
+                            # Hide `wait` if any task awaits clarification
+                            try:
+                                if any(
+                                    getattr(_inf, "waiting_for_clarification", False)
+                                    for _inf in tools_data2.info.values()
+                                ):
+                                    dyn_factory2.dynamic_tools.pop("wait", None)
+                            except Exception:
+                                pass
+                            for _nm, _fn in dyn_factory2.dynamic_tools.items():
+                                try:
+                                    schemas2.append(
+                                        _method_to_schema(_fn, tool_name=_nm),
+                                    )
+                                except Exception:
+                                    continue
+                        except Exception:
+                            pass
                         if self.response_format is not None:
                             try:
                                 _answer_schema = _resp_schema(self.response_format)
