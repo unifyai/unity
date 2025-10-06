@@ -135,6 +135,8 @@ class Orchestrator:
         except Exception:
             self._normalized_tools = {}
         self._call_counts: dict[str, int] = {}
+        # No throttling: interjections are drained and consolidated before the
+        # next LLM turn (legacy `loop.py` behavior).
 
     def _build_interjection_system_content(self, payload: Any) -> str:
         # Mirror legacy wording and consolidation semantics
@@ -989,8 +991,9 @@ class Orchestrator:
                     schemas_for_step.append(_method_to_schema(fn, tool_name=name))
                 except Exception:
                     continue
-            # Drain any pending interjections non-blockingly and append a consolidated
-            # system message before the next LLM turn so the guidance is considered.
+            # Drain ALL interjections for this LLM turn and append a system
+            # message per item (tests accept consolidation across one or many
+            # system messages). This mirrors legacy loop behavior.
             try:
                 _cfg_inter = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
                 _timer_inter = _Timer(
@@ -1000,43 +1003,115 @@ class Orchestrator:
                     client=self.client,
                 )
                 _dispatcher_inter = _Dispatcher(self.client, _cfg_inter, _timer_inter)
-                drained_any = False
+                drained = 0
+                drained_texts: list[str] = []
+                # Collect all interjections and append any associated images immediately
                 while True:
                     try:
                         _payload = self.interject_queue.get_nowait()
                     except Exception:
                         break
+                    drained += 1
                     try:
-                        _sys_msg = {
-                            "role": "system",
-                            "content": self._build_interjection_system_content(
-                                _payload,
-                            ),
-                        }
-                        await _dispatcher_inter.append_msgs([_sys_msg])
-                        drained_any = True
+                        # Extract plain text for consolidation
+                        if isinstance(_payload, dict):
+                            _txt = str(_payload.get("message", "")).strip()
+                            _imgs = _payload.get("images")
+                        else:
+                            _txt = str(_payload).strip()
+                            _imgs = None
+                        if _txt:
+                            drained_texts.append(_txt)
+                        # Append any provided images into the live registry/log
+                        try:
+                            _append_images(_imgs, _default_img_src("interjection"))
+                        except Exception:
+                            pass
                     except Exception:
-                        # keep draining
                         pass
-                if drained_any:
+
+                if drained:
+                    # Build a single consolidated system message so the LLM sees
+                    # all interjections together (helps it emit multiple tool calls
+                    # in one turn). We include the user-visible history like legacy.
                     try:
-                        LOGGER.info(
-                            "interject_drain: appended guidance before LLM turn step=%s",
-                            step,
+                        history_lines: list[str] = []
+                        try:
+                            outer = (
+                                self.outer_handle_container[0]
+                                if self.outer_handle_container
+                                else None
+                            )
+                        except Exception:
+                            outer = None
+                        try:
+                            uvh = (
+                                getattr(outer, "_user_visible_history", [])
+                                if outer
+                                else []
+                            )
+                            for _m in uvh:
+                                role = _m.get("role")
+                                _content = _m.get("content")
+                                if isinstance(_content, dict):
+                                    _text = str(_content.get("message", "")).strip()
+                                else:
+                                    _text = str(_content or "").strip()
+                                if role in ("user", "assistant") and _text:
+                                    history_lines.append(f"{role}: {_text}")
+                        except Exception:
+                            history_lines = []
+
+                        body_lines = ["--", *history_lines]
+                        for t in drained_texts:
+                            body_lines.append(f"user: **{t}**")
+                        body_lines.append("--")
+
+                        sys_content = (
+                            "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                            "They have just interjected with the following message(s) (most recent last). "
+                            "From their perspective, the conversation thus far is as follows:\n"
+                            + "\n".join(body_lines)
+                            + "Please consider and incorporate *all* interjections in your final response to the user. "
+                            + "Later interjections should always override earlier interjections if there are "
+                            + "any conflicting comments/requests across the different interjections."
                         )
+
+                        await _dispatcher_inter.append_msgs(
+                            [
+                                {"role": "system", "content": sys_content},
+                            ],
+                        )
+                        try:
+                            LOGGER.info(
+                                "interject_drain: appended consolidated guidance (count=%s) before LLM turn step=%s",
+                                drained,
+                                step,
+                            )
+                        except Exception:
+                            pass
                     except Exception:
                         pass
             except Exception:
                 pass
 
-            await _gwp(
-                self.client,
-                self.preprocess_msgs,
-                return_full_completion=True,
-                tools=schemas_for_step,
-                tool_choice=step_tool_choice,
-                stateful=True,
-            )
+            gen_kwargs = {
+                "return_full_completion": True,
+                "tools": schemas_for_step,
+                "tool_choice": step_tool_choice,
+                "stateful": True,
+            }
+            try:
+                if self.max_parallel_tool_calls is not None:
+                    gen_kwargs["max_tool_calls"] = self.max_parallel_tool_calls
+                elif "drained" in locals() and drained >= 2:
+                    # Encourage the model to emit multiple tool calls in one turn when
+                    # multiple interjections arrived. Use a small headroom.
+                    gen_kwargs["max_tool_calls"] = drained + 2
+            except Exception:
+                pass
+
+            await _gwp(self.client, self.preprocess_msgs, **gen_kwargs)
             tail = (
                 self.client.messages[-1]
                 if getattr(self.client, "messages", None)
