@@ -296,7 +296,8 @@ class Orchestrator:
         # Build first-turn tool schemas using tool_policy (legacy parity)
         # This allows policies like ("required", {...}) to force a tool call on step 0.
         first_tool_choice: str = "auto"
-        policy_returned_map: Dict[str, Callable] = dict(self.tools or {})
+        # When no policy is provided, default to HIDE-NONE for auto mode
+        policy_returned_map: Dict[str, Callable] = {}
         all_tools_map: Dict[str, Callable] = dict(self.tools or {})
         if self.tool_policy is not None:
             try:
@@ -305,7 +306,8 @@ class Orchestrator:
                     dict(all_tools_map),
                 )
             except Exception:
-                first_tool_choice, policy_returned_map = "auto", dict(all_tools_map)
+                # On policy failure, fall back to auto with no hidden tools
+                first_tool_choice, policy_returned_map = "auto", {}
 
         # Legacy parity for first turn:
         # - If mode == "auto": mapping is the HIDE set → visible = all - returned
