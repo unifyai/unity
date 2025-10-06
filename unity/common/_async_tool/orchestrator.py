@@ -914,6 +914,45 @@ class Orchestrator:
                     schemas_for_step.append(_method_to_schema(fn, tool_name=name))
                 except Exception:
                     continue
+            # Drain any pending interjections non-blockingly and append a consolidated
+            # system message before the next LLM turn so the guidance is considered.
+            try:
+                _cfg_inter = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
+                _timer_inter = _Timer(
+                    timeout=self.timeout,
+                    max_steps=self.max_steps,
+                    raise_on_limit=self.raise_on_limit,
+                    client=self.client,
+                )
+                _dispatcher_inter = _Dispatcher(self.client, _cfg_inter, _timer_inter)
+                drained_any = False
+                while True:
+                    try:
+                        _payload = self.interject_queue.get_nowait()
+                    except Exception:
+                        break
+                    try:
+                        _sys_msg = {
+                            "role": "system",
+                            "content": self._build_interjection_system_content(
+                                _payload,
+                            ),
+                        }
+                        await _dispatcher_inter.append_msgs([_sys_msg])
+                        drained_any = True
+                    except Exception:
+                        # keep draining
+                        pass
+                if drained_any:
+                    try:
+                        LOGGER.info(
+                            "interject_drain: appended guidance before LLM turn step=%s",
+                            step,
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
             await _gwp(
                 self.client,
