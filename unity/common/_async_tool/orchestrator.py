@@ -370,6 +370,9 @@ class Orchestrator:
         except Exception:
             pass
 
+        # Track whether we consumed policy step=1 via the follow-up path
+        consumed_followup_step1: bool = False
+
         # Ask for tool calls
         # Enforce a hard wall-clock timeout around the very first LLM turn to
         # preserve legacy semantics: when raise_on_limit=True, exceed → TimeoutError;
@@ -491,6 +494,7 @@ class Orchestrator:
                     tool_choice=next_choice,
                     stateful=True,
                 )
+                consumed_followup_step1 = True
             except Exception:
                 # If follow-up failed, fall back to returning the first assistant answer
                 return last.get("content", "") or ""
@@ -780,8 +784,33 @@ class Orchestrator:
                 except Exception:
                     raise
 
+        # If we already executed a follow-up LLM turn to honour policy step=1 above,
+        # finish with a final assistant turn WITHOUT tools to mirror legacy behaviour
+        # (prevents an unnecessary second tool call when policy only revealed tools once).
+        if consumed_followup_step1:
+            try:
+                await _gwp(
+                    self.client,
+                    self.preprocess_msgs,
+                    return_full_completion=True,
+                    tools=[],
+                    tool_choice="auto",
+                    stateful=True,
+                )
+                tail = (
+                    self.client.messages[-1]
+                    if getattr(self.client, "messages", None)
+                    else None
+                )
+                if isinstance(tail, dict) and not (tail.get("tool_calls") or []):
+                    return tail.get("content", "") or ""
+            except Exception:
+                pass
+
         # Subsequent LLM turns: keep offering the same schemas until no tool_calls are requested
-        step = 1
+        # If we already executed a follow-up LLM turn to honour policy step=1 above,
+        # start counting subsequent policy turns from step=2 to avoid duplicating step=1.
+        step = 2 if consumed_followup_step1 else 1
         while True:
             # Pre-LLM guard (subsequent turns): if we still have pending tools and
             # the very next assistant turn would consume the last remaining step,
@@ -817,12 +846,63 @@ class Orchestrator:
                 # When raise_on_limit=True, let the exception bubble up
                 raise
 
+            # Apply step-specific tool policy (legacy parity):
+            # On each subsequent turn, re-evaluate the policy with the current step index.
+            # Semantics:
+            # - mode == "auto" → returned mapping are tools to HIDE
+            # - other modes (e.g. "required") → returned mapping are tools to SHOW
+            step_tool_choice = "auto"
+            step_policy_map: Dict[str, Callable] = {}
+            visible_map_for_step: Dict[str, Callable] = dict(self.tools or {})
+            try:
+                if self.tool_policy is not None:
+                    try:
+                        step_tool_choice, step_policy_map = self.tool_policy(
+                            step,
+                            dict(self.tools or {}),
+                        )
+                    except Exception:
+                        step_tool_choice, step_policy_map = "auto", {}
+
+                    all_map = dict(self.tools or {})
+                    if step_tool_choice == "auto":
+                        visible_map_for_step = {
+                            n: f
+                            for n, f in all_map.items()
+                            if n not in (step_policy_map or {})
+                        }
+                    else:
+                        visible_map_for_step = dict(step_policy_map) or dict(all_map)
+
+                    try:
+                        LOGGER.info(
+                            "subseq_policy: step=%s mode=%s returned=%s visible=%s",
+                            step,
+                            step_tool_choice,
+                            list((step_policy_map or {}).keys()),
+                            list(visible_map_for_step.keys()),
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                # Fall back to exposing all tools with auto choice
+                step_tool_choice = "auto"
+                visible_map_for_step = dict(self.tools or {})
+
+            # Build schemas for this step from the visible map
+            schemas_for_step: list[dict] = []
+            for name, fn in visible_map_for_step.items():
+                try:
+                    schemas_for_step.append(_method_to_schema(fn, tool_name=name))
+                except Exception:
+                    continue
+
             await _gwp(
                 self.client,
                 self.preprocess_msgs,
                 return_full_completion=True,
-                tools=schemas,
-                tool_choice="auto",
+                tools=schemas_for_step,
+                tool_choice=step_tool_choice,
                 stateful=True,
             )
             tail = (
