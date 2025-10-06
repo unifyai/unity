@@ -15,6 +15,11 @@ class Medium(StrEnum):
     UNIFY_CHAT = "unify_chat"
 
 
+class ScreenShareAnnotation(BaseModel):
+    caption: str
+    image_b64: str
+
+
 class Message(BaseModel):
     message_id: int = Field(description="Unique identifier for the message", ge=-1)
     medium: Medium = Field(
@@ -39,6 +44,10 @@ class Message(BaseModel):
             "Mapping of json.dumps strings like '[x:y]' → image_id (int). "
             "Supports negative indices and open-ended ranges (e.g., '[6:]', '[:10]')."
         ),
+    )
+    screen_share: dict[str, ScreenShareAnnotation] = Field(
+        default_factory=dict,
+        description="Mapping of timestamps to screen share annotation objects, capturing key visual events.",
     )
 
     @field_validator("images", mode="before")
