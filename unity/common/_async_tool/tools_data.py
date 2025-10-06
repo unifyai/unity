@@ -24,7 +24,6 @@ from .loop_config import LIVE_IMAGES_REGISTRY
 from .tools_utils import parse_arg_scoped_span, extract_alignment_text_from_value
 from unity.image_manager.utils import substring_from_span
 from ...constants import LOGGER
-from ...constants import LOGGER
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
@@ -37,6 +36,8 @@ class ToolsData:
         self.normalized = normalise_tools(tools)
         self.pending: Set[asyncio.Task] = set()
         self.info: Dict[asyncio.Task, ToolCallMetadata] = {}
+        # Per-tool concurrency semaphores (enforce max_concurrent at runtime)
+        self._semaphores: Dict[str, asyncio.Semaphore] = {}
         # Per-tool hidden total-call quotas (counted per loop instance)
         self.call_counts: Dict[str, int] = {}
         self.clarification_channels: Dict[
@@ -468,11 +469,56 @@ class ToolsData:
                     # If anything goes wrong, leave images as-is
                     pass
 
-        # Build coroutine
-        if asyncio.iscoroutinefunction(fn):
-            coro = fn(**merged_kwargs)
-        else:
-            coro = asyncio.to_thread(fn, **merged_kwargs)
+        # Build coroutine with runtime concurrency gating (max_concurrent)
+        sem: Optional[asyncio.Semaphore] = None
+        with suppress(Exception):
+            limit = self.normalized[name].max_concurrent
+            if limit is not None and int(limit) > 0:
+                # Create per-tool semaphore lazily
+                if name not in self._semaphores:
+                    self._semaphores[name] = asyncio.Semaphore(int(limit))
+                sem = self._semaphores[name]
+
+        async def _invoke_tool():
+            if asyncio.iscoroutinefunction(fn):
+                return await fn(**merged_kwargs)
+            else:
+                return await asyncio.to_thread(fn, **merged_kwargs)
+
+        async def _run_with_concurrency():
+            # Acquire a permit if a semaphore is configured for this tool
+            if sem is not None:
+                try:
+                    await sem.acquire()
+                    try:
+                        LOGGER.info(
+                            "tools_data.semaphore_acquired: name=%s value=%s",
+                            name,
+                            getattr(sem, "_value", "?"),
+                        )
+                    except Exception:
+                        pass
+                except Exception:
+                    # Best-effort: if acquisition fails unexpectedly, proceed without gating
+                    pass
+            try:
+                return await _invoke_tool()
+            finally:
+                if sem is not None:
+                    try:
+                        sem.release()
+                        try:
+                            LOGGER.info(
+                                "tools_data.semaphore_released: name=%s value=%s",
+                                name,
+                                getattr(sem, "_value", "?"),
+                            )
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
+        coro = _run_with_concurrency()
 
         call_dict = {
             "id": call_id,
