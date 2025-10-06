@@ -892,12 +892,13 @@ class ToolsData:
                     tool_reply_msg["content"] = result
                     tool_msg = tool_reply_msg
             else:
-                # Not at tail: emit a synthetic assistant→tool pair to carry the result
-                tool_msg = await self._emit_completion_pair(
-                    result,
-                    call_id,
-                    msg_dispatcher,
-                )
+                # Legacy-parity: update the existing placeholder in-place even when not at tail
+                # to keep tool results contiguous directly after the assistant tool_calls turn.
+                try:
+                    tool_reply_msg["content"] = result
+                except Exception:
+                    pass
+                tool_msg = tool_reply_msg
 
         else:
             tool_msg = create_tool_call_message(name, call_id, result)
