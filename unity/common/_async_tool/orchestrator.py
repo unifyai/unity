@@ -41,7 +41,6 @@ from .timeout_timer import TimeoutTimer as _Timer
 from .loop import LoopLogger as _LoopLogger
 from .loop import _LoopToolFailureTracker as _FailureTracker
 from .orchestrator_events import State, Event
-from .orchestrator_runners import LLMRunner, ToolRunner
 from .orchestrator_adapters import InterjectAdapter, ControlAdapter
 
 
@@ -202,11 +201,6 @@ class Orchestrator:
         return sys_content
 
     async def run(self) -> str:
-        # Experimental: single LLM slice before legacy, gated by UNITY_EVENTED_LLM_SLICE
-        try:
-            do_slice = json.loads(os.environ.get("UNITY_EVENTED_LLM_SLICE", "false"))
-        except Exception:
-            do_slice = False
         try:
             do_first_turn = json.loads(
                 os.environ.get("UNITY_EVENTED_FIRST_TURN", "true"),
@@ -228,7 +222,6 @@ class Orchestrator:
         has_finite_timeout = self.timeout is not None and float(self.timeout) > 0
         if has_hidden_quotas or has_finite_timeout:
             do_first_turn = False
-            do_slice = False
             try:
                 reason = (
                     "quotas_detected"
@@ -2605,192 +2598,6 @@ class Orchestrator:
                     )
                 except Exception:
                     pass
-
-        elif do_slice:
-            async with asyncio.TaskGroup() as tg:
-                self._tg = tg
-                # Optionally expose real tool schemas during experimental slice
-                try:
-                    expose_tools = json.loads(
-                        os.environ.get("UNITY_EVENTED_LLM_TOOLS", "false"),
-                    )
-                except Exception:
-                    expose_tools = False
-                # Apply policy on the slice as well for parity
-                tool_choice_mode = "auto"
-                filtered_map: Dict[str, Callable] = dict(self.tools or {})
-                if self.tool_policy is not None:
-                    try:
-                        tool_choice_mode, filtered_map = self.tool_policy(
-                            0,
-                            dict(self.tools or {}),
-                        )
-                    except Exception:
-                        tool_choice_mode = "auto"
-                        filtered_map = dict(self.tools or {})
-                tools_param: list[dict] = []
-                if expose_tools:
-                    tools_param = [
-                        _method_to_schema(fn, tool_name=name)
-                        for name, fn in filtered_map.items()
-                    ]
-                    if self.response_format is not None:
-                        try:
-                            _answer_schema = _resp_schema(self.response_format)
-                            tools_param.append(
-                                {
-                                    "type": "function",
-                                    "strict": True,
-                                    "function": {
-                                        "name": "final_answer",
-                                        "description": (
-                                            "Submit your final answer in the required JSON format. "
-                                            "Calling this tool marks the conversation as complete."
-                                        ),
-                                        "parameters": {
-                                            "type": "object",
-                                            "properties": {"answer": _answer_schema},
-                                            "required": ["answer"],
-                                        },
-                                    },
-                                },
-                            )
-                        except Exception:
-                            pass
-                # Parity: add structured-output system_message hint in slice mode as well
-                if self.response_format is not None:
-                    try:
-                        _schema = _resp_schema(self.response_format)
-                        _hint = (
-                            "\n\nNOTE: After completing all tool calls, your **final** assistant reply must be valid JSON that conforms to the following schema. Do NOT include any extra keys or commentary.\n"
-                            + json.dumps(_schema, indent=2)
-                        )
-                        base_sys = getattr(self.client, "system_message", "") or ""
-                        if hasattr(self.client, "set_system_message"):
-                            try:
-                                self.client.set_system_message(base_sys + _hint)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                # Wire adapters: control always; interject gated by env (future use)
-                try:
-                    ControlAdapter(self).schedule()
-                except Exception:
-                    pass
-                # Interject adapter enabled by default for slice as well
-                try:
-                    enable_interject_adapter = json.loads(
-                        os.environ.get("UNITY_EVENTED_INTERJECT_ADAPTER", "true"),
-                    )
-                except Exception:
-                    enable_interject_adapter = True
-                if enable_interject_adapter:
-                    try:
-                        InterjectAdapter(self).schedule()
-                    except Exception:
-                        pass
-
-                LLMRunner(self).schedule_generate(
-                    {
-                        "tools": tools_param,
-                        "tool_choice": tool_choice_mode,
-                        "response_format": self.response_format,
-                    },
-                )
-                # Wait for a single LLM event
-                while True:
-                    evt = await self.events.get()
-                    t = evt.get("type")
-                    if t == "pause_requested":
-                        try:
-                            self.pause_event.clear()
-                            self._set_state(State.PAUSED, on=t)
-                        except Exception:
-                            pass
-                        continue
-                    if t == "cancel_requested":
-                        try:
-                            self._set_state(State.CANCELLING, on=t)
-                            await self._cancel_children()
-                            if self.stop_event is not None:
-                                self.stop_event.set()
-                        except Exception:
-                            pass
-                        break
-                    if t == "resume_requested":
-                        try:
-                            self.pause_event.set()
-                            self._set_state(State.WAITING_LLM, on=t)
-                        except Exception:
-                            pass
-                        continue
-                    if t == "llm_completed":
-                        # Attempt to schedule any tool calls if present
-                        msg = evt.get("message") or {}
-                        tool_calls = (
-                            (msg.get("tool_calls") or [])
-                            if isinstance(msg, dict)
-                            else []
-                        )
-                        try:
-                            tool_calls = self._prune_over_quota_on_msg(msg)
-                        except Exception:
-                            pass
-                        try:
-                            self._insert_placeholders_for_calls(msg, tool_calls)
-                        except Exception:
-                            pass
-                        for call in tool_calls:
-                            try:
-                                fn_meta = call.get("function", {})
-                                name = fn_meta.get("name")
-                                args_json = call.get("function", {}).get(
-                                    "arguments",
-                                    "{}",
-                                )
-                                args = (
-                                    json.loads(args_json)
-                                    if isinstance(args_json, str)
-                                    else (args_json or {})
-                                )
-                                call_id = call.get("id") or "call"
-                                if isinstance(name, str) and _is_helper_tool(name):
-                                    if name == "wait":
-                                        continue
-                                    try:
-                                        self._insert_helper_ack(
-                                            msg,
-                                            name,
-                                            args_json,
-                                            str(call_id),
-                                        )
-                                    except Exception:
-                                        pass
-                                    continue
-                                fn = self.tools.get(name)
-                                if callable(
-                                    fn,
-                                ) and ToolRunner.is_safe_to_schedule_without_clar(fn):
-                                    try:
-                                        self._call_counts[name] = (
-                                            self._call_counts.get(name, 0) + 1
-                                        )
-                                    except Exception:
-                                        pass
-                                    ToolRunner(self).schedule_tool(
-                                        name=name,
-                                        call_id=str(call_id),
-                                        fn=fn,
-                                        parent_assistant_msg=msg,
-                                        **args,
-                                    )
-                            except Exception:
-                                # Best-effort in experimental slice
-                                continue
-                        break
-                    if t in {"llm_failed", "llm_preempted"}:
-                        break
 
         # Delegate to legacy loop for full behaviour and completion –
         # do not mutate transcript by inserting a system message here.
