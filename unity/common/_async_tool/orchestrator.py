@@ -49,6 +49,7 @@ from .timeout_timer import TimeoutTimer as _Timer
 from .loop import LoopLogger as _LoopLogger
 from .loop import _LoopToolFailureTracker as _FailureTracker
 from .orchestrator_events import State, Event
+from ...constants import LOGGER
 
 
 ## Events and State are imported from orchestrator_events
@@ -253,6 +254,35 @@ class Orchestrator:
             await self._append_initial_message()
         except Exception:
             pass
+
+        # Immediate limits guard (pre-LLM): enforce max_steps/timeout right after
+        # the initial message is appended. This mirrors legacy behaviour where
+        # USER + ASSISTANT would exceed max_steps=1 and must raise when
+        # raise_on_limit=True.
+        try:
+            cfg0 = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
+            timer0 = _Timer(
+                timeout=self.timeout,
+                max_steps=self.max_steps,
+                raise_on_limit=self.raise_on_limit,
+                client=self.client,
+            )
+            try:
+                LOGGER.info(
+                    "pre_llm_limit_guard: label=%s messages=%s max_steps=%s timeout=%s",
+                    getattr(cfg0, "label", "<unknown>"),
+                    len(getattr(self.client, "messages", []) or []),
+                    self.max_steps,
+                    self.timeout,
+                )
+            except Exception:
+                pass
+            # These checks will raise when raise_on_limit is True
+            timer0.has_exceeded_time()
+            timer0.has_exceeded_msgs()
+        except Exception:
+            # Propagate exception (TimeoutError / RuntimeError) to caller
+            raise
 
         # Refactored: run the evented core path (single code path for all turns)
         return await self._run_evented_core()
