@@ -5,6 +5,7 @@ from typing import Literal, Optional
 from collections import deque
 
 from unity.conversation_manager_2.new_events import *
+from unity.transcript_manager.types.message import UNASSIGNED
 
 
 @dataclass
@@ -104,6 +105,7 @@ class ConversationManagerState:
         self.events = []
         self.last_snapshot_time = datetime.now()
         self.phone_contact: Optional[Contact] = None
+        self.call_exchange_id = UNASSIGNED
 
         # assistant details
         self.job_name = job_name
@@ -275,6 +277,13 @@ class ConversationManagerState:
                         c["email"],
                         c["phone_number"],
                     )
+
+            case LogMessageOutput() as e:
+                # ToDo: Get this working for email and whatsapp as well
+                # Email: Replying to the same thread
+                # Whatsapp: Managing different kinds of chat such as groups, etc.
+                if e.medium == "phone_call" and self.call_exchange_id == UNASSIGNED:
+                    self.call_exchange_id = e.exchange_id
 
     def snapshot(self):
         self._current_snapshot_time = datetime.now()

@@ -162,14 +162,17 @@ class ManagersWorker:
 
             message = messages[0] if messages else None
             print(
-                f"[ManagersWorker] Logged message: {medium} from {sender_id} to {receiver_ids}"
+                f"[ManagersWorker] Logged message: {medium}"
+                f" from {sender_id} to {receiver_ids}"
             )
 
             # Publish reply as Event envelope
             if message:
                 await self._event_broker.publish(
                     self._publish_channel,
-                    LogMessageOutput(exchange_id=message.exchange_id).to_json(),
+                    LogMessageOutput(
+                        medium=medium, exchange_id=message.exchange_id
+                    ).to_json(),
                 )
                 print(f"[ManagersWorker] Published exchange_id {message.exchange_id}")
 

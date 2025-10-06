@@ -387,6 +387,10 @@ class ConversationManager:
         else:
             sender_id, receiver_ids = contact_id, [0]
 
+        exchange_id = UNASSIGNED
+        if medium == "phone_call":
+            exchange_id = self.state.call_exchange_id
+
         await self.event_broker.publish(
             "app:managers:input",
             LogMessageInput(
@@ -394,7 +398,7 @@ class ConversationManager:
                 sender_id=sender_id,
                 receiver_ids=receiver_ids,
                 content=content,
-                exchange_id=UNASSIGNED,
+                exchange_id=exchange_id,
                 metadata=None,
             ).to_json(),
         )
@@ -465,22 +469,6 @@ class ConversationManager:
             # do not do anything here, let the user reply back or whatever
             asyncio.create_task(self.publish_transcript(event))
 
-        # Yasser: let conversation manager state handle this event
-
-        # elif isinstance(event, GetContactsOutput):
-        #     conversation_contacts = [
-        #         ConversationContact(
-        #             c["id"], c["name"], c["id"] == 1, c["number"], c["email"]
-        #         )
-        #         for c in event.contacts
-        #     ]
-        #     for c in conversation_contacts:
-        #         self.update_contact(c)
-
-        elif isinstance(event, LogMessageOutput):
-            # ToDo: get exchange id handled properly
-            pass
-
         elif isinstance(event, StartupEvent):
             payload = event.to_dict()["payload"]
             kwargs = {
@@ -522,6 +510,7 @@ class ConversationManager:
             try:
                 terminate_process(self.call_proc)
                 self.call_proc = None
+                self.state.call_exchange_id = UNASSIGNED
                 print(f"Call process terminated")
             except Exception as e:
                 print(f"Error terminating call process: {e}")
