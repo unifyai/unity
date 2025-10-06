@@ -335,15 +335,61 @@ class Orchestrator:
             pass
 
         # Ask for tool calls
-
-        await _gwp(
-            self.client,
-            self.preprocess_msgs,
-            return_full_completion=True,
-            tools=schemas,
-            tool_choice="auto",
-            stateful=True,
-        )
+        # Enforce a hard wall-clock timeout around the very first LLM turn to
+        # preserve legacy semantics: when raise_on_limit=True, exceed → TimeoutError;
+        # when False, terminate gracefully with an assistant notice.
+        try:
+            _first_timer = _Timer(
+                timeout=self.timeout,
+                max_steps=self.max_steps,
+                raise_on_limit=self.raise_on_limit,
+                client=self.client,
+            )
+            _remaining = _first_timer.remaining_time()
+            if _remaining is None:
+                await _gwp(
+                    self.client,
+                    self.preprocess_msgs,
+                    return_full_completion=True,
+                    tools=schemas,
+                    tool_choice="auto",
+                    stateful=True,
+                )
+            else:
+                # Guard against negative drift
+                _timeout_secs = max(0.0, float(_remaining))
+                await asyncio.wait_for(
+                    _gwp(
+                        self.client,
+                        self.preprocess_msgs,
+                        return_full_completion=True,
+                        tools=schemas,
+                        tool_choice="auto",
+                        stateful=True,
+                    ),
+                    timeout=_timeout_secs,
+                )
+        except asyncio.TimeoutError:
+            # Hard timeout on the first turn
+            if self.raise_on_limit:
+                raise
+            try:
+                cfgX = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
+                timerX = _Timer(
+                    timeout=self.timeout,
+                    max_steps=self.max_steps,
+                    raise_on_limit=self.raise_on_limit,
+                    client=self.client,
+                )
+                dispatcherX = _Dispatcher(self.client, cfgX, timerX)
+                notice = {
+                    "role": "assistant",
+                    "content": f"🔚 Terminating early: timeout ({self.timeout}s) exceeded",
+                }
+                await dispatcherX.append_msgs([notice])
+                return notice["content"]
+            except Exception:
+                return ""
 
         last = (
             self.client.messages[-1] if getattr(self.client, "messages", None) else None
