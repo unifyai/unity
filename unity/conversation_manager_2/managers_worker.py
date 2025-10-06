@@ -167,12 +167,14 @@ class ManagersWorker:
 
     async def _publish_bus_event(self, event: Event) -> None:
         """Publish an event to the EventBus."""
-        if not self._initialized:
-            print("[ManagersWorker] Not initialized, cannot publish bus event")
-            return
-        bus_event = Event.from_dict(event.to_dict()["event"]).to_bus_event()
+        while not self._initialized:
+            await asyncio.sleep(1)
+            print("[ManagersWorker] Not initialized yet, cannot publish bus event")
+        event_dict = event.to_dict()["payload"]["event"]
+        bus_event = Event.from_dict(event_dict).to_bus_event()
         bus_event.payload.pop("api_key", None)
         bus_event.payload.pop("message_id", None)
+        print("Publishing bus event", bus_event)
         await EVENT_BUS.publish(bus_event)
 
     async def _log_message(self, event: LogMessageInput) -> None:
