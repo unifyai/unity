@@ -272,6 +272,38 @@ class Orchestrator:
             except Exception:
                 continue
 
+        # If any interjections arrived before the first LLM turn, append a system message
+        # that consolidates user-visible history and the latest interjection. This mirrors
+        # legacy behaviour and ensures EVENT_BUS publishes a system entry containing
+        # "user: **<interjection>**", and the LLM will incorporate the latest guidance.
+        try:
+            cfg0 = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
+            timer0 = _Timer(
+                timeout=self.timeout,
+                max_steps=self.max_steps,
+                raise_on_limit=self.raise_on_limit,
+                client=self.client,
+            )
+            dispatcher0 = _Dispatcher(self.client, cfg0, timer0)
+
+            last_payload = None
+            while True:
+                try:
+                    payload = self.interject_queue.get_nowait()
+                    last_payload = payload
+                except Exception:
+                    # QueueEmpty or any failure → stop draining
+                    break
+
+            if last_payload is not None:
+                sys_msg = {
+                    "role": "system",
+                    "content": self._build_interjection_system_content(last_payload),
+                }
+                await dispatcher0.append_msgs([sys_msg])
+        except Exception:
+            pass
+
         # Ask for tool calls
 
         await _gwp(
