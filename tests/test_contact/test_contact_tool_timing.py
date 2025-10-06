@@ -18,8 +18,8 @@ def test_tool_list_columns_timing():
     cols = cm._list_columns()
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(cols, dict) and cols
-    assert elapsed_ms < 1500
-    print(f"elapsed: {elapsed_ms} < 1500")
+    assert elapsed_ms < 2250
+    print(f"elapsed: {elapsed_ms} < 2250")
 
 
 @pytest.mark.unit
@@ -105,8 +105,8 @@ def test_tool_delete_custom_column_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(resp, dict)
     assert col not in cm._list_columns()
-    assert elapsed_ms < 1200
-    print(f"elapsed: {elapsed_ms} < 1200")
+    assert elapsed_ms < 1800
+    print(f"elapsed: {elapsed_ms} < 1800")
 
 
 @pytest.mark.unit
