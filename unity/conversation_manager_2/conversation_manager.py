@@ -426,6 +426,8 @@ class ConversationManager:
 
         # update state
         self.state.update_state(event)
+        if event.__class__.loggable:
+            asyncio.create_task(self.publish_bus_events(event))
 
         if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
             # start phone call process and wait untils its done, we should probably make sure
