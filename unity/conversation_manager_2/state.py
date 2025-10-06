@@ -1,5 +1,6 @@
 from datetime import datetime
 from dataclasses import dataclass, field
+import os
 from typing import Literal, Optional
 from collections import deque
 
@@ -52,7 +53,24 @@ class Notification:
 
 
 class ConversationManagerState:
-    def __init__(self):
+    def __init__(
+        self,
+        job_name: str,
+        user_id: str,
+        assistant_id: str,
+        assistant_name: str,
+        assistant_age: str,
+        assistant_region: str,
+        assistant_about: str,
+        voice_provider: str,
+        voice_id: str,
+        assistant_number: str,
+        assistant_email: str,
+        user_name: str,
+        user_number: str,
+        user_email: str,
+        user_whatsapp_number: str,
+    ):
 
         # These should not be harcoded
         self.phone_contacts_map = {
@@ -87,9 +105,42 @@ class ConversationManagerState:
         self.last_snapshot_time = datetime.now()
         self.phone_contact: Optional[Contact] = None
 
+        # assistant details
+        self.job_name = job_name
+        self.user_id = user_id
+        self.assistant_id = assistant_id
+        self.assistant_name = assistant_name
+        self.assistant_age = assistant_age
+        self.assistant_region = assistant_region
+        self.assistant_about = assistant_about
+        self.voice_provider = voice_provider
+        self.voice_id = voice_id
+
+        # contact data
+        self.assistant_number = assistant_number
+        self.assistant_email = assistant_email
+        self.user_name = user_name
+        self.user_number = user_number
+        self.user_email = user_email
+        self.user_whatsapp_number = user_whatsapp_number
+
+        # initialization state
+        self.initialized: bool = False
+
     def update_state(self, event: Event):
-        self.events.append(event)
+        # log the event if it's loggable
+        if event.__class__.loggable:
+            self.events.append(event)
         match event:
+            # startup events
+            case ManagersStartupOutput() as e:
+                if not e.initialized:
+                    raise Exception("Managers failed to initialize")
+                self.initialized = bool(e.initialized)
+            case StartupEvent() as e:
+                payload = e.to_dict()["payload"]
+                self.set_details(payload)
+
             case PhoneCallRecieved() as e:
                 # contact should always exist here.
                 contact = self.get_contact(phone_number=e.contact)
@@ -240,6 +291,54 @@ class ConversationManagerState:
         state = f"<notifications>\n{self._add_spaces(notif)}\n</notifications>\n<active_conversations>\n{self._add_spaces(active_convs)}\n</active_conversations>"
 
         return state
+
+    def set_details(self, payload: dict):
+        """Populate assistant/user/voice details and update environment variables."""
+        self.user_id = payload["user_id"]
+        self.assistant_id = payload["assistant_id"]
+        self.assistant_name = payload["assistant_name"]
+        self.assistant_age = payload["assistant_age"]
+        self.assistant_region = payload["assistant_region"]
+        self.assistant_about = payload["assistant_about"]
+        self.assistant_number = payload["assistant_number"]
+        self.assistant_email = payload["assistant_email"]
+        self.user_name = payload["user_name"]
+        self.user_number = payload["user_number"]
+        self.user_whatsapp_number = payload["user_whatsapp_number"]
+        self.user_email = payload["user_email"]
+        self.current_user = {
+            "user_name": self.user_name,
+            "user_number": self.user_number,
+            "user_whatsapp_number": self.user_whatsapp_number,
+            "user_email": self.user_email,
+        }
+        self.voice_provider = payload["voice_provider"]
+        self.voice_id = payload["voice_id"]
+        os.environ["UNIFY_KEY"] = payload.pop("api_key")
+        os.environ["USER_ID"] = self.user_id
+        os.environ["USER_NAME"] = self.user_name
+        os.environ["USER_NUMBER"] = self.user_number
+        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
+        os.environ["USER_EMAIL"] = self.user_email
+        os.environ["ASSISTANT_NAME"] = self.assistant_name
+        os.environ["ASSISTANT_NUMBER"] = self.assistant_number
+        os.environ["ASSISTANT_EMAIL"] = self.assistant_email
+        os.environ["VOICE_PROVIDER"] = self.voice_provider
+        os.environ["VOICE_ID"] = self.voice_id
+
+    def get_details(self) -> dict:
+        return {
+            "job_name": self.job_name,
+            "user_id": self.user_id,
+            "assistant_id": self.assistant_id,
+            "user_name": self.user_name,
+            "assistant_name": self.assistant_name,
+            "user_number": self.user_number,
+            "user_whatsapp_number": self.user_whatsapp_number,
+            "assistant_number": self.assistant_number,
+            "user_email": self.user_email,
+            "assistant_email": self.assistant_email,
+        }
 
     def push_message(
         self,

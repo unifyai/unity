@@ -60,7 +60,7 @@ class ManagersWorker:
         Initialize all managers and configure them.
         This is the first message processed, blocking all subsequent messages.
 
-        Note: Environment variables are already set by ConversationManager.set_details()
+        Note: Environment variables are already set by ConversationManagerState.set_details()
         when the StartupEvent arrives, so we don't duplicate that logic here.
         """
         print("[ManagersWorker] Processing startup")
