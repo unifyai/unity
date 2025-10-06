@@ -430,9 +430,79 @@ class Orchestrator:
         last = (
             self.client.messages[-1] if getattr(self.client, "messages", None) else None
         )
-        # If the assistant answered directly, return it
+        # If the assistant answered directly, consider a policy-driven second turn
         if isinstance(last, dict) and not (last.get("tool_calls") or []):
-            return last.get("content", "") or ""
+            # If a policy is present and would reveal any tools on step 1, run a follow-up
+            run_follow_up = False
+            next_choice = "auto"
+            next_policy_map: Dict[str, Callable] = {}
+            try:
+                if self.tool_policy is not None:
+                    try:
+                        next_choice, next_policy_map = self.tool_policy(
+                            1,
+                            dict(self.tools or {}),
+                        )
+                    except Exception:
+                        next_choice, next_policy_map = "auto", {}
+
+                    all_map = dict(self.tools or {})
+                    if next_choice == "auto":
+                        visible_next = {
+                            n: f
+                            for n, f in all_map.items()
+                            if n not in (next_policy_map or {})
+                        }
+                    else:
+                        visible_next = dict(next_policy_map) or dict(all_map)
+
+                    try:
+                        LOGGER.info(
+                            "policy_eval_followup: step=1 mode=%s returned=%s visible=%s",
+                            next_choice,
+                            list((next_policy_map or {}).keys()),
+                            list(visible_next.keys()),
+                        )
+                    except Exception:
+                        pass
+
+                    run_follow_up = bool(visible_next)
+                else:
+                    run_follow_up = False
+            except Exception:
+                run_follow_up = False
+
+            if not run_follow_up:
+                return last.get("content", "") or ""
+
+            # Execute a second LLM turn with the visible tool set for step 1
+            try:
+                schemas_next: list[dict] = []
+                for n, f in visible_next.items():
+                    try:
+                        schemas_next.append(_method_to_schema(f, tool_name=n))
+                    except Exception:
+                        continue
+                await _gwp(
+                    self.client,
+                    self.preprocess_msgs,
+                    return_full_completion=True,
+                    tools=schemas_next,
+                    tool_choice=next_choice,
+                    stateful=True,
+                )
+            except Exception:
+                # If follow-up failed, fall back to returning the first assistant answer
+                return last.get("content", "") or ""
+
+            # Refresh pointer to the latest assistant message after the follow-up
+            last = (
+                self.client.messages[-1]
+                if getattr(self.client, "messages", None)
+                else None
+            )
+            if isinstance(last, dict) and not (last.get("tool_calls") or []):
+                return last.get("content", "") or ""
 
         # Locate the assistant turn that requested tools
         assistant_msg = None
