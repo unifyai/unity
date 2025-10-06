@@ -50,6 +50,7 @@ from .loop import LoopLogger as _LoopLogger
 from .loop import _LoopToolFailureTracker as _FailureTracker
 from .orchestrator_events import State, Event
 from ...constants import LOGGER
+from ...constants import LOGGER
 
 
 ## Events and State are imported from orchestrator_events
@@ -265,6 +266,14 @@ class Orchestrator:
             pass
 
     async def run(self) -> str:
+        # Prune any pre-seeded assistant helper-only turns (e.g. a lone `wait`)
+        # so the transcript does not contain dangling helper tool_calls without
+        # corresponding tool replies. This mirrors legacy loop semantics and
+        # satisfies tests that pre-seed helper calls before starting the loop.
+        try:
+            self._prune_preseeded_helper_turns()
+        except Exception:
+            pass
         # Ensure the initial user/system message(s) are present in the transcript
         try:
             await self._append_initial_message()
@@ -302,6 +311,72 @@ class Orchestrator:
 
         # Refactored: run the evented core path (single code path for all turns)
         return await self._run_evented_core()
+
+    def _prune_preseeded_helper_turns(self) -> None:
+        """Remove assistant turns that consist only of helper calls we should drop.
+
+        Current policy: if an assistant message contains only helper tool_calls and
+        every helper is `wait`, drop that assistant message entirely. We keep this
+        narrowly-scoped to avoid impacting other helper behaviours (e.g. explicit
+        acknowledgements) until broader parity is verified across tests.
+        """
+        msgs = getattr(self.client, "messages", None)
+        if not isinstance(msgs, list) or not msgs:
+            return
+
+        to_remove: list[int] = []
+        try:
+            for i, m in enumerate(msgs):
+                if not isinstance(m, dict) or m.get("role") != "assistant":
+                    continue
+                tool_calls = m.get("tool_calls") or []
+                if not tool_calls:
+                    continue
+                # Collect helper names for this assistant turn
+                names: list[str] = []
+                try:
+                    for c in tool_calls:
+                        fn = (c.get("function", {}) or {}).get("name")
+                        if isinstance(fn, str):
+                            names.append(fn)
+                except Exception:
+                    names = []
+
+                if not names:
+                    continue
+
+                all_helpers = True
+                try:
+                    for n in names:
+                        if not _is_helper_tool(n):
+                            all_helpers = False
+                            break
+                except Exception:
+                    all_helpers = False
+
+                if not all_helpers:
+                    continue
+
+                # Drop only when all helpers are the `wait` helper
+                if all(n == "wait" for n in names):
+                    to_remove.append(i)
+                    try:
+                        LOGGER.info(
+                            "orchestrator: pruning pre-seeded helper-only assistant turn at idx=%s names=%s",
+                            i,
+                            names,
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            to_remove = []
+
+        # Remove from the tail to preserve indices while popping
+        for i in reversed(to_remove):
+            try:
+                msgs.pop(i)
+            except Exception:
+                pass
 
     async def _run_evented_core(self) -> str:
         """Simplified, unified evented flow: first LLM → schedule tools → wait → final LLM.
