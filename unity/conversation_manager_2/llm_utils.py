@@ -41,7 +41,7 @@ async def stream_llm_call(
         yield {"type": "end_streamed_field"}
         yield {
             "type": "output",
-            "content": from_json(out, allow_partial="trailing-strings"),
+            "content": out,
         }
 
 
