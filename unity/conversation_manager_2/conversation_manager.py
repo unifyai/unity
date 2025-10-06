@@ -164,7 +164,8 @@ class ConversationManager:
                         json.dumps({"type": "end_gen"}),
                     )
 
-            parsed_out = event["content"]
+            out = event["content"]
+            parsed_out = json.loads(out)
             assistant_phone_utterance_event = AssistantPhoneUtterance(
                 self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
             )
@@ -466,6 +467,7 @@ class ConversationManager:
             self.state.mode = "text"
             self.call_contact = None
             self.cleanup_call_proc()
+            await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, PhoneUtterance):
             asyncio.create_task(self.publish_transcript(event))

@@ -207,7 +207,7 @@ class ConversationManagerState:
             case AssistantPhoneUtterance() as e:
                 contact = self.get_contact(phone_number=e.contact)
                 self.push_message(
-                    contact, "phone", Message("You", e.content, e.timestamp)
+                    contact, "phone", Message(contact.full_name, e.content, e.timestamp)
                 )
                 self.push_notif(
                     Notification(
@@ -216,6 +216,19 @@ class ConversationManagerState:
                         e.timestamp,
                     )
                 )
+            case PhoneCallEnded() as e:
+                contact = self.get_contact(phone_number=e.contact)
+                self.push_message(
+                    contact, "phone", Message(contact.full_name, "<Phone Call Ended...>", e.timestamp)
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Phone Call Ended with '{contact.full_name}'",
+                        e.timestamp,
+                    )
+                )
+
             case SMSRecieved() as e:
                 contact = self.get_contact(phone_number=e.contact)
                 self.push_message(
@@ -368,7 +381,7 @@ class ConversationManagerState:
         id: Optional[str] = None,
         phone_number: Optional[str] = None,
         email: Optional[str] = None,
-    ):
+    ) -> Contact:
         """returns the new contact and whether they were newly created or not."""
         if not (id or phone_number or email):
             raise Exception(
