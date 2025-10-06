@@ -286,6 +286,61 @@ class ToolsData:
         except Exception:
             pass
 
+        # Normalise aliases for single-public-parameter tools (legacy parity)
+        # If the tool has exactly one public parameter and it's missing from
+        # the LLM-provided args, accept common aliases and map them to it.
+        try:
+            internal_hidden = {
+                "interject_queue",
+                "pause_event",
+                "clarification_up_q",
+                "clarification_down_q",
+                "notification_up_q",
+                "parent_chat_context",
+            }
+            public_params = [p for p in params if p not in internal_hidden]
+            if (
+                isinstance(call_args, dict)
+                and not has_varkw
+                and len(public_params) == 1
+                and public_params[0] not in call_args
+            ):
+                alias_order = (
+                    "content",
+                    "message",
+                    "text",
+                    "prompt",
+                    "guidance",
+                    "instruction",
+                    "question",
+                    "query",
+                    "param",
+                    "value",
+                    "label",
+                    "name",
+                    "arg",
+                )
+                dest = public_params[0]
+                for alias in alias_order:
+                    if alias in call_args:
+                        try:
+                            call_args[dest] = call_args.pop(alias)
+                            LOGGER.info(
+                                "tools_data.normalized_single_param: name=%s alias=%s -> %s",
+                                name,
+                                alias,
+                                dest,
+                            )
+                        except Exception:
+                            # Fallback: copy instead of pop
+                            try:
+                                call_args[dest] = call_args.get(alias)
+                            except Exception:
+                                pass
+                        break
+        except Exception:
+            pass
+
         # Filter extras to match fn signature
         filtered_extras = {
             k: v for k, v in extra_kwargs.items() if k in params or has_varkw
