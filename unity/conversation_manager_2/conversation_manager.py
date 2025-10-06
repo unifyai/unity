@@ -164,7 +164,8 @@ class ConversationManager:
                         json.dumps({"type": "end_gen"}),
                     )
 
-            parsed_out = event["content"]
+            out = event["content"]
+            parsed_out = json.loads(out)
             assistant_phone_utterance_event = AssistantPhoneUtterance(
                 self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
             )
