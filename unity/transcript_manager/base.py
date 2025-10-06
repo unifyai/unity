@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
-
+from typing import Any, Dict, List, Optional
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 
@@ -89,9 +88,3 @@ class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
             steer the interaction via ``pause()``, ``resume()``, ``interject()``
             or ``stop()``.
         """
-
-
-if TYPE_CHECKING:
-    # Avoid a runtime import to prevent circular dependencies
-    from .types.message import ScreenShareAnnotation
-    from ..common.tool_outcome import ToolOutcome

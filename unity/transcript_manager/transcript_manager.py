@@ -111,7 +111,7 @@ class TranscriptManager(BaseTranscriptManager):
                 ctxs = unify.get_active_context()
                 read_ctx, write_ctx = ctxs["read"], ctxs["write"]
             except Exception:
-                # If ensure fails (e.g., offline tests), proceed; downstream will fall back safely
+                # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
                 pass
         assert (
             read_ctx == write_ctx
@@ -756,7 +756,7 @@ class TranscriptManager(BaseTranscriptManager):
                 - Contact-side (derived): "str({first_name}) + ' ' + str({bio})"
             - reference_text: The free-form text to embed and compare against each row’s source embedding for this term.
             Notes:
-            - When an expression is not a plain identifier, any `{...}` placeholders must reference valid fields on the selected side (message vs contact). Mixed-side expressions are not allowed; if placeholders include any message fields, the term is treated as message-side; if placeholders include only contact fields (and none match message fields), the term is contact-side.
+            - When an expression is not a plain identifier, any `{...}` placeholders must reference valid fields on the selected side (message vs contact). Mixed-side expressions are not allowed; if placeholders include any message fields, the term is treated as message-side; if placeholders include only contact fields, the term is contact-side.
             - If you supply only contact-side terms, a join with the contacts table is performed and the top-k messages are returned based on their senders' similarity to the provided references.
             - The embeddings model and derived columns are managed automatically.
         k : int, default 10
@@ -1533,7 +1533,7 @@ class TranscriptManager(BaseTranscriptManager):
         *,
         include_types: bool = True,
         include_private: bool = False,
-    ) -> Dict[str, str] | List[str]:
+    ) -> Dict[str, str] | list[str]:
         """
         Return the list of available columns in the transcripts table, optionally with types.
 
