@@ -197,6 +197,7 @@ class CreateContactInput(Event):
 
 @dataclass
 class LogMessageOutput(Event):
+    medium: str
     exchange_id: int
 
 
