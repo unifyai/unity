@@ -293,14 +293,50 @@ class Orchestrator:
         This consolidates the previously scattered first-turn and subsequent-turn logic
         into a single deterministic path.
         """
-        # Build base tool schemas
-        base_tools: Dict[str, Callable] = dict(self.tools or {})
+        # Build first-turn tool schemas using tool_policy (legacy parity)
+        # This allows policies like ("required", {...}) to force a tool call on step 0.
+        first_tool_choice: str = "auto"
+        policy_returned_map: Dict[str, Callable] = dict(self.tools or {})
+        all_tools_map: Dict[str, Callable] = dict(self.tools or {})
+        if self.tool_policy is not None:
+            try:
+                first_tool_choice, policy_returned_map = self.tool_policy(
+                    0,
+                    dict(all_tools_map),
+                )
+            except Exception:
+                first_tool_choice, policy_returned_map = "auto", dict(all_tools_map)
+
+        # Legacy parity for first turn:
+        # - If mode == "auto": mapping is the HIDE set → visible = all - returned
+        # - Else: mapping is the SHOW set → visible = returned (fallback to all when empty)
+        if first_tool_choice == "auto":
+            first_visible_map = {
+                n: f
+                for n, f in all_tools_map.items()
+                if n not in (policy_returned_map or {})
+            }
+        else:
+            first_visible_map = dict(policy_returned_map) or dict(all_tools_map)
+
+        # Build schemas from visible tools only
         schemas: list[dict] = []
-        for name, fn in base_tools.items():
+        for name, fn in first_visible_map.items():
             try:
                 schemas.append(_method_to_schema(fn, tool_name=name))
             except Exception:
                 continue
+
+        # Debug: record the chosen policy and visibility for the first turn
+        try:
+            LOGGER.info(
+                "first_turn_policy: choice=%s tools=%s visible=%s",
+                first_tool_choice,
+                list((policy_returned_map or {}).keys()),
+                list(first_visible_map.keys()),
+            )
+        except Exception:
+            pass
 
         # If any interjections arrived before the first LLM turn, append a system message
         # that consolidates user-visible history and the latest interjection. This mirrors
@@ -352,7 +388,7 @@ class Orchestrator:
                     self.preprocess_msgs,
                     return_full_completion=True,
                     tools=schemas,
-                    tool_choice="auto",
+                    tool_choice=first_tool_choice,
                     stateful=True,
                 )
             else:
@@ -364,7 +400,7 @@ class Orchestrator:
                         self.preprocess_msgs,
                         return_full_completion=True,
                         tools=schemas,
-                        tool_choice="auto",
+                        tool_choice=first_tool_choice,
                         stateful=True,
                     ),
                     timeout=_timeout_secs,
@@ -578,6 +614,40 @@ class Orchestrator:
         except Exception:
             pass
 
+        # Local early-exit helper for this minimal core
+        async def _early_exit_local(reason: str) -> str:
+            # Cancel any pending work and append a graceful termination notice
+            for t in list(getattr(tools_data, "pending", [])):
+                try:
+                    inf = tools_data.info.get(t)
+                    if (
+                        inf is not None
+                        and inf.handle is not None
+                        and hasattr(inf.handle, "stop")
+                    ):
+                        await maybe_await(inf.handle.stop())
+                except Exception:
+                    pass
+                try:
+                    if not t.done():
+                        t.cancel()
+                except Exception:
+                    pass
+            try:
+                await asyncio.gather(
+                    *list(getattr(tools_data, "pending", [])),
+                    return_exceptions=True,
+                )
+                tools_data.pending.clear()
+            except Exception:
+                pass
+            notice = {
+                "role": "assistant",
+                "content": f"🔚 Terminating early: {reason}",
+            }
+            await dispatcher.append_msgs([notice])
+            return notice["content"]
+
         # Wait for tool completions (no clar/notify handling in this minimal core)
         while tools_data.pending:
             done_tasks, _ = await asyncio.wait(
@@ -586,7 +656,47 @@ class Orchestrator:
                 timeout=timer.remaining_time(),
             )
             if not done_tasks:
-                break
+                # No tool finished within the allotted time budget. Mirror legacy
+                # behaviour by cancelling pending work and appending a graceful
+                # early-termination notice instead of proceeding to another LLM turn.
+                try:
+                    if timer.has_exceeded_time():
+                        try:
+                            LOGGER.info(
+                                "evented_minimal_core_timeout: label=%s reason=%s",
+                                getattr(cfg, "label", "<unknown>"),
+                                f"timeout ({self.timeout}s) exceeded",
+                            )
+                        except Exception:
+                            pass
+                        return await _early_exit_local(
+                            f"timeout ({self.timeout}s) exceeded",
+                        )
+                    if timer.has_exceeded_msgs():
+                        try:
+                            LOGGER.info(
+                                "evented_minimal_core_timeout: label=%s reason=%s",
+                                getattr(cfg, "label", "<unknown>"),
+                                f"max_steps ({self.max_steps}) exceeded",
+                            )
+                        except Exception:
+                            pass
+                        return await _early_exit_local(
+                            f"max_steps ({self.max_steps}) exceeded",
+                        )
+                except Exception:
+                    # When raise_on_limit=True the checks above raise; let that bubble up.
+                    raise
+                # Fallback: treat as a timeout even if the guard did not trip.
+                try:
+                    LOGGER.info(
+                        "evented_minimal_core_timeout: label=%s reason=%s",
+                        getattr(cfg, "label", "<unknown>"),
+                        "timeout exceeded",
+                    )
+                except Exception:
+                    pass
+                return await _early_exit_local("timeout exceeded")
             tracker = _FailureTracker(self.max_consecutive_failures)
             for t in list(done_tasks):
                 try:
@@ -603,6 +713,40 @@ class Orchestrator:
         # Subsequent LLM turns: keep offering the same schemas until no tool_calls are requested
         step = 1
         while True:
+            # Pre-LLM guard (subsequent turns): if we still have pending tools and
+            # the very next assistant turn would consume the last remaining step,
+            # terminate gracefully instead of letting the LLM emit a noop.
+            try:
+                cur_msgs = len(getattr(self.client, "messages", []) or [])
+                if self.max_steps is not None and tools_data.pending:
+                    if cur_msgs + 1 >= int(self.max_steps):
+                        try:
+                            LOGGER.info(
+                                "pre_llm_limit_guard_subseq: pending_tools=%s messages=%s max_steps=%s -> early_exit",
+                                len(tools_data.pending),
+                                cur_msgs,
+                                self.max_steps,
+                            )
+                        except Exception:
+                            pass
+                        return await _early_exit_local(
+                            f"max_steps ({self.max_steps}) exceeded",
+                        )
+                # Also guard for wall-clock expiry before scheduling another LLM turn
+                timer_guard = _Timer(
+                    timeout=self.timeout,
+                    max_steps=self.max_steps,
+                    raise_on_limit=self.raise_on_limit,
+                    client=self.client,
+                )
+                if timer_guard.has_exceeded_time():
+                    return await _early_exit_local(
+                        f"timeout ({self.timeout}s) exceeded",
+                    )
+            except Exception:
+                # When raise_on_limit=True, let the exception bubble up
+                raise
+
             await _gwp(
                 self.client,
                 self.preprocess_msgs,
@@ -1033,26 +1177,55 @@ class Orchestrator:
             expose_tools = True
 
             tool_choice_mode = "auto"
-            filtered_map: Dict[str, Callable] = dict(self.tools or {})
+            policy_returned_map: Dict[str, Callable] = dict(self.tools or {})
+            full_tools_map: Dict[str, Callable] = dict(self.tools or {})
             if self.tool_policy is not None:
                 try:
-                    tool_choice_mode, filtered_map = self.tool_policy(
+                    tool_choice_mode, policy_returned_map = self.tool_policy(
                         0,
-                        dict(self.tools or {}),
+                        dict(full_tools_map),
                     )
                 except Exception:
                     tool_choice_mode = "auto"
-                    filtered_map = dict(self.tools or {})
+                    policy_returned_map = dict(full_tools_map)
+
+            # Legacy semantics (loop.py parity):
+            # - For mode == "auto", the policy's returned mapping represents tools to HIDE.
+            # - For other modes (e.g., "required"), the returned mapping represents tools to SHOW.
+            if tool_choice_mode == "auto":
+                effective_visible_map = {
+                    name: fn
+                    for name, fn in full_tools_map.items()
+                    if name not in (policy_returned_map or {})
+                }
+            else:
+                effective_visible_map = (
+                    dict(policy_returned_map)
+                    if policy_returned_map
+                    else dict(full_tools_map)
+                )
+
+            try:
+                LOGGER.info(
+                    "policy_eval_first_turn: mode=%s returned=%s visible=%s",
+                    tool_choice_mode,
+                    list((policy_returned_map or {}).keys()),
+                    list(effective_visible_map.keys()),
+                )
+            except Exception:
+                pass
 
             tools_param: list[dict] = []
             if expose_tools:
                 # Build schemas from the filtered mapping with pre-exposure filtering
                 try:
                     normalized = normalise_tools(
-                        {n: fn for n, fn in filtered_map.items()},
+                        {n: fn for n, fn in effective_visible_map.items()},
                     )
                 except Exception:
-                    normalized = {n: ToolSpec(fn=fn) for n, fn in filtered_map.items()}
+                    normalized = {
+                        n: ToolSpec(fn=fn) for n, fn in effective_visible_map.items()
+                    }
                 td0 = _ToolsData(
                     self.tools,
                     client=self.client,
@@ -2471,20 +2644,41 @@ class Orchestrator:
                                 tool_choice_mode2 = "auto"
                                 filtered_map2 = dict(self.tools or {})
 
-                        schemas2: list[dict] = []
-                        for n, f in filtered_map2.items():
-                            try:
-                                schemas2.append(_method_to_schema(f, tool_name=n))
-                            except Exception:
-                                continue
+                        # Legacy semantics (loop.py parity) for subsequent turns as well
+                        full_tools_map2: Dict[str, Callable] = dict(self.tools or {})
+                        if tool_choice_mode2 == "auto":
+                            effective_visible_map2 = {
+                                name: fn
+                                for name, fn in full_tools_map2.items()
+                                if name not in (filtered_map2 or {})
+                            }
+                        else:
+                            effective_visible_map2 = (
+                                dict(filtered_map2)
+                                if filtered_map2
+                                else dict(full_tools_map2)
+                            )
+
+                        try:
+                            LOGGER.info(
+                                "policy_eval_turn: step=%s mode=%s returned=%s visible=%s",
+                                step_idx,
+                                tool_choice_mode2,
+                                list((filtered_map2 or {}).keys()),
+                                list(effective_visible_map2.keys()),
+                            )
+                        except Exception:
+                            pass
+
                         # Pre-exposure filtering by hidden quotas and concurrency
                         try:
                             normalized2 = normalise_tools(
-                                {n: f for n, f in filtered_map2.items()},
+                                {n: f for n, f in effective_visible_map2.items()},
                             )
                         except Exception:
                             normalized2 = {
-                                n: ToolSpec(fn=f) for n, f in filtered_map2.items()
+                                n: ToolSpec(fn=f)
+                                for n, f in effective_visible_map2.items()
                             }
                         filtered_schemas2: list[dict] = []
                         for name, spec in normalized2.items():
