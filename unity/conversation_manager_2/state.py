@@ -219,7 +219,9 @@ class ConversationManagerState:
             case PhoneCallEnded() as e:
                 contact = self.get_contact(phone_number=e.contact)
                 self.push_message(
-                    contact, "phone", Message(contact.full_name, "<Phone Call Ended...>", e.timestamp)
+                    contact,
+                    "phone",
+                    Message(contact.full_name, "<Phone Call Ended...>", e.timestamp),
                 )
                 self.push_notif(
                     Notification(
