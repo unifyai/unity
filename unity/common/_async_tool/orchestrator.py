@@ -319,12 +319,7 @@ class Orchestrator:
             except Exception:
                 pass
             # Determine tool exposure and policy for the first LLM turn
-            try:
-                expose_tools = json.loads(
-                    os.environ.get("UNITY_EVENTED_LLM_TOOLS", "true"),
-                )
-            except Exception:
-                expose_tools = True
+            expose_tools = True
 
             tool_choice_mode = "auto"
             filtered_map: Dict[str, Callable] = dict(self.tools or {})
