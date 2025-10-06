@@ -5,6 +5,7 @@ from enum import Enum
 import os
 import json
 from typing import Optional, Dict, Callable, Tuple, Any, Union, TypedDict, Literal
+from datetime import timedelta
 
 import unify
 
@@ -511,6 +512,175 @@ class Orchestrator:
 
                         live_images_overview.__doc__ = overview_doc  # type: ignore[attr-defined]
 
+                        # Image helpers
+                        id_to_handle: dict[int, Any] = {}
+                        try:
+                            for span_key, ih in list(self.images.items()):
+                                try:
+                                    img_id = int(getattr(ih, "image_id", -1))
+                                except Exception:
+                                    img_id = -1
+                                id_to_handle[img_id] = ih
+                        except Exception:
+                            id_to_handle = {}
+
+                        async def ask_image(*, image_id: int, question: str, images: dict | None = None) -> Any:  # type: ignore[valid-type]
+                            ih = id_to_handle.get(int(image_id))
+                            if ih is None:
+                                return {"error": f"image_id {image_id} not found"}
+                            try:
+                                _append_images(images, _default_img_src("ask"))
+                            except Exception:
+                                pass
+                            try:
+                                return await ih.ask(question)
+                            except Exception as _exc:  # noqa: BLE001
+                                return {"error": str(_exc)}
+
+                        async def attach_image_raw(*, image_id: int, note: str | None = None) -> Dict[str, Any]:  # type: ignore[valid-type,name-defined]
+                            iid = int(image_id)
+                            ih = id_to_handle.get(iid)
+                            if ih is None:
+                                return {"error": f"image_id {iid} not found"}
+                            # Build image content block (GCS/URL/data URI/bytes) like legacy
+                            try:
+                                data_str = getattr(
+                                    getattr(ih, "_image", None),
+                                    "data",
+                                    None,
+                                )
+                                is_gcs_url = isinstance(data_str, str) and (
+                                    data_str.startswith("gs://")
+                                    or data_str.startswith(
+                                        "https://storage.googleapis.com/",
+                                    )
+                                )
+                                if is_gcs_url:
+                                    try:
+                                        from urllib.parse import urlparse as _urlparse
+
+                                        parsed_url = _urlparse(data_str)
+                                        bucket_name = ""
+                                        object_path = ""
+                                        if parsed_url.scheme == "gs":
+                                            bucket_name = parsed_url.netloc
+                                            object_path = parsed_url.path.lstrip("/")
+                                        elif (
+                                            parsed_url.hostname
+                                            == "storage.googleapis.com"
+                                        ):
+                                            parts = parsed_url.path.lstrip("/").split(
+                                                "/",
+                                                1,
+                                            )
+                                            if len(parts) == 2:
+                                                bucket_name, object_path = parts
+                                        storage_client = getattr(
+                                            getattr(ih, "_manager", None),
+                                            "storage_client",
+                                            None,
+                                        )
+                                        bucket = storage_client.bucket(bucket_name)
+                                        blob = bucket.blob(object_path)
+                                        signed_url = blob.generate_signed_url(
+                                            version="v4",
+                                            expiration=timedelta(hours=1),
+                                            method="GET",
+                                        )
+                                        content_block = {
+                                            "type": "image_url",
+                                            "image_url": {"url": signed_url},
+                                        }
+                                    except Exception:
+                                        raw = ih.raw()
+                                        import base64 as _b64
+
+                                        head = (
+                                            bytes(raw[:10])
+                                            if isinstance(raw, (bytes, bytearray))
+                                            else b""
+                                        )
+                                        if head.startswith(b"\xff\xd8"):
+                                            mime = "image/jpeg"
+                                        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                                            mime = "image/png"
+                                        else:
+                                            mime = "image/png"
+                                        b64 = _b64.b64encode(raw).decode("ascii")
+                                        content_block = {
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": f"data:{mime};base64,{b64}",
+                                            },
+                                        }
+                                elif isinstance(data_str, str) and (
+                                    data_str.startswith("http://")
+                                    or data_str.startswith("https://")
+                                    or data_str.startswith("data:image/")
+                                ):
+                                    content_block = {
+                                        "type": "image_url",
+                                        "image_url": {"url": data_str},
+                                    }
+                                else:
+                                    raw = ih.raw()
+                                    import base64 as _b64
+
+                                    head = (
+                                        bytes(raw[:10])
+                                        if isinstance(raw, (bytes, bytearray))
+                                        else b""
+                                    )
+                                    if head.startswith(b"\xff\xd8"):
+                                        mime = "image/jpeg"
+                                    elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                                        mime = "image/png"
+                                    else:
+                                        mime = "image/png"
+                                    b64 = _b64.b64encode(raw).decode("ascii")
+                                    content_block = {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:{mime};base64,{b64}",
+                                        },
+                                    }
+
+                                # Append as a user block via dispatcher
+                                cfgA = _LoopConfig(
+                                    self.loop_id,
+                                    self.lineage,
+                                    self.lineage or [],
+                                )
+                                timerA = _Timer(
+                                    timeout=self.timeout,
+                                    max_steps=self.max_steps,
+                                    raise_on_limit=self.raise_on_limit,
+                                    client=self.client,
+                                )
+                                dispatcherA = _Dispatcher(self.client, cfgA, timerA)
+                                await dispatcherA.append_msgs(
+                                    [
+                                        {
+                                            "role": "user",
+                                            "content": (
+                                                [content_block]
+                                                if note is None
+                                                else [
+                                                    {"type": "text", "text": note},
+                                                    content_block,
+                                                ]
+                                            ),
+                                        },
+                                    ],
+                                )
+                                try:
+                                    _append_images(None, _default_img_src("attach"))
+                                except Exception:
+                                    pass
+                                return {"status": "attached", "image_id": iid}
+                            except Exception as _exc:  # noqa: BLE001
+                                return {"error": str(_exc)}
+
                         async def align_images_for(*, args: dict, hints: list[dict]) -> dict:  # type: ignore[valid-type]
                             out: dict[str, int] = {}
                             try:
@@ -578,6 +748,21 @@ class Orchestrator:
                                 _method_to_schema(
                                     align_images_for,
                                     tool_name="align_images_for",
+                                ),
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            tools_param.append(
+                                _method_to_schema(ask_image, tool_name="ask_image"),
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            tools_param.append(
+                                _method_to_schema(
+                                    attach_image_raw,
+                                    tool_name="attach_image_raw",
                                 ),
                             )
                         except Exception:
@@ -1765,6 +1950,197 @@ class Orchestrator:
 
                                 live_images_overview.__doc__ = overview_doc2  # type: ignore[attr-defined]
 
+                                # Image helpers
+                                id_to_handle2: dict[int, Any] = {}
+                                try:
+                                    for span_key, ih in list(self.images.items()):
+                                        try:
+                                            img_id = int(getattr(ih, "image_id", -1))
+                                        except Exception:
+                                            img_id = -1
+                                        id_to_handle2[img_id] = ih
+                                except Exception:
+                                    id_to_handle2 = {}
+
+                                async def ask_image(*, image_id: int, question: str, images: dict | None = None) -> Any:  # type: ignore[valid-type]
+                                    ih = id_to_handle2.get(int(image_id))
+                                    if ih is None:
+                                        return {
+                                            "error": f"image_id {image_id} not found",
+                                        }
+                                    try:
+                                        _append_images(images, _default_img_src("ask"))
+                                    except Exception:
+                                        pass
+                                    try:
+                                        return await ih.ask(question)
+                                    except Exception as _exc:  # noqa: BLE001
+                                        return {"error": str(_exc)}
+
+                                async def attach_image_raw(*, image_id: int, note: str | None = None) -> Dict[str, Any]:  # type: ignore[valid-type,name-defined]
+                                    iid = int(image_id)
+                                    ih = id_to_handle2.get(iid)
+                                    if ih is None:
+                                        return {"error": f"image_id {iid} not found"}
+                                    try:
+                                        data_str = getattr(
+                                            getattr(ih, "_image", None),
+                                            "data",
+                                            None,
+                                        )
+                                        is_gcs_url = isinstance(data_str, str) and (
+                                            data_str.startswith("gs://")
+                                            or data_str.startswith(
+                                                "https://storage.googleapis.com/",
+                                            )
+                                        )
+                                        if is_gcs_url:
+                                            try:
+                                                from urllib.parse import (
+                                                    urlparse as _urlparse,
+                                                )
+
+                                                parsed_url = _urlparse(data_str)
+                                                bucket_name = ""
+                                                object_path = ""
+                                                if parsed_url.scheme == "gs":
+                                                    bucket_name = parsed_url.netloc
+                                                    object_path = (
+                                                        parsed_url.path.lstrip("/")
+                                                    )
+                                                elif (
+                                                    parsed_url.hostname
+                                                    == "storage.googleapis.com"
+                                                ):
+                                                    parts = parsed_url.path.lstrip(
+                                                        "/",
+                                                    ).split("/", 1)
+                                                    if len(parts) == 2:
+                                                        bucket_name, object_path = parts
+                                                storage_client = getattr(
+                                                    getattr(ih, "_manager", None),
+                                                    "storage_client",
+                                                    None,
+                                                )
+                                                bucket = storage_client.bucket(
+                                                    bucket_name,
+                                                )
+                                                blob = bucket.blob(object_path)
+                                                signed_url = blob.generate_signed_url(
+                                                    version="v4",
+                                                    expiration=timedelta(hours=1),
+                                                    method="GET",
+                                                )
+                                                content_block = {
+                                                    "type": "image_url",
+                                                    "image_url": {"url": signed_url},
+                                                }
+                                            except Exception:
+                                                raw = ih.raw()
+                                                import base64 as _b64
+
+                                                head = (
+                                                    bytes(raw[:10])
+                                                    if isinstance(
+                                                        raw,
+                                                        (bytes, bytearray),
+                                                    )
+                                                    else b""
+                                                )
+                                                if head.startswith(b"\xff\xd8"):
+                                                    mime = "image/jpeg"
+                                                elif head.startswith(
+                                                    b"\x89PNG\r\n\x1a\n",
+                                                ):
+                                                    mime = "image/png"
+                                                else:
+                                                    mime = "image/png"
+                                                b64 = _b64.b64encode(raw).decode(
+                                                    "ascii",
+                                                )
+                                                content_block = {
+                                                    "type": "image_url",
+                                                    "image_url": {
+                                                        "url": f"data:{mime};base64,{b64}",
+                                                    },
+                                                }
+                                        elif isinstance(data_str, str) and (
+                                            data_str.startswith("http://")
+                                            or data_str.startswith("https://")
+                                            or data_str.startswith("data:image/")
+                                        ):
+                                            content_block = {
+                                                "type": "image_url",
+                                                "image_url": {"url": data_str},
+                                            }
+                                        else:
+                                            raw = ih.raw()
+                                            import base64 as _b64
+
+                                            head = (
+                                                bytes(raw[:10])
+                                                if isinstance(raw, (bytes, bytearray))
+                                                else b""
+                                            )
+                                            if head.startswith(b"\xff\xd8"):
+                                                mime = "image/jpeg"
+                                            elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                                                mime = "image/png"
+                                            else:
+                                                mime = "image/png"
+                                            b64 = _b64.b64encode(raw).decode("ascii")
+                                            content_block = {
+                                                "type": "image_url",
+                                                "image_url": {
+                                                    "url": f"data:{mime};base64,{b64}",
+                                                },
+                                            }
+
+                                        cfgB = _LoopConfig(
+                                            self.loop_id,
+                                            self.lineage,
+                                            self.lineage or [],
+                                        )
+                                        timerB = _Timer(
+                                            timeout=self.timeout,
+                                            max_steps=self.max_steps,
+                                            raise_on_limit=self.raise_on_limit,
+                                            client=self.client,
+                                        )
+                                        dispatcherB = _Dispatcher(
+                                            self.client,
+                                            cfgB,
+                                            timerB,
+                                        )
+                                        await dispatcherB.append_msgs(
+                                            [
+                                                {
+                                                    "role": "user",
+                                                    "content": (
+                                                        [content_block]
+                                                        if note is None
+                                                        else [
+                                                            {
+                                                                "type": "text",
+                                                                "text": note,
+                                                            },
+                                                            content_block,
+                                                        ]
+                                                    ),
+                                                },
+                                            ],
+                                        )
+                                        try:
+                                            _append_images(
+                                                None,
+                                                _default_img_src("attach"),
+                                            )
+                                        except Exception:
+                                            pass
+                                        return {"status": "attached", "image_id": iid}
+                                    except Exception as _exc:  # noqa: BLE001
+                                        return {"error": str(_exc)}
+
                                 async def align_images_for(*, args: dict, hints: list[dict]) -> dict:  # type: ignore[valid-type]
                                     out: dict[str, int] = {}
                                     try:
@@ -1841,6 +2217,24 @@ class Orchestrator:
                                     )
                                 except Exception:
                                     pass
+                                try:
+                                    schemas2.append(
+                                        _method_to_schema(
+                                            ask_image,
+                                            tool_name="ask_image",
+                                        ),
+                                    )
+                                except Exception:
+                                    pass
+                                try:
+                                    schemas2.append(
+                                        _method_to_schema(
+                                            attach_image_raw,
+                                            tool_name="attach_image_raw",
+                                        ),
+                                    )
+                                except Exception:
+                                    pass
                             except Exception:
                                 pass
                         # Dynamic helper tools for current pending set
@@ -1909,6 +2303,38 @@ class Orchestrator:
                         try:
                             if timer.has_exceeded_time() or timer.has_exceeded_msgs():
                                 break
+                        except Exception:
+                            pass
+                        # Global pause gating – do not allow LLM turns while paused
+                        try:
+                            if not self.pause_event.is_set():
+                                cancel_gate2 = asyncio.create_task(
+                                    self.cancel_event.wait(),
+                                    name="EventedPauseCancelGate2",
+                                )
+                                resume_gate2 = asyncio.create_task(
+                                    self.pause_event.wait(),
+                                    name="EventedPauseResumeGate2",
+                                )
+                                done_gate2, _ = await asyncio.wait(
+                                    {cancel_gate2, resume_gate2},
+                                    return_when=asyncio.FIRST_COMPLETED,
+                                )
+                                for g in (cancel_gate2, resume_gate2):
+                                    if g not in done_gate2 and not g.done():
+                                        g.cancel()
+                                await asyncio.gather(
+                                    cancel_gate2,
+                                    resume_gate2,
+                                    return_exceptions=True,
+                                )
+                                if self.cancel_event.is_set():
+                                    if self.stop_event is not None:
+                                        try:
+                                            self.stop_event.set()
+                                        except Exception:
+                                            pass
+                                    raise asyncio.CancelledError
                         except Exception:
                             pass
                         await _gwp(self.client, self.preprocess_msgs, **gen_kwargs2)
