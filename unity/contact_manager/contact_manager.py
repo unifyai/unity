@@ -31,6 +31,7 @@ from ..common.semantic_search import (
     fetch_top_k_by_references,
     backfill_rows,
 )
+from ..constants import is_semantic_cache_enabled
 
 
 class ContactManager(BaseContactManager):
@@ -745,6 +746,14 @@ class ContactManager(BaseContactManager):
                 include_activity=include_activity,
             ),
         )
+
+        # Determine if semantic cache mode is enabled
+        use_semantic_cache = is_semantic_cache_enabled()
+
+        # When semantic cache is enabled, use "auto" tool policy to allow the LLM
+        # to decide whether to return or call tools based on cached results
+        tool_policy_fn = None if use_semantic_cache else self._default_ask_tool_policy
+
         handle = start_async_tool_loop(
             client,
             text,
@@ -752,8 +761,9 @@ class ContactManager(BaseContactManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=self._default_ask_tool_policy,
+            tool_policy=tool_policy_fn,
             preprocess_msgs=inject_broader_context,
+            semantic_cache=use_semantic_cache,
         )
 
         if _return_reasoning_steps:
