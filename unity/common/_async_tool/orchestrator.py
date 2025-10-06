@@ -242,6 +242,22 @@ class Orchestrator:
                 client=self.client,
             )
             dispatcher = _Dispatcher(self.client, cfg, timer)
+            # Ensure the transcript begins with a system header carrying parent context
+            # when provided – this mirrors legacy ordering used by tests.
+            try:
+                if self.parent_chat_context:
+                    sys_msg = {
+                        "role": "system",
+                        "_ctx_header": True,
+                        "content": (
+                            "Broader context (read-only):\n"
+                            + json.dumps(self.parent_chat_context, indent=2)
+                            + "\n\nResolve the *next* user request in light of this."
+                        ),
+                    }
+                    await dispatcher.append_msgs([sys_msg])
+            except Exception:
+                pass
             await dispatcher.append_msgs(msgs)
 
         except Exception:
