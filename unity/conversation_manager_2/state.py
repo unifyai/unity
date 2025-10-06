@@ -452,7 +452,7 @@ class ConversationManagerState:
                 threads.append(self._render_thread(t_name, t))
         threads = "\n\n".join(threads)
         return f"""
-<contact id="{contact.id}" first_name="{contact.first_name}" last_name={contact.last_name} is_boss="{contact.is_boss}" phone_number="{contact.phone_number or ""}" email="{contact.email or ""}">
+<contact id="{contact.id}" first_name="{contact.first_name}" last_name="{contact.last_name}" is_boss="{contact.is_boss}" phone_number="{contact.phone_number or ""}" email="{contact.email or ""}">
 {self._add_spaces(threads)}
 </contact>""".strip()
 
