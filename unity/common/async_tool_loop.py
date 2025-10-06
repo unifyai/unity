@@ -825,10 +825,10 @@ def start_async_tool_loop(
         use_evented = (
             bool(evented)
             if evented is not None
-            else json.loads(os.environ.get("UNITY_EVENTED_TOOL_LOOP", "false"))
+            else json.loads(os.environ.get("UNITY_EVENTED_TOOL_LOOP", "true"))
         )
     except Exception:
-        use_evented = False
+        use_evented = True
 
     loop_coro = evented_tool_loop_inner if use_evented else async_tool_loop_inner
 
