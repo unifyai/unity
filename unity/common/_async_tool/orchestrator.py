@@ -424,6 +424,18 @@ class Orchestrator:
         tools_data = _ToolsData(self.tools, client=self.client, logger=logger)
         assistant_meta: Dict[int, Dict[str, Any]] = {}
 
+        # Enforce hidden per-loop quotas on the assistant turn before scheduling
+        try:
+            tools_data.prune_over_quota_tool_calls(assistant_msg)
+        except Exception:
+            pass
+
+        # Seed per-loop quota counters from prior turns (evented-only accumulation)
+        try:
+            tools_data.call_counts.update(self._call_counts)
+        except Exception:
+            pass
+
         # Optionally prune duplicate tool calls within the same assistant turn
         call_list = list(assistant_msg.get("tool_calls") or [])
         if self.prune_tool_duplicates and call_list:
@@ -466,6 +478,11 @@ class Orchestrator:
                     propagate_chat_context=self.propagate_chat_context,
                     assistant_meta=assistant_meta,
                 )
+                # Track per-loop quota usage across evented turns
+                try:
+                    self._call_counts[nm] = self._call_counts.get(nm, 0) + 1
+                except Exception:
+                    pass
             except Exception:
                 continue
 
@@ -616,6 +633,16 @@ class Orchestrator:
                 tools_data2 = _ToolsData(self.tools, client=self.client, logger=logger2)
                 assistant_meta2: Dict[int, Dict[str, Any]] = {}
 
+                # Seed and enforce hidden per-loop quotas on subsequent assistant turns as well
+                try:
+                    tools_data2.call_counts.update(self._call_counts)
+                except Exception:
+                    pass
+                try:
+                    tools_data2.prune_over_quota_tool_calls(tail)
+                except Exception:
+                    pass
+
                 # Optionally prune duplicates in subsequent assistant turn
                 tail_calls = list(tail.get("tool_calls") or [])
                 if self.prune_tool_duplicates and tail_calls:
@@ -658,6 +685,11 @@ class Orchestrator:
                             propagate_chat_context=self.propagate_chat_context,
                             assistant_meta=assistant_meta2,
                         )
+                        # Track per-loop quota usage across evented turns
+                        try:
+                            self._call_counts[nm] = self._call_counts.get(nm, 0) + 1
+                        except Exception:
+                            pass
                     except Exception:
                         continue
 
