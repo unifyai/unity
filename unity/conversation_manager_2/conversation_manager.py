@@ -461,6 +461,7 @@ class ConversationManager:
             self.state.mode = "text"
             self.call_contact = None
             self.cleanup_call_proc()
+            await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, PhoneUtterance):
             asyncio.create_task(self.publish_transcript(event))
