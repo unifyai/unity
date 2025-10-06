@@ -43,6 +43,7 @@ from .tools_data import ToolsData as _ToolsData
 from contextlib import suppress
 from .message_dispatcher import LoopMessageDispatcher as _Dispatcher
 from .loop_config import LoopConfig as _LoopConfig
+from .loop_config import TOOL_LOOP_LINEAGE as _TOOL_LOOP_LINEAGE
 from .loop_config import LIVE_IMAGES_LOG as _LIVE_IMAGES_LOG
 from .timeout_timer import TimeoutTimer as _Timer
 from .loop import LoopLogger as _LoopLogger
@@ -3464,4 +3465,11 @@ async def evented_tool_loop_inner(
         semantic_cache=semantic_cache,
         images=images,
     )
-    return await orch.run()
+    # Ensure nested loops inherit lineage via contextvar (legacy parity)
+    cfg = _LoopConfig(loop_id, lineage, _TOOL_LOOP_LINEAGE.get([]))
+    _token = _TOOL_LOOP_LINEAGE.set(cfg.lineage)
+    try:
+        return await orch.run()
+    finally:
+        with suppress(Exception):
+            _TOOL_LOOP_LINEAGE.reset(_token)
