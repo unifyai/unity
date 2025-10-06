@@ -426,6 +426,9 @@ class ConversationManager:
 
         # update state
         self.state.update_state(event)
+
+        # every interaction with the managers worker happens through the conversation
+        # manager instead of the state, which is why we need to publish the events here
         if event.__class__.loggable:
             asyncio.create_task(self.publish_bus_events(event))
 
