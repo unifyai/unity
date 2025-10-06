@@ -355,6 +355,12 @@ class ConversationManager:
             ).to_json(),
         )
 
+    async def publish_bus_events(self, event: Event):
+        await self.event_broker.publish(
+            "app:managers:input",
+            PublishBusEvent(event=event.to_dict()).to_json(),
+        )
+
     async def publish_transcript(self, event: Event):
         event_name = event.to_dict()["event_name"].lower()
         print("publishing transcript", event_name)

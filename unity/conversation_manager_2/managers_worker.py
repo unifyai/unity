@@ -9,17 +9,21 @@ import redis.asyncio as redis
 
 import unity
 from unity.contact_manager.contact_manager import ContactManager
+from unity.events.event_bus import EVENT_BUS
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import UNASSIGNED
 from unity.conversation_manager_2.new_events import (
     CreateContactInput,
     Event,
+    GetBusEventsInput,
+    GetBusEventsOutput,
     ManagersStartupInput,
     LogMessageInput,
     GetContactsInput,
     LogMessageOutput,
     GetContactsOutput,
     ManagersStartupOutput,
+    PublishBusEvent,
 )
 
 
@@ -95,22 +99,43 @@ class ManagersWorker:
                     )
                 print("[ManagersWorker] Unity initialized")
 
-                # 1. Initialize ContactManager and get contacts
+                # Assumes UNIFY_KEY is already in environment from set_details()
+                api_key = os.environ.get("UNIFY_KEY")
+
+                # 1. Configure EventBus
+                print("[ManagersWorker] Configuring EventBus...")
+                if api_key:
+                    EVENT_BUS._get_logger().session.headers[
+                        "Authorization"
+                    ] = f"Bearer {api_key}"
+                # event_bus auto-pinning registration
+                EVENT_BUS.set_window("Comms", 50)
+                EVENT_BUS.register_auto_pin(
+                    event_type="Comms",
+                    open_predicate=lambda e: e.payload.get("role", "")
+                    == "tool_use start",
+                    close_predicate=lambda e: e.payload.get("role", "")
+                    == "tool_use end",
+                    key_fn=lambda e: e.payload.get("handle_id", ""),
+                )
+                bus_events_task = asyncio.create_task(self._get_bus_events())
+                print("[ManagersWorker] EventBus configured")
+
+                # 2. Initialize ContactManager and get contacts
                 print("[ManagersWorker] Initializing ContactManager...")
                 self._contact_manager = ContactManager()
-                await self._get_contacts()
+                contacts_task = asyncio.create_task(self._get_contacts())
+                await asyncio.gather(bus_events_task, contacts_task)
                 print("[ManagersWorker] ContactManager initialized")
 
-                # 2. Initialize TranscriptManager with ContactManager
+                # 3. Initialize TranscriptManager with ContactManager
                 print("[ManagersWorker] Initializing TranscriptManager...")
                 self._transcript_manager = TranscriptManager(
                     contact_manager=self._contact_manager
                 )
                 print("[ManagersWorker] TranscriptManager initialized")
 
-                # 3. Configure TranscriptManager logger with auth header
-                # Assumes UNIFY_KEY is already in environment from set_details()
-                api_key = os.environ.get("UNIFY_KEY")
+                # 4. Configure TranscriptManager logger with auth header
                 if api_key:
                     self._transcript_manager._get_logger().session.headers[
                         "Authorization"
@@ -129,6 +154,26 @@ class ManagersWorker:
                 self._publish_channel,
                 ManagersStartupOutput(initialized=self._initialized).to_json(),
             )
+
+    async def _get_bus_events(self) -> None:
+        """Get events from EventBus."""
+        bus_events = await EVENT_BUS.search(filter='type == "Comms"', limit=50)
+        await self._event_broker.publish(
+            self._publish_channel,
+            GetBusEventsOutput(
+                events=[Event.from_bus_event(e).to_dict() for e in bus_events][::-1]
+            ).to_json(),
+        )
+
+    async def _publish_bus_event(self, event: Event) -> None:
+        """Publish an event to the EventBus."""
+        if not self._initialized:
+            print("[ManagersWorker] Not initialized, cannot publish bus event")
+            return
+        bus_event = Event.from_dict(event.to_dict()["event"]).to_bus_event()
+        bus_event.payload.pop("api_key", None)
+        bus_event.payload.pop("message_id", None)
+        await EVENT_BUS.publish(bus_event)
 
     async def _log_message(self, event: LogMessageInput) -> None:
         """Log a message via TranscriptManager."""
@@ -241,6 +286,10 @@ class ManagersWorker:
         # Route to handlers using isinstance
         if isinstance(event, ManagersStartupInput):
             asyncio.create_task(self._startup(event.to_dict()["payload"]))
+        elif isinstance(event, GetBusEventsInput):
+            asyncio.create_task(self._get_bus_events())
+        elif isinstance(event, PublishBusEvent):
+            asyncio.create_task(self._publish_bus_event(event))
         elif isinstance(event, LogMessageInput):
             asyncio.create_task(self._log_message(event))
         elif isinstance(event, GetContactsInput):

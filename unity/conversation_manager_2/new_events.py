@@ -33,8 +33,20 @@ class Event:
             "payload": asdict(self, dict_factory=datetime_aware_dict_factory),
         }
 
+    def to_bus_event(self):
+        from unity.events.event_bus import Event as BusEvent
+
+        payload = self.to_dict()["payload"]
+        return BusEvent(
+            calling_id="",
+            type="Comms",
+            timestamp=self.timestamp.isoformat(),
+            payload=payload,
+            payload_cls=self.__class__.__name__,
+        )
+
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data) -> "Event":
         cls = cls._registry.get(data["event_name"])
         if not cls:
             raise Exception(f"Class {data['event_name']} is not registered.")
@@ -45,6 +57,15 @@ class Event:
     @classmethod
     def from_json(cls, json_data):
         data = json.loads(json_data)
+        return cls.from_dict(data)
+
+    @classmethod
+    def from_bus_event(cls, event):
+        event_dump = event.model_dump()
+        data = {
+            "event_name": event_dump["payload_cls"],
+            "payload": event_dump["payload"],
+        }
         return cls.from_dict(data)
 
     def __init_subclass__(cls):
@@ -204,3 +225,18 @@ class LogMessageOutput(Event):
 @dataclass
 class GetContactsOutput(Event):
     contacts: list[dict[str, Any]]
+
+
+@dataclass
+class GetBusEventsInput(Event):
+    pass
+
+
+@dataclass
+class GetBusEventsOutput(Event):
+    events: list[dict[str, Any]]
+
+
+@dataclass
+class PublishBusEvent(Event):
+    event: dict[str, Any]
