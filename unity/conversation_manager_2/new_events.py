@@ -22,6 +22,7 @@ class Event:
     timestamp: datetime = field(default_factory=datetime.now)
 
     _registry: ClassVar[dict[str, "Event"]] = {}
+    loggable: ClassVar[bool] = True
 
     def to_json(self):
         return json.dumps(self.to_dict())
@@ -120,6 +121,7 @@ class EmailSent(Event):
 
 @dataclass
 class StartupEvent(Event):
+    loggable: ClassVar[bool] = False
     api_key: str
     medium: str
     assistant_id: str
@@ -140,6 +142,7 @@ class StartupEvent(Event):
 
 @dataclass
 class Ping(Event):
+    loggable: ClassVar[bool] = False
     kind: str
 
 
@@ -165,6 +168,7 @@ class ManagersStartupInput(Event):
 
 @dataclass
 class ManagersStartupOutput(Event):
+    loggable: ClassVar[bool] = False
     initialized: bool
 
 

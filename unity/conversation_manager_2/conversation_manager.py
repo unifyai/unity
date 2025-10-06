@@ -104,11 +104,26 @@ class ConversationManager:
         self.event_broker = event_broker
         self.openai_client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-        self.state = ConversationManagerState()
+        self.state = ConversationManagerState(
+            job_name=job_name,
+            user_id=user_id,
+            assistant_id=assistant_id,
+            assistant_name=assistant_name,
+            assistant_age=assistant_age,
+            assistant_region=assistant_region,
+            assistant_about=assistant_about,
+            voice_provider=voice_provider,
+            voice_id=voice_id,
+            assistant_number=assistant_number,
+            assistant_email=assistant_email,
+            user_name=user_name,
+            user_number=user_number,
+            user_email=user_email,
+            user_whatsapp_number=user_whatsapp_number,
+        )
 
         self.chat_history = []
         self.call_proc = None
-        self.initialized = False
 
     async def run_llm(self):
         self.state.snapshot()
@@ -116,8 +131,8 @@ class ConversationManager:
         print(prompt)
         input_message = {"role": "user", "content": prompt}
         system_message = Template(SYS).render(
-            name=self.user_name,
-            number=self.user_number,
+            name=self.state.user_name,
+            number=self.state.user_number,
         )
         if self.state.mode in ["call", "gmeet"]:
             print("running...")
@@ -243,7 +258,7 @@ class ConversationManager:
                         )
                     else:
                         res = await _start_call(
-                            self.assistant_number, contact.phone_number
+                            self.state.assistant_number, contact.phone_number
                         )
                         if not res["success"]:
                             await self.event_broker.publish(
@@ -294,7 +309,7 @@ class ConversationManager:
             )
 
             # fetch contacts if env vars are already set
-            if self.assistant_id:
+            if self.state.assistant_id:
                 asyncio.create_task(self.publish_startup())
                 print("Default startup")
 
@@ -318,88 +333,25 @@ class ConversationManager:
                     # await self.schedule_llm_run(0)
                     ...
                 else:
-                    event = Event.from_json(msg["data"])
+                    event = Event.from_json(msg["data"])  # type: ignore[arg-type]
                     print(event)
-                    if isinstance(event, Ping):
-                        print("ping received - keeping conversation manager alive")
-                        continue
-                    elif isinstance(event, ManagersStartupOutput):
-                        if not event.initialized:
-                            raise Exception("Managers failed to initialize")
-                        self.initialized = True
-                        continue
-                    elif isinstance(event, StartupEvent):
-                        payload = event.to_dict()["payload"]
-                        self.set_details(payload)
-                        kwargs = {
-                            "job_name": self.job_name,
-                            "timestamp": payload["timestamp"],
-                            "medium": payload["medium"],
-                            "user_id": self.user_id,
-                            "assistant_id": self.assistant_id,
-                            "user_name": self.user_name,
-                            "assistant_name": self.assistant_name,
-                            "user_number": self.user_number,
-                            "user_whatsapp_number": self.user_whatsapp_number,
-                            "assistant_number": self.assistant_number,
-                            "user_email": self.user_email,
-                            "assistant_email": self.assistant_email,
-                        }
-                        await self.publish_startup()
-                        asyncio.create_task(
-                            asyncio.to_thread(log_job_startup, **kwargs),
-                        )
-                        continue
                     await self.handle_event(event)
-
-    def set_details(self, payload):
-        self.user_id = payload["user_id"]
-        self.assistant_id = payload["assistant_id"]
-        self.assistant_name = payload["assistant_name"]
-        self.assistant_age = payload["assistant_age"]
-        self.assistant_region = payload["assistant_region"]
-        self.assistant_about = payload["assistant_about"]
-        self.assistant_number = payload["assistant_number"]
-        self.assistant_email = payload["assistant_email"]
-        self.user_name = payload["user_name"]
-        self.user_number = payload["user_number"]
-        self.user_whatsapp_number = payload["user_whatsapp_number"]
-        self.user_email = payload["user_email"]
-        self.current_user = {
-            "user_name": self.user_name,
-            "user_number": self.user_number,
-            "user_whatsapp_number": self.user_whatsapp_number,
-            "user_email": self.user_email,
-        }
-        self.voice_provider = payload["voice_provider"]
-        self.voice_id = payload["voice_id"]
-        os.environ["UNIFY_KEY"] = payload.pop("api_key")
-        os.environ["USER_ID"] = self.user_id
-        os.environ["USER_NAME"] = self.user_name
-        os.environ["USER_NUMBER"] = self.user_number
-        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
-        os.environ["USER_EMAIL"] = self.user_email
-        os.environ["ASSISTANT_NAME"] = self.assistant_name
-        os.environ["ASSISTANT_NUMBER"] = self.assistant_number
-        os.environ["ASSISTANT_EMAIL"] = self.assistant_email
-        os.environ["VOICE_PROVIDER"] = self.voice_provider
-        os.environ["VOICE_ID"] = self.voice_id
 
     async def publish_startup(self):
         print("publishing startup")
         await self.event_broker.publish(
             "app:managers:input",
             ManagersStartupInput(
-                agent_id=self.assistant_id,
-                first_name=self.assistant_name,
-                age=self.assistant_age,
-                region=self.assistant_region,
-                about=self.assistant_about,
-                phone=self.assistant_number,
-                email=self.assistant_email,
-                user_phone=self.user_number,
-                user_whatsapp_number=self.user_whatsapp_number,
-                assistant_whatsapp_number=self.assistant_number,
+                agent_id=self.state.assistant_id,
+                first_name=self.state.assistant_name,
+                age=self.state.assistant_age,
+                region=self.state.assistant_region,
+                about=self.state.assistant_about,
+                phone=self.state.assistant_number,
+                email=self.state.assistant_email,
+                user_phone=self.state.user_number,
+                user_whatsapp_number=self.state.user_whatsapp_number,
+                assistant_whatsapp_number=self.state.assistant_number,
             ).to_json(),
         )
 
@@ -448,8 +400,10 @@ class ConversationManager:
         )
 
     async def handle_event(self, event: Event):
-        # add placeholder contact if we're yet to populate the contacts map
-        if not self.initialized and hasattr(event, "contact"):
+        # add placeholder contact if we're yet to populate the contacts map.
+        # TODO: this is a hack to get the conversation manager to work without managers.
+        # TODO: Needs to be removed as soon as manager instantiation is quick enough.
+        if not self.state.initialized and hasattr(event, "contact"):
             self.state.create_new_contact(
                 id="1",
                 first_name="Placeholder",
@@ -485,9 +439,9 @@ class ConversationManager:
                     str(target_path),
                     "dev",
                     event.contact,
-                    self.assistant_number,
-                    self.voice_provider,
-                    self.voice_id if self.voice_id else "None",
+                    self.state.assistant_number,
+                    self.state.voice_provider,
+                    self.state.voice_id if self.state.voice_id else "None",
                     "None",
                     str(False),
                 )
@@ -527,8 +481,21 @@ class ConversationManager:
             # ToDo: get exchange id handled properly
             pass
 
+        elif isinstance(event, StartupEvent):
+            payload = event.to_dict()["payload"]
+            kwargs = {
+                "timestamp": payload["timestamp"],
+                "medium": payload["medium"],
+                **self.state.get_details(),
+            }
+            await self.publish_startup()
+            asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
+
         elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)
+
+        elif isinstance(event, Ping):
+            print("ping received - keeping conversation manager alive")
 
         else:
             # otherwise (whatsapp, sms, email) just schedule another llm run after 2 seconds
