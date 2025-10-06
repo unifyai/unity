@@ -41,7 +41,6 @@ from .timeout_timer import TimeoutTimer as _Timer
 from .loop import LoopLogger as _LoopLogger
 from .loop import _LoopToolFailureTracker as _FailureTracker
 from .orchestrator_events import State, Event
-from .orchestrator_adapters import InterjectAdapter, ControlAdapter
 
 
 ## Events and State are imported from orchestrator_events
@@ -200,13 +199,49 @@ class Orchestrator:
         )
         return sys_content
 
-    async def run(self) -> str:
+    async def _append_initial_message(self) -> None:
+        """Append the initial message parameter to the client transcript.
+
+        Normalises strings to a user turn and preserves dict/list structures as-is.
+        """
         try:
-            do_first_turn = json.loads(
-                os.environ.get("UNITY_EVENTED_FIRST_TURN", "true"),
+
+            def _as_msgs(msg) -> list[dict]:
+                if isinstance(msg, str):
+                    return [{"role": "user", "content": msg}]
+                if isinstance(msg, dict):
+                    # Assume already in chat message shape
+                    return [msg]
+                if isinstance(msg, list):
+                    out: list[dict] = []
+                    for it in msg:
+                        if isinstance(it, str):
+                            out.append({"role": "user", "content": it})
+                        elif isinstance(it, dict):
+                            out.append(it)
+                    return out
+                return []
+
+            msgs = _as_msgs(self.message)
+            if not msgs:
+                return
+            cfg = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
+            timer = _Timer(
+                timeout=self.timeout,
+                max_steps=self.max_steps,
+                raise_on_limit=self.raise_on_limit,
+                client=self.client,
             )
+            dispatcher = _Dispatcher(self.client, cfg, timer)
+            await dispatcher.append_msgs(msgs)
+
         except Exception:
-            do_first_turn = True
+            # Defensive: never fail appending initial messages
+            pass
+
+    async def run(self) -> str:
+
+        # First-turn path is always enabled; no env gating
 
         # If any tools define a hidden per-loop quota, skip the evented first-turn
         # path to avoid drift between preconsumed quotas and the legacy loop's
@@ -218,19 +253,8 @@ class Orchestrator:
             )
         except Exception:
             has_hidden_quotas = False
-        # If a finite timeout is set, rely on the legacy loop's TimeoutTimer semantics for now.
+        # If a finite timeout is set, we still run the evented path – parity is maintained elsewhere.
         has_finite_timeout = self.timeout is not None and float(self.timeout) > 0
-        if has_hidden_quotas or has_finite_timeout:
-            do_first_turn = False
-            try:
-                reason = (
-                    "quotas_detected"
-                    if has_hidden_quotas
-                    else f"finite_timeout={self.timeout}"
-                )
-                LOGGER.info(f"orchestrator: skip evented first turn due to {reason}")
-            except Exception:
-                pass
 
         # Additional parity gating: disable evented path when semantic cache or images are used
         # Semantic cache is supported in evented path: inject messages and a dummy tool like legacy
@@ -275,7 +299,10 @@ class Orchestrator:
             await dispatcher.append_msgs([notice])
             return notice["content"]
 
-        if do_first_turn:
+            # First-turn: run a single LLM step with optional tool schemas and
+            # honour interjection preemption. Do not mutate the transcript beyond
+            # what the LLM produces; let the legacy loop handle scheduling,
+            # placeholders, helper-acks, and all ordering semantics for parity.
             # First-turn: run a single LLM step with optional tool schemas and
             # honour interjection preemption. Do not mutate the transcript beyond
             # what the LLM produces; let the legacy loop handle scheduling,
@@ -318,6 +345,15 @@ class Orchestrator:
                         return notice["content"]
             except Exception:
                 pass
+            # Append the initial message(s) if not already present in transcript
+            try:
+                has_user_already = any(
+                    m.get("role") == "user" for m in (self.client.messages or [])
+                )
+            except Exception:
+                has_user_already = False
+            if not has_user_already:
+                await self._append_initial_message()
             # Determine tool exposure and policy for the first LLM turn
             expose_tools = True
 
@@ -800,100 +836,87 @@ class Orchestrator:
             except Exception:
                 enable_interject_adapter = True
 
-            async with asyncio.TaskGroup() as tg:
-                self._tg = tg
-                # Always wire control adapter (safe, posts cancel events without interference)
-                try:
-                    ControlAdapter(self).schedule()
-                except Exception:
-                    pass
-                if enable_interject_adapter:
-                    try:
-                        InterjectAdapter(self).schedule()
-                    except Exception:
-                        pass
-
-                # Global pause gating – do not allow LLM turns while paused
-                try:
-                    if not self.pause_event.is_set():
-                        # Wait until resume or cancel, but still allow cancel to win
-                        cancel_gate = asyncio.create_task(
-                            self.cancel_event.wait(),
-                            name="EventedPauseCancelGate",
-                        )
-                        resume_gate = asyncio.create_task(
-                            self.pause_event.wait(),
-                            name="EventedPauseResumeGate",
-                        )
-                        done_gate, _ = await asyncio.wait(
-                            {cancel_gate, resume_gate},
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        # Cancel whichever helper didn’t complete
-                        for g in (cancel_gate, resume_gate):
-                            if g not in done_gate and not g.done():
-                                g.cancel()
-                        await asyncio.gather(
-                            cancel_gate,
-                            resume_gate,
-                            return_exceptions=True,
-                        )
-                        # If cancelled while paused, respect cancellation before LLM step
-                        if self.cancel_event.is_set():
-                            if self.stop_event is not None:
-                                try:
-                                    self.stop_event.set()
-                                except Exception:
-                                    pass
-                            # Mirror legacy: no extra assistant message here; handoff to legacy cancel path
-                            raise asyncio.CancelledError
-                except Exception:
-                    pass
-
-                # Time/step guard for first-turn LLM
-                timer0 = _Timer(
-                    timeout=self.timeout,
-                    max_steps=self.max_steps,
-                    raise_on_limit=self.raise_on_limit,
-                    client=self.client,
-                )
-                # Limits already enforced above when header was injected; keep here as a guard without raising
-
-                llm_task = asyncio.create_task(
-                    _gwp(self.client, self.preprocess_msgs, **gen_kwargs),
-                    name="EventedFirstTurnLLM",
-                )
-                interject_w = (
-                    asyncio.create_task(
-                        self.interject_queue.get(),
-                        name="EventedFirstTurnInterject",
+            # Global pause gating – do not allow LLM turns while paused
+            try:
+                if not self.pause_event.is_set():
+                    # Wait until resume or cancel, but still allow cancel to win
+                    cancel_gate = asyncio.create_task(
+                        self.cancel_event.wait(),
+                        name="EventedPauseCancelGate",
                     )
-                    if not enable_interject_adapter
-                    else None
-                )
-                cancel_w = asyncio.create_task(
-                    self.cancel_event.wait(),
-                    name="EventedFirstTurnCancel",
-                )
-
-                waitset0 = {llm_task, cancel_w} | (
-                    {interject_w} if interject_w is not None else set()
-                )
-                done, _ = await asyncio.wait(
-                    waitset0,
-                    return_when=asyncio.FIRST_COMPLETED,
-                    timeout=timer0.remaining_time(),
-                )
-                # Timeout handling: cancel llm and mark stop
-                if not done:
-                    try:
-                        if not llm_task.done():
-                            llm_task.cancel()
-                            await asyncio.gather(llm_task, return_exceptions=True)
+                    resume_gate = asyncio.create_task(
+                        self.pause_event.wait(),
+                        name="EventedPauseResumeGate",
+                    )
+                    done_gate, _ = await asyncio.wait(
+                        {cancel_gate, resume_gate},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    # Cancel whichever helper didn't complete
+                    for g in (cancel_gate, resume_gate):
+                        if g not in done_gate and not g.done():
+                            g.cancel()
+                    await asyncio.gather(
+                        cancel_gate,
+                        resume_gate,
+                        return_exceptions=True,
+                    )
+                    # If cancelled while paused, respect cancellation before LLM step
+                    if self.cancel_event.is_set():
                         if self.stop_event is not None:
-                            self.stop_event.set()
-                    except Exception:
-                        pass
+                            try:
+                                self.stop_event.set()
+                            except Exception:
+                                pass
+                        # Mirror legacy: no extra assistant message here; handoff to legacy cancel path
+                        raise asyncio.CancelledError
+            except Exception:
+                pass
+
+            # Time/step guard for first-turn LLM
+            timer0 = _Timer(
+                timeout=self.timeout,
+                max_steps=self.max_steps,
+                raise_on_limit=self.raise_on_limit,
+                client=self.client,
+            )
+            # Limits already enforced above when header was injected; keep here as a guard without raising
+
+            llm_task = asyncio.create_task(
+                _gwp(self.client, self.preprocess_msgs, **gen_kwargs),
+                name="EventedTurnLLM",
+            )
+            interject_w = (
+                asyncio.create_task(
+                    self.interject_queue.get(),
+                    name="EventedTurnInterject",
+                )
+                if not enable_interject_adapter
+                else None
+            )
+            cancel_w = asyncio.create_task(
+                self.cancel_event.wait(),
+                name="EventedTurnCancel",
+            )
+
+            waitset0 = {llm_task, cancel_w} | (
+                {interject_w} if interject_w is not None else set()
+            )
+            done, _ = await asyncio.wait(
+                waitset0,
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=timer0.remaining_time(),
+            )
+            # Timeout handling: cancel llm and mark stop
+            if not done:
+                try:
+                    if not llm_task.done():
+                        llm_task.cancel()
+                        await asyncio.gather(llm_task, return_exceptions=True)
+                    if self.stop_event is not None:
+                        self.stop_event.set()
+                except Exception:
+                    pass
 
             # If cancelled or preempted by interjection, cancel the LLM and fall back
             if cancel_w in done:
@@ -942,19 +965,8 @@ class Orchestrator:
                     _ = llm_task.exception()
                 except Exception:
                     pass
-                # Insert placeholders for base tools immediately after the assistant turn
-                try:
-                    msg_ref = (
-                        self.client.messages[-1]
-                        if getattr(self.client, "messages", None)
-                        else None
-                    )
-                    if isinstance(msg_ref, dict):
-                        tcs = list(msg_ref.get("tool_calls") or [])
-                        if tcs:
-                            self._insert_placeholders_for_calls(msg_ref, tcs)
-                except Exception:
-                    pass
+
+                # Defer placeholder insertion to ensure_placeholders_for_pending
                 # Minimal hygiene: prune `wait` and acknowledge other helper tools
                 try:
                     msg = (
@@ -1016,14 +1028,14 @@ class Orchestrator:
                             pass
                 # Schedule and await first completion/clarification/notification using ToolsData
                 try:
-                    msg0 = (
-                        self.client.messages[-1]
-                        if getattr(self.client, "messages", None)
-                        else None
-                    )
+                    assistant_msg = None
+                    for _m in reversed(self.client.messages or []):
+                        if isinstance(_m, dict) and _m.get("role") == "assistant":
+                            assistant_msg = _m
+                            break
                 except Exception:
-                    msg0 = None
-                if isinstance(msg0, dict):
+                    assistant_msg = None
+                if isinstance(assistant_msg, dict):
                     # Setup dispatcher and tools data
                     cfg = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
                     timer = _Timer(
@@ -1103,7 +1115,7 @@ class Orchestrator:
                                 )
                                 await _insert_tool_message_after_assistant(
                                     assistant_meta,
-                                    msg0,
+                                    assistant_msg,
                                     tool_msg,
                                     self.client,
                                     dispatcher,
@@ -1149,7 +1161,7 @@ class Orchestrator:
                                 )
                                 await _insert_tool_message_after_assistant(
                                     assistant_meta,
-                                    msg0,
+                                    assistant_msg,
                                     tool_msg,
                                     self.client,
                                     dispatcher,
@@ -1195,7 +1207,7 @@ class Orchestrator:
                                 )
                                 await _insert_tool_message_after_assistant(
                                     assistant_meta,
-                                    msg0,
+                                    assistant_msg,
                                     tool_msg,
                                     self.client,
                                     dispatcher,
@@ -1250,7 +1262,7 @@ class Orchestrator:
                                 )
                                 await _insert_tool_message_after_assistant(
                                     assistant_meta,
-                                    msg0,
+                                    assistant_msg,
                                     tool_reply_msg,
                                     self.client,
                                     dispatcher,
@@ -1314,7 +1326,7 @@ class Orchestrator:
                                 )
                                 await _insert_tool_message_after_assistant(
                                     assistant_meta,
-                                    msg0,
+                                    assistant_msg,
                                     tool_msg,
                                     self.client,
                                     dispatcher,
@@ -1326,7 +1338,7 @@ class Orchestrator:
 
                     # Process helper calls (drop/handle) and prune from assistant msg
                     try:
-                        calls0 = list(msg0.get("tool_calls") or [])
+                        calls0 = list(assistant_msg.get("tool_calls") or [])
                         remaining_calls0 = []
                         for c in calls0:
                             _nm = (c.get("function", {}) or {}).get("name")
@@ -1336,7 +1348,12 @@ class Orchestrator:
                                     continue
                             remaining_calls0.append(c)
                         if len(remaining_calls0) != len(calls0):
-                            msg0["tool_calls"] = remaining_calls0
+                            assistant_msg["tool_calls"] = remaining_calls0
+
+                        # If there are no tool_calls at all, return final assistant content immediately (legacy parity)
+                        if not (assistant_msg.get("tool_calls") or []):
+                            _content = assistant_msg.get("content", "")
+                            return _content
                     except Exception:
                         pass
                     # Schedule base tool calls (enforce max_parallel_tool_calls)
@@ -1346,7 +1363,9 @@ class Orchestrator:
                         if self.max_parallel_tool_calls is not None
                         else None
                     )
-                    for idx, call in enumerate(list(msg0.get("tool_calls") or [])):
+                    for idx, call in enumerate(
+                        list(assistant_msg.get("tool_calls") or []),
+                    ):
                         try:
                             name = (call.get("function", {}) or {}).get("name")
                             if not isinstance(name, str) or _is_helper_tool(name):
@@ -1359,7 +1378,7 @@ class Orchestrator:
                             if max_calls is not None and scheduled_count >= max_calls:
                                 break
                             await tools_data.schedule_base_tool_call(
-                                msg0,
+                                assistant_msg,
                                 name=name,
                                 args_json=args_json,
                                 call_id=cid,
@@ -1374,7 +1393,7 @@ class Orchestrator:
                     # Ensure placeholders
                     try:
                         await _ensure_placeholders_for_pending(
-                            assistant_msg=msg0,
+                            assistant_msg=assistant_msg,
                             tools_data=tools_data,
                             assistant_meta=assistant_meta,
                             client=self.client,
@@ -1386,14 +1405,14 @@ class Orchestrator:
                     interject_waiter = (
                         asyncio.create_task(
                             self.interject_queue.get(),
-                            name="FirstTurnInterject",
+                            name="TurnInterject",
                         )
                         if not enable_interject_adapter
                         else None
                     )
                     cancel_waiter2 = asyncio.create_task(
                         self.cancel_event.wait(),
-                        name="FirstTurnCancel",
+                        name="TurnCancel",
                     )
                     clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
                     notif_waiters: Dict[asyncio.Task, asyncio.Task] = {}
@@ -1408,20 +1427,31 @@ class Orchestrator:
                         ):
                             cw = asyncio.create_task(
                                 _inf.clar_up_queue.get(),
-                                name="FirstTurnClarification",
+                                name="TurnClarification",
                             )
                             clar_waiters[cw] = _t
                         if _inf.notification_queue is not None:
                             pw = asyncio.create_task(
                                 _inf.notification_queue.get(),
-                                name="FirstTurnNotification",
+                                name="TurnNotification",
                             )
                             notif_waiters[pw] = _t
+
                     # Loop to handle multiple completions before handing off
                     canceled = False
                     interjected = False
                     llm_turn_required = False
                     while True:
+                        # Determine whether we have any real waiters (not just cancel)
+                        _has_real_waiters = bool(
+                            tools_data.pending
+                            or clar_waiters
+                            or notif_waiters
+                            or (interject_waiter is not None),
+                        )
+                        if not _has_real_waiters:
+                            break
+
                         waitset = (
                             tools_data.pending
                             | set(clar_waiters.keys())
@@ -1433,6 +1463,7 @@ class Orchestrator:
                             )
                             | {cancel_waiter2}
                         )
+                        # Redundant guard (kept for safety)
                         if not waitset:
                             break
                         # Early-limit checks before waiting
@@ -1451,6 +1482,7 @@ class Orchestrator:
                                 )
                         except Exception:
                             pass
+
                         done_first, _ = await asyncio.wait(
                             waitset,
                             return_when=asyncio.FIRST_COMPLETED,
@@ -1462,6 +1494,7 @@ class Orchestrator:
                                 tools_data,
                                 dispatcher,
                             )
+
                         # Cleanup unused helpers for this iteration
                         try:
                             for aux in (
@@ -1547,7 +1580,7 @@ class Orchestrator:
                                         )
                                         await _insert_tool_message_after_assistant(
                                             assistant_meta,
-                                            msg0,
+                                            assistant_msg,
                                             placeholder,
                                             self.client,
                                             dispatcher,
@@ -1619,7 +1652,7 @@ class Orchestrator:
                                         )
                                         await _insert_tool_message_after_assistant(
                                             assistant_meta,
-                                            msg0,
+                                            assistant_msg,
                                             placeholder,
                                             self.client,
                                             dispatcher,
@@ -1700,56 +1733,47 @@ class Orchestrator:
                             ):
                                 cw = asyncio.create_task(
                                     _inf.clar_up_queue.get(),
-                                    name="FirstTurnClarification",
+                                    name="TurnClarification",
                                 )
                                 clar_waiters[cw] = _t
                             if _inf.notification_queue is not None:
                                 pw = asyncio.create_task(
                                     _inf.notification_queue.get(),
-                                    name="FirstTurnNotification",
+                                    name="TurnNotification",
                                 )
                                 notif_waiters[pw] = _t
                         # Recreate interject/cancel waiters for next loop
                         interject_waiter = (
                             asyncio.create_task(
                                 self.interject_queue.get(),
-                                name="FirstTurnInterject",
+                                name="TurnInterject",
                             )
                             if not enable_interject_adapter
                             else None
                         )
                         cancel_waiter2 = asyncio.create_task(
                             self.cancel_event.wait(),
-                            name="FirstTurnCancel",
+                            name="TurnCancel",
                         )
 
                     # Optional: if no pending and no cancellations/interjections and no clarification requested,
                     # we can allow one more LLM turn evented before handoff (broadening subtly)
-                    if (
-                        not canceled
-                        and not interjected
-                        and not llm_turn_required
-                        and not tools_data.pending
-                    ):
+                    if not canceled and not interjected and not llm_turn_required:
+                        # Finalization check (legacy parity): if no tasks pending and the latest assistant
+                        # turn contains no tool_calls, return its content immediately.
                         try:
-                            # Second-turn assistant – parity: tool_choice per policy step 1
-                            tool_choice_mode2 = "auto"
-                            if self.tool_policy is not None:
-                                try:
-                                    tool_choice_mode2, _ = self.tool_policy(
-                                        1,
-                                        dict(self.tools or {}),
-                                    )
-                                except Exception:
-                                    tool_choice_mode2 = "auto"
-                            await _gwp(
-                                self.client,
-                                self.preprocess_msgs,
-                                return_full_completion=True,
-                                tools=[],
-                                tool_choice=tool_choice_mode2,
-                                stateful=True,
-                            )
+                            if not tools_data.pending:
+                                latest_asst = None
+                                for _m in reversed(self.client.messages or []):
+                                    if (
+                                        isinstance(_m, dict)
+                                        and _m.get("role") == "assistant"
+                                    ):
+                                        latest_asst = _m
+                                        break
+                                if isinstance(latest_asst, dict):
+                                    if not (latest_asst.get("tool_calls") or []):
+                                        return latest_asst.get("content", "")
                         except Exception:
                             pass
 
@@ -2596,12 +2620,7 @@ class Orchestrator:
 
         # Delegate to legacy loop for full behaviour and completion –
         # do not mutate transcript by inserting a system message here.
-        try:
-            LOGGER.info(
-                f"orchestrator: handover to legacy; preconsumed_quotas={getattr(self, '_call_counts', {})}",
-            )
-        except Exception:
-            pass
+
         return await _legacy_tool_loop_inner(
             client=self.client,
             message=self.message,

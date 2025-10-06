@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 
 class InterjectAdapter:
     """Adapter that would forward interjections as events.
@@ -12,7 +14,7 @@ class InterjectAdapter:
     def __init__(self, orchestrator: "Orchestrator") -> None:
         self._orch = orchestrator
 
-    def schedule(self) -> None:  # pragma: no cover - skeleton
+    def schedule(self) -> asyncio.Task | None:  # pragma: no cover - skeleton
         if self._orch._tg is None:
             raise RuntimeError("TaskGroup not initialized")
 
@@ -21,7 +23,7 @@ class InterjectAdapter:
                 payload = await self._orch.interject_queue.get()
                 await self._orch.events.put({"type": "interjected", "content": payload})
 
-        self._orch._tg.create_task(_task())
+        return self._orch._tg.create_task(_task())
 
 
 class ControlAdapter:
@@ -34,7 +36,7 @@ class ControlAdapter:
     def __init__(self, orchestrator: "Orchestrator") -> None:
         self._orch = orchestrator
 
-    def schedule(self) -> None:  # pragma: no cover - skeleton
+    def schedule(self) -> asyncio.Task | None:  # pragma: no cover - skeleton
         if self._orch._tg is None:
             raise RuntimeError("TaskGroup not initialized")
 
@@ -42,4 +44,4 @@ class ControlAdapter:
             await self._orch.cancel_event.wait()
             await self._orch.events.put({"type": "cancel_requested", "reason": None})
 
-        self._orch._tg.create_task(_watch_cancel())
+        return self._orch._tg.create_task(_watch_cancel())
