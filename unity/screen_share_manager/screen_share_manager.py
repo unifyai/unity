@@ -154,7 +154,7 @@ class ScreenShareManager:
 
         # Clients and Managers
         self._event_broker: redis.Redis = get_event_broker()
-        self._openai_client = unify.AsyncUnify(
+        self._analysis_client = unify.AsyncUnify(
             "gpt-4o@openai",
             response_format=TurnAnalysisResponse,
         )
@@ -556,8 +556,8 @@ class ScreenShareManager:
             return None, {}
 
         try:
-            self._openai_client.set_system_message(system_prompt)
-            response = await self._openai_client.generate(user_message=user_content)
+            self._analysis_client.set_system_message(system_prompt)
+            response = await self._analysis_client.generate(user_message=user_content)
             if isinstance(response, TurnAnalysisResponse):
                 return response, timestamp_to_frame_map
             elif isinstance(response, str):

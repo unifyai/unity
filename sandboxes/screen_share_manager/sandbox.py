@@ -8,33 +8,6 @@ richly annotated transcript message created by the ScreenShareManager.
 
 Prerequisites:
 - `pip install mss redis numpy Pillow`
-- Ensure all environment variables from the root README are set (OPENAI_API_KEY, etc.).
-
---- IMPORTANT: Window Selection on Linux ---
-The `XGetImage() failed` error is almost always due to incorrect window
-coordinates or running on a Wayland display server without using a
-Wayland-compatible method to get coordinates. Please follow these
-instructions carefully.
-
-**For X11 Users:**
-1.  Run `xwininfo -frame` in your terminal.
-2.  Your cursor will change. Click on the target window you want to capture.
-3.  Note the following values from the output:
-    - `Absolute upper-left X:`
-    - `Absolute upper-left Y:`
-    - `Width:`
-    - `Height:`
-4.  Use these exact values for the `--x`, `--y`, `--width`, and `--height` arguments.
-
-**For Wayland Users:**
-Standard X11 tools like `xwininfo` will not work correctly.
-1.  You must use a Wayland-native tool to get screen coordinates. The recommended tool is `slop`.
-    - Install it using your package manager (e.g., `sudo apt install slop` or `sudo dnf install slop`).
-2.  Run the following command in your terminal:
-    `slop -f "%x %y %w %h"`
-3.  Your cursor will change. Click and drag to select the exact region of the window you want to capture.
-4.  The geometry (`X Y W H`) will be printed to your terminal. Use these values for the
-    `--x`, `--y`, `--width`, and `--height` arguments.
 
 Example Usage (after getting coordinates):
 ------------------------------------------
