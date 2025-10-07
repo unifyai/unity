@@ -49,6 +49,23 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
     return "\n\n".join(handle_docs)
 
 
+def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
+    """Formats the library of existing functions into clean code blocks."""
+    if not existing_functions:
+        return "None."
+
+    unique_implementations = {
+        textwrap.dedent(func_data.get("implementation", "")).strip()
+        for func_data in existing_functions.values()
+        if func_data.get("implementation")
+    }
+
+    if not unique_implementations:
+        return "None."
+
+    return "\n\n---\n\n".join(unique_implementations)
+
+
 def _format_cache_summary(idempotency_cache: Dict[tuple, Any], last_n: int = 20) -> str:
     """
     Formats the last N cache entries, including tool call arguments, into a
@@ -1887,23 +1904,6 @@ def _build_dynamic_implement_rules_and_examples(
     )
 
 
-def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
-    """Formats the library of existing functions into clean code blocks."""
-    if not existing_functions:
-        return "None."
-
-    unique_implementations = {
-        textwrap.dedent(func_data.get("implementation", "")).strip()
-        for func_data in existing_functions.values()
-        if func_data.get("implementation")
-    }
-
-    if not unique_implementations:
-        return "None."
-
-    return "\n\n---\n\n".join(unique_implementations)
-
-
 def build_initial_plan_prompt(
     goal: str,
     existing_functions: Dict[str, Any],
@@ -1932,7 +1932,7 @@ def build_initial_plan_prompt(
         {rules_and_examples}
         ---
         ### Existing Functions Library
-        You may use these pre-existing functions if they are suitable.
+        You may use these pre-existing functions if they are suitable. If you use one, you MUST include its full source code in your response.
         {formatted_functions}
 
         ---
@@ -1957,6 +1957,7 @@ def build_dynamic_implement_prompt(
     replan_context: str,
     *,
     tools: Dict[str, Callable],
+    existing_functions: Dict[str, Any],
     existing_code_for_modification: Optional[str] = None,
     recent_transcript: Optional[str] = None,
     parent_chat_context: Optional[list] = None,
@@ -1964,6 +1965,19 @@ def build_dynamic_implement_prompt(
 ) -> str:
     """Builds the system prompt for dynamically implementing or modifying a function."""
 
+    formatted_functions = _format_existing_functions(existing_functions)
+    existing_functions_section = textwrap.dedent(
+        f"""
+        ---
+        ### Existing Functions Library
+        You may find these pre-existing functions useful. You can either call them directly
+        (if their source code is already in the 'Full Plan Source Code' below) or
+        copy and adapt their implementation.
+
+        {formatted_functions}
+        ---
+        """,
+    )
     modification_instructions = ""
     if existing_code_for_modification:
         modification_instructions = textwrap.dedent(
@@ -2094,6 +2108,8 @@ def build_dynamic_implement_prompt(
 
         {goal}
         ---
+
+        {existing_functions_section}
 
         **CRITICAL: You must choose one of four actions:**
         1.  **`implement_function`**: Write the Python code for `{function_name}`. Choose this if the function's goal is achievable from the current browser state. **Your code MUST be a single, self-contained `async def` function block. DO NOT include top-level imports or class definitions outside the function.** All necessary imports and helper classes MUST be defined *inside* the function.
