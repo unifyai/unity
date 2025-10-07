@@ -141,7 +141,7 @@ class ScreenShareManager:
 
     def __init__(self):
         # Configuration
-        self.SSIM_THRESHOLD = 0.97
+        self.SSIM_THRESHOLD = 0.80
         self.INACTIVITY_TIMEOUT_SEC = 10.0
         self.FRAME_BUFFER_SIZE = 100
         self.VISUAL_EVENT_SAMPLING_THRESHOLD = 3
