@@ -10,6 +10,7 @@ from ..knowledge_manager.types import ColumnType
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
+from ..common.tool_spec import read_only
 
 import unify
 from .types.contact import Contact
@@ -451,6 +452,7 @@ class ContactManager(BaseContactManager):
         return self._store.get_columns()
 
     # Apply timing to tool methods
+    @read_only
     def _list_columns(
         self,
         *,
@@ -1502,6 +1504,7 @@ class ContactManager(BaseContactManager):
             },
         }
 
+    @read_only
     def _search_contacts(
         self,
         *,
@@ -1572,6 +1575,7 @@ class ContactManager(BaseContactManager):
         )
         return [Contact(**r) for r in filled]
 
+    @read_only
     def _filter_contacts(
         self,
         *,

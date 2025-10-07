@@ -94,7 +94,6 @@ async def _construct_new_user_message(
         if msg.get("role") == "assistant" and msg.get("tool_calls") is not None:
             for tool_call in msg.get("tool_calls"):
                 if (id := tool_call["id"]) in _user_clarifications.keys():
-                    print(tool_call)
                     args = json.loads(tool_call["function"]["arguments"])
                     _user_clarifications[id]["assistant_question"] = args["question"]
 
@@ -304,6 +303,9 @@ async def get_dummy_tool(
         awaitables = []
         for tool_call in history:
             if (tool_name := tool_call.get("name")) in tools.normalized:
+                # Only re-call tools that are read-only
+                if not tools.normalized[tool_name].read_only:
+                    continue
                 fn = tools.normalized[tool_name].fn
                 try:
                     args = json.loads(tool_call.get("arguments")) or {}
