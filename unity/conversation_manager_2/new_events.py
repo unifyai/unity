@@ -77,6 +77,7 @@ class Event:
 @dataclass
 class PhoneCallRecieved(Event):
     contact: str
+    conference_name: str
 
 
 @dataclass

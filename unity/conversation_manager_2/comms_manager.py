@@ -195,6 +195,7 @@ class CommsManager:
                         "Unity_",
                         "",
                     )
+                    conference_name = event.get("conference_name", "")
 
                     # TODO: differentiate between calls picked up from outbound calls and inbound calls
                     task = asyncio.run_coroutine_threadsafe(
@@ -205,6 +206,7 @@ class CommsManager:
                                     "caller_number",
                                     event.get("user_number"),
                                 ),
+                                conference_name=conference_name,
                                 # voice_id=event.get("voice_id", None),
                                 # voice_provider=event.get("voice_provider", None),
                             ).to_json(),
