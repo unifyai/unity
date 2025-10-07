@@ -35,8 +35,6 @@ class ToolCallMetadata:
     # and upward events (clarifications/notifications) should bubble to the
     # outer loop as well.
     is_passthrough: bool = False
-    # Transcript index of the most recent clarification request for this call (used for dynamic gating)
-    clar_request_index: int | None = None
 
 
 class ToolCallMessage(TypedDict):

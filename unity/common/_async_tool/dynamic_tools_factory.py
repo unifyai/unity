@@ -654,39 +654,8 @@ class DynamicToolFactory:
                 handle,
             )
 
-        # Clarify helpers are exposed dynamically only when a call is actively awaiting
-        # clarification and the transcript shows a user-facing clarification exchange
-        # (request followed by a `request_clarification` tool reply) since the most
-        # recent clarification event. This avoids premature answers and supports
-        # multiple clarification cycles across a single long-running call.
-        if info.clar_up_queue is not None and getattr(
-            info,
-            "waiting_for_clarification",
-            False,
-        ):
-            # Additional gate: only expose clarify AFTER a request_clarification tool reply
-            # is present in the transcript (post the recorded clarification request point).
-            try:
-                msgs = getattr(self.tools_data, "_client").messages  # transcript
-            except Exception:
-                msgs = []
-            start_idx = getattr(info, "clar_request_index", 0) or 0
-            saw_request_tool_reply = False
-            try:
-                for m in list(msgs)[start_idx:]:
-                    if (
-                        isinstance(m, dict)
-                        and m.get("role") == "tool"
-                        and m.get("name") == "request_clarification"
-                    ):
-                        saw_request_tool_reply = True
-                        break
-            except Exception:
-                saw_request_tool_reply = False
-
-            if saw_request_tool_reply:
-                self._create_clarify_tool(create_tool_ctx)
-            # else: still waiting; do not expose yet
+        if info.clar_up_queue is not None:
+            self._create_clarify_tool(create_tool_ctx)
 
         # Determine capability and current pause state; expose only one helper at a time
         cap_pause = (handle_available and hasattr(handle, "pause")) or (
