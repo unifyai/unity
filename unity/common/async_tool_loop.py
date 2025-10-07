@@ -19,7 +19,6 @@ from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
-from ._async_tool.orchestrator import evented_tool_loop_inner
 
 if TYPE_CHECKING:
     from ..image_manager.image_manager import ImageHandle
@@ -819,25 +818,15 @@ def start_async_tool_loop(
     )
     _lineage = [*_parent, loop_id]
 
-    # Choose engine based on parameter or environment flag
-    # UNITY_EVENTED_TOOL_LOOP=true enables the event-driven orchestrator.
-    try:
-        use_evented = (
-            bool(evented)
-            if evented is not None
-            else json.loads(os.environ.get("UNITY_EVENTED_TOOL_LOOP", "true"))
-        )
-    except Exception:
-        use_evented = True
-
-    loop_coro = evented_tool_loop_inner if use_evented else async_tool_loop_inner
+    # Temporarily hard-code the legacy loop while the new evented orchestrator
+    # is being refactored. We will re-incorporate the orchestrator by wiring it
+    # back in here once the refactor is complete.
+    loop_coro = async_tool_loop_inner
 
     try:
         LOGGER.info(
-            "tool_loop: engine=%s evented_flag=%s env=%s",
-            "evented" if use_evented else "legacy",
+            "tool_loop: engine=legacy (orchestrator temporarily disabled) evented_flag=%s",
             str(evented),
-            os.environ.get("UNITY_EVENTED_TOOL_LOOP", "unset"),
         )
     except Exception:
         pass
