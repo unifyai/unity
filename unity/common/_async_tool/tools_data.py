@@ -23,8 +23,6 @@ from contextlib import suppress
 from .loop_config import LIVE_IMAGES_REGISTRY
 from .tools_utils import parse_arg_scoped_span, extract_alignment_text_from_value
 from unity.image_manager.utils import substring_from_span
-from ...constants import LOGGER
-from ...constants import LOGGER
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
@@ -188,14 +186,6 @@ class ToolsData:
 
         fn = self.normalized[name].fn
 
-        # DEBUG: log raw scheduling info
-        try:
-            LOGGER.info(
-                f"tools_data.schedule_base_tool_call: name={name} call_id={call_id} raw_args={args_json}",
-            )
-        except Exception:
-            pass
-
         # Enforce hidden per-tool total call quota: should be pre-pruned from
         # the assistant message, but guard here as well and simply skip.
         with suppress(Exception):
@@ -212,22 +202,9 @@ class ToolsData:
 
         sig = inspect.signature(fn)
         params = sig.parameters
-        try:
-            LOGGER.info(
-                "tools_data.signature: name=%s has_params=%s params=%s",
-                name,
-                bool(params),
-                list(params.keys()),
-            )
-        except Exception:
-            pass
         has_varkw = any(
             p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
         )
-        try:
-            LOGGER.info("tools_data.signature: name=%s has_varkw=%s", name, has_varkw)
-        except Exception:
-            pass
 
         sig_accepts_interject_q = "interject_queue" in params or has_varkw
         sig_accepts_pause_event = "pause_event" in params or has_varkw
@@ -272,68 +249,20 @@ class ToolsData:
             )
         except Exception:
             call_args = {}
-        try:
-            LOGGER.info(
-                "tools_data.call_args: name=%s keys=%s payload=%s",
-                name,
-                (
-                    list(call_args.keys())
-                    if isinstance(call_args, dict)
-                    else type(call_args).__name__
-                ),
-                call_args,
-            )
-        except Exception:
-            pass
 
         # Filter extras to match fn signature
         filtered_extras = {
             k: v for k, v in extra_kwargs.items() if k in params or has_varkw
         }
-        try:
-            LOGGER.info(
-                "tools_data.filtered_extras: name=%s keys=%s",
-                name,
-                list(filtered_extras.keys()),
-            )
-        except Exception:
-            pass
 
         # Forward base-tool call args, but drop any unknown keys unless **kwargs is accepted.
         # This mirrors our dynamic helper normalisation and avoids spurious TypeErrors
         # when the model invents arguments that are not part of the tool schema.
         if isinstance(call_args, dict) and not has_varkw:
             allowed_call_args = {k: v for k, v in call_args.items() if k in params}
-            try:
-                dropped = [k for k in call_args.keys() if k not in params]
-                if dropped:
-                    LOGGER.info(
-                        "tools_data.filtered_call_args: name=%s dropped_unknown_keys=%s",
-                        name,
-                        dropped,
-                    )
-            except Exception:
-                pass
         else:
             allowed_call_args = call_args
         merged_kwargs = {**allowed_call_args, **filtered_extras}
-        try:
-            LOGGER.info(
-                "tools_data.invoke: name=%s merged_keys=%s",
-                name,
-                list(merged_kwargs.keys()),
-            )
-            if isinstance(allowed_call_args, dict):
-                for _k in allowed_call_args:
-                    if _k not in params and not has_varkw:
-                        LOGGER.info(
-                            "tools_data.invoke: name=%s dropping? has_varkw=%s unknown_key=%s (will pass as-is per current policy)",
-                            name,
-                            has_varkw,
-                            _k,
-                        )
-        except Exception:
-            pass
 
         # ── Normalise arg-scoped image mapping for inner tools, but skip
         #     source-scoped helpers like `ask_image` which expect `<source>[x:y]`.
