@@ -76,12 +76,14 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
     """
 
     outer_client = make_llm(
-        "You are coordinating internal tools. If any pending tool asks a clarification question: "
-        "(1) Do not start unrelated base tools until that pending call is unblocked; "
-        "(2) Obtain the answer by any suitable means (you may call other tools, or call request_clarification to ask the user); "
-        "(3) As soon as you have the answer, immediately call the generated clarify_{toolName}_{id} helper for that exact pending call to provide the answer so it can resume. "
-        "After the original call resumes or completes, you may continue with further tools as needed. "
-        "When the email has been sent successfully, end your final assistant message with an explicit confirmation using the word 'sent' (e.g., 'Email sent.'). "
+        "You are coordinating internal tools.\n"
+        "When any pending tool asks a clarification question, assume the missing detail is a user-specific fact or preference "
+        "that is NOT inferable from the current tool context or prior messages in this loop. Do not guess or invent.\n"
+        "Therefore: (1) Do not start unrelated base tools until that pending call is unblocked; "
+        "(2) Call `request_clarification` to ask the user the exact question and wait for their answer (you may call other tools only to fetch that answer); "
+        "(3) As soon as you have the answer, immediately call the generated clarify_{toolName}_{id} helper for that exact pending call to provide the answer so it can resume.\n"
+        "After the original call resumes or completes, you may continue with further tools as needed.\n"
+        "When the email has been sent successfully, end your final assistant message with an explicit confirmation using the word 'sent' (e.g., 'Email sent.').\n"
         "Do not hallucinate any details; if unknown, ask. Keep responses concise.",
     )
 
@@ -204,9 +206,14 @@ async def delegating_tool(
     clarification_down_q: asyncio.Queue[str] | None = None,
 ) -> str:  # return type misleading on purpose
     inner_llm = make_llm(
-        "If any internal tool needs information, you may call request_clarification to ask the user. "
-        "When a running tool is waiting for an answer, first provide that answer via the appropriate clarify_{toolName}_{id} helper "
-        "before starting unrelated new tools. You may use other tools to determine the answer if helpful.",
+        "You are coordinating internal tools in a nested loop.\n"
+        "CRITICAL: When any internal tool requests clarification, the missing information is a user-specific preference or fact "
+        "that is NOT available to you from tool context or prior messages in this loop. Do not infer, assume, or guess.\n"
+        "Therefore, you MUST first call `request_clarification` to ask the user the exact question, wait for the user's answer, "
+        "and ONLY THEN call the corresponding clarify_{toolName}_{id} helper to provide that answer so the tool can resume.\n"
+        "Never call a clarify_* helper unless you have just obtained the answer via `request_clarification` in this conversation. "
+        "For example, for a question like 'what colour should the widget be?', treat it as a personal preference unknown to you; ask the user. "
+        "Keep responses concise.",
     )
 
     async def request_clarification(question: str) -> str:
@@ -239,12 +246,12 @@ async def test_clarification_bubbles_through_returned_handle() -> None:
         return await clar_down_q.get()
 
     outer_llm = make_llm(
-        "You are the TOP-LEVEL coordinator. When any pending tool (including nested delegated tools) "
-        "asks a clarification question via a clarification_request_* tool message, you MUST: "
-        "(1) Call `request_clarification` to ask the user that exact question; "
-        "(2) Wait for the user's answer; "
-        "(3) Forward that answer to the pending tool via the clarify_* helper. "
-        "Do NOT answer clarification questions yourself - always bubble them up to the user via `request_clarification` first. "
+        "You are the TOP-LEVEL coordinator. When any pending tool (including nested delegated tools) asks a clarification "
+        "question via a clarification_request_* tool message, you MUST:\n"
+        "(1) Call `request_clarification` to ask the user that exact question;\n"
+        "(2) Wait for the user's answer;\n"
+        "(3) Forward that answer to the pending tool via the clarify_* helper.\n"
+        "Treat these as user preferences or facts unknown to you; do NOT answer them yourself, guess, or infer from unrelated context.\n"
         "Do NOT start unrelated tools until pending clarifications are resolved.",
     )
 

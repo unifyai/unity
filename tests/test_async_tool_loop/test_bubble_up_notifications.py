@@ -82,13 +82,14 @@ async def test_notification_bubbles_up_two_tiers() -> None:
     """
 
     outer_client = make_llm(
-        "You are coordinating internal tools that may emit progress notifications while running. "
-        "When any pending tool emits a progress update: "
-        "(1) Immediately surface a concise, non-blocking update one level up by calling notify_parent(message=...). "
-        "(2) Do not wait for any acknowledgement; let the running tool continue. "
-        "(3) Avoid starting unrelated tools while the original call is in progress, unless required to complete the task. "
+        "You are coordinating internal tools that may emit progress notifications while running.\n"
+        "When any pending tool emits a progress update: \n"
+        "(1) Immediately surface a concise, non-blocking update one level up by calling notify_parent(message=...).\n"
+        "    Use the actual progress text when available (e.g., 'Composing email…', 'Sending email…'); do not invent.\n"
+        "(2) Do not wait for any acknowledgement; let the running tool continue.\n"
+        "(3) Avoid starting unrelated tools while the original call is in progress, unless required to complete the task.\n"
         "As soon as the email has been sent successfully, end your final assistant message with an explicit confirmation "
-        "using the word 'sent' (e.g., 'Email sent.'). Do not invent details; keep responses concise.",
+        "using the word 'sent' (e.g., 'Email sent.'). Keep responses concise.",
     )
 
     outer_tools = {
@@ -199,7 +200,8 @@ async def delegating_tool(
     notification_up_q: asyncio.Queue | None = None,
 ) -> str:  # return type misleading on purpose
     inner_llm = make_llm(
-        "Surface any internal notifications as they occur; continue to completion.",
+        "Surface any internal notifications as they occur; continue to completion.\n"
+        "Do not fabricate status; forward only the actual progress messages you receive.",
     )
 
     # Bridge notifications by closing over the parent notification queue
@@ -225,8 +227,9 @@ async def test_notification_bubbles_through_returned_handle() -> None:
 
     outer_llm = make_llm(
         "You are the TOP-LEVEL coordinator. When any delegated or nested tool emits progress notifications, "
-        "you may acknowledge them briefly but do not wait for any acknowledgement; continue until the delegated work completes. "
-        "Do not start unrelated tools while there is pending delegated work unless necessary to complete the task. "
+        "acknowledge them briefly (non-blocking) and continue until the delegated work completes.\n"
+        "Do not wait for any acknowledgement; do not start unrelated tools while work is pending unless necessary.\n"
+        "Do not invent status; only reflect actual notifications.\n"
         "When the inner work completes, end your final assistant message by including the word 'finished'. "
         "Keep responses concise.",
     )
