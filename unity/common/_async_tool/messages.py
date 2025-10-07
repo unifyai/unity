@@ -210,12 +210,6 @@ def _normalise_kwargs_for_bound_method(bound_method, incoming_kw: dict) -> dict:
                 "instruction",
                 "question",
                 "query",
-                # Additional common aliases used by some models/tools
-                "param",
-                "value",
-                "label",
-                "name",
-                "arg",
             ):
                 if alias in kw:
                     kw[public_params[0]] = kw.pop(alias)
