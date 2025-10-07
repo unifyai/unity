@@ -2992,6 +2992,30 @@ class HierarchicalPlan(BaseActiveTask):
         self.action_log.append(f"USER ASKED: {question}")
         return handle
 
+    async def next_clarification(self) -> dict:
+        """Awaits the next clarification question from the running plan."""
+        if not self.clarification_enabled:
+            await asyncio.Event().wait()
+            return {}
+        question = await self.clarification_up_q.get()
+        return {"question": question}
+
+    async def next_notification(self) -> dict:
+        """
+        Awaits the next notification from the running plan.
+        NOTE: This is not implemented for HierarchicalPlan and will wait indefinitely.
+        """
+        await asyncio.Event().wait()
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        """
+        Provides an answer to a pending clarification question.
+        The call_id is ignored as this handle only manages one clarification channel.
+        """
+        if self.clarification_enabled:
+            await self.clarification_down_q.put(answer)
+
     def _is_valid_method(self, name: str) -> bool:
         """
         Checks if a given control method is valid in the current plan state.
