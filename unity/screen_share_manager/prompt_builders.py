@@ -85,12 +85,14 @@ SCHEMA FOR YOUR RESPONSE:```json
     return prompt
 
 
-def build_summary_update_prompt(current_summary: str, new_events: List[KeyEvent]) -> str:
+def build_summary_update_prompt(
+    current_summary: str, new_events: List[KeyEvent]
+) -> str:
     """
     Builds the system prompt for the summary update LLM.
     """
     new_events_formatted = "\n".join(
-        [f'- At t={evt.timestamp:.2f}s: {evt.event_description}' for evt in new_events]
+        [f"- At t={evt.timestamp:.2f}s: {evt.event_description}" for evt in new_events]
     )
 
     prompt = f"""
