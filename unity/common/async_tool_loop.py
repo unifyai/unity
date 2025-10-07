@@ -443,20 +443,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         except Exception:
             parent_label = "unknown"
 
-        # Best-effort detection of a single nested handle to enrich the label
+        # Best-effort detection of a single nested handle to enrich the label (removed for simplicity)
         child_label: str | None = None
-        try:
-            _ti = getattr(self._task, "task_info", {})  # type: ignore[attr-defined]
-            nested_ids: set[str] = set()
-            for _t, _inf in _ti.items() if isinstance(_ti, dict) else []:
-                _h = _inf.get("handle")
-                _lid = getattr(_h, "_log_label", None) or getattr(_h, "_loop_id", None)
-                if isinstance(_lid, str) and _lid:
-                    nested_ids.add(_lid)
-            if len(nested_ids) == 1:
-                child_label = next(iter(nested_ids))
-        except Exception:
-            child_label = None
 
         if child_label:
             loop_id_label = f"Question({parent_label}->{child_label})"
@@ -630,7 +618,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             task_info = {}
         try:
             items = task_info.items() if isinstance(task_info, dict) else []
-            pt_handles = self._iter_passthrough_handles()
             for _t, _inf in items:
                 try:
                     h = _inf.handle
@@ -659,7 +646,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             task_info = {}
         try:
             items = task_info.items() if isinstance(task_info, dict) else []
-            pt_handles = self._iter_passthrough_handles()
             for _t, _inf in items:
                 try:
                     h = _inf.handle
@@ -799,14 +785,11 @@ def start_async_tool_loop(
     )
     _lineage = [*_parent, loop_id]
 
-    # Temporarily hard-code the legacy loop while the new evented orchestrator
-    # is being refactored. We will re-incorporate the orchestrator by wiring it
-    # back in here once the refactor is complete.
-    loop_coro = async_tool_loop_inner
+    # Run the async tool loop
 
     async def _loop_wrapper():
         try:
-            return await loop_coro(
+            return await async_tool_loop_inner(
                 client,
                 message,
                 tools,
