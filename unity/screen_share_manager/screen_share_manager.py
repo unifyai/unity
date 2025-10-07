@@ -427,9 +427,10 @@ class ScreenShareManager:
             image_id = image_ids[0]
 
             # 2. Build screen_share entry
+            event_type = "speech" if event.triggering_phrase else "vision"
             ts_key = f"{event.timestamp:.2f}-{event.timestamp:.2f}"
             screen_share_dict[ts_key] = ScreenShareAnnotation(
-                caption=event.event_description, image_b64=screenshot_b64
+                caption=event.event_description, image_b64=screenshot_b64, type=event_type
             )
 
             # 3. Build images entry if there's a triggering phrase

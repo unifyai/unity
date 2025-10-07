@@ -2,6 +2,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field, model_validator, field_validator
 from datetime import datetime
 import re
+from typing import Literal
 
 UNASSIGNED = -1
 
@@ -17,7 +18,8 @@ class Medium(StrEnum):
 
 class ScreenShareAnnotation(BaseModel):
     caption: str
-    image_b64: str
+    image: str
+    type: Literal["vision", "speech"]
 
 
 class Message(BaseModel):

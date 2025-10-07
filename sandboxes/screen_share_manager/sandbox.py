@@ -165,7 +165,7 @@ def _capture_and_publish_frames(monitor: Dict[str, int], fps: int = 5):
 
 
 async def _result_fetcher_and_printer(
-    transcript_manager: TranscriptManager, voice_enabled: bool
+    transcript_manager: TranscriptManager, project_name: str, voice_enabled: bool
 ):
     """
     A background task that continuously polls for new transcript messages and prints them.
@@ -176,6 +176,7 @@ async def _result_fetcher_and_printer(
     last_printed_message_id = (
         initial_messages[0].message_id if initial_messages else -1
     )
+    context_name = transcript_manager._transcripts_ctx
 
     while not _main_stop_event.is_set():
         try:
@@ -183,13 +184,7 @@ async def _result_fetcher_and_printer(
             if latest_messages:
                 latest_message = latest_messages[0]
                 if latest_message.message_id > last_printed_message_id:
-                    print("\n\n--- Fetched Transcript Log ---")
-                    print(
-                        json.dumps(
-                            latest_message.model_dump(mode="json"), indent=2
-                        )
-                    )
-                    print("-------------------------------\n")
+                    print(f"\n\n✅ Event logged to Unify in {project_name}/{context_name} in log {latest_message.message_id}\n")
                     if voice_enabled:
                         speak("Analysis complete.")
                     # Update the last printed ID and redraw the input prompt
@@ -249,6 +244,8 @@ async def _main_async() -> None:
     manager_task = None
     result_fetcher_task = None
 
+    session_start_time = time.time()
+    
     try:
         screen_manager = ScreenShareManager()
         transcript_manager = TranscriptManager()
@@ -270,7 +267,7 @@ async def _main_async() -> None:
         
         # Start the background task for fetching and printing results
         result_fetcher_task = asyncio.create_task(
-            _result_fetcher_and_printer(transcript_manager, args.voice)
+            _result_fetcher_and_printer(transcript_manager, args.project_name, args.voice)
         )
 
         await asyncio.sleep(2)
@@ -307,9 +304,9 @@ async def _main_async() -> None:
                     continue
 
                 # --- Publish Utterance for Background Processing ---
-                print("\n- - - Processing Turn in Background - - -")
 
-                turn_start_time = time.time()
+                turn_start_time = session_start_time
+                turn_end_time = time.time() - session_start_time
                 event_payload = {
                     "event_name": "PhoneUtterance",
                     "payload": {
@@ -317,7 +314,7 @@ async def _main_async() -> None:
                         "timestamp": datetime.now().isoformat(),
                         "content": utterance,
                         "start_time": turn_start_time,
-                        "end_time": time.time(),
+                        "end_time": turn_end_time,
                     },
                 }
                 await redis_client.publish(
