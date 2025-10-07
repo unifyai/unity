@@ -1350,6 +1350,10 @@ async def async_tool_loop_inner(
                             f"tool execution:\n{question}"
                         )
                         tool_msg = ph  # for event_bus
+                        # Record transcript index of the current clarification request for this call
+                        tools_data.info[src_task].clar_request_index = len(
+                            client.messages,
+                        )
 
                         # 4️⃣ forward event to the outer handle (programmatic consumption)
                         try:
@@ -1874,6 +1878,10 @@ async def async_tool_loop_inner(
                             ph["content"] = (
                                 "Tool incomplete, please answer the following to continue "
                                 f"tool execution:\n{question}"
+                            )
+                            # Record transcript index for this clarification request (pre-emptive path)
+                            tools_data.info[src_task].clar_request_index = len(
+                                client.messages,
                             )
 
                             # Forward event up to outer handle
