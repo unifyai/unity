@@ -42,10 +42,6 @@ class ToolsData:
             Tuple[asyncio.Queue[str], asyncio.Queue[str]],
         ] = {}
         self.completed_results: Dict[str, str] = {}
-        # When a tool returns a passthrough handle, the outer loop should hand over
-        # and stop doing any further work. We record the delegate here so the main
-        # loop can immediately await it and return, without emitting extra messages.
-        self.handover_delegate = None
 
     def _quota_count(self, task_name: str) -> int:
         return self.call_counts.get(task_name, 0)
@@ -228,9 +224,6 @@ class ToolsData:
             extra_kwargs["clarification_down_q"] = clar_down_q
 
         progress_q: Optional[asyncio.Queue[dict]] = None
-        if sig_accepts_progress:
-            progress_q = asyncio.Queue()
-            extra_kwargs["notification_up_q"] = progress_q
         if sig_accepts_progress:
             progress_q = asyncio.Queue()
             extra_kwargs["notification_up_q"] = progress_q
@@ -422,8 +415,7 @@ class ToolsData:
         info: ToolCallMetadata = self.pop_task(task)
         name = info.name
         call_id = info.call_id
-        fn = info.call_dict["function"]["name"]
-        arg = info.call_dict["function"]["arguments"]
+        # remove unused locals
 
         # 1️⃣-a. Drain any pending notifications that arrived just before completion
         #      (prevents missing progress events when the tool finishes quickly).
@@ -520,14 +512,7 @@ class ToolsData:
                 ):
                     try:
                         _outer = outer_handle_container[0]
-                        # Adopt the handle to enable built-in flushing of any
-                        # pending interjections and to wire through future steering
-                        # calls automatically, while the outer loop keeps running
-                        # (handover/early-return was removed in the new design).
-                        try:
-                            _outer._adopt(raw)  # type: ignore[attr-defined]
-                        except Exception:
-                            pass
+                        # Wire pause/stop state with the new handle; outer loop keeps running.
                         # Forward any early interjections that were queued before
                         # this passthrough handle existed. Do NOT consume the outer
                         # buffer so that subsequent passthrough handles also receive them.

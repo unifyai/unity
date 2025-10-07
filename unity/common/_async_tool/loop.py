@@ -1061,7 +1061,7 @@ async def async_tool_loop_inner(
                     missing_ids = set(last_problem["missing"])
                     # Skip if we already scheduled for this assistant turn
                     if id(amsg) not in assistant_meta:
-                        backfilled = await schedule_missing_for_message(
+                        await schedule_missing_for_message(
                             amsg,
                             missing_ids,
                             tools_data=tools_data,
@@ -1953,24 +1953,10 @@ async def async_tool_loop_inner(
                                     if isinstance(payload, dict)
                                     else None
                                 )
-                                try:
-                                    logger.info(
-                                        f"(pre-emptive) Notification payload images for {tool_name}: {list((images_from_child or {}).keys())}",
-                                        prefix="📣",
-                                    )
-                                except Exception:
-                                    pass
                                 append_source_scoped_images(
                                     images_from_child,
                                     default_source_label("notification"),
                                 )
-                                try:
-                                    logger.info(
-                                        f"(pre-emptive) Live images log after notification: {LIVE_IMAGES_LOG.get()}",
-                                        prefix="🖼️",
-                                    )
-                                except Exception:
-                                    pass
                             except Exception:
                                 pass
                         llm_turn_required = True
