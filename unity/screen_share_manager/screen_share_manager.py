@@ -23,7 +23,7 @@ from unity.transcript_manager.types.message import (
     ScreenShareAnnotation,
 )
 
-from .prompt_builders import build_turn_analysis_prompt
+from .prompt_builders import build_summary_update_prompt, build_turn_analysis_prompt
 from .types import KeyEvent, TurnAnalysisResponse
 
 logger = logging.getLogger(__name__)
@@ -154,6 +154,7 @@ class ScreenShareManager:
             "gpt-4o@openai",
             response_format=TurnAnalysisResponse,
         )
+        self._summary_client = unify.AsyncUnify("gpt-4o-mini@openai")
         self._image_manager = ImageManager()
         self._transcript_manager = TranscriptManager()
 
@@ -174,6 +175,13 @@ class ScreenShareManager:
         self._logging_semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_LOGGING_TASKS)
         self._dispatcher_task: Optional[asyncio.Task] = None
 
+        # State for rolling summary and recent events
+        self._session_summary: str = "The session has just begun."
+        self._recent_key_events: Deque[KeyEvent] = deque(maxlen=5)
+        self._unsummarized_events: List[KeyEvent] = []
+        self._summary_update_lock = asyncio.Lock()
+        self._summary_update_task: Optional[asyncio.Task] = None
+
     async def start(self):
         """Starts the main event listening and the logging dispatcher."""
         logger.info("ScreenShareManager started. Initializing background tasks...")
@@ -185,6 +193,8 @@ class ScreenShareManager:
         self._stop_event.set()
         if self._dispatcher_task and not self._dispatcher_task.done():
             self._dispatcher_task.cancel()
+        if self._summary_update_task and not self._summary_update_task.done():
+            self._summary_update_task.cancel()
         logger.info("ScreenShareManager stopping...")
 
     def _b64_to_image(self, b64_string: str) -> Image.Image:
@@ -288,6 +298,60 @@ class ScreenShareManager:
                 )
             self._last_significant_frame_b64 = frame_b64
 
+    def _trigger_summary_update(self):
+        """Schedules the summary update task, ensuring only one is running or scheduled (debouncing)."""
+        if self._summary_update_task and not self._summary_update_task.done():
+            logger.debug("Summary update task already scheduled. Skipping.")
+            return
+        logger.info("Scheduling session summary update.")
+        self._summary_update_task = asyncio.create_task(self._update_summary())
+
+    async def _update_summary(self):
+        """A serialized task that updates the session summary using the latest events."""
+        # Allow a small delay to batch events that arrive close together
+        await asyncio.sleep(3.0)
+
+        async with self._summary_update_lock:
+            events_to_summarize = []
+            current_summary = ""
+            async with self._state_lock:
+                if not self._unsummarized_events:
+                    logger.debug("No new events to summarize.")
+                    return
+                # Create a copy and clear the original list
+                events_to_summarize = list(self._unsummarized_events)
+                self._unsummarized_events.clear()
+                current_summary = self._session_summary
+
+            logger.info(f"Updating summary with {len(events_to_summarize)} new event(s).")
+            try:
+                prompt = build_summary_update_prompt(current_summary, events_to_summarize)
+                new_summary = await self._summary_client.generate(prompt)
+
+                if new_summary and isinstance(new_summary, str):
+                    async with self._state_lock:
+                        self._session_summary = new_summary.strip()
+                    logger.info("Session summary updated successfully.")
+                    logger.debug(f"New Summary: {self._session_summary}")
+                else:
+                    logger.warning("Summary update LLM call did not return a valid string.")
+
+            except asyncio.CancelledError:
+                logger.info("Summary update task cancelled.")
+                # Put the events back if cancelled before completion
+                async with self._state_lock:
+                    self._unsummarized_events = (
+                        events_to_summarize + self._unsummarized_events
+                    )
+                raise
+            except Exception as e:
+                logger.error(f"Error during summary update: {e}", exc_info=True)
+                # Put the events back on failure to be retried next time
+                async with self._state_lock:
+                    self._unsummarized_events = (
+                        events_to_summarize + self._unsummarized_events
+                    )
+
     async def _trigger_turn_analysis(self, speech_event: Optional[dict]):
         """
         Atomically captures the current pending visual events and launches a
@@ -332,24 +396,43 @@ class ScreenShareManager:
             self._analyses_in_flight += 1
 
         try:
-            key_events, frame_map = await self._get_llm_analysis(
+            response, frame_map = await self._get_llm_analysis(
                 speech_event, visual_events
             )
 
-            if key_events or speech_event:
-                log_job = (speech_event, key_events, frame_map)
+            if response:
+                key_events = response.events
+                # Add new events to state and trigger summarizer
+                if key_events:
+                    async with self._state_lock:
+                        for event in key_events:
+                            # Add to recent events for prompt context
+                            self._recent_key_events.append(event)
+                            # Add to unsummarized events for the summary task
+                            self._unsummarized_events.append(event)
+                    self._trigger_summary_update()
+
+                # Queue the turn for logging to the transcript
+                if key_events or speech_event:
+                    log_job = (speech_event, key_events, frame_map)
+                    await self._logging_queue.put(log_job)
+
+                # Publish real-time annotations
+                for event in key_events:
+                    await self._event_broker.publish(
+                        "app:comms:screen_annotation",
+                        json.dumps(
+                            {
+                                "event_name": "ScreenAnnotationEvent",
+                                "payload": {"event_description": event.event_description},
+                            }
+                        ),
+                    )
+            # If analysis fails but there was speech, still log the speech turn
+            elif speech_event:
+                log_job = (speech_event, [], {})
                 await self._logging_queue.put(log_job)
 
-            for event in key_events:
-                await self._event_broker.publish(
-                    "app:comms:screen_annotation",
-                    json.dumps(
-                        {
-                            "event_name": "ScreenAnnotationEvent",
-                            "payload": {"event_description": event.event_description},
-                        }
-                    ),
-                )
         except Exception as e:
             logger.error(
                 f"An unhandled exception occurred during turn analysis task: {e}",
@@ -363,9 +446,18 @@ class ScreenShareManager:
         self,
         speech_event: Optional[dict],
         visual_events: List[Dict],
-    ) -> Tuple[List[KeyEvent], Dict[float, str]]:
+    ) -> Tuple[Optional[TurnAnalysisResponse], Dict[float, str]]:
         """Constructs the prompt and calls the LLM to get turn analysis."""
-        system_prompt = build_turn_analysis_prompt()
+        # Get a consistent snapshot of the context state for this analysis turn
+        async with self._state_lock:
+            current_summary = self._session_summary
+            recent_event_descriptions = [
+                event.event_description for event in self._recent_key_events
+            ]
+
+        system_prompt = build_turn_analysis_prompt(
+            current_summary, recent_event_descriptions
+        )
         user_content = []
         timestamp_to_frame_map: Dict[float, str] = {}
         if speech_event:
@@ -434,12 +526,15 @@ class ScreenShareManager:
                     )
         if not self._openai_client:
             logger.warning("Unify client not initialized. Skipping analysis.")
-            return [], {}
+            return None, {}
+        # If there's no speech and no visual events, there's nothing to analyze.
+        if not user_content and not speech_event:
+            return None, {}
         try:
             self._openai_client.set_system_message(system_prompt)
             response = await self._openai_client.generate(user_message=user_content)
             if isinstance(response, TurnAnalysisResponse):
-                return response.events, timestamp_to_frame_map
+                return response, timestamp_to_frame_map
             elif isinstance(response, str):
                 logger.warning(
                     "LLM analysis returned a raw string, indicating a schema validation failure. Attempting manual parse."
@@ -448,22 +543,22 @@ class ScreenShareManager:
                     validated_response = TurnAnalysisResponse.model_validate(
                         json.loads(response)
                     )
-                    return validated_response.events, timestamp_to_frame_map
+                    return validated_response, timestamp_to_frame_map
                 except (json.JSONDecodeError, Exception) as e:
                     logger.error(
                         f"Failed to manually parse or validate LLM string response: {e}",
                         exc_info=True,
                     )
                     logger.debug(f"Malformed LLM response string: {response}")
-                    return [], {}
+                    return None, {}
             else:
                 logger.error(
                     f"Unexpected response type from LLM analysis: {type(response)}"
                 )
-                return [], {}
+                return None, {}
         except Exception as e:
             logger.error(f"Error during LLM analysis: {e}", exc_info=True)
-            return [], {}
+            return None, {}
 
     async def _log_turn_to_transcript(
         self,
@@ -535,9 +630,10 @@ class ScreenShareManager:
             screenshot_b64 = combined_frame_map.get(event.representative_timestamp)
             if not screenshot_b64 and combined_frame_map:
                 closest_ts = min(
-                    combined_frame_map.keys(), key=lambda ts: abs(ts - rep_ts)
+                    combined_frame_map.keys(),
+                    key=lambda ts: abs(ts - event.representative_timestamp),
                 )
-                if abs(closest_ts - rep_ts) < 1.0:
+                if abs(closest_ts - event.representative_timestamp) < 1.0:
                     screenshot_b64 = combined_frame_map[closest_ts]
 
             if not screenshot_b64:
