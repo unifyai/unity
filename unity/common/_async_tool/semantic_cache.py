@@ -71,11 +71,32 @@ def _simplify_tool_trajectory(tool_trajectory: list[ToolCallPair]):
     return ret
 
 
-async def _construct_new_user_message(init_user_message, messages_history):
+async def _construct_new_user_message(
+    init_user_message,
+    messages_history,
+    full_messages_history,
+):
+    history = None
     if not messages_history:
-        return init_user_message
+        history = init_user_message
+    else:
+        history = messages_history
 
-    # TODO clarifications should be included and used to construct the new user message
+    # TODO Update prompt
+    _user_clarifications = {}
+    for msg in full_messages_history:
+        if msg.get("role") == "tool" and msg.get("name").startswith(
+            "request_clarification",
+        ):
+            _user_clarifications[msg["tool_call_id"]] = {"user_answer": msg["content"]}
+
+    for msg in full_messages_history:
+        if msg.get("role") == "assistant" and msg.get("tool_calls") is not None:
+            for tool_call in msg.get("tool_calls"):
+                if (id := tool_call["id"]) in _user_clarifications.keys():
+                    print(tool_call)
+                    args = json.loads(tool_call["function"]["arguments"])
+                    _user_clarifications[id]["assistant_question"] = args["question"]
 
     CLEAN_USER_MESSAGE_PROMPT = """
 Task: From the conversation history, return the final intended user message.
@@ -85,6 +106,7 @@ Rules:
 - Ignore assistant messages; they are never part of the output.
 - Output exactly one plain string: the final corrected user message. No quotes, JSON, or explanation.
 - Do not add new information. Remove redundant or off-topic words.
+- If clarifications are provided, use them to construct the new user message.
 
 Examples:
 
@@ -109,7 +131,7 @@ Can you find the contact with the name John Smith?
     client = _CONFIG.get_client()
     client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
     return await client.generate(
-        user_message=f"Messages: {json.dumps(messages_history)}",
+        user_message=f"Messages: {json.dumps(history)}\nPossible clarifications: {json.dumps(_user_clarifications)}",
     )
 
 
@@ -340,6 +362,7 @@ async def save_semantic_cache(
     new_user_message = await _construct_new_user_message(
         initial_user_message,
         user_message_visible_history,
+        messages_history,
     )
 
     tool_trajectory = await _clean_tool_trajectory(
