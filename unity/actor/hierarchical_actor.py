@@ -4307,6 +4307,26 @@ class HierarchicalActor(BaseActor):
                 else "N/A (This is a top-level function call)"
             )
 
+            existing_functions = {}
+            if self.function_manager:
+                try:
+                    query = f"{function_name} {docstring}"
+                    relevant_functions = (
+                        self.function_manager.search_functions_by_similarity(
+                            query=query,
+                            n=3,
+                        )
+                    )
+                    existing_functions = {f["name"]: f for f in relevant_functions}
+                    if existing_functions:
+                        plan.action_log.append(
+                            f"Found {len(existing_functions)} relevant skills for implementing '{function_name}'.",
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Could not retrieve functions from FunctionManager for dynamic_implement: {e}",
+                    )
+
             clean_full_plan_source = (
                 "\n\n".join(
                     plan.clean_function_source_map.values(),
@@ -4347,6 +4367,7 @@ class HierarchicalActor(BaseActor):
                 has_browser_screenshot=browser_screenshot is not None,
                 replan_context=replan_reason,
                 tools=self.tools,
+                existing_functions=existing_functions,
                 existing_code_for_modification=kwargs.get(
                     "existing_code_for_modification",
                 ),
