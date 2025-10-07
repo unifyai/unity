@@ -439,7 +439,6 @@ def method_to_schema(
     raw_doc = bound_method.__doc__ or ""
     cleaned_doc = _strip_hidden_params_from_doc(raw_doc, hidden)
 
-    # … remainder is unchanged …
     if hasattr(bound_method, "__self__") and hasattr(
         bound_method.__self__,
         "__class__",

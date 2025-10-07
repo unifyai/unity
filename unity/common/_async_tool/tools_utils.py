@@ -5,6 +5,7 @@ import time
 from typing import Any
 import re
 from .loop_config import LIVE_IMAGES_REGISTRY, LIVE_IMAGES_LOG
+from contextlib import suppress
 
 
 @dataclass
@@ -182,23 +183,17 @@ def append_source_scoped_images(images: dict | None, default_source_label: str) 
                 src, span = default_source_label, "[:]"
 
             handle = None
-            try:
+            with suppress(Exception):
                 if isinstance(v, int):
                     handle = reg.get(int(v)) if isinstance(reg, dict) else None
                 elif hasattr(v, "image_id"):
                     handle = v
-            except Exception:
-                handle = None
             if handle is None:
                 continue
-            try:
+            with suppress(Exception):
                 reg[int(getattr(handle, "image_id", -1))] = handle
-            except Exception:
-                pass
-            try:
+            with suppress(Exception):
                 log.append(f"{src}:{int(getattr(handle, 'image_id', -1))}:{span}")
-            except Exception:
-                pass
     except Exception:
         return
 
