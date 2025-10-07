@@ -533,3 +533,4 @@ class ConversationManager:
         print(f"Marking job {self.job_name} done")
         mark_job_done(self.job_name)
         self.cleanup_call_proc()
+        self.stop.set()
