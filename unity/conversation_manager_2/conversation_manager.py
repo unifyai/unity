@@ -130,7 +130,7 @@ class ConversationManager:
         prompt = self.state.get_state_for_llm()
         print(prompt)
         input_message = {"role": "user", "content": prompt}
-        boss_contact = [c for c in self.state.inverted_contacts_map.values() if c.is_boss][0]
+        boss_contact = next(c for c in self.state.inverted_contacts_map.values() if c.is_boss)
         system_message = Template(SYS).render(
             contact_id=boss_contact.id,
             first_name=boss_contact.first_name,
