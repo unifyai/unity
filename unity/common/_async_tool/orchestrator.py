@@ -9,6 +9,7 @@ from datetime import timedelta
 import unify
 
 # Delegate to the existing inner loop for now (skeleton orchestrator).
+from .loop import async_tool_loop_inner as _legacy_tool_loop_inner
 from .loop import _check_valid_response_format as _resp_schema
 from .messages import generate_with_preprocess as _gwp
 from .messages import _is_helper_tool as _is_helper_tool
@@ -16,14 +17,6 @@ from .messages import build_helper_ack_content as _helper_ack
 from .messages import (
     ensure_placeholders_for_pending as _ensure_placeholders_for_pending,
 )
-from .messages import (
-    find_unreplied_assistant_entries as _find_unreplied,
-)
-from .messages import (
-    schedule_missing_for_message as _schedule_missing_for_message,
-)
-from .messages import insert_tool_message_after_assistant as _insert_tool_after
-from .tools_utils import create_tool_call_message as _create_tool_call_msg
 from .messages import (
     insert_tool_message_after_assistant as _insert_tool_message_after_assistant,
 )
@@ -35,22 +28,19 @@ from ..llm_helpers import _dumps as _json_pretty
 from ..tool_spec import normalise_tools
 from ..tool_spec import ToolSpec
 from . import semantic_cache as sc
+from ...constants import LOGGER
 from .tools_utils import create_tool_call_message
 from .dynamic_tools_factory import DynamicToolFactory
 from .tools_utils import append_source_scoped_images as _append_images
 from .tools_utils import default_source_label as _default_img_src
 from .tools_data import ToolsData as _ToolsData
-from contextlib import suppress
 from .message_dispatcher import LoopMessageDispatcher as _Dispatcher
 from .loop_config import LoopConfig as _LoopConfig
-from .loop_config import TOOL_LOOP_LINEAGE as _TOOL_LOOP_LINEAGE
 from .loop_config import LIVE_IMAGES_LOG as _LIVE_IMAGES_LOG
 from .timeout_timer import TimeoutTimer as _Timer
 from .loop import LoopLogger as _LoopLogger
 from .loop import _LoopToolFailureTracker as _FailureTracker
 from .orchestrator_events import State, Event
-from ...constants import LOGGER
-from ...constants import LOGGER
 
 
 ## Events and State are imported from orchestrator_events
@@ -135,8 +125,6 @@ class Orchestrator:
         except Exception:
             self._normalized_tools = {}
         self._call_counts: dict[str, int] = {}
-        # No throttling: interjections are drained and consolidated before the
-        # next LLM turn (legacy `loop.py` behavior).
 
     def _build_interjection_system_content(self, payload: Any) -> str:
         # Mirror legacy wording and consolidation semantics
@@ -245,22 +233,6 @@ class Orchestrator:
                 client=self.client,
             )
             dispatcher = _Dispatcher(self.client, cfg, timer)
-            # Ensure the transcript begins with a system header carrying parent context
-            # when provided – this mirrors legacy ordering used by tests.
-            try:
-                if self.parent_chat_context:
-                    sys_msg = {
-                        "role": "system",
-                        "_ctx_header": True,
-                        "content": (
-                            "Broader context (read-only):\n"
-                            + json.dumps(self.parent_chat_context, indent=2)
-                            + "\n\nResolve the *next* user request in light of this."
-                        ),
-                    }
-                    await dispatcher.append_msgs([sys_msg])
-            except Exception:
-                pass
             await dispatcher.append_msgs(msgs)
 
         except Exception:
@@ -268,1042 +240,7 @@ class Orchestrator:
             pass
 
     async def run(self) -> str:
-        # Prune any pre-seeded assistant helper-only turns (e.g. a lone `wait`)
-        # so the transcript does not contain dangling helper tool_calls without
-        # corresponding tool replies. This mirrors legacy loop semantics and
-        # satisfies tests that pre-seed helper calls before starting the loop.
-        try:
-            self._prune_preseeded_helper_turns()
-        except Exception:
-            pass
-        # Ensure the initial user/system message(s) are present in the transcript
-        try:
-            await self._append_initial_message()
-        except Exception:
-            pass
 
-        # Immediate limits guard (pre-LLM): enforce max_steps/timeout right after
-        # the initial message is appended. This mirrors legacy behaviour where
-        # USER + ASSISTANT would exceed max_steps=1 and must raise when
-        # raise_on_limit=True.
-        try:
-            cfg0 = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
-            timer0 = _Timer(
-                timeout=self.timeout,
-                max_steps=self.max_steps,
-                raise_on_limit=self.raise_on_limit,
-                client=self.client,
-            )
-            try:
-                LOGGER.info(
-                    "pre_llm_limit_guard: label=%s messages=%s max_steps=%s timeout=%s",
-                    getattr(cfg0, "label", "<unknown>"),
-                    len(getattr(self.client, "messages", []) or []),
-                    self.max_steps,
-                    self.timeout,
-                )
-            except Exception:
-                pass
-            # These checks will raise when raise_on_limit is True
-            timer0.has_exceeded_time()
-            timer0.has_exceeded_msgs()
-        except Exception:
-            # Propagate exception (TimeoutError / RuntimeError) to caller
-            raise
-
-        # Refactored: run the evented core path (single code path for all turns)
-        return await self._run_evented_core()
-
-    def _prune_preseeded_helper_turns(self) -> None:
-        """Remove assistant turns that consist only of helper calls we should drop.
-
-        Current policy: if an assistant message contains only helper tool_calls and
-        every helper is `wait`, drop that assistant message entirely. We keep this
-        narrowly-scoped to avoid impacting other helper behaviours (e.g. explicit
-        acknowledgements) until broader parity is verified across tests.
-        """
-        msgs = getattr(self.client, "messages", None)
-        if not isinstance(msgs, list) or not msgs:
-            return
-
-        to_remove: list[int] = []
-        try:
-            for i, m in enumerate(msgs):
-                if not isinstance(m, dict) or m.get("role") != "assistant":
-                    continue
-                tool_calls = m.get("tool_calls") or []
-                if not tool_calls:
-                    continue
-                # Collect helper names for this assistant turn
-                names: list[str] = []
-                try:
-                    for c in tool_calls:
-                        fn = (c.get("function", {}) or {}).get("name")
-                        if isinstance(fn, str):
-                            names.append(fn)
-                except Exception:
-                    names = []
-
-                if not names:
-                    continue
-
-                all_helpers = True
-                try:
-                    for n in names:
-                        if not _is_helper_tool(n):
-                            all_helpers = False
-                            break
-                except Exception:
-                    all_helpers = False
-
-                if not all_helpers:
-                    continue
-
-                # Drop only when all helpers are the `wait` helper
-                if all(n == "wait" for n in names):
-                    to_remove.append(i)
-                    try:
-                        LOGGER.info(
-                            "orchestrator: pruning pre-seeded helper-only assistant turn at idx=%s names=%s",
-                            i,
-                            names,
-                        )
-                    except Exception:
-                        pass
-        except Exception:
-            to_remove = []
-
-        # Remove from the tail to preserve indices while popping
-        for i in reversed(to_remove):
-            try:
-                msgs.pop(i)
-            except Exception:
-                pass
-
-    async def _run_evented_core(self) -> str:
-        """Simplified, unified evented flow: first LLM → schedule tools → wait → final LLM.
-
-        This consolidates the previously scattered first-turn and subsequent-turn logic
-        into a single deterministic path.
-        """
-        # Build first-turn tool schemas using tool_policy (legacy parity)
-        # This allows policies like ("required", {...}) to force a tool call on step 0.
-        first_tool_choice: str = "auto"
-        # When no policy is provided, default to HIDE-NONE for auto mode
-        policy_returned_map: Dict[str, Callable] = {}
-        all_tools_map: Dict[str, Callable] = dict(self.tools or {})
-        if self.tool_policy is not None:
-            try:
-                first_tool_choice, policy_returned_map = self.tool_policy(
-                    0,
-                    dict(all_tools_map),
-                )
-            except Exception:
-                # On policy failure, fall back to auto with no hidden tools
-                first_tool_choice, policy_returned_map = "auto", {}
-
-        # Legacy parity for first turn:
-        # - If mode == "auto": mapping is the HIDE set → visible = all - returned
-        # - Else: mapping is the SHOW set → visible = returned (fallback to all when empty)
-        if first_tool_choice == "auto":
-            first_visible_map = {
-                n: f
-                for n, f in all_tools_map.items()
-                if n not in (policy_returned_map or {})
-            }
-        else:
-            first_visible_map = dict(policy_returned_map) or dict(all_tools_map)
-
-        # Build schemas from visible tools only
-        schemas: list[dict] = []
-        for name, fn in first_visible_map.items():
-            try:
-                schemas.append(_method_to_schema(fn, tool_name=name))
-            except Exception:
-                continue
-
-        # Debug: record the chosen policy and visibility for the first turn
-        try:
-            LOGGER.info(
-                "first_turn_policy: choice=%s tools=%s visible=%s",
-                first_tool_choice,
-                list((policy_returned_map or {}).keys()),
-                list(first_visible_map.keys()),
-            )
-        except Exception:
-            pass
-
-        # If any interjections arrived before the first LLM turn, append a system message
-        # that consolidates user-visible history and the latest interjection. This mirrors
-        # legacy behaviour and ensures EVENT_BUS publishes a system entry containing
-        # "user: **<interjection>**", and the LLM will incorporate the latest guidance.
-        try:
-            cfg0 = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
-            timer0 = _Timer(
-                timeout=self.timeout,
-                max_steps=self.max_steps,
-                raise_on_limit=self.raise_on_limit,
-                client=self.client,
-            )
-            dispatcher0 = _Dispatcher(self.client, cfg0, timer0)
-
-            last_payload = None
-            while True:
-                try:
-                    payload = self.interject_queue.get_nowait()
-                    last_payload = payload
-                except Exception:
-                    # QueueEmpty or any failure → stop draining
-                    break
-
-            if last_payload is not None:
-                sys_msg = {
-                    "role": "system",
-                    "content": self._build_interjection_system_content(last_payload),
-                }
-                await dispatcher0.append_msgs([sys_msg])
-        except Exception:
-            pass
-
-        # Track whether we consumed policy step=1 via the follow-up path
-        consumed_followup_step1: bool = False
-
-        # Ask for tool calls
-        # Enforce a hard wall-clock timeout around the very first LLM turn to
-        # preserve legacy semantics: when raise_on_limit=True, exceed → TimeoutError;
-        # when False, terminate gracefully with an assistant notice.
-        try:
-            _first_timer = _Timer(
-                timeout=self.timeout,
-                max_steps=self.max_steps,
-                raise_on_limit=self.raise_on_limit,
-                client=self.client,
-            )
-            _remaining = _first_timer.remaining_time()
-            if _remaining is None:
-                await _gwp(
-                    self.client,
-                    self.preprocess_msgs,
-                    return_full_completion=True,
-                    tools=schemas,
-                    tool_choice=first_tool_choice,
-                    stateful=True,
-                )
-            else:
-                # Guard against negative drift
-                _timeout_secs = max(0.0, float(_remaining))
-                await asyncio.wait_for(
-                    _gwp(
-                        self.client,
-                        self.preprocess_msgs,
-                        return_full_completion=True,
-                        tools=schemas,
-                        tool_choice=first_tool_choice,
-                        stateful=True,
-                    ),
-                    timeout=_timeout_secs,
-                )
-        except asyncio.TimeoutError:
-            # Hard timeout on the first turn
-            if self.raise_on_limit:
-                raise
-            try:
-                cfgX = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
-                timerX = _Timer(
-                    timeout=self.timeout,
-                    max_steps=self.max_steps,
-                    raise_on_limit=self.raise_on_limit,
-                    client=self.client,
-                )
-                dispatcherX = _Dispatcher(self.client, cfgX, timerX)
-                notice = {
-                    "role": "assistant",
-                    "content": f"🔚 Terminating early: timeout ({self.timeout}s) exceeded",
-                }
-                await dispatcherX.append_msgs([notice])
-                return notice["content"]
-            except Exception:
-                return ""
-
-        last = (
-            self.client.messages[-1] if getattr(self.client, "messages", None) else None
-        )
-        # If the assistant answered directly, consider a policy-driven second turn
-        if isinstance(last, dict) and not (last.get("tool_calls") or []):
-            # If a policy is present and would reveal any tools on step 1, run a follow-up
-            run_follow_up = False
-            next_choice = "auto"
-            next_policy_map: Dict[str, Callable] = {}
-            try:
-                if self.tool_policy is not None:
-                    try:
-                        next_choice, next_policy_map = self.tool_policy(
-                            1,
-                            dict(self.tools or {}),
-                        )
-                    except Exception:
-                        next_choice, next_policy_map = "auto", {}
-
-                    all_map = dict(self.tools or {})
-                    if next_choice == "auto":
-                        visible_next = {
-                            n: f
-                            for n, f in all_map.items()
-                            if n not in (next_policy_map or {})
-                        }
-                    else:
-                        visible_next = dict(next_policy_map) or dict(all_map)
-
-                    try:
-                        LOGGER.info(
-                            "policy_eval_followup: step=1 mode=%s returned=%s visible=%s",
-                            next_choice,
-                            list((next_policy_map or {}).keys()),
-                            list(visible_next.keys()),
-                        )
-                    except Exception:
-                        pass
-
-                    run_follow_up = bool(visible_next)
-                else:
-                    run_follow_up = False
-            except Exception:
-                run_follow_up = False
-
-            if not run_follow_up:
-                return last.get("content", "") or ""
-
-            # Execute a second LLM turn with the visible tool set for step 1
-            try:
-                schemas_next: list[dict] = []
-                for n, f in visible_next.items():
-                    try:
-                        schemas_next.append(_method_to_schema(f, tool_name=n))
-                    except Exception:
-                        continue
-                await _gwp(
-                    self.client,
-                    self.preprocess_msgs,
-                    return_full_completion=True,
-                    tools=schemas_next,
-                    tool_choice=next_choice,
-                    stateful=True,
-                )
-                consumed_followup_step1 = True
-            except Exception:
-                # If follow-up failed, fall back to returning the first assistant answer
-                return last.get("content", "") or ""
-
-            # Refresh pointer to the latest assistant message after the follow-up
-            last = (
-                self.client.messages[-1]
-                if getattr(self.client, "messages", None)
-                else None
-            )
-            if isinstance(last, dict) and not (last.get("tool_calls") or []):
-                return last.get("content", "") or ""
-
-        # Locate the assistant turn that requested tools
-        assistant_msg = None
-        try:
-            for _m in reversed(self.client.messages or []):
-                if isinstance(_m, dict) and _m.get("role") == "assistant":
-                    assistant_msg = _m
-                    break
-        except Exception:
-            assistant_msg = None
-
-        if not isinstance(assistant_msg, dict):
-            return ""
-
-        # Schedule tool calls
-        cfg = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
-        timer = _Timer(
-            timeout=self.timeout,
-            max_steps=self.max_steps,
-            raise_on_limit=self.raise_on_limit,
-            client=self.client,
-        )
-        dispatcher = _Dispatcher(self.client, cfg, timer)
-        logger = _LoopLogger(cfg, self.log_steps)
-        tools_data = _ToolsData(self.tools, client=self.client, logger=logger)
-        assistant_meta: Dict[int, Dict[str, Any]] = {}
-
-        # Enforce hidden per-loop quotas on the assistant turn before scheduling
-        try:
-            tools_data.prune_over_quota_tool_calls(assistant_msg)
-        except Exception:
-            pass
-
-        # Seed per-loop quota counters from prior turns (evented-only accumulation)
-        try:
-            tools_data.call_counts.update(self._call_counts)
-        except Exception:
-            pass
-
-        # Optionally prune duplicate tool calls within the same assistant turn
-        call_list = list(assistant_msg.get("tool_calls") or [])
-        if self.prune_tool_duplicates and call_list:
-            try:
-                seen: set[tuple[str, str]] = set()
-                filtered: list[dict] = []
-                for c in call_list:
-                    fn = c.get("function", {}) or {}
-                    nm = fn.get("name")
-                    aj = fn.get("arguments", "{}")
-                    key = (str(nm), str(aj))
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    filtered.append(c)
-                if len(filtered) != len(call_list):
-                    call_list = filtered
-                    # Update transcript so the LLM no longer expects replies for pruned call_ids
-                    try:
-                        assistant_msg["tool_calls"] = call_list
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        for idx, call in enumerate(call_list):
-            try:
-                nm = (call.get("function", {}) or {}).get("name")
-                if not isinstance(nm, str) or _is_helper_tool(nm):
-                    continue
-                aj = (call.get("function", {}) or {}).get("arguments", "{}")
-                cid = call.get("id") or "call"
-                await tools_data.schedule_base_tool_call(
-                    assistant_msg,
-                    name=nm,
-                    args_json=aj,
-                    call_id=cid,
-                    call_idx=idx,
-                    parent_chat_context=self.parent_chat_context,
-                    propagate_chat_context=self.propagate_chat_context,
-                    assistant_meta=assistant_meta,
-                )
-                # Track per-loop quota usage across evented turns
-                try:
-                    self._call_counts[nm] = self._call_counts.get(nm, 0) + 1
-                except Exception:
-                    pass
-            except Exception:
-                continue
-
-        # Ensure placeholders exist for all scheduled tool calls before any further LLM turns
-        try:
-            await _ensure_placeholders_for_pending(
-                assistant_msg=assistant_msg,
-                tools_data=tools_data,
-                assistant_meta=assistant_meta,
-                client=self.client,
-                msg_dispatcher=dispatcher,
-            )
-        except Exception:
-            pass
-
-        # Strong guard: if any assistant tool_call ids still have no responding tool message,
-        # schedule or backfill placeholders so the next assistant turn never triggers API 400s.
-        try:
-            findings = _find_unreplied(self.client)
-            for f in findings:
-                if f.get("assistant_msg") is not assistant_msg:
-                    continue
-                missing_ids = set(f.get("missing") or [])
-                if not missing_ids:
-                    continue
-
-                # Attempt to schedule any missing ones (if not already scheduled)
-                try:
-                    await _schedule_missing_for_message(
-                        assistant_msg,
-                        missing_ids,
-                        tools_data=tools_data,
-                        parent_chat_context=self.parent_chat_context,
-                        propagate_chat_context=self.propagate_chat_context,
-                        assistant_meta=assistant_meta,
-                        client=self.client,
-                        msg_dispatcher=dispatcher,
-                    )
-                except Exception:
-                    pass
-                # Ensure placeholders now exist for these
-                with suppress(Exception):
-                    await _ensure_placeholders_for_pending(
-                        assistant_msg=assistant_msg,
-                        tools_data=tools_data,
-                        assistant_meta=assistant_meta,
-                        client=self.client,
-                        msg_dispatcher=dispatcher,
-                    )
-                # As a final safety net, inject minimal tool placeholder messages directly
-                # for any still-missing ids to satisfy the API contract.
-                try:
-                    # Recompute missing after attempts above
-                    f2 = next(
-                        (
-                            x
-                            for x in _find_unreplied(self.client)
-                            if x.get("assistant_msg") is assistant_msg
-                        ),
-                        None,
-                    )
-                    still_missing = set(f2.get("missing") or []) if f2 else set()
-                except Exception:
-                    still_missing = set()
-                if still_missing:
-                    for cid in list(still_missing):
-                        try:
-                            # Find the function name for this call id (if present) for readability
-                            fn_name = None
-                            try:
-                                for c in assistant_msg.get("tool_calls") or []:
-                                    if c.get("id") == cid:
-                                        fn_name = (c.get("function", {}) or {}).get(
-                                            "name",
-                                        )
-                                        break
-                            except Exception:
-                                fn_name = None
-                            tool_msg = _create_tool_call_msg(
-                                name=str(fn_name or "tool"),
-                                call_id=cid,
-                                content="Pending… tool call accepted. Working on it.",
-                            )
-                            await _insert_tool_after(
-                                assistant_meta,
-                                assistant_msg,
-                                tool_msg,
-                                self.client,
-                                dispatcher,
-                            )
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-
-        # Local early-exit helper for this minimal core
-        async def _early_exit_local(reason: str) -> str:
-            # Cancel any pending work and append a graceful termination notice
-            for t in list(getattr(tools_data, "pending", [])):
-                try:
-                    inf = tools_data.info.get(t)
-                    if (
-                        inf is not None
-                        and inf.handle is not None
-                        and hasattr(inf.handle, "stop")
-                    ):
-                        await maybe_await(inf.handle.stop())
-                except Exception:
-                    pass
-                try:
-                    if not t.done():
-                        t.cancel()
-                except Exception:
-                    pass
-            try:
-                await asyncio.gather(
-                    *list(getattr(tools_data, "pending", [])),
-                    return_exceptions=True,
-                )
-                tools_data.pending.clear()
-            except Exception:
-                pass
-            notice = {
-                "role": "assistant",
-                "content": f"🔚 Terminating early: {reason}",
-            }
-            await dispatcher.append_msgs([notice])
-            return notice["content"]
-
-        # Wait for tool completions (no clar/notify handling in this minimal core)
-        while tools_data.pending:
-            done_tasks, _ = await asyncio.wait(
-                set(tools_data.pending),
-                return_when=asyncio.FIRST_COMPLETED,
-                timeout=timer.remaining_time(),
-            )
-            if not done_tasks:
-                # No tool finished within the allotted time budget. Mirror legacy
-                # behaviour by cancelling pending work and appending a graceful
-                # early-termination notice instead of proceeding to another LLM turn.
-                try:
-                    if timer.has_exceeded_time():
-                        try:
-                            LOGGER.info(
-                                "evented_minimal_core_timeout: label=%s reason=%s",
-                                getattr(cfg, "label", "<unknown>"),
-                                f"timeout ({self.timeout}s) exceeded",
-                            )
-                        except Exception:
-                            pass
-                        return await _early_exit_local(
-                            f"timeout ({self.timeout}s) exceeded",
-                        )
-                    if timer.has_exceeded_msgs():
-                        try:
-                            LOGGER.info(
-                                "evented_minimal_core_timeout: label=%s reason=%s",
-                                getattr(cfg, "label", "<unknown>"),
-                                f"max_steps ({self.max_steps}) exceeded",
-                            )
-                        except Exception:
-                            pass
-                        return await _early_exit_local(
-                            f"max_steps ({self.max_steps}) exceeded",
-                        )
-                except Exception:
-                    # When raise_on_limit=True the checks above raise; let that bubble up.
-                    raise
-                # Fallback: treat as a timeout even if the guard did not trip.
-                try:
-                    LOGGER.info(
-                        "evented_minimal_core_timeout: label=%s reason=%s",
-                        getattr(cfg, "label", "<unknown>"),
-                        "timeout exceeded",
-                    )
-                except Exception:
-                    pass
-                return await _early_exit_local("timeout exceeded")
-            tracker = _FailureTracker(self.max_consecutive_failures)
-            for t in list(done_tasks):
-                try:
-                    await tools_data.process_completed_task(
-                        task=t,
-                        consecutive_failures=tracker,
-                        outer_handle_container=self.outer_handle_container,
-                        assistant_meta=assistant_meta,
-                        msg_dispatcher=dispatcher,
-                    )
-                except Exception:
-                    raise
-
-        # If we already executed a follow-up LLM turn to honour policy step=1 above,
-        # finish with a final assistant turn WITHOUT tools to mirror legacy behaviour
-        # (prevents an unnecessary second tool call when policy only revealed tools once).
-        if consumed_followup_step1:
-            try:
-                await _gwp(
-                    self.client,
-                    self.preprocess_msgs,
-                    return_full_completion=True,
-                    tools=[],
-                    tool_choice="auto",
-                    stateful=True,
-                )
-                tail = (
-                    self.client.messages[-1]
-                    if getattr(self.client, "messages", None)
-                    else None
-                )
-                if isinstance(tail, dict) and not (tail.get("tool_calls") or []):
-                    return tail.get("content", "") or ""
-            except Exception:
-                pass
-
-        # Subsequent LLM turns: keep offering the same schemas until no tool_calls are requested
-        # If we already executed a follow-up LLM turn to honour policy step=1 above,
-        # start counting subsequent policy turns from step=2 to avoid duplicating step=1.
-        step = 2 if consumed_followup_step1 else 1
-        while True:
-            # Pre-LLM guard (subsequent turns): if we still have pending tools and
-            # the very next assistant turn would consume the last remaining step,
-            # terminate gracefully instead of letting the LLM emit a noop.
-            try:
-                cur_msgs = len(getattr(self.client, "messages", []) or [])
-                if self.max_steps is not None and tools_data.pending:
-                    if cur_msgs + 1 >= int(self.max_steps):
-                        try:
-                            LOGGER.info(
-                                "pre_llm_limit_guard_subseq: pending_tools=%s messages=%s max_steps=%s -> early_exit",
-                                len(tools_data.pending),
-                                cur_msgs,
-                                self.max_steps,
-                            )
-                        except Exception:
-                            pass
-                        return await _early_exit_local(
-                            f"max_steps ({self.max_steps}) exceeded",
-                        )
-                # Also guard for wall-clock expiry before scheduling another LLM turn
-                timer_guard = _Timer(
-                    timeout=self.timeout,
-                    max_steps=self.max_steps,
-                    raise_on_limit=self.raise_on_limit,
-                    client=self.client,
-                )
-                if timer_guard.has_exceeded_time():
-                    return await _early_exit_local(
-                        f"timeout ({self.timeout}s) exceeded",
-                    )
-            except Exception:
-                # When raise_on_limit=True, let the exception bubble up
-                raise
-
-            # Apply step-specific tool policy (legacy parity):
-            # On each subsequent turn, re-evaluate the policy with the current step index.
-            # Semantics:
-            # - mode == "auto" → returned mapping are tools to HIDE
-            # - other modes (e.g. "required") → returned mapping are tools to SHOW
-            step_tool_choice = "auto"
-            step_policy_map: Dict[str, Callable] = {}
-            visible_map_for_step: Dict[str, Callable] = dict(self.tools or {})
-            try:
-                if self.tool_policy is not None:
-                    try:
-                        step_tool_choice, step_policy_map = self.tool_policy(
-                            step,
-                            dict(self.tools or {}),
-                        )
-                    except Exception:
-                        step_tool_choice, step_policy_map = "auto", {}
-
-                    all_map = dict(self.tools or {})
-                    if step_tool_choice == "auto":
-                        visible_map_for_step = {
-                            n: f
-                            for n, f in all_map.items()
-                            if n not in (step_policy_map or {})
-                        }
-                    else:
-                        visible_map_for_step = dict(step_policy_map) or dict(all_map)
-
-                    try:
-                        LOGGER.info(
-                            "subseq_policy: step=%s mode=%s returned=%s visible=%s",
-                            step,
-                            step_tool_choice,
-                            list((step_policy_map or {}).keys()),
-                            list(visible_map_for_step.keys()),
-                        )
-                    except Exception:
-                        pass
-            except Exception:
-                # Fall back to exposing all tools with auto choice
-                step_tool_choice = "auto"
-                visible_map_for_step = dict(self.tools or {})
-
-            # Build schemas for this step from the visible map
-            schemas_for_step: list[dict] = []
-            for name, fn in visible_map_for_step.items():
-                try:
-                    schemas_for_step.append(_method_to_schema(fn, tool_name=name))
-                except Exception:
-                    continue
-            # Drain ALL interjections for this LLM turn and append a system
-            # message per item (tests accept consolidation across one or many
-            # system messages). This mirrors legacy loop behavior.
-            try:
-                _cfg_inter = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
-                _timer_inter = _Timer(
-                    timeout=self.timeout,
-                    max_steps=self.max_steps,
-                    raise_on_limit=self.raise_on_limit,
-                    client=self.client,
-                )
-                _dispatcher_inter = _Dispatcher(self.client, _cfg_inter, _timer_inter)
-                drained = 0
-                drained_texts: list[str] = []
-                # Collect all interjections and append any associated images immediately
-                while True:
-                    try:
-                        _payload = self.interject_queue.get_nowait()
-                    except Exception:
-                        break
-                    drained += 1
-                    try:
-                        # Extract plain text for consolidation
-                        if isinstance(_payload, dict):
-                            _txt = str(_payload.get("message", "")).strip()
-                            _imgs = _payload.get("images")
-                        else:
-                            _txt = str(_payload).strip()
-                            _imgs = None
-                        if _txt:
-                            drained_texts.append(_txt)
-                        # Append any provided images into the live registry/log
-                        try:
-                            _append_images(_imgs, _default_img_src("interjection"))
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-
-                if drained:
-                    # Build a single consolidated system message so the LLM sees
-                    # all interjections together (helps it emit multiple tool calls
-                    # in one turn). We include the user-visible history like legacy.
-                    try:
-                        history_lines: list[str] = []
-                        try:
-                            outer = (
-                                self.outer_handle_container[0]
-                                if self.outer_handle_container
-                                else None
-                            )
-                        except Exception:
-                            outer = None
-                        try:
-                            uvh = (
-                                getattr(outer, "_user_visible_history", [])
-                                if outer
-                                else []
-                            )
-                            for _m in uvh:
-                                role = _m.get("role")
-                                _content = _m.get("content")
-                                if isinstance(_content, dict):
-                                    _text = str(_content.get("message", "")).strip()
-                                else:
-                                    _text = str(_content or "").strip()
-                                if role in ("user", "assistant") and _text:
-                                    history_lines.append(f"{role}: {_text}")
-                        except Exception:
-                            history_lines = []
-
-                        body_lines = ["--", *history_lines]
-                        for t in drained_texts:
-                            body_lines.append(f"user: **{t}**")
-                        body_lines.append("--")
-
-                        sys_content = (
-                            "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
-                            "They have just interjected with the following message(s) (most recent last). "
-                            "From their perspective, the conversation thus far is as follows:\n"
-                            + "\n".join(body_lines)
-                            + "Please consider and incorporate *all* interjections in your final response to the user. "
-                            + "Later interjections should always override earlier interjections if there are "
-                            + "any conflicting comments/requests across the different interjections."
-                        )
-
-                        await _dispatcher_inter.append_msgs(
-                            [
-                                {"role": "system", "content": sys_content},
-                            ],
-                        )
-                        try:
-                            LOGGER.info(
-                                "interject_drain: appended consolidated guidance (count=%s) before LLM turn step=%s",
-                                drained,
-                                step,
-                            )
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            gen_kwargs = {
-                "return_full_completion": True,
-                "tools": schemas_for_step,
-                "tool_choice": step_tool_choice,
-                "stateful": True,
-            }
-            try:
-                if self.max_parallel_tool_calls is not None:
-                    gen_kwargs["max_tool_calls"] = self.max_parallel_tool_calls
-                elif "drained" in locals() and drained >= 2:
-                    # Encourage the model to emit multiple tool calls in one turn when
-                    # multiple interjections arrived. Use a small headroom.
-                    gen_kwargs["max_tool_calls"] = drained + 2
-            except Exception:
-                pass
-
-            await _gwp(self.client, self.preprocess_msgs, **gen_kwargs)
-            tail = (
-                self.client.messages[-1]
-                if getattr(self.client, "messages", None)
-                else None
-            )
-            if isinstance(tail, dict) and not (tail.get("tool_calls") or []):
-                return tail.get("content", "") or ""
-
-            # Schedule any new tool calls from this assistant turn
-            if isinstance(tail, dict):
-                cfg2 = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
-                timer2 = _Timer(
-                    timeout=self.timeout,
-                    max_steps=self.max_steps,
-                    raise_on_limit=self.raise_on_limit,
-                    client=self.client,
-                )
-                dispatcher2 = _Dispatcher(self.client, cfg2, timer2)
-                logger2 = _LoopLogger(cfg2, self.log_steps)
-                tools_data2 = _ToolsData(self.tools, client=self.client, logger=logger2)
-                assistant_meta2: Dict[int, Dict[str, Any]] = {}
-
-                # Seed and enforce hidden per-loop quotas on subsequent assistant turns as well
-                try:
-                    tools_data2.call_counts.update(self._call_counts)
-                except Exception:
-                    pass
-                try:
-                    tools_data2.prune_over_quota_tool_calls(tail)
-                except Exception:
-                    pass
-
-                # Optionally prune duplicates in subsequent assistant turn
-                tail_calls = list(tail.get("tool_calls") or [])
-                if self.prune_tool_duplicates and tail_calls:
-                    try:
-                        seen2: set[tuple[str, str]] = set()
-                        filtered2: list[dict] = []
-                        for c in tail_calls:
-                            fn = c.get("function", {}) or {}
-                            nm = fn.get("name")
-                            aj = fn.get("arguments", "{}")
-                            key = (str(nm), str(aj))
-                            if key in seen2:
-                                continue
-                            seen2.add(key)
-                            filtered2.append(c)
-                        if len(filtered2) != len(tail_calls):
-                            tail_calls = filtered2
-                            # Update transcript so the LLM no longer expects replies for pruned call_ids
-                            try:
-                                tail["tool_calls"] = tail_calls
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-
-                for idx, call in enumerate(tail_calls):
-                    try:
-                        nm = (call.get("function", {}) or {}).get("name")
-                        if not isinstance(nm, str) or _is_helper_tool(nm):
-                            continue
-                        aj = (call.get("function", {}) or {}).get("arguments", "{}")
-                        cid = call.get("id") or "call"
-                        await tools_data2.schedule_base_tool_call(
-                            tail,
-                            name=nm,
-                            args_json=aj,
-                            call_id=cid,
-                            call_idx=idx,
-                            parent_chat_context=self.parent_chat_context,
-                            propagate_chat_context=self.propagate_chat_context,
-                            assistant_meta=assistant_meta2,
-                        )
-                        # Track per-loop quota usage across evented turns
-                        try:
-                            self._call_counts[nm] = self._call_counts.get(nm, 0) + 1
-                        except Exception:
-                            pass
-                    except Exception:
-                        continue
-
-                # Ensure placeholders exist for all scheduled tool calls before next LLM turn
-                try:
-                    await _ensure_placeholders_for_pending(
-                        assistant_msg=tail,
-                        tools_data=tools_data2,
-                        assistant_meta=assistant_meta2,
-                        client=self.client,
-                        msg_dispatcher=dispatcher2,
-                    )
-                except Exception:
-                    pass
-
-                # Strong guard for subsequent turns as well
-                try:
-                    findings2 = _find_unreplied(self.client)
-                    for f2 in findings2:
-                        if f2.get("assistant_msg") is not tail:
-                            continue
-                        missing_ids2 = set(f2.get("missing") or [])
-                        if not missing_ids2:
-                            continue
-
-                        try:
-                            await _schedule_missing_for_message(
-                                tail,
-                                missing_ids2,
-                                tools_data=tools_data2,
-                                parent_chat_context=self.parent_chat_context,
-                                propagate_chat_context=self.propagate_chat_context,
-                                assistant_meta=assistant_meta2,
-                                client=self.client,
-                                msg_dispatcher=dispatcher2,
-                            )
-                        except Exception:
-                            pass
-                        with suppress(Exception):
-                            await _ensure_placeholders_for_pending(
-                                assistant_msg=tail,
-                                tools_data=tools_data2,
-                                assistant_meta=assistant_meta2,
-                                client=self.client,
-                                msg_dispatcher=dispatcher2,
-                            )
-                        # Final safety net for subsequent turn
-                        try:
-                            f3 = next(
-                                (
-                                    x
-                                    for x in _find_unreplied(self.client)
-                                    if x.get("assistant_msg") is tail
-                                ),
-                                None,
-                            )
-                            still_missing2 = (
-                                set(f3.get("missing") or []) if f3 else set()
-                            )
-                        except Exception:
-                            still_missing2 = set()
-                        if still_missing2:
-                            for cid2 in list(still_missing2):
-                                try:
-                                    fn2 = None
-                                    try:
-                                        for c in tail.get("tool_calls") or []:
-                                            if c.get("id") == cid2:
-                                                fn2 = (c.get("function", {}) or {}).get(
-                                                    "name",
-                                                )
-                                                break
-                                    except Exception:
-                                        fn2 = None
-                                    tool_msg2 = _create_tool_call_msg(
-                                        name=str(fn2 or "tool"),
-                                        call_id=cid2,
-                                        content="Pending… tool call accepted. Working on it.",
-                                    )
-                                    await _insert_tool_after(
-                                        assistant_meta2,
-                                        tail,
-                                        tool_msg2,
-                                        self.client,
-                                        dispatcher2,
-                                    )
-                                except Exception:
-                                    pass
-                except Exception:
-                    pass
-
-                while tools_data2.pending:
-                    done2, _ = await asyncio.wait(
-                        set(tools_data2.pending),
-                        return_when=asyncio.FIRST_COMPLETED,
-                        timeout=timer2.remaining_time(),
-                    )
-                    if not done2:
-                        break
-                    tracker2 = _FailureTracker(self.max_consecutive_failures)
-                    for t in list(done2):
-                        try:
-                            await tools_data2.process_completed_task(
-                                task=t,
-                                consecutive_failures=tracker2,
-                                outer_handle_container=self.outer_handle_container,
-                                assistant_meta=assistant_meta2,
-                                msg_dispatcher=dispatcher2,
-                            )
-                        except Exception:
-                            pass
-
-            step += 1
         # First-turn path is always enabled; no env gating
 
         # If any tools define a hidden per-loop quota, skip the evented first-turn
@@ -1361,119 +298,6 @@ class Orchestrator:
             notice = {"role": "assistant", "content": f"🔚 Terminating early: {reason}"}
             await dispatcher.append_msgs([notice])
             return notice["content"]
-
-        # Minimal evented execution path (temporary) – runs even if the detailed
-        # evented logic below is accidentally skipped. This ensures simple flows
-        # (like a single sync tool) complete without legacy fallback.
-        try:
-            # 1) First assistant turn asking for tools
-            base_tools = {n: f for n, f in (self.tools or {}).items()}
-            tool_schemas = []
-            for n, f in base_tools.items():
-                try:
-                    tool_schemas.append(_method_to_schema(f, tool_name=n))
-                except Exception:
-                    continue
-            await _gwp(
-                self.client,
-                self.preprocess_msgs,
-                return_full_completion=True,
-                tools=tool_schemas,
-                tool_choice="auto",
-                stateful=True,
-            )
-
-            # 2) If assistant already answered directly, return
-            last = (
-                self.client.messages[-1]
-                if getattr(self.client, "messages", None)
-                else None
-            )
-            if isinstance(last, dict) and not (last.get("tool_calls") or []):
-                return last.get("content", "") or ""
-
-            # 3) Schedule any base tool calls from the assistant turn
-            assistant_msg = None
-            for _m in reversed(self.client.messages or []):
-                if isinstance(_m, dict) and _m.get("role") == "assistant":
-                    assistant_msg = _m
-                    break
-            if isinstance(assistant_msg, dict):
-                cfg = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
-                timer = _Timer(
-                    timeout=self.timeout,
-                    max_steps=self.max_steps,
-                    raise_on_limit=self.raise_on_limit,
-                    client=self.client,
-                )
-                dispatcher = _Dispatcher(self.client, cfg, timer)
-                logger = _LoopLogger(cfg, self.log_steps)
-                tools_data = _ToolsData(self.tools, client=self.client, logger=logger)
-                assistant_meta: Dict[int, Dict[str, Any]] = {}
-
-                for idx, call in enumerate(list(assistant_msg.get("tool_calls") or [])):
-                    try:
-                        nm = (call.get("function", {}) or {}).get("name")
-                        if not isinstance(nm, str) or _is_helper_tool(nm):
-                            continue
-                        aj = (call.get("function", {}) or {}).get("arguments", "{}")
-                        cid = call.get("id") or "call"
-                        await tools_data.schedule_base_tool_call(
-                            assistant_msg,
-                            name=nm,
-                            args_json=aj,
-                            call_id=cid,
-                            call_idx=idx,
-                            parent_chat_context=self.parent_chat_context,
-                            propagate_chat_context=self.propagate_chat_context,
-                            assistant_meta=assistant_meta,
-                        )
-                    except Exception:
-                        continue
-
-                # 4) Wait for all scheduled tools to complete
-                while tools_data.pending:
-                    done_tasks, _ = await asyncio.wait(
-                        set(tools_data.pending),
-                        return_when=asyncio.FIRST_COMPLETED,
-                        timeout=timer.remaining_time(),
-                    )
-                    if not done_tasks:
-                        break
-                    tracker = _FailureTracker(self.max_consecutive_failures)
-                    for t in list(done_tasks):
-                        try:
-                            await tools_data.process_completed_task(
-                                task=t,
-                                consecutive_failures=tracker,
-                                outer_handle_container=self.outer_handle_container,
-                                assistant_meta=assistant_meta,
-                                msg_dispatcher=dispatcher,
-                            )
-                        except Exception:
-                            pass
-
-                # 5) Ask the model for the final answer (no tools needed now)
-                await _gwp(
-                    self.client,
-                    self.preprocess_msgs,
-                    return_full_completion=True,
-                    tools=[],
-                    tool_choice="auto",
-                    stateful=True,
-                )
-                final_msg = (
-                    self.client.messages[-1]
-                    if getattr(self.client, "messages", None)
-                    else None
-                )
-                if isinstance(final_msg, dict):
-                    content = final_msg.get("content", "") or ""
-                    if content:
-                        return content
-        except Exception:
-            # Fall through to the comprehensive evented path or legacy fallback
-            pass
 
             # First-turn: run a single LLM step with optional tool schemas and
             # honour interjection preemption. Do not mutate the transcript beyond
@@ -1534,55 +358,26 @@ class Orchestrator:
             expose_tools = True
 
             tool_choice_mode = "auto"
-            policy_returned_map: Dict[str, Callable] = dict(self.tools or {})
-            full_tools_map: Dict[str, Callable] = dict(self.tools or {})
+            filtered_map: Dict[str, Callable] = dict(self.tools or {})
             if self.tool_policy is not None:
                 try:
-                    tool_choice_mode, policy_returned_map = self.tool_policy(
+                    tool_choice_mode, filtered_map = self.tool_policy(
                         0,
-                        dict(full_tools_map),
+                        dict(self.tools or {}),
                     )
                 except Exception:
                     tool_choice_mode = "auto"
-                    policy_returned_map = dict(full_tools_map)
-
-            # Legacy semantics (loop.py parity):
-            # - For mode == "auto", the policy's returned mapping represents tools to HIDE.
-            # - For other modes (e.g., "required"), the returned mapping represents tools to SHOW.
-            if tool_choice_mode == "auto":
-                effective_visible_map = {
-                    name: fn
-                    for name, fn in full_tools_map.items()
-                    if name not in (policy_returned_map or {})
-                }
-            else:
-                effective_visible_map = (
-                    dict(policy_returned_map)
-                    if policy_returned_map
-                    else dict(full_tools_map)
-                )
-
-            try:
-                LOGGER.info(
-                    "policy_eval_first_turn: mode=%s returned=%s visible=%s",
-                    tool_choice_mode,
-                    list((policy_returned_map or {}).keys()),
-                    list(effective_visible_map.keys()),
-                )
-            except Exception:
-                pass
+                    filtered_map = dict(self.tools or {})
 
             tools_param: list[dict] = []
             if expose_tools:
                 # Build schemas from the filtered mapping with pre-exposure filtering
                 try:
                     normalized = normalise_tools(
-                        {n: fn for n, fn in effective_visible_map.items()},
+                        {n: fn for n, fn in filtered_map.items()},
                     )
                 except Exception:
-                    normalized = {
-                        n: ToolSpec(fn=fn) for n, fn in effective_visible_map.items()
-                    }
+                    normalized = {n: ToolSpec(fn=fn) for n, fn in filtered_map.items()}
                 td0 = _ToolsData(
                     self.tools,
                     client=self.client,
@@ -2112,7 +907,6 @@ class Orchestrator:
                 return_when=asyncio.FIRST_COMPLETED,
                 timeout=timer0.remaining_time(),
             )
-
             # Timeout handling: cancel llm and mark stop
             if not done:
                 try:
@@ -2242,7 +1036,6 @@ class Orchestrator:
                 except Exception:
                     assistant_msg = None
                 if isinstance(assistant_msg, dict):
-
                     # Setup dispatcher and tools data
                     cfg = _LoopConfig(self.loop_id, self.lineage, self.lineage or [])
                     timer = _Timer(
@@ -3001,41 +1794,20 @@ class Orchestrator:
                                 tool_choice_mode2 = "auto"
                                 filtered_map2 = dict(self.tools or {})
 
-                        # Legacy semantics (loop.py parity) for subsequent turns as well
-                        full_tools_map2: Dict[str, Callable] = dict(self.tools or {})
-                        if tool_choice_mode2 == "auto":
-                            effective_visible_map2 = {
-                                name: fn
-                                for name, fn in full_tools_map2.items()
-                                if name not in (filtered_map2 or {})
-                            }
-                        else:
-                            effective_visible_map2 = (
-                                dict(filtered_map2)
-                                if filtered_map2
-                                else dict(full_tools_map2)
-                            )
-
-                        try:
-                            LOGGER.info(
-                                "policy_eval_turn: step=%s mode=%s returned=%s visible=%s",
-                                step_idx,
-                                tool_choice_mode2,
-                                list((filtered_map2 or {}).keys()),
-                                list(effective_visible_map2.keys()),
-                            )
-                        except Exception:
-                            pass
-
+                        schemas2: list[dict] = []
+                        for n, f in filtered_map2.items():
+                            try:
+                                schemas2.append(_method_to_schema(f, tool_name=n))
+                            except Exception:
+                                continue
                         # Pre-exposure filtering by hidden quotas and concurrency
                         try:
                             normalized2 = normalise_tools(
-                                {n: f for n, f in effective_visible_map2.items()},
+                                {n: f for n, f in filtered_map2.items()},
                             )
                         except Exception:
                             normalized2 = {
-                                n: ToolSpec(fn=f)
-                                for n, f in effective_visible_map2.items()
+                                n: ToolSpec(fn=f) for n, f in filtered_map2.items()
                             }
                         filtered_schemas2: list[dict] = []
                         for name, spec in normalized2.items():
@@ -3846,19 +2618,37 @@ class Orchestrator:
                 except Exception:
                     pass
 
-        # Evented-only: return final assistant content if present; else empty string.
-        try:
-            latest_asst = None
-            for _m in reversed(self.client.messages or []):
-                if isinstance(_m, dict) and _m.get("role") == "assistant":
-                    latest_asst = _m
-                    break
-            if latest_asst is not None:
-                return latest_asst.get("content", "") or ""
-        except Exception:
-            pass
-        # No assistant content, return empty string (explicit evented-only behaviour)
-        return ""
+        # Delegate to legacy loop for full behaviour and completion –
+        # do not mutate transcript by inserting a system message here.
+
+        return await _legacy_tool_loop_inner(
+            client=self.client,
+            message=self.message,
+            tools=self.tools,
+            loop_id=self.loop_id,
+            lineage=self.lineage,
+            interject_queue=self.interject_queue,
+            cancel_event=self.cancel_event,
+            stop_event=self.stop_event,
+            pause_event=self.pause_event,
+            max_consecutive_failures=self.max_consecutive_failures,
+            prune_tool_duplicates=self.prune_tool_duplicates,
+            interrupt_llm_with_interjections=self.interrupt_llm_with_interjections,
+            propagate_chat_context=self.propagate_chat_context,
+            parent_chat_context=self.parent_chat_context,
+            log_steps=self.log_steps,
+            max_steps=self.max_steps,
+            timeout=self.timeout,
+            raise_on_limit=self.raise_on_limit,
+            include_class_in_dynamic_tool_names=self.include_class_in_dynamic_tool_names,
+            tool_policy=self.tool_policy,
+            preprocess_msgs=self.preprocess_msgs,
+            outer_handle_container=self.outer_handle_container,
+            response_format=self.response_format,
+            max_parallel_tool_calls=self.max_parallel_tool_calls,
+            semantic_cache=self.semantic_cache,
+            images=self.images,
+        )
 
     def _build_tool_schemas(self) -> list[dict]:
         schemas: list[dict] = []
@@ -3896,8 +2686,9 @@ class Orchestrator:
     def _log_event(self, name: str, **fields) -> None:
         try:
             rec = {"event": name, "loop_id": self.loop_id, **fields}
+            LOGGER.info(f"orchestrator {json.dumps(rec, default=str)}")
         except Exception:
-            rec = {"event": name}
+            pass
 
     def _log_transition(self, *, old_state: str, new_state: str, on: str, **kw) -> None:
         self._log_event("transition", old=old_state, new=new_state, on=on, **kw)
@@ -4156,11 +2947,4 @@ async def evented_tool_loop_inner(
         semantic_cache=semantic_cache,
         images=images,
     )
-    # Ensure nested loops inherit lineage via contextvar (legacy parity)
-    cfg = _LoopConfig(loop_id, lineage, _TOOL_LOOP_LINEAGE.get([]))
-    _token = _TOOL_LOOP_LINEAGE.set(cfg.lineage)
-    try:
-        return await orch.run()
-    finally:
-        with suppress(Exception):
-            _TOOL_LOOP_LINEAGE.reset(_token)
+    return await orch.run()

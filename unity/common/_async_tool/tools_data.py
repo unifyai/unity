@@ -24,6 +24,7 @@ from .loop_config import LIVE_IMAGES_REGISTRY
 from .tools_utils import parse_arg_scoped_span, extract_alignment_text_from_value
 from unity.image_manager.utils import substring_from_span
 from ...constants import LOGGER
+from ...constants import LOGGER
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
@@ -36,8 +37,6 @@ class ToolsData:
         self.normalized = normalise_tools(tools)
         self.pending: Set[asyncio.Task] = set()
         self.info: Dict[asyncio.Task, ToolCallMetadata] = {}
-        # Per-tool concurrency semaphores (enforce max_concurrent at runtime)
-        self._semaphores: Dict[str, asyncio.Semaphore] = {}
         # Per-tool hidden total-call quotas (counted per loop instance)
         self.call_counts: Dict[str, int] = {}
         self.clarification_channels: Dict[
@@ -287,61 +286,6 @@ class ToolsData:
         except Exception:
             pass
 
-        # Normalise aliases for single-public-parameter tools (legacy parity)
-        # If the tool has exactly one public parameter and it's missing from
-        # the LLM-provided args, accept common aliases and map them to it.
-        try:
-            internal_hidden = {
-                "interject_queue",
-                "pause_event",
-                "clarification_up_q",
-                "clarification_down_q",
-                "notification_up_q",
-                "parent_chat_context",
-            }
-            public_params = [p for p in params if p not in internal_hidden]
-            if (
-                isinstance(call_args, dict)
-                and not has_varkw
-                and len(public_params) == 1
-                and public_params[0] not in call_args
-            ):
-                alias_order = (
-                    "content",
-                    "message",
-                    "text",
-                    "prompt",
-                    "guidance",
-                    "instruction",
-                    "question",
-                    "query",
-                    "param",
-                    "value",
-                    "label",
-                    "name",
-                    "arg",
-                )
-                dest = public_params[0]
-                for alias in alias_order:
-                    if alias in call_args:
-                        try:
-                            call_args[dest] = call_args.pop(alias)
-                            LOGGER.info(
-                                "tools_data.normalized_single_param: name=%s alias=%s -> %s",
-                                name,
-                                alias,
-                                dest,
-                            )
-                        except Exception:
-                            # Fallback: copy instead of pop
-                            try:
-                                call_args[dest] = call_args.get(alias)
-                            except Exception:
-                                pass
-                        break
-        except Exception:
-            pass
-
         # Filter extras to match fn signature
         filtered_extras = {
             k: v for k, v in extra_kwargs.items() if k in params or has_varkw
@@ -469,56 +413,11 @@ class ToolsData:
                     # If anything goes wrong, leave images as-is
                     pass
 
-        # Build coroutine with runtime concurrency gating (max_concurrent)
-        sem: Optional[asyncio.Semaphore] = None
-        with suppress(Exception):
-            limit = self.normalized[name].max_concurrent
-            if limit is not None and int(limit) > 0:
-                # Create per-tool semaphore lazily
-                if name not in self._semaphores:
-                    self._semaphores[name] = asyncio.Semaphore(int(limit))
-                sem = self._semaphores[name]
-
-        async def _invoke_tool():
-            if asyncio.iscoroutinefunction(fn):
-                return await fn(**merged_kwargs)
-            else:
-                return await asyncio.to_thread(fn, **merged_kwargs)
-
-        async def _run_with_concurrency():
-            # Acquire a permit if a semaphore is configured for this tool
-            if sem is not None:
-                try:
-                    await sem.acquire()
-                    try:
-                        LOGGER.info(
-                            "tools_data.semaphore_acquired: name=%s value=%s",
-                            name,
-                            getattr(sem, "_value", "?"),
-                        )
-                    except Exception:
-                        pass
-                except Exception:
-                    # Best-effort: if acquisition fails unexpectedly, proceed without gating
-                    pass
-            try:
-                return await _invoke_tool()
-            finally:
-                if sem is not None:
-                    try:
-                        sem.release()
-                        try:
-                            LOGGER.info(
-                                "tools_data.semaphore_released: name=%s value=%s",
-                                name,
-                                getattr(sem, "_value", "?"),
-                            )
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-
-        coro = _run_with_concurrency()
+        # Build coroutine
+        if asyncio.iscoroutinefunction(fn):
+            coro = fn(**merged_kwargs)
+        else:
+            coro = asyncio.to_thread(fn, **merged_kwargs)
 
         call_dict = {
             "id": call_id,
@@ -892,13 +791,12 @@ class ToolsData:
                     tool_reply_msg["content"] = result
                     tool_msg = tool_reply_msg
             else:
-                # Legacy-parity: update the existing placeholder in-place even when not at tail
-                # to keep tool results contiguous directly after the assistant tool_calls turn.
-                try:
-                    tool_reply_msg["content"] = result
-                except Exception:
-                    pass
-                tool_msg = tool_reply_msg
+                # Not at tail: emit a synthetic assistant→tool pair to carry the result
+                tool_msg = await self._emit_completion_pair(
+                    result,
+                    call_id,
+                    msg_dispatcher,
+                )
 
         else:
             tool_msg = create_tool_call_message(name, call_id, result)
