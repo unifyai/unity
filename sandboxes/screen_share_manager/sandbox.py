@@ -151,7 +151,9 @@ def _capture_and_publish_frames(monitor: Dict[str, int], fps: int = 5):
                 "payload": {"timestamp": timestamp, "frame_b64": data_url},
             }
             try:
-                redis_client.publish("app:comms:screen_frame", json.dumps(event_payload))
+                redis_client.publish(
+                    "app:comms:screen_frame", json.dumps(event_payload)
+                )
                 frame_count += 1
             except redis.exceptions.ConnectionError as e:
                 LG.error(f"Redis connection error: {e}. Is Redis running?")
@@ -173,9 +175,7 @@ async def _result_fetcher_and_printer(
     LG.info("Result fetcher started. Polling for new transcript logs.")
     # Initialize with the ID of the latest message at startup
     initial_messages = transcript_manager._filter_messages(limit=1)
-    last_printed_message_id = (
-        initial_messages[0].message_id if initial_messages else -1
-    )
+    last_printed_message_id = initial_messages[0].message_id if initial_messages else -1
     context_name = transcript_manager._transcripts_ctx
 
     while not _main_stop_event.is_set():
@@ -184,7 +184,10 @@ async def _result_fetcher_and_printer(
             if latest_messages:
                 latest_message = latest_messages[0]
                 if latest_message.message_id > last_printed_message_id:
-                    print(f"\n\n✅ Event logged to Unify in {project_name}/{context_name} in log {latest_message.message_id}\n")
+                    print(
+                        f"\n\n✅ Event logged to Unify in {project_name}/{context_name} in log {latest_message.message_id}\n",
+                        flush=True,
+                    )
                     if voice_enabled:
                         speak("Analysis complete.")
                     # Update the last printed ID and redraw the input prompt
@@ -214,7 +217,9 @@ async def _main_async() -> None:
         required=True,
         help="The y-coordinate of the top-left corner.",
     )
-    parser.add_argument("--width", type=int, required=True, help="The width of the capture area.")
+    parser.add_argument(
+        "--width", type=int, required=True, help="The width of the capture area."
+    )
     parser.add_argument(
         "--height", type=int, required=True, help="The height of the capture area."
     )
@@ -245,7 +250,7 @@ async def _main_async() -> None:
     result_fetcher_task = None
 
     session_start_time = time.time()
-    
+
     try:
         screen_manager = ScreenShareManager()
         transcript_manager = TranscriptManager()
@@ -264,10 +269,12 @@ async def _main_async() -> None:
             daemon=True,
         )
         capture_thread.start()
-        
+
         # Start the background task for fetching and printing results
         result_fetcher_task = asyncio.create_task(
-            _result_fetcher_and_printer(transcript_manager, args.project_name, args.voice)
+            _result_fetcher_and_printer(
+                transcript_manager, args.project_name, args.voice
+            )
         )
 
         await asyncio.sleep(2)
@@ -276,8 +283,8 @@ async def _main_async() -> None:
         while not _main_stop_event.is_set():
             try:
                 utterance = ""
-
-                turn_start_time = time.time() - session_start_time
+                turn_start_time = 0.0
+                turn_end_time = 0.0
 
                 # Use asyncio.to_thread to run the blocking input() in a separate thread
                 if args.voice:
@@ -286,18 +293,22 @@ async def _main_async() -> None:
                     prompt = prompt.strip()
                     if prompt.lower() == "r":
                         # Voice recording is also blocking, so run it in a thread
+                        turn_start_time = time.time()
                         audio = await asyncio.to_thread(record_until_enter)
                         utterance = transcribe_deepgram(audio).strip()
+                        turn_end_time = time.time()
                         if not utterance:
                             continue
                         print(f"▶️  {utterance}")
                     else:
+                        turn_start_time = time.time()
                         utterance = prompt
+                        turn_end_time = time.time()
                 else:
+                    turn_start_time = time.time()
                     utterance = await asyncio.to_thread(input, "command> ")
                     utterance = utterance.strip()
-
-                turn_end_time = time.time() - session_start_time
+                    turn_end_time = time.time()
 
                 if not utterance:
                     continue
@@ -309,14 +320,18 @@ async def _main_async() -> None:
                     continue
 
                 # --- Publish Utterance for Background Processing ---
+                # FIX: Correctly calculate relative start and end times for the turn
+                relative_start_time = turn_start_time - session_start_time
+                relative_end_time = turn_end_time - session_start_time
+
                 event_payload = {
                     "event_name": "PhoneUtterance",
                     "payload": {
                         "contact_details": {"contact_id": 1},
                         "timestamp": datetime.now().isoformat(),
                         "content": utterance,
-                        "start_time": turn_start_time,
-                        "end_time": turn_end_time,
+                        "start_time": relative_start_time,
+                        "end_time": relative_end_time,
                     },
                 }
                 await redis_client.publish(
