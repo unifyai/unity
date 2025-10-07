@@ -82,7 +82,8 @@ class ManagersWorker:
                     unity.init(
                         assistant_id=int(
                             payload.get("agent_id", "0").replace(
-                                "default-assistant-", ""
+                                "default-assistant-",
+                                "",
                             ),
                         ),
                         default_assistant={
@@ -132,7 +133,7 @@ class ManagersWorker:
                 # 3. Initialize TranscriptManager with ContactManager
                 print("[ManagersWorker] Initializing TranscriptManager...")
                 self._transcript_manager = TranscriptManager(
-                    contact_manager=self._contact_manager
+                    contact_manager=self._contact_manager,
                 )
                 print("[ManagersWorker] TranscriptManager initialized")
 
@@ -162,7 +163,7 @@ class ManagersWorker:
         await self._event_broker.publish(
             self._publish_channel,
             GetBusEventsOutput(
-                events=[Event.from_bus_event(e).to_dict() for e in bus_events][::-1]
+                events=[Event.from_bus_event(e).to_dict() for e in bus_events][::-1],
             ).to_json(),
         )
 
@@ -211,7 +212,7 @@ class ManagersWorker:
             message = messages[0] if messages else None
             print(
                 f"[ManagersWorker] Logged message: {medium}"
-                f" from {sender_id} to {receiver_ids}"
+                f" from {sender_id} to {receiver_ids}",
             )
 
             # Publish reply as Event envelope
@@ -219,7 +220,8 @@ class ManagersWorker:
                 await self._event_broker.publish(
                     self._publish_channel,
                     LogMessageOutput(
-                        medium=medium, exchange_id=message.exchange_id
+                        medium=medium,
+                        exchange_id=message.exchange_id,
                     ).to_json(),
                 )
                 print(f"[ManagersWorker] Published exchange_id {message.exchange_id}")
@@ -333,7 +335,7 @@ class ManagersWorker:
         """
         if self._event_broker is None:
             raise RuntimeError(
-                "[ManagersWorker] _event_broker must be set before wait_for_events()"
+                "[ManagersWorker] _event_broker must be set before wait_for_events()",
             )
         print("[ManagersWorker] Flag", self._initialized)
         print("[ManagersWorker] Starting to wait for events")
@@ -351,7 +353,8 @@ class ManagersWorker:
                 while not self._stop_event.is_set():
                     try:
                         msg = await pubsub.get_message(
-                            timeout=2, ignore_subscribe_messages=True
+                            timeout=2,
+                            ignore_subscribe_messages=True,
                         )
 
                         # Parse Event from JSON envelope and enqueue
@@ -359,12 +362,12 @@ class ManagersWorker:
                             try:
                                 event = Event.from_json(msg["data"])  # type: ignore[arg-type]
                                 print(
-                                    f"[ManagersWorker] Enqueued event: {event.to_dict()['event_name']}"
+                                    f"[ManagersWorker] Enqueued event: {event.to_dict()['event_name']}",
                                 )
                                 await self._message_queue.put(event)
                             except Exception as parse_err:
                                 print(
-                                    f"[ManagersWorker] Failed to parse Event from message: {parse_err}"
+                                    f"[ManagersWorker] Failed to parse Event from message: {parse_err}",
                                 )
 
                     except Exception as e:

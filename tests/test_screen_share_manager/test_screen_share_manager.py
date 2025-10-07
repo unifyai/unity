@@ -1,10 +1,8 @@
 # FILE: test_screen_share_manager.py
 
 import asyncio
-import base64
 from datetime import datetime
 import json
-from unittest.mock import call, ANY, AsyncMock
 
 import pytest
 from unity.image_manager.utils import make_solid_png_base64
@@ -40,7 +38,7 @@ async def test_ssim_change_detection_creates_pending_event(mocked_screen_share_m
 
     # Handle a new, different frame
     await manager._handle_frame_event(
-        {"payload": {"timestamp": 10.0, "frame_b64": PNG_RED_B64}}
+        {"payload": {"timestamp": 10.0, "frame_b64": PNG_RED_B64}},
     )
 
     assert len(manager._pending_vision_events) == 1
@@ -67,7 +65,7 @@ async def test_no_ssim_change_does_not_create_pending_event(
 
     # Handle a new, identical frame
     await manager._handle_frame_event(
-        {"payload": {"timestamp": 10.0, "frame_b64": PNG_BLUE_B64}}
+        {"payload": {"timestamp": 10.0, "frame_b64": PNG_BLUE_B64}},
     )
 
     assert len(manager._pending_vision_events) == 0
@@ -90,7 +88,7 @@ async def test_initial_frame_sets_baseline_and_creates_no_event(
 
     # Handle the first-ever frame
     await manager._handle_frame_event(
-        {"payload": {"timestamp": 1.0, "frame_b64": PNG_BLUE_B64}}
+        {"payload": {"timestamp": 1.0, "frame_b64": PNG_BLUE_B64}},
     )
 
     # It should set the baseline but not create a pending event
@@ -116,8 +114,8 @@ async def test_speech_event_triggers_analysis_and_logging(mocked_screen_share_ma
                 event_description="User clicked the 'Submit' button.",
                 screenshot_b64=PNG_RED_B64,
                 triggering_phrase="click this button",
-            )
-        ]
+            ),
+        ],
     )
     mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
 
@@ -176,7 +174,7 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
             "timestamp": 25.0,
             "before_frame_b64": PNG_BLUE_B64,
             "after_frame_b64": PNG_RED_B64,
-        }
+        },
     )
     manager._last_activity_time = asyncio.get_event_loop().time() - 1.0
 
@@ -187,8 +185,8 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
                 timestamp=25.0,
                 event_description="User navigated to the 'Profile' page.",
                 screenshot_b64=PNG_RED_B64,
-            )
-        ]
+            ),
+        ],
     )
     mocks["openai_client"].chat.completions.create.return_value = silent_event_analysis
 
@@ -221,8 +219,8 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
                 event_description="User confirmed seeing their profile.",
                 screenshot_b64=PNG_RED_B64,
                 triggering_phrase="see my profile",
-            )
-        ]
+            ),
+        ],
     )
     mocks["openai_client"].chat.completions.create.return_value = speech_event_analysis
 
@@ -268,7 +266,7 @@ async def test_combined_turn_logs_multiple_events(mocked_screen_share_manager):
             "timestamp": 14.5,
             "before_frame_b64": PNG_BLUE_B64,
             "after_frame_b64": PNG_RED_B64,
-        }
+        },
     )
 
     mock_llm_response = TurnAnalysisResponse(
@@ -285,7 +283,7 @@ async def test_combined_turn_logs_multiple_events(mocked_screen_share_manager):
                 screenshot_b64=PNG_RED_B64,
                 triggering_phrase="I will click submit",
             ),
-        ]
+        ],
     )
     mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
 
@@ -340,7 +338,7 @@ async def test_llm_failure_is_handled_gracefully(mocked_screen_share_manager):
             "contact_details": {"contact_id": 1},
             "content": "test",
             "timestamp": datetime.now().isoformat(),  # Added for Message creation
-        }
+        },
     }
     await manager._analyze_turn(speech_event=speech_event_data)
 
@@ -368,7 +366,7 @@ async def test_empty_llm_response_logs_message_without_events(
     """
     manager, mocks = mocked_screen_share_manager
     mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
-        events=[]
+        events=[],
     )
 
     speech_event_data = {
@@ -376,7 +374,7 @@ async def test_empty_llm_response_logs_message_without_events(
             "contact_details": {"contact_id": 1},
             "content": "test",
             "timestamp": datetime.now().isoformat(),  # Added for Message creation
-        }
+        },
     }
     await manager._analyze_turn(speech_event=speech_event_data)
 
@@ -400,13 +398,13 @@ async def test_analysis_clears_pending_vision_events(mocked_screen_share_manager
     """
     manager, mocks = mocked_screen_share_manager
     manager._pending_vision_events.append(
-        {"timestamp": 1.0, "before_frame_b64": "b", "after_frame_b64": "a"}
+        {"timestamp": 1.0, "before_frame_b64": "b", "after_frame_b64": "a"},
     )
     assert len(manager._pending_vision_events) == 1
 
     # Mock LLM to return an empty response, the simplest case
     mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
-        events=[]
+        events=[],
     )
 
     await manager._analyze_turn(
@@ -415,8 +413,8 @@ async def test_analysis_clears_pending_vision_events(mocked_screen_share_manager
                 "content": "go",
                 "contact_details": {"contact_id": 1},
                 "timestamp": datetime.now().isoformat(),
-            }
-        }
+            },
+        },
     )
 
     # The list should be cleared regardless of the LLM output
@@ -440,14 +438,14 @@ async def test_silent_event_without_prior_utterance_is_stored(
 
     # Simulate a silent event
     manager._pending_vision_events.append(
-        {"timestamp": 25.0, "before_frame_b64": "b", "after_frame_b64": "a"}
+        {"timestamp": 25.0, "before_frame_b64": "b", "after_frame_b64": "a"},
     )
 
     # Mock LLM response
     mock_llm_response = TurnAnalysisResponse(
         events=[
-            KeyEvent(timestamp=25.0, event_description="Desc", screenshot_b64="b64")
-        ]
+            KeyEvent(timestamp=25.0, event_description="Desc", screenshot_b64="b64"),
+        ],
     )
     mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
 
@@ -481,8 +479,8 @@ async def test_triggering_phrase_not_found_in_content_is_handled(
                 event_description="User clicked.",
                 screenshot_b64=PNG_RED_B64,
                 triggering_phrase="a phrase that does not exist",
-            )
-        ]
+            ),
+        ],
     )
     mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
 
@@ -537,7 +535,7 @@ async def test_realtime_annotation_is_published_for_each_key_event(
                 event_description="Event C: User clicked a button.",
                 screenshot_b64=PNG_GREEN_B64,
             ),
-        ]
+        ],
     )
     mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
 
@@ -547,7 +545,7 @@ async def test_realtime_annotation_is_published_for_each_key_event(
             "contact_details": {"contact_id": 1},
             "content": "dummy speech",
             "timestamp": datetime.now().isoformat(),
-        }
+        },
     }
 
     # 3. Trigger analysis
@@ -612,7 +610,7 @@ async def test_rapid_event_burst_is_sampled(mocked_screen_share_manager):
     ]
 
     mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
-        events=[]
+        events=[],
     )
     await manager._analyze_turn(speech_event=None)
 
@@ -669,7 +667,7 @@ async def test_slow_events_are_not_sampled(mocked_screen_share_manager):
     ]
 
     mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
-        events=[]
+        events=[],
     )
     await manager._analyze_turn(speech_event=None)
 
@@ -740,7 +738,7 @@ async def test_mixed_bursts_and_single_events_are_handled_correctly(
     ]
 
     mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
-        events=[]
+        events=[],
     )
     await manager._analyze_turn(speech_event=None)
 

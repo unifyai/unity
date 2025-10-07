@@ -1,4 +1,3 @@
-import json
 from pydantic_core import from_json
 
 
@@ -46,7 +45,11 @@ async def stream_llm_call(
 
 
 async def llm_call(
-    client: AsyncOpenAI, system_prompt, messages, model="gpt-4.1", response_model=None
+    client: AsyncOpenAI,
+    system_prompt,
+    messages,
+    model="gpt-4.1",
+    response_model=None,
 ):
     out = await client.responses.parse(
         model="gpt-4.1",

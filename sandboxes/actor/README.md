@@ -74,7 +74,7 @@ The service will run on `http://localhost:3000` (configurable via `--agent-url`)
 > # Rebuild local core
 > cd magnitude/packages/magnitude-core
 > npm run build
-> 
+>
 > # Reinstall in agent-service to pick up the updated local package
 > cd ../..  # Back to repo root
 > cd agent-service

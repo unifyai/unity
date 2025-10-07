@@ -26,7 +26,7 @@ from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
 
 from livekit.agents import ModelSettings, llm, FunctionTool, Agent
-from typing import AsyncIterable, get_args
+from typing import AsyncIterable
 import sounddevice as sd
 import numpy as np
 

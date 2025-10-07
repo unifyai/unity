@@ -24,6 +24,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from dotenv import load_dotenv
+
+load_dotenv()
 import unify
 
 from sandboxes.utils import (
@@ -42,7 +44,6 @@ from unity.actor.code_act_actor import CodeActActor
 from unity.actor.hierarchical_actor import HierarchicalActor
 from unity.actor.tool_loop_actor import ToolLoopActor
 
-load_dotenv()
 LG = logging.getLogger("actor_sandbox")
 
 

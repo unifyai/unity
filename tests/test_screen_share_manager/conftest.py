@@ -4,7 +4,6 @@ from datetime import datetime
 
 import pytest
 from unity.screen_share_manager.screen_share_manager import ScreenShareManager
-from unity.screen_share_manager.types import TurnAnalysisResponse, KeyEvent
 from unity.transcript_manager.types.message import Message
 
 
@@ -26,19 +25,19 @@ def mocked_screen_share_manager(event_loop):
     - A dictionary of its mocked dependencies.
     """
     with patch(
-        "unity.screen_share_manager.screen_share_manager.get_event_broker"
+        "unity.screen_share_manager.screen_share_manager.get_event_broker",
     ) as mock_get_broker, patch(
-        "unity.screen_share_manager.screen_share_manager.AsyncOpenAI"
+        "unity.screen_share_manager.screen_share_manager.AsyncOpenAI",
     ) as mock_openai, patch(
-        "unity.screen_share_manager.screen_share_manager.ImageManager"
+        "unity.screen_share_manager.screen_share_manager.ImageManager",
     ) as mock_image_manager, patch(
-        "unity.screen_share_manager.screen_share_manager.TranscriptManager"
+        "unity.screen_share_manager.screen_share_manager.TranscriptManager",
     ) as mock_transcript_manager:
 
         # Mock Event Broker (Redis)
         mock_broker = MagicMock()
         mock_broker.pubsub.return_value.__aenter__.return_value.get_message = AsyncMock(
-            return_value=None
+            return_value=None,
         )
         mock_broker.publish = AsyncMock()
         mock_get_broker.return_value = mock_broker
@@ -51,7 +50,7 @@ def mocked_screen_share_manager(event_loop):
         # Mock ImageManager
         mock_image_manager_instance = MagicMock()
         mock_image_manager_instance.add_images.return_value = [
-            42
+            42,
         ]  # Return a predictable image_id
         mock_image_manager.return_value = mock_image_manager_instance
 
@@ -67,7 +66,7 @@ def mocked_screen_share_manager(event_loop):
             content="test",
         )
         mock_transcript_manager_instance.log_messages.return_value = [
-            mock_logged_message
+            mock_logged_message,
         ]
         mock_transcript_manager.return_value = mock_transcript_manager_instance
 
