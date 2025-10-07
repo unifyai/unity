@@ -130,10 +130,15 @@ class ConversationManager:
         prompt = self.state.get_state_for_llm()
         print(prompt)
         input_message = {"role": "user", "content": prompt}
+        boss_contact = [c for c in self.state.inverted_contacts_map.values() if c.is_boss][0]
         system_message = Template(SYS).render(
-            name=self.state.user_name,
-            number=self.state.user_number,
+            contact_id=boss_contact.id,
+            first_name=boss_contact.first_name,
+            last_name=boss_contact.last_name,
+            phone_number=boss_contact.phone_number,
+            email=boss_contact.email
         )
+        print(system_message)
         if self.state.mode in ["call", "gmeet"]:
             print("running...")
             first_chunk = True
