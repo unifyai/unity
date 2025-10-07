@@ -49,8 +49,6 @@ def normalise_tools(
 
 
 def read_only(fn: Callable) -> Callable:
-    """
-    Mark a tool as read-only. these tools will be re-called and evaluated for semantic cache.
-    """
+    """Mark a tool as read-only; eligible for semantic-cache re-execution."""
     setattr(fn, "_tool_spec_read_only", True)
     return fn

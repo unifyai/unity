@@ -53,6 +53,32 @@ class DynamicToolFactory:
             pass
 
     @staticmethod
+    def _ensure_kwonly_param(to_wrapper, name: str, annotation, default=None) -> None:
+        """Ensure a keyword-only parameter exists on the wrapper's signature."""
+        with suppress(Exception):
+            import inspect as _inspect
+
+            sig = _inspect.signature(to_wrapper)
+            params = list(sig.parameters.values())
+            if any(p.name == name for p in params):
+                return
+            params.append(
+                _inspect.Parameter(
+                    name,
+                    kind=_inspect.Parameter.KEYWORD_ONLY,
+                    default=default,
+                    annotation=annotation,
+                ),
+            )
+            to_wrapper.__signature__ = _inspect.Signature(
+                parameters=params,
+                return_annotation=sig.return_annotation,
+            )
+            anns = dict(getattr(to_wrapper, "__annotations__", {}))
+            anns[name] = annotation
+            to_wrapper.__annotations__ = anns
+
+    @staticmethod
     def _discover_custom_public_methods(handle) -> dict[str, Callable]:
         """
         Return a mapping ``name → bound_method`` of *public* callables on *handle*:
@@ -175,44 +201,12 @@ class DynamicToolFactory:
             fallback_doc=doc,
             fn=_stop,
         )
-        # Expose full argspec of handle.stop in the helper schema
-        # Ensure helper schema mirrors underlying handle.stop parameters and adds `images`.
+        # Expose full argspec of handle.stop in the helper schema and ensure `images` exists
         with suppress(Exception):
-            import inspect as _inspect
-
-            params: list[_inspect.Parameter] = []
-            annotations: dict = {"return": Dict[str, str]}
             if handle is not None and hasattr(handle, "stop"):
-                sig = _inspect.signature(getattr(handle, "stop"))
-                for name, p in sig.parameters.items():
-                    if name == "self":
-                        continue
-                    params.append(
-                        _inspect.Parameter(
-                            name,
-                            kind=_inspect.Parameter.KEYWORD_ONLY,
-                            default=p.default,
-                            annotation=p.annotation,
-                        ),
-                    )
-                    if p.annotation is not _inspect._empty:  # type: ignore[attr-defined]
-                        annotations[name] = p.annotation
-            # Append images param if not already present
-            if not any(p.name == "images" for p in params):
-                params.append(
-                    _inspect.Parameter(
-                        "images",
-                        kind=_inspect.Parameter.KEYWORD_ONLY,
-                        default=None,
-                        annotation=Optional[dict],
-                    ),
-                )
-                annotations["images"] = Optional[dict]
-            _stop.__signature__ = _inspect.Signature(
-                parameters=params,
-                return_annotation=Dict[str, str],
-            )
-            _stop.__annotations__ = annotations
+                self._adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
+        # Ensure images kw-only param
+        self._ensure_kwonly_param(_stop, "images", Optional[dict], default=None)
 
     def _create_interject_tool(
         self,
@@ -264,56 +258,26 @@ class DynamicToolFactory:
                     **{k: v for k, v in _kw.items() if k != "images"},
                 }
 
-            # Expose the downstream handle's signature to the LLM
+            # Expose the downstream handle's signature to the LLM and ensure common params
             with suppress(Exception):
-                import inspect as _inspect
-
-                params: list[_inspect.Parameter] = []
-                annotations: dict = {"return": Dict[str, str]}
                 if hasattr(handle, "interject"):
-                    sig = _inspect.signature(getattr(handle, "interject"))
-                    for name, p in sig.parameters.items():
-                        if name == "self":
-                            continue
-                        params.append(
-                            _inspect.Parameter(
-                                name,
-                                kind=_inspect.Parameter.KEYWORD_ONLY,
-                                default=p.default,
-                                annotation=p.annotation,
-                            ),
-                        )
-                        if p.annotation is not _inspect._empty:  # type: ignore[attr-defined]
-                            annotations[name] = p.annotation
-                # Ensure common aliases are visible in schema if not present
-                existing = {p.name for p in params}
-                if "content" not in existing and "message" not in existing:
-                    params.insert(
-                        0,
-                        _inspect.Parameter(
-                            "content",
-                            kind=_inspect.Parameter.KEYWORD_ONLY,
-                            default=None,
-                            annotation=Optional[str],
-                        ),
+                    self._adopt_signature_and_annotations(
+                        getattr(handle, "interject"),
+                        _interject,
                     )
-                    annotations["content"] = Optional[str]
-                # Append images param if not already present
-                if not any(p.name == "images" for p in params):
-                    params.append(
-                        _inspect.Parameter(
-                            "images",
-                            kind=_inspect.Parameter.KEYWORD_ONLY,
-                            default=None,
-                            annotation=Optional[dict],
-                        ),
-                    )
-                    annotations["images"] = Optional[dict]
-                _interject.__signature__ = _inspect.Signature(
-                    parameters=params,
-                    return_annotation=Dict[str, str],
-                )
-                _interject.__annotations__ = annotations
+            # Ensure `content` alias and `images` kw-only parameters exist
+            self._ensure_kwonly_param(
+                _interject,
+                "content",
+                Optional[str],
+                default=None,
+            )
+            self._ensure_kwonly_param(
+                _interject,
+                "images",
+                Optional[dict],
+                default=None,
+            )
 
         else:
 

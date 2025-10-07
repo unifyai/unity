@@ -939,11 +939,146 @@ async def async_tool_loop_inner(
             logger.info(f"Early exit – {reason}", prefix="⏹️")
         return notice["content"]
 
+    # ── small local helpers to dedupe repeated logic ─────────────────────────
+    def _pretty(tool_name: str, payload: Any) -> str:
+        try:
+            content_payload = (
+                payload if isinstance(payload, dict) else {"message": str(payload)}
+            )
+            return _dumps({"tool": tool_name, **content_payload}, indent=4)
+        except Exception:
+            try:
+                return _dumps({"tool": tool_name, "message": str(payload)}, indent=4)
+            except Exception:
+                return _dumps({"tool": tool_name}, indent=4)
+
+    async def _handle_clarification(
+        src_task: asyncio.Task,
+        question_payload: Any,
+    ) -> None:
+        images_from_child = None
+        question_text = ""
+        try:
+            if isinstance(question_payload, dict):
+                images_from_child = question_payload.get("images")
+                question_text = question_payload.get("question", "")
+            else:
+                question_text = str(question_payload)
+        except Exception:
+            question_text = str(question_payload)
+
+        call_id = tools_data.info[src_task].call_id
+        tool_name = tools_data.info[src_task].name
+
+        # mark the task as waiting
+        tools_data.info[src_task].waiting_for_clarification = True
+
+        # ensure/refresh single placeholder for this call-id
+        ph = tools_data.info[src_task].tool_reply_msg
+        if ph is None:
+            ph = create_tool_call_message(
+                name=f"clarification_request_{call_id}",
+                call_id=call_id,
+                content="",
+            )
+            await insert_tool_message_after_assistant(
+                assistant_meta,
+                tools_data.info[src_task].assistant_msg,
+                ph,
+                client,
+                _msg_dispatcher,
+            )
+            tools_data.info[src_task].tool_reply_msg = ph
+
+        ph["name"] = f"clarification_request_{call_id}"
+        ph["content"] = (
+            "Tool incomplete, please answer the following to continue tool execution:\n"
+            f"{question_text}"
+        )
+
+        # Forward programmatic clarification event to outer handle
+        try:
+            outer = outer_handle_container[0] if outer_handle_container else None
+            if outer is not None and hasattr(outer, "_clar_q"):
+                await outer._clar_q.put(
+                    {
+                        "type": "clarification",
+                        "call_id": call_id,
+                        "tool_name": tool_name,
+                        "question": question_text,
+                    },
+                )
+        except Exception:
+            pass
+
+        # Append any images sent alongside the clarification request
+        try:
+            append_source_scoped_images(
+                images_from_child,
+                default_source_label("clar_request"),
+            )
+        except Exception:
+            pass
+
+    async def _handle_notification(src_task: asyncio.Task, payload: Any) -> None:
+        call_id = tools_data.info[src_task].call_id
+        tool_name = tools_data.info[src_task].name
+
+        pretty = _pretty(tool_name, payload)
+
+        placeholder = tools_data.info[src_task].tool_reply_msg
+        if placeholder is None:
+            placeholder = create_tool_call_message(
+                name=tool_name,
+                call_id=call_id,
+                content=pretty,
+            )
+            await insert_tool_message_after_assistant(
+                assistant_meta,
+                tools_data.info[src_task].assistant_msg,
+                placeholder,
+                client,
+                _msg_dispatcher,
+            )
+            tools_data.info[src_task].tool_reply_msg = placeholder
+        else:
+            placeholder["content"] = pretty
+
+        # Forward programmatic notification event to the outer handle
+        try:
+            outer = outer_handle_container[0] if outer_handle_container else None
+            if outer is not None and hasattr(outer, "_notification_q"):
+                event_payload = (
+                    payload if isinstance(payload, dict) else {"message": str(payload)}
+                )
+                await outer._notification_q.put(
+                    {
+                        "type": "notification",
+                        "call_id": call_id,
+                        "tool_name": tool_name,
+                        **event_payload,
+                    },
+                )
+        except Exception:
+            pass
+
+        # Append images provided with the notification payload
+        try:
+            images_from_child = (
+                payload.get("images") if isinstance(payload, dict) else None
+            )
+            append_source_scoped_images(
+                images_from_child,
+                default_source_label("notification"),
+            )
+        except Exception:
+            pass
+
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
     llm_turn_required = False
 
-    # No persist mode: loop returns immediately upon final assistant message
+    # Loop returns immediately upon the final assistant message (no persist mode)
 
     try:
         while True:
@@ -952,7 +1087,7 @@ async def async_tool_loop_inner(
             # set, the outer loop must stop doing any further work and simply
             # await the delegate's result. This guarantees no extra assistant
             # turns, tools, or events are emitted by the outer loop.
-            # Passthrough mode no longer hands over control; outer loop continues.
+            # Passthrough: nested handles run while the outer loop remains active.
 
             # ── 0-α-P. Global *pause* gate  ────────────────────────────
             # Keep handling tool completions & cancellation, but *never*
@@ -1242,13 +1377,6 @@ async def async_tool_loop_inner(
                             name="NotificationQueueGet",
                         )
                         notif_waiters[pw] = _t
-                        # Debug: log initial qsize for notification queue
-                        try:
-                            _qs = 0
-                            if hasattr(info.notification_queue, "qsize"):
-                                _qs = int(info.notification_queue.qsize())
-                        except Exception:
-                            pass
                 waiters = (
                     tools_data.pending
                     | set(clar_waiters)
@@ -1311,73 +1439,7 @@ async def async_tool_loop_inner(
                 # ── clarification request bubbled up from a child tool ──────────────
                 if done & clar_waiters.keys():
                     for cw in done & clar_waiters.keys():
-                        question = (
-                            cw.result()
-                        )  # may be str or dict with {question, images}
-                        images_from_child = None
-                        if isinstance(question, dict):
-                            images_from_child = question.get("images")
-                            question = question.get("question", "")
-                        src_task = clar_waiters[cw]
-                        call_id = tools_data.info[src_task].call_id
-                        tool_name = tools_data.info[src_task].name
-
-                        # 1️⃣ mark the task as waiting
-                        tools_data.info[src_task].waiting_for_clarification = True
-
-                        # 2️⃣ REUSE the existing placeholder if we already inserted one
-                        ph = tools_data.info[src_task].tool_reply_msg
-                        if ph is None:
-                            # no placeholder yet → create one exactly once
-                            ph = create_tool_call_message(
-                                name=f"clarification_request_{call_id}",
-                                call_id=call_id,
-                                content="",  # will fill below
-                            )
-                            await insert_tool_message_after_assistant(
-                                assistant_meta,
-                                tools_data.info[src_task].assistant_msg,
-                                ph,
-                                client,
-                                _msg_dispatcher,
-                            )
-                            tools_data.info[src_task].tool_reply_msg = ph
-
-                        # 3️⃣ turn (or update) the placeholder into the request
-                        ph["name"] = f"clarification_request_{call_id}"
-                        ph["content"] = (
-                            "Tool incomplete, please answer the following to continue "
-                            f"tool execution:\n{question}"
-                        )
-                        tool_msg = ph  # for event_bus
-
-                        # 4️⃣ forward event to the outer handle (programmatic consumption)
-                        try:
-                            outer = (
-                                outer_handle_container[0]
-                                if outer_handle_container
-                                else None
-                            )
-                            if outer is not None and hasattr(outer, "_clar_q"):
-                                await outer._clar_q.put(
-                                    {
-                                        "type": "clarification",
-                                        "call_id": call_id,
-                                        "tool_name": tool_name,
-                                        "question": question,
-                                    },
-                                )
-                        except Exception:
-                            pass
-
-                        # Handle images sent alongside the clarification request
-                        try:
-                            append_source_scoped_images(
-                                images_from_child,
-                                default_source_label("clar_request"),
-                            )
-                        except Exception:
-                            pass
+                        await _handle_clarification(clar_waiters[cw], cw.result())
 
                     # let the assistant answer immediately
                     # Process any notifications that arrived in the same tick
@@ -1441,85 +1503,7 @@ async def async_tool_loop_inner(
                 # ── progress update bubbled up from a child tool (non-blocking) ─────
                 if done & notif_waiters.keys():
                     for pw in done & notif_waiters.keys():
-                        payload = pw.result()
-                        src_task = notif_waiters[pw]
-                        call_id = tools_data.info[src_task].call_id
-                        tool_name = tools_data.info[src_task].name
-
-                        # Acknowledge bottom‑up notification for this call_id; keep one tool reply per call_id
-                        try:
-                            content_payload = (
-                                payload
-                                if isinstance(payload, dict)
-                                else {"message": str(payload)}
-                            )
-                            pretty = _dumps(
-                                {"tool": tool_name, **content_payload},
-                                indent=4,
-                            )
-                        except Exception:
-                            pretty = _dumps(
-                                {"tool": tool_name, "message": str(payload)},
-                                indent=4,
-                            )
-
-                        # Update existing tool reply if present, else create one
-                        placeholder = tools_data.info[src_task].tool_reply_msg
-                        if placeholder is None:
-                            placeholder = create_tool_call_message(
-                                name=tool_name,
-                                call_id=call_id,
-                                content=pretty,
-                            )
-                            await insert_tool_message_after_assistant(
-                                assistant_meta,
-                                tools_data.info[src_task].assistant_msg,
-                                placeholder,
-                                client,
-                                _msg_dispatcher,
-                            )
-                            tools_data.info[src_task].tool_reply_msg = placeholder
-                        else:
-                            placeholder["content"] = pretty
-
-                        # 2️⃣ forward event to the outer handle stream
-                        try:
-                            outer = (
-                                outer_handle_container[0]
-                                if outer_handle_container
-                                else None
-                            )
-                            if outer is not None and hasattr(outer, "_notification_q"):
-                                # Prefer dict payload, else wrap string
-                                event_payload = (
-                                    payload
-                                    if isinstance(payload, dict)
-                                    else {"message": str(payload)}
-                                )
-                                await outer._notification_q.put(
-                                    {
-                                        "type": "notification",
-                                        "call_id": call_id,
-                                        "tool_name": tool_name,
-                                        **event_payload,
-                                    },
-                                )
-                        except Exception:
-                            pass
-
-                        # Handle images sent alongside notification payloads
-                        try:
-                            images_from_child = (
-                                payload.get("images")
-                                if isinstance(payload, dict)
-                                else None
-                            )
-                            append_source_scoped_images(
-                                images_from_child,
-                                default_source_label("notification"),
-                            )
-                        except Exception:
-                            pass
+                        await _handle_notification(notif_waiters[pw], pw.result())
                     # Require an immediate LLM turn (same behaviour as clarification)
                     llm_turn_required = True
 
@@ -1557,7 +1541,7 @@ async def async_tool_loop_inner(
                 )
                 continue  # still waiting for other tool tasks
 
-            # No handover delegate in the new passthrough design
+            # Passthrough: no handover delegate; outer loop continues scheduling
 
             # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
             #       any still‑running tool calls ────────────────────────────────
@@ -1843,122 +1827,13 @@ async def async_tool_loop_inner(
                     # Clarification request bubbled up while LLM thinking
                     if done & set(clar_waiters2.keys()):
                         for cw in done & set(clar_waiters2.keys()):
-                            question = cw.result()
-                            images_from_child = None
-                            if isinstance(question, dict):
-                                images_from_child = question.get("images")
-                                question = question.get("question", "")
-                            src_task = clar_waiters2[cw]
-                            call_id = tools_data.info[src_task].call_id
-                            tool_name = tools_data.info[src_task].name
-
-                            # mark waiting
-                            tools_data.info[src_task].waiting_for_clarification = True
-
-                            ph = tools_data.info[src_task].tool_reply_msg
-                            if ph is None:
-                                ph = create_tool_call_message(
-                                    name=f"clarification_request_{call_id}",
-                                    call_id=call_id,
-                                    content="",
-                                )
-                                await insert_tool_message_after_assistant(
-                                    assistant_meta,
-                                    tools_data.info[src_task].assistant_msg,
-                                    ph,
-                                    client,
-                                    _msg_dispatcher,
-                                )
-                                tools_data.info[src_task].tool_reply_msg = ph
-                            ph["name"] = f"clarification_request_{call_id}"
-                            ph["content"] = (
-                                "Tool incomplete, please answer the following to continue "
-                                f"tool execution:\n{question}"
-                            )
-
-                            # Forward event up to outer handle
-                            try:
-                                outer = (
-                                    outer_handle_container[0]
-                                    if outer_handle_container
-                                    else None
-                                )
-                                if outer is not None and hasattr(outer, "_clar_q"):
-                                    await outer._clar_q.put(
-                                        {
-                                            "type": "clarification",
-                                            "call_id": call_id,
-                                            "tool_name": tool_name,
-                                            "question": question,
-                                        },
-                                    )
-                            except Exception:
-                                pass
-
-                            # Append images from child clarification
-                            try:
-                                append_source_scoped_images(
-                                    images_from_child,
-                                    default_source_label("clar_request"),
-                                )
-                            except Exception:
-                                pass
+                            await _handle_clarification(clar_waiters2[cw], cw.result())
                         llm_turn_required = True
 
                     # Notification bubbled up while LLM thinking
                     if done & set(notif_waiters2.keys()):
                         for pw in done & set(notif_waiters2.keys()):
-                            payload = pw.result()
-                            src_task = notif_waiters2[pw]
-                            call_id = tools_data.info[src_task].call_id
-                            tool_name = tools_data.info[src_task].name
-
-                            try:
-                                content_payload = (
-                                    payload
-                                    if isinstance(payload, dict)
-                                    else {"message": str(payload)}
-                                )
-                                pretty = _dumps(
-                                    {"tool": tool_name, **content_payload},
-                                    indent=4,
-                                )
-                            except Exception:
-                                pretty = _dumps(
-                                    {"tool": tool_name, "message": str(payload)},
-                                    indent=4,
-                                )
-
-                            placeholder = tools_data.info[src_task].tool_reply_msg
-                            if placeholder is None:
-                                placeholder = create_tool_call_message(
-                                    name=tool_name,
-                                    call_id=call_id,
-                                    content=pretty,
-                                )
-                                await insert_tool_message_after_assistant(
-                                    assistant_meta,
-                                    tools_data.info[src_task].assistant_msg,
-                                    placeholder,
-                                    client,
-                                    _msg_dispatcher,
-                                )
-                                tools_data.info[src_task].tool_reply_msg = placeholder
-                            else:
-                                placeholder["content"] = pretty
-
-                            try:
-                                images_from_child = (
-                                    payload.get("images")
-                                    if isinstance(payload, dict)
-                                    else None
-                                )
-                                append_source_scoped_images(
-                                    images_from_child,
-                                    default_source_label("notification"),
-                                )
-                            except Exception:
-                                pass
+                            await _handle_notification(notif_waiters2[pw], pw.result())
                         llm_turn_required = True
 
             else:
@@ -2100,26 +1975,11 @@ async def async_tool_loop_inner(
                         except Exception:
                             pass
 
-                        # Remove this `wait` tool call from the assistant message. If it
-                        # was the only call and there is no content, drop the assistant msg.
-                        try:
-                            calls = msg.get("tool_calls") or []
-                            remaining_calls = [
-                                c
-                                for c in calls
-                                if c.get("function", {}).get("name") != "wait"
-                            ]
-                            content_present = bool((msg.get("content") or "").strip())
-                            if not remaining_calls:
-                                if not content_present:
-                                    if client.messages and client.messages[-1] is msg:
-                                        client.messages.pop()
-                                else:
-                                    msg.pop("tool_calls", None)
-                            else:
-                                msg["tool_calls"] = remaining_calls
-                        except Exception:
-                            pass
+                        # Prune the `wait` tool call using a shared helper
+                        with suppress(Exception):
+                            from .messages import prune_wait_tool_call as _prune_wait
+
+                            _prune_wait(msg, call["id"], client=client)
 
                         # After acknowledging a wait, do NOT grant an immediate LLM turn.
                         # The loop should now wait for any pending tools or interjections.
@@ -2631,19 +2491,6 @@ async def async_tool_loop_inner(
         # resources cleanly.  Only after every task has finished/aborted do
         # we re-raise the same `CancelledError`, preserving expected asyncio
         # semantics for upstream callers.
-        try:
-            _pending_count = (
-                len(tools_data.pending) if hasattr(tools_data, "pending") else "-"
-            )
-            _task_info_count = len(getattr(tools_data, "info", {}))
-            _call_ids = []
-            try:
-                for _t, _inf in getattr(tools_data, "info", {}).items():
-                    _call_ids.append(f"{_inf.name}:{_inf.call_id}")
-            except Exception:
-                _call_ids = []
-        except Exception:
-            pass
         with suppress(Exception):
             _stop_forwarded_once = await propagate_stop_once(
                 tools_data.info,

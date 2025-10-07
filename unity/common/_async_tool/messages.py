@@ -290,6 +290,40 @@ def build_helper_ack_content(name: str, args_json: Any) -> str:
     return ack_content
 
 
+# Helper: prune a `wait` tool call from an assistant message. If it was the
+# only tool call and there is no content, drop the assistant message from the
+# client's transcript where possible.
+def prune_wait_tool_call(
+    asst_msg: dict,
+    call_id: str,
+    *,
+    client: unify.AsyncUnify | None = None,
+) -> None:
+    try:
+        tool_calls = asst_msg.get("tool_calls") or []
+        remaining = [c for c in tool_calls if c.get("id") != call_id]
+        content_present = bool((asst_msg.get("content") or "").strip())
+        if not remaining:
+            if not content_present:
+                if client is not None:
+                    try:
+                        if client.messages and client.messages[-1] is asst_msg:
+                            client.messages.pop()
+                        else:
+                            idx_in_log = client.messages.index(asst_msg)
+                            client.messages.pop(idx_in_log)
+                    except Exception:
+                        pass
+                else:
+                    asst_msg.pop("tool_calls", None)
+            else:
+                asst_msg.pop("tool_calls", None)
+        else:
+            asst_msg["tool_calls"] = remaining
+    except Exception:
+        pass
+
+
 # ── small helper: keep assistant→tool chronology DRY ────────────────────
 async def insert_tool_message_after_assistant(
     assistant_meta: dict,

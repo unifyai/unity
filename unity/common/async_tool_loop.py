@@ -201,6 +201,39 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # a passthrough handle is not yet ready but tools are scheduled
         self._pending_passthrough_ops: list[tuple[str, dict, tuple[str, ...]]] = []
 
+    # small local helpers to keep user-visible history consistent
+    def _append_user_visible_user(
+        self,
+        message: str,
+        parent_chat_context_cont: list[dict] | None,
+    ) -> None:
+        try:
+            # NOTE: key name 'parent_chat_context_continuted' is legacy and intentional
+            if parent_chat_context_cont is not None:
+                self._user_visible_history.append(
+                    {
+                        "role": "user",
+                        "content": {
+                            "message": message,
+                            "parent_chat_context_continuted": parent_chat_context_cont,
+                        },
+                    },
+                )
+            else:
+                self._user_visible_history.append(
+                    {"role": "user", "content": message},
+                )
+        except Exception:
+            pass
+
+    def _append_user_visible_assistant(self, message: str) -> None:
+        try:
+            self._user_visible_history.append(
+                {"role": "assistant", "content": message},
+            )
+        except Exception:
+            pass
+
     # ── internal: passthrough forwarding/buffering helpers ──────────────────
     def _iter_passthrough_handles(self):
         try:
@@ -296,21 +329,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
 
         # Record the user-visible question immediately (even if delegated)
-        try:
-            if parent_chat_context_cont is not None:
-                self._user_visible_history.append(
-                    {
-                        "role": "user",
-                        "content": {
-                            "message": question,
-                            "parent_chat_context_continuted": parent_chat_context_cont,
-                        },
-                    },
-                )
-            else:
-                self._user_visible_history.append({"role": "user", "content": question})
-        except Exception:
-            pass
+        self._append_user_visible_user(question, parent_chat_context_cont)
 
         # No delegate forwarding – outer loop remains in control.
 
@@ -443,13 +462,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         except Exception:
             parent_label = "unknown"
 
-        # Best-effort detection of a single nested handle to enrich the label (removed for simplicity)
-        child_label: str | None = None
-
-        if child_label:
-            loop_id_label = f"Question({parent_label}->{child_label})"
-        else:
-            loop_id_label = f"Question({parent_label})"
+        loop_id_label = f"Question({parent_label})"
 
         # Build the message for the inspection loop – either a plain string or
         # a single string that embeds the continued parent context.
@@ -485,12 +498,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
             async def _rec_result():  # type: ignore[return-type]
                 ans = await _orig_result()
-                try:
-                    self._user_visible_history.append(
-                        {"role": "assistant", "content": ans},
-                    )
-                except Exception:
-                    pass
+                self._append_user_visible_assistant(ans)
                 return ans
 
             helper_handle.result = _rec_result  # type: ignore[attr-defined]
@@ -498,12 +506,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         async def _wrap():
             answer = await helper_handle.result()
-            try:
-                self._user_visible_history.append(
-                    {"role": "assistant", "content": answer},
-                )
-            except Exception:
-                pass
+            self._append_user_visible_assistant(answer)
             return answer, inspection_client.messages
 
         helper_handle.result = _wrap  # type: ignore[attr-defined]
@@ -522,21 +525,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         LOGGER.info(f"💬 [{_label}] Interject requested: {message}")
         # No delegate forwarding – outer loop remains in control.
         # Record user-visible immediately
-        try:
-            if parent_chat_context_cont is not None:
-                self._user_visible_history.append(
-                    {
-                        "role": "user",
-                        "content": {
-                            "message": message,
-                            "parent_chat_context_continuted": parent_chat_context_cont,
-                        },
-                    },
-                )
-            else:
-                self._user_visible_history.append({"role": "user", "content": message})
-        except Exception:
-            pass
+        self._append_user_visible_user(message, parent_chat_context_cont)
 
         # Generalized passthrough forwarding/buffering
         await self._replay_pending_passthrough_ops()

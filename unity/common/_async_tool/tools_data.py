@@ -43,6 +43,17 @@ class ToolsData:
         ] = {}
         self.completed_results: Dict[str, str] = {}
 
+    # Local helper: pretty-print tool payloads consistently
+    @staticmethod
+    def _pretty_tool_payload(tool_name: str, payload: Any) -> str:
+        try:
+            content_payload = (
+                payload if isinstance(payload, dict) else {"message": str(payload)}
+            )
+            return _dumps({"tool": tool_name, **content_payload}, indent=4)
+        except Exception:
+            return _dumps({"tool": tool_name, "message": str(payload)}, indent=4)
+
     def _quota_count(self, task_name: str) -> int:
         return self.call_counts.get(task_name, 0)
 
@@ -433,15 +444,7 @@ class ToolsData:
                     break
 
                 # Pretty-print content for transcript placeholder
-                try:
-                    content_payload = (
-                        payload
-                        if isinstance(payload, dict)
-                        else {"message": str(payload)}
-                    )
-                    pretty = _dumps({"tool": name, **content_payload}, indent=4)
-                except Exception:
-                    pretty = _dumps({"tool": name, "message": str(payload)}, indent=4)
+                pretty = self._pretty_tool_payload(name, payload)
 
                 # Create/update a single tool-reply placeholder for this call_id
                 placeholder = info.tool_reply_msg
