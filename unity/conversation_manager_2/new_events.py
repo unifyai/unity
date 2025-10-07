@@ -137,7 +137,7 @@ class EmailSent(Event):
     contact: str
     subject: str
     body: str
-    message_id: Optional[str]
+    message_id: str | None = None
 
 
 @dataclass
