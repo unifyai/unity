@@ -145,9 +145,15 @@ async def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=No
     if previous_tool_trajectory:
         cleaned_trajectory.extend(previous_tool_trajectory)
 
-    _flatten_tools = {
-        msg.get("tool_call_id"): msg for msg in msgs if msg.get("role") == "tool"
-    }
+    _flatten_tools = {}
+
+    for msg in msgs:
+        if msg.get("role") == "tool":
+            # Skip completion status tools or anything not an actual tool call
+            if not msg["tool_call_id"].startswith("call_"):
+                continue
+
+            _flatten_tools[msg["tool_call_id"]] = msg
 
     for msg in msgs:
         if msg.get("role") != "assistant":
