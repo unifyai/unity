@@ -288,7 +288,7 @@ class ScreenShareManager:
         speech_event: Optional[dict],
         visual_events: List[Dict],
     ) -> Tuple[List[KeyEvent], Dict[float, str]]:
-        """Constructs the prompt and calls the LLM to get turn analysis."""        
+        """Constructs the prompt and calls the LLM to get turn analysis."""
         system_prompt = build_turn_analysis_prompt()
         user_content = []
         timestamp_to_frame_map: Dict[float, str] = {}
@@ -319,7 +319,7 @@ class ScreenShareManager:
                         bursts.append(current_burst)
                         current_burst = [current_event]
                 bursts.append(current_burst)
-            # Process each burst (sampling if necessary) and build prompt                
+            # Process each burst (sampling if necessary) and build prompt
             frame_counter = 0
             for burst in bursts:
                 events_to_process = burst
@@ -395,14 +395,15 @@ class ScreenShareManager:
         key_events: List[KeyEvent],
         frame_map: Dict[float, str],
     ):
-        """Logs a speech-based turn to the TranscriptManager, including any stored silent events."""        
+        """Logs a speech-based turn to the TranscriptManager, including any stored silent events."""
         all_events = sorted(
             self._stored_silent_key_events + key_events, key=lambda e: e.timestamp
         )
         self._stored_silent_key_events.clear()
         speech_payload = speech_event["payload"]
-        images_dict = {}
-        screen_share_dict = {}
+
+        images_to_add = []
+        event_to_image_map = {}
 
         for event in all_events:
             # 1. Register image, get ID
@@ -412,24 +413,44 @@ class ScreenShareManager:
             # Implement closest-match fallback for timestamps
             if not screenshot_b64 and frame_map:
                 closest_ts = min(frame_map.keys(), key=lambda ts: abs(ts - rep_ts))
-                if abs(closest_ts - rep_ts) < 1.0:  # 1-second tolerance
-                    logger.warning(
-                        f"Could not find exact frame for timestamp {rep_ts}. Using closest match: {closest_ts}."
-                    )
+                if abs(closest_ts - rep_ts) < 1.0:
                     screenshot_b64 = frame_map[closest_ts]
 
-            if not screenshot_b64:
+            if screenshot_b64:
+                images_to_add.append(
+                    {"data": screenshot_b64, "caption": event.event_description}
+                )
+                # Use the event's timestamp as a temporary unique key
+                event_to_image_map[event.timestamp] = len(images_to_add) - 1
+
+        # Batch log all images in a single call
+        logged_image_ids = self._image_manager.add_images(images_to_add)
+
+        # Re-associate logged IDs back to events
+        timestamp_to_image_id = {}
+        for ts, index in event_to_image_map.items():
+            if index < len(logged_image_ids):
+                timestamp_to_image_id[ts] = logged_image_ids[index]
+
+        images_dict = {}
+        screen_share_dict = {}
+
+        for event in all_events:
+            image_id = timestamp_to_image_id.get(event.timestamp)
+            if not image_id:
                 logger.warning(
-                    f"Could not find frame for representative_timestamp: {event.representative_timestamp}"
+                    f"Could not find a logged image_id for event at timestamp: {event.timestamp}"
                 )
                 continue
 
-            image_ids = self._image_manager.add_images(
-                [{"data": screenshot_b64, "caption": event.event_description}]
-            )
-            if not image_ids:
+            screenshot_b64 = frame_map.get(event.representative_timestamp)
+            if not screenshot_b64 and frame_map:
+                closest_ts = min(frame_map.keys(), key=lambda ts: abs(ts - rep_ts))
+                if abs(closest_ts - rep_ts) < 1.0:
+                    screenshot_b64 = frame_map[closest_ts]
+
+            if not screenshot_b64:
                 continue
-            image_id = image_ids[0]
 
             # 2. Build screen_share entry
             event_type = "speech" if event.triggering_phrase else "vision"
