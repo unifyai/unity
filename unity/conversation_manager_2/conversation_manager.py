@@ -4,7 +4,6 @@ import asyncio
 # import threading
 from jinja2 import Template
 import json
-from typing import Literal
 import contextlib
 from pathlib import Path
 
@@ -16,7 +15,7 @@ from unity.conversation_manager_2.actions import (
     _send_email_via_address,
     _start_call,
 )
-from unity.conversation_manager_2.state import ConversationManagerState
+from unity.conversation_manager_2.state import ConversationManagerState, Notification
 from unity.helpers import run_script, terminate_process
 from unity.conversation_manager_2.llm_utils import stream_llm_call, llm_call
 from unity.transcript_manager.types.message import UNASSIGNED
@@ -125,18 +124,25 @@ class ConversationManager:
         self.chat_history = []
         self.call_proc = None
 
+        # Channel for handle communication
+        self._handle_input_channel = (
+            f"app:conversation_manager:input:{self.assistant_id}"
+        )
+
     async def run_llm(self):
         self.state.snapshot()
         prompt = self.state.get_state_for_llm()
         print(prompt)
         input_message = {"role": "user", "content": prompt}
-        boss_contact = next(c for c in self.state.inverted_contacts_map.values() if c.is_boss)
+        boss_contact = next(
+            c for c in self.state.inverted_contacts_map.values() if c.is_boss
+        )
         system_message = Template(SYS).render(
             contact_id=boss_contact.id,
             first_name=boss_contact.first_name,
             last_name=boss_contact.last_name,
             phone_number=boss_contact.phone_number,
-            email=boss_contact.email
+            email=boss_contact.email,
         )
         print(system_message)
         if self.state.mode in ["call", "gmeet"]:
@@ -172,7 +178,8 @@ class ConversationManager:
             out = event["content"]
             parsed_out = json.loads(out)
             assistant_phone_utterance_event = AssistantPhoneUtterance(
-                self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
+                self.state.phone_contact.phone_number,
+                parsed_out["phone_utterance"],
             )
             await self.event_broker.publish(
                 "app:comms:phone_utterance",
@@ -257,7 +264,7 @@ class ConversationManager:
                     print("contact found=", contact)
                     if self.state.mode == "call":
                         error = Error(
-                            "You can not make a call while on a call, wait till the call ends."
+                            "You can not make a call while on a call, wait till the call ends.",
                         )
                         await self.event_broker.publish(
                             "app:comms:call_initiated",
@@ -265,7 +272,8 @@ class ConversationManager:
                         )
                     else:
                         res = await _start_call(
-                            self.state.assistant_number, contact.phone_number
+                            self.state.assistant_number,
+                            contact.phone_number,
                         )
                         if not res["success"]:
                             await self.event_broker.publish(
@@ -312,7 +320,10 @@ class ConversationManager:
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
             await pubsub.psubscribe(
-                "app:comms:*", "app:conductor:*", "app:managers:output"
+                "app:comms:*",
+                "app:conductor:*",
+                "app:managers:output",
+                self._handle_input_channel,
             )
 
             # fetch contacts if env vars are already set
@@ -340,7 +351,23 @@ class ConversationManager:
                     # await self.schedule_llm_run(0)
                     ...
                 else:
-                    event = Event.from_json(msg["data"])  # type: ignore[arg-type]
+                    # Handle events from the steering handle
+                    if msg["channel"] == self._handle_input_channel:
+                        event = Event.from_json(msg["data"])
+                        if isinstance(event, NotificationInjectedEvent):
+                            notification_obj = Notification(
+                                type=event.source,
+                                content=event.content,
+                                timestamp=event.timestamp,
+                            )
+                            # Pass the single object to the method
+                            self.state.push_notif(notification_obj)
+                            # Trigger an LLM run to react to the new notification
+                            await self.schedule_llm_run(delay=0.1, cancel_running=True)
+                        continue
+
+                    # Process other events as before
+                    event = Event.from_json(msg["data"])
                     print(event)
                     await self.handle_event(event)
 

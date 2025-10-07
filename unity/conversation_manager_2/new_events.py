@@ -241,3 +241,16 @@ class GetBusEventsOutput(Event):
 @dataclass
 class PublishBusEvent(Event):
     event: dict[str, Any]
+
+
+# --------------------------------------------------------------------------- #
+# ConversationManagerHandle Events
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class NotificationInjectedEvent(Event):
+    """Event to inject a notification into the ConversationManager."""
+
+    content: str
+    source: str
