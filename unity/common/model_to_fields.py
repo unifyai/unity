@@ -30,19 +30,7 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
     fields_source = model.model_fields
 
     def infer_column_type(py_t: Any) -> str:
-        """
-        Recursively map an arbitrary (possibly deeply-nested) Python type
-        annotation to the closest ``ColumnType`` label.
-
-        The rules are:
-        • ``BaseModel`` subclasses and ``Mapping``/``dict`` → ``dict``
-        • Any ``Sequence`` (list, tuple, set, …) → ``list``
-        • Primitive scalars → their matching scalar type
-        • ``Union``/``|`` types are flattened – if all non-None variants resolve
-          to the *same* ``ColumnType`` that label is used, otherwise we fall
-          back to ``str``.
-        • Anything unknown falls back to ``str``.
-        """
+        """Map a (possibly nested) annotation to the closest ``ColumnType`` label."""
 
         origin = get_origin(py_t)
 
@@ -60,7 +48,7 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
             resolved = {infer_column_type(arg) for arg in non_none_args}
             return resolved.pop() if len(resolved) == 1 else ColumnType.str
 
-        # ---- Container types ----------------------------------------------
+        # ---- Container & scalar types -------------------------------------
         origin_or_self = origin or py_t
 
         if isinstance(origin_or_self, type) and issubclass(origin_or_self, BaseModel):
@@ -70,21 +58,17 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
         if origin_or_self in (list, tuple, set, Sequence):
             return ColumnType.list
 
-        # ---- Scalar primitives -------------------------------------------
-        if origin_or_self is str:
-            return ColumnType.str
-        if origin_or_self is int:
-            return ColumnType.int
-        if origin_or_self is float:
-            return ColumnType.float
-        if origin_or_self is bool:
-            return ColumnType.bool
-        if origin_or_self is datetime:
-            return ColumnType.datetime
-        if origin_or_self is date:
-            return ColumnType.date
-        if origin_or_self is time:
-            return ColumnType.time
+        primitive_map = {
+            str: ColumnType.str,
+            int: ColumnType.int,
+            float: ColumnType.float,
+            bool: ColumnType.bool,
+            datetime: ColumnType.datetime,
+            date: ColumnType.date,
+            time: ColumnType.time,
+        }
+        if origin_or_self in primitive_map:
+            return primitive_map[origin_or_self]
 
         # ---- Recursive inspection of type arguments -----------------------
         # For generics like ``List[Foo]`` we've already classified via the

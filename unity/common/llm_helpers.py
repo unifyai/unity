@@ -241,7 +241,7 @@ def _strip_hidden_params_from_doc(
     doc: str,
     hidden: set[str] | Iterable[str],
 ) -> str:
-    """Remove the *Parameters* blocks of any parameters listed in *hidden*."""
+    """Remove parameter blocks for any names in `hidden` from a docstring."""
     hidden = set(hidden)
     if not doc or not hidden:
         return doc
@@ -332,39 +332,33 @@ def _strip_hidden_params_from_doc(
 
 
 def annotation_to_schema(ann: Any) -> Dict[str, Any]:
-    """Convert a Python type annotation into an OpenAI-compatible JSON-Schema
-    fragment, including full support for Pydantic BaseModel subclasses.
-    """
+    """Convert a Python annotation into a JSON Schema fragment (supports Pydantic)."""
 
-    # ── 0. Remove typing.Annotated wrapper, if any ────────────────────────────
+    # Unwrap typing.Annotated
     origin = get_origin(ann)
-    if origin is not None and origin.__name__ == "Annotated":  # Py ≥3.10
+    if origin is not None and getattr(origin, "__name__", "") == "Annotated":
         ann = get_args(ann)[0]
+        origin = get_origin(ann)
 
-    # ── 0a. Explicitly recognise NoneType so Optional[T] collapses correctly ──
+    # NoneType
     if ann is type(None):
         return {"type": "null"}
 
-    # ── 1. Primitive scalars (str/int/float/bool) ────────────────────────────
+    # Primitive scalars
     if ann in TYPE_MAP:
         return {"type": TYPE_MAP[ann]}
 
-    # ── 2. Enum subclasses (e.g. ColumnType) ─────────────────────────────────
+    # Enum
     if isinstance(ann, type) and issubclass(ann, Enum):
         return {"type": "string", "enum": [member.value for member in ann]}
 
-    # ── 3. Pydantic model ────────────────────────────────────────────────────
+    # Pydantic model
     if isinstance(ann, type) and issubclass(ann, BaseModel):
-        # Pydantic already produces an OpenAPI/JSON-Schema compliant dictionary.
-        # We can embed that verbatim.  (It contains 'title', 'type', 'properties',
-        # 'required', etc.  Any 'definitions' block is also allowed by the spec.)
         return ann.model_json_schema()
 
-    # ── 4. typing.Dict[K, V]  → JSON object whose values follow V ────────────
-    origin = get_origin(ann)
+    # Dict[K, V]
     if origin is dict or origin is Dict:
         args = get_args(ann)
-        # Dict  (i.e., no [K, V] supplied)  →  free-form object
         if len(args) < 2:
             return {"type": "object"}
         _, value_type = args
@@ -373,32 +367,26 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
             "additionalProperties": annotation_to_schema(value_type),
         }
 
-    # ── 5. typing.List[T] or list[T]  → JSON array of T ──────────────────────
+    # List[T]
     if origin in (list, List):
         (item_type,) = get_args(ann)
-        return {
-            "type": "array",
-            "items": annotation_to_schema(item_type),
-        }
+        return {"type": "array", "items": annotation_to_schema(item_type)}
 
-    # ── 6. typing.Union / Optional …  → anyOf schemas ────────────────────────
-    # Support both typing.Union and PEP 604 unions (types.UnionType)
-    _is_union = False
+    # Union / Optional
     try:
-        import types as _types  # local import to avoid top-level dependency
+        import types as _types  # local import
 
-        _is_union = origin is Union or origin is _types.UnionType
+        is_union = origin is Union or origin is _types.UnionType
     except Exception:
-        _is_union = origin is Union
+        is_union = origin is Union
 
-    if _is_union:
+    if is_union:
         sub_schemas = [annotation_to_schema(a) for a in get_args(ann)]
-        # Collapse trivial Optional[X] (i.e. Union[X, NoneType]) into X
         if len(sub_schemas) == 2 and {"type": "null"} in sub_schemas:
             return next(s for s in sub_schemas if s != {"type": "null"})
         return {"anyOf": sub_schemas}
 
-    # ── 7. Fallback – treat as generic string ────────────────────────────────
+    # Fallback
     return {"type": "string"}
 
 
@@ -407,9 +395,7 @@ def method_to_schema(
     tool_name: Optional[str] = None,
     include_class_name: bool = True,
 ):
-    """
-    Convert **bound_method** into an OpenAI-compatible *function*-tool schema.
-    """
+    """Convert a bound method into an OpenAI-compatible function-tool schema."""
 
     sig = inspect.signature(bound_method)
     hints = get_type_hints(bound_method)
