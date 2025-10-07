@@ -1455,6 +1455,16 @@ class HierarchicalPlan(BaseActiveTask):
                 self.action_log.append(
                     f"Main plan execution finished with result: {result}.",
                 )
+                if self.pending_verifications:
+                    self.action_log.append(
+                        f"Waiting for {len(self.pending_verifications)} pending verification(s)...",
+                    )
+                    await asyncio.gather(
+                        *[h.task for h in self.pending_verifications.values()],
+                        return_exceptions=True,
+                    )
+                    self.action_log.append("All background verifications complete.")
+
                 await self._cancel_all_background_tasks()
                 self._set_state(_HierarchicalPlanState.COMPLETED)
                 self._set_final_result(str(result))
