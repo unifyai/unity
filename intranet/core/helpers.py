@@ -12,7 +12,7 @@ def _strip_quoted_text(text: str) -> str:
         if stripped.startswith(">"):
             continue
         if re.match(r"On .+wrote:", stripped) or stripped.startswith(
-            "-----Original Message-----"
+            "-----Original Message-----",
         ):
             break
         cleaned.append(line)
@@ -69,7 +69,7 @@ def _gmail_thread_to_conversation(thread):
                 ),
                 "subject": _header(headers, "Subject"),
                 "content": _payload_text(payload),
-            }
+            },
         )
     return convo
 
@@ -101,7 +101,7 @@ def get_thread_id(user_id, history_id, gmail_service):
                         q="is:unread newer_than:1d",
                     )
                     .execute()
-                )
+                ),
             ]
 
         # Process each history entry
@@ -143,7 +143,9 @@ def get_thread_id(user_id, history_id, gmail_service):
                 continue
 
             gmail_service.users().messages().modify(
-                userId=user_id, id=msg_id, body={"removeLabelIds": ["UNREAD"]}
+                userId=user_id,
+                id=msg_id,
+                body={"removeLabelIds": ["UNREAD"]},
             ).execute()
 
             # Get the thread for this message

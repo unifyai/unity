@@ -22,7 +22,7 @@ class Contact:
             "sms": deque(maxlen=5),
             "email": deque(maxlen=5),
             "phone": deque(maxlen=5),
-        }
+        },
     )
 
     @property
@@ -156,7 +156,7 @@ class ConversationManagerState:
                         "comms",
                         f"Phone Call recieved from '{contact.full_name}'",
                         e.timestamp,
-                    )
+                    ),
                 )
 
             # made by assistant
@@ -172,7 +172,7 @@ class ConversationManagerState:
                         "comms",
                         f"Phone Call Sent to '{contact.full_name}'",
                         e.timestamp,
-                    )
+                    ),
                 )
             case PhoneCallStarted() as e:
                 self.mode = "call"
@@ -188,33 +188,37 @@ class ConversationManagerState:
                         "comms",
                         f"Phone Call started with '{contact.full_name}'",
                         e.timestamp,
-                    )
+                    ),
                 )
 
             case PhoneUtterance() as e:
                 contact = self.get_contact(phone_number=e.contact)
                 self.push_message(
-                    contact, "phone", Message(contact.full_name, e.content, e.timestamp)
+                    contact,
+                    "phone",
+                    Message(contact.full_name, e.content, e.timestamp),
                 )
                 self.push_notif(
                     Notification(
                         "comms",
                         f"Phone Call Utterance recieved from '{contact.full_name}'",
                         e.timestamp,
-                    )
+                    ),
                 )
             # made by assistant
             case AssistantPhoneUtterance() as e:
                 contact = self.get_contact(phone_number=e.contact)
                 self.push_message(
-                    contact, "phone", Message(contact.full_name, e.content, e.timestamp)
+                    contact,
+                    "phone",
+                    Message(contact.full_name, e.content, e.timestamp),
                 )
                 self.push_notif(
                     Notification(
                         "comms",
                         f"Phone Call Utterance sent to '{contact.full_name}'",
                         e.timestamp,
-                    )
+                    ),
                 )
             case PhoneCallEnded() as e:
                 contact = self.get_contact(phone_number=e.contact)
@@ -228,30 +232,38 @@ class ConversationManagerState:
                         "comms",
                         f"Phone Call Ended with '{contact.full_name}'",
                         e.timestamp,
-                    )
+                    ),
                 )
                 self.phone_contact = None
 
             case SMSRecieved() as e:
                 contact = self.get_contact(phone_number=e.contact)
                 self.push_message(
-                    contact, "sms", Message(contact.full_name, e.content, e.timestamp)
+                    contact,
+                    "sms",
+                    Message(contact.full_name, e.content, e.timestamp),
                 )
                 self.push_notif(
                     Notification(
-                        "comms", f"SMS recieved from '{contact.full_name}'", e.timestamp
-                    )
+                        "comms",
+                        f"SMS recieved from '{contact.full_name}'",
+                        e.timestamp,
+                    ),
                 )
             # made by assistant
             case SMSSent() as e:
                 contact = self.get_contact(phone_number=e.contact)
                 self.push_message(
-                    contact, "sms", Message("You", e.content, e.timestamp)
+                    contact,
+                    "sms",
+                    Message("You", e.content, e.timestamp),
                 )
                 self.push_notif(
                     Notification(
-                        "comms", f"SMS sent to '{contact.full_name}'", e.timestamp
-                    )
+                        "comms",
+                        f"SMS sent to '{contact.full_name}'",
+                        e.timestamp,
+                    ),
                 )
             case EmailRecieved() as e:
                 contact = self.get_contact(email=e.contact)
@@ -265,7 +277,7 @@ class ConversationManagerState:
                         "comms",
                         f"Email recieved from '{contact.full_name}'",
                         e.timestamp,
-                    )
+                    ),
                 )
             # made by assistant
             case EmailSent() as e:
@@ -277,8 +289,10 @@ class ConversationManagerState:
                 )
                 self.push_notif(
                     Notification(
-                        "comms", f"Email sent to '{contact.full_name}'", e.timestamp
-                    )
+                        "comms",
+                        f"Email sent to '{contact.full_name}'",
+                        e.timestamp,
+                    ),
                 )
             # made by assistant
             case Error() as e:
@@ -388,13 +402,13 @@ class ConversationManagerState:
         """returns the new contact and whether they were newly created or not."""
         if not (id or phone_number or email):
             raise Exception(
-                "at least one id, phone number or email must be provided to infer contact"
+                "at least one id, phone number or email must be provided to infer contact",
             )
         if id:
             contact = self.inverted_contacts_map.get(id)
             if contact:
                 return contact
-            
+
         if phone_number:
             contact = self.phone_contacts_map.get(phone_number)
             if contact:
@@ -495,7 +509,7 @@ Body:
                 f"""[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
                 for n in self.notifs
                 if n.timestamp > self.last_snapshot_time
-            ]
+            ],
         )
 
     def _add_spaces(self, string: str, num_spaces: int = 4):

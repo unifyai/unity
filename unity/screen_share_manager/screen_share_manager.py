@@ -15,7 +15,6 @@ from skimage.metrics import structural_similarity as ssim
 import numpy as np
 
 from unity.conversation_manager_2.event_broker import get_event_broker
-from unity.file_manager.parser.types.document import DocumentImage
 from unity.image_manager.image_manager import ImageManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import (
@@ -120,7 +119,7 @@ class ScreenShareManager:
         # State Variables
         self._stop_event = asyncio.Event()
         self._frame_buffer: Deque[Tuple[float, str]] = deque(
-            maxlen=self.FRAME_BUFFER_SIZE
+            maxlen=self.FRAME_BUFFER_SIZE,
         )
         self._pending_vision_events: List[Dict] = []
         self._stored_silent_key_events: List[KeyEvent] = []  # Store silent events here
@@ -156,14 +155,16 @@ class ScreenShareManager:
         """
         async with self._event_broker.pubsub() as pubsub:
             await pubsub.psubscribe(
-                "app:comms:screen_frame", "app:comms:phone_utterance"
+                "app:comms:screen_frame",
+                "app:comms:phone_utterance",
             )
 
             while not self._stop_event.is_set():
                 try:
                     # Wait for a message with a timeout to check for inactivity
                     message = await pubsub.get_message(
-                        ignore_subscribe_messages=True, timeout=1.0
+                        ignore_subscribe_messages=True,
+                        timeout=1.0,
                     )
 
                     if message:
@@ -174,7 +175,7 @@ class ScreenShareManager:
                             asyncio.create_task(self._handle_frame_event(event_data))
                         elif channel == "app:comms:phone_utterance":
                             asyncio.create_task(
-                                self._handle_utterance_event(event_data)
+                                self._handle_utterance_event(event_data),
                             )
 
                     # Check for inactivity and flush pending events
@@ -208,14 +209,14 @@ class ScreenShareManager:
 
         if score < self.SSIM_THRESHOLD:
             logger.info(
-                f"Significant visual change detected at t={timestamp:.2f}s (SSIM: {score:.2f})"
+                f"Significant visual change detected at t={timestamp:.2f}s (SSIM: {score:.2f})",
             )
             self._pending_vision_events.append(
                 {
                     "timestamp": timestamp,
                     "before_frame_b64": self._last_significant_frame_b64,
                     "after_frame_b64": frame_b64,
-                }
+                },
             )
             self._last_significant_frame_b64 = frame_b64
 
@@ -274,12 +275,14 @@ class ScreenShareManager:
                         {
                             "event_name": "ScreenAnnotationEvent",
                             "payload": {"event_description": event.event_description},
-                        }
+                        },
                     ),
                 )
 
     async def _get_llm_analysis(
-        self, speech_event: Optional[dict], visual_events: List[Dict]
+        self,
+        speech_event: Optional[dict],
+        visual_events: List[Dict],
     ) -> List[KeyEvent]:
         """Constructs the prompt and calls the LLM to get turn analysis."""
         system_prompt = build_turn_analysis_prompt()
@@ -288,7 +291,7 @@ class ScreenShareManager:
         if speech_event:
             payload = speech_event["payload"]
             user_content.append(
-                {"type": "text", "text": f"User Speech: \"{payload['content']}\""}
+                {"type": "text", "text": f"User Speech: \"{payload['content']}\""},
             )
             # Check for optional timestamp keys before accessing them
             if "start_time" in payload and "end_time" in payload:
@@ -296,7 +299,7 @@ class ScreenShareManager:
                     {
                         "type": "text",
                         "text": f"Speech Timestamps: Start={payload['start_time']:.2f}s, End={payload['end_time']:.2f}s",
-                    }
+                    },
                 )
 
         if visual_events:
@@ -324,13 +327,13 @@ class ScreenShareManager:
                 events_to_process_for_burst = burst
                 if len(burst) > self.VISUAL_EVENT_SAMPLING_THRESHOLD:
                     logger.info(
-                        f"Detected a burst of {len(burst)} events. Sampling down to 3."
+                        f"Detected a burst of {len(burst)} events. Sampling down to 3.",
                     )
                     user_content.append(
                         {
                             "type": "text",
                             "text": "\nNOTE: The following frames are a sampled summary (first, middle, last) of a rapid sequence of screen changes.",
-                        }
+                        },
                     )
                     middle_index = len(burst) // 2
                     events_to_process_for_burst = [
@@ -345,21 +348,21 @@ class ScreenShareManager:
                         {
                             "type": "text",
                             "text": f"\nVisual Change #{frame_counter} at t={ve['timestamp']:.2f}s:",
-                        }
+                        },
                     )
                     user_content.append({"type": "text", "text": "BEFORE:"})
                     user_content.append(
                         {
                             "type": "image_url",
                             "image_url": {"url": ve["before_frame_b64"]},
-                        }
+                        },
                     )
                     user_content.append({"type": "text", "text": "AFTER:"})
                     user_content.append(
                         {
                             "type": "image_url",
                             "image_url": {"url": ve["after_frame_b64"]},
-                        }
+                        },
                     )
 
         if not self._openai_client:
@@ -381,12 +384,15 @@ class ScreenShareManager:
             return []
 
     async def _log_turn_to_transcript(
-        self, speech_event: dict, key_events: List[KeyEvent]
+        self,
+        speech_event: dict,
+        key_events: List[KeyEvent],
     ):
         """Logs a speech-based turn to the TranscriptManager, including any stored silent events."""
         # Merge current key events with any stored silent events
         all_events = sorted(
-            self._stored_silent_key_events + key_events, key=lambda e: e.timestamp
+            self._stored_silent_key_events + key_events,
+            key=lambda e: e.timestamp,
         )
         self._stored_silent_key_events.clear()
 
@@ -397,7 +403,7 @@ class ScreenShareManager:
         for event in all_events:
             # 1. Register image, get ID
             image_ids = self._image_manager.add_images(
-                [{"data": event.screenshot_b64, "caption": event.event_description}]
+                [{"data": event.screenshot_b64, "caption": event.event_description}],
             )
             if not image_ids:
                 continue
@@ -406,21 +412,22 @@ class ScreenShareManager:
             # 2. Build screen_share entry
             ts_key = f"{event.timestamp:.2f}-{event.timestamp:.2f}"
             screen_share_dict[ts_key] = ScreenShareAnnotation(
-                caption=event.event_description, image_b64=event.screenshot_b64
+                caption=event.event_description,
+                image_b64=event.screenshot_b64,
             )
 
             # 3. Build images entry if there's a triggering phrase
             if event.triggering_phrase:
                 try:
                     start_index = speech_payload["content"].index(
-                        event.triggering_phrase
+                        event.triggering_phrase,
                     )
                     end_index = start_index + len(event.triggering_phrase)
                     span_key = f"[{start_index}:{end_index}]"
                     images_dict[span_key] = image_id
                 except ValueError:
                     logger.warning(
-                        f"Triggering phrase '{event.triggering_phrase}' not found in content."
+                        f"Triggering phrase '{event.triggering_phrase}' not found in content.",
                     )
 
         # 4. Construct and log the Message
@@ -438,5 +445,5 @@ class ScreenShareManager:
         if logged_messages:
             self._last_user_utterance_message_id = logged_messages[0].message_id
             logger.info(
-                f"Logged turn to transcript with message_id: {self._last_user_utterance_message_id}"
+                f"Logged turn to transcript with message_id: {self._last_user_utterance_message_id}",
             )

@@ -112,8 +112,8 @@ async def main_plan():
 
 4. **Browser Navigation** (for web tasks):
 ```python
-await action_provider.browser_act("Navigate to https://...")
-await action_provider.browser_observe("What elements are visible?")
+await action_provider.act("Navigate to https://...")
+await action_provider.observe("What elements are visible?")
 ```
 
 5. **Structured Data Extraction**:

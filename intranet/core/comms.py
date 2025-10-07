@@ -202,10 +202,10 @@ async def process_message(message):
 
         # call the /query endpoint
         fallback_message = (
-            "We’re sorry, but we couldn’t complete your request due to an unexpected error.\n\n"
+            "We're sorry, but we couldn't complete your request due to an unexpected error.\n\n"
             "Please forward this email to hello@unify.ai with a brief description of what you "
             "were trying to do and any details that might help us investigate (for example, the "
-            "original subject and the approximate time you sent your message). We’ll look into this promptly and get back to you.\n\n"
+            "original subject and the approximate time you sent your message). We'll look into this promptly and get back to you.\n\n"
             "You can also try sending your question again or try another question to see if the issue persists.\n\n"
             "Kind regards,\n"
             "Midland Heart Policies Assistant"

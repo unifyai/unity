@@ -209,7 +209,7 @@ class EmailSentEvent(_Message):
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {"message_id": self.message_id, "subject": self.subject}
+            {"message_id": self.message_id, "subject": self.subject},
         )
         return base_dict
 
@@ -240,7 +240,7 @@ class EmailRecievedEvent(_Message):
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {"message_id": self.message_id, "subject": self.subject}
+            {"message_id": self.message_id, "subject": self.subject},
         )
         return base_dict
 
