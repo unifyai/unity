@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import datetime
 import os
 from typing import Optional
@@ -36,7 +37,7 @@ class ManagersWorker:
     Uses Pub/Sub with an internal queue to ensure FIFO ordering.
     """
 
-    def __init__(self, event_broker: redis.Redis):
+    def __init__(self, event_broker: Optional[redis.Redis] = None):
         self._event_broker = event_broker
 
         # Pub/Sub channels
@@ -53,7 +54,7 @@ class ManagersWorker:
         # State flags
         self._initialized = False
         self._init_lock = asyncio.Lock()
-        self._stop_event = asyncio.Event()
+        self._stop_event = threading.Event()
 
     # ──────────────────────────────────────────────────────────────────
     # Message handlers
@@ -330,7 +331,11 @@ class ManagersWorker:
         Subscribe to Redis Pub/Sub and enqueue messages.
         A separate task processes the queue to ensure ordering.
         """
-        print("Flag", self._initialized)
+        if self._event_broker is None:
+            raise RuntimeError(
+                "[ManagersWorker] _event_broker must be set before wait_for_events()"
+            )
+        print("[ManagersWorker] Flag", self._initialized)
         print("[ManagersWorker] Starting to wait for events")
         print(f"[ManagersWorker] Subscribe channel: {self._subscribe_channel}")
         print(f"[ManagersWorker] Publish channel: {self._publish_channel}")
@@ -369,6 +374,7 @@ class ManagersWorker:
         finally:
             # Stop processor
             self._stop_event.set()
+            await self._event_broker.aclose()
             await processor_task
             print("[ManagersWorker] Worker stopped")
 
