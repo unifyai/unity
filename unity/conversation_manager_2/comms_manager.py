@@ -106,6 +106,25 @@ class CommsManager:
                     self.loop,
                 )
             elif thread in events_map:
+                # Publish contacts
+                contacts = [
+                    {
+                        "id": c["contact_id"],
+                        "first_name": c["first_name"],
+                        "last_name": c["surname"],
+                        "phone_number": c["phone_number"],
+                        "email": c["email_address"],
+                    }
+                    for c in event.get("contacts", [])
+                ]
+                asyncio.run_coroutine_threadsafe(
+                    self.message_queue.publish(
+                        f"app:comms:contacts",
+                        GetContactsOutput(contacts=contacts).to_json(),
+                    ),
+                    self.loop,
+                )
+
                 content = event["body"]
                 topic = ""
                 if thread == "email":
@@ -155,6 +174,25 @@ class CommsManager:
                 message.ack()
             elif "call" in thread:
                 try:
+                    # Publish contacts
+                    contacts = [
+                        {
+                            "id": c["contact_id"],
+                            "first_name": c["first_name"],
+                            "last_name": c["surname"],
+                            "phone_number": c["phone_number"],
+                            "email": c["email_address"],
+                        }
+                        for c in event.get("contacts", [])
+                    ]
+                    asyncio.run_coroutine_threadsafe(
+                        self.message_queue.publish(
+                            f"app:comms:contacts",
+                            GetContactsOutput(contacts=contacts).to_json(),
+                        ),
+                        self.loop,
+                    )
+
                     # Extract phone numbers from the message data
                     from_number = event.get("caller_number", "")
                     to_number = "+" + event.get("conference_name", "").replace(

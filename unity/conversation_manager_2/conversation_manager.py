@@ -411,19 +411,6 @@ class ConversationManager:
         )
 
     async def handle_event(self, event: Event):
-        # add placeholder contact if we're yet to populate the contacts map.
-        # TODO: this is a hack to get the conversation manager to work without managers.
-        # TODO: Needs to be removed as soon as manager instantiation is quick enough.
-        if not self.state.initialized and hasattr(event, "contact"):
-            self.state.create_new_contact(
-                id="1",
-                first_name="Placeholder",
-                last_name="Contact",
-                email=event.contact,
-                phone_number=event.contact,
-            )
-            print("Placeholder contact created")
-
         # update state
         self.state.update_state(event)
 
