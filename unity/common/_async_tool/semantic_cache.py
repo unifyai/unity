@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 class _SemanticCacheSaver:
     """
-    A singleton background task handler that manages saving tasks in a thread pool.
+    A singleton semantic cache task handler that manages saving tasks in a thread pool.
     Automatically cleans up all saving tasks before application exit.
     """
 
@@ -45,21 +45,10 @@ class _SemanticCacheSaver:
             self._executor = ThreadPoolExecutor(max_workers=max_workers)
             atexit.register(self._cleanup)
             logger.info(
-                f"SemanticCacheBackgroundSaver initialized with {max_workers} workers",
+                f"SemanticCacheSaver initialized with {max_workers} workers",
             )
 
     def _submit(self, fn: Callable, *args, **kwargs) -> Any:
-        """
-        Submit a task to be executed in the background.
-
-        Args:
-            fn: Function to execute
-            *args: Positional arguments for the function
-            **kwargs: Keyword arguments for the function
-
-        Returns:
-            Future object representing the task
-        """
         future = self._executor.submit(fn, *args, **kwargs)
         with self._future_lock:
             self._futures.append(future)
@@ -67,7 +56,6 @@ class _SemanticCacheSaver:
         return future
 
     def _task_done_callback(self, future):
-        """Handle saving task completion and log any errors."""
         with self._future_lock:
             self._futures.remove(future)
         try:
@@ -77,12 +65,10 @@ class _SemanticCacheSaver:
 
     def _cleanup(self):
         """
-        Cleanup method called automatically at exit.
-        Waits for all pending saving tasks to complete.
+        Cleanup method called automatically at exit. Waits for all pending saving tasks to complete.
         """
-        logger.info("Shutting down SemanticCacheBackgroundSaver...")
+        logger.info("Shutting down SemanticCacheSaver...")
         self._executor.shutdown(wait=True)
-        logger.info("All saving tasks completed")
 
     def _save_to_cache(self, user_message, tool_trajectory):
         global _CONFIG

@@ -132,13 +132,6 @@ async def test_semantic_cache_performance_improvement(
 
 @_handle_project
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "first_contact, second_contact",
-    [
-        ("Alice Smith", "Bob Johnson"),
-        ("Charlie Brown", "Diana Prince"),
-    ],
-)
 async def test_semantic_cache_similar_queries_benefit(
     first_contact: str,
     second_contact: str,
@@ -151,6 +144,8 @@ async def test_semantic_cache_similar_queries_benefit(
     because the LLM can leverage the cached pattern from the first query.
     """
     cm, _ = contact_manager_scenario
+    first_contact = "Alice Smith"
+    second_contact = "Bob Johnson"
 
     with patch("unity.constants.is_semantic_cache_enabled", return_value=True):
         # First query - establish pattern

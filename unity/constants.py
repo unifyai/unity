@@ -31,15 +31,8 @@ def is_semantic_cache_enabled() -> bool:
     """
     Check if semantic cache mode is enabled via the UNITY_SEMANTIC_CACHE environment variable.
 
-    Semantic cache mode is ON by default. Set UNITY_SEMANTIC_CACHE=false (or 0/no/off)
-    to disable it.
-
-    This function can be patched during testing to control the behavior.
-
-    Returns
-    -------
-    bool
-        True if semantic cache is enabled, False otherwise.
+    Semantic cache mode is OFF by default. Set UNITY_SEMANTIC_CACHE=true (or 1/yes/on)
+    to enable it.
     """
     return os.getenv("UNITY_SEMANTIC_CACHE", "false").lower() not in {
         "0",
