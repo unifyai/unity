@@ -190,12 +190,9 @@ class CommsManager:
                     )
 
                     # Extract phone numbers from the message data
-                    from_number = event.get("caller_number", "")
-                    to_number = "+" + event.get("conference_name", "").replace(
-                        "Unity_",
-                        "",
-                    )
                     conference_name = event.get("conference_name", "")
+                    from_number = event.get("caller_number", "")
+                    to_number = "+" + conference_name.replace("Unity_", "")
 
                     # TODO: differentiate between calls picked up from outbound calls and inbound calls
                     task = asyncio.run_coroutine_threadsafe(
