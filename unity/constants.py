@@ -41,7 +41,7 @@ def is_semantic_cache_enabled() -> bool:
     bool
         True if semantic cache is enabled, False otherwise.
     """
-    return os.getenv("UNITY_SEMANTIC_CACHE", "true").lower() not in {
+    return os.getenv("UNITY_SEMANTIC_CACHE", "false").lower() not in {
         "0",
         "false",
         "no",
