@@ -3,11 +3,14 @@ import json
 import inspect
 import asyncio
 import functools
+import atexit
+import logging
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, TypedDict
+import threading
+from typing import TYPE_CHECKING, Any, Mapping, TypedDict, Callable
 from pydantic import BaseModel
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 
 if TYPE_CHECKING:
     from unity.common._async_tool.tools_data import ToolsData
@@ -17,6 +20,90 @@ from ..semantic_search import escape_single_quotes
 from ..llm_helpers import _dumps
 
 _USER_MESSAGE_EMBEDDING_FIELD_NAME = "_user_message_emb"
+logger = logging.getLogger(__name__)
+
+
+class _BackgroundSaver:
+    """
+    A singleton background task handler that manages saving tasks in a thread pool.
+    Automatically cleans up all saving tasks before application exit.
+    """
+
+    _instance = None
+    _executor = None
+    _futures = []
+    _future_lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self, max_workers: int = 4):
+        # Only initialize once
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=max_workers)
+            atexit.register(self._cleanup)
+            logger.info(
+                f"SemanticCacheBackgroundSaver initialized with {max_workers} workers",
+            )
+
+    def submit(self, fn: Callable, *args, **kwargs) -> Any:
+        """
+        Submit a task to be executed in the background.
+
+        Args:
+            fn: Function to execute
+            *args: Positional arguments for the function
+            **kwargs: Keyword arguments for the function
+
+        Returns:
+            Future object representing the task
+        """
+        future = self._executor.submit(fn, *args, **kwargs)
+        with self._future_lock:
+            self._futures.append(future)
+        future.add_done_callback(self._task_done_callback)
+        return future
+
+    def _task_done_callback(self, future):
+        """Handle saving task completion and log any errors."""
+        with self._future_lock:
+            self._futures.remove(future)
+        try:
+            future.result()
+        except Exception as e:
+            logger.error(f"Saving failed with error: {e}", exc_info=True)
+
+    def _cleanup(self):
+        """
+        Cleanup method called automatically at exit.
+        Waits for all pending saving tasks to complete.
+        """
+        logger.info("Shutting down SemanticCacheBackgroundSaver...")
+        self._executor.shutdown(wait=True)
+        logger.info("All saving tasks completed")
+
+    def wait(self, timeout: int = 360) -> bool:
+        """
+        Wait for all pending saving tasks to complete
+        Returns True if all tasks completed, False if some timed out.
+        """
+        with self._future_lock:
+            snapshot = set(self._futures)
+
+        if not snapshot:
+            return True
+
+        _, pending = wait(snapshot, timeout=timeout)
+        if pending:
+            logger.warning(f"Some saving tasks timed out: {pending}")
+            return False
+
+        return True
+
+
+_BACKGROUND_SAVER = None
 
 
 class _Config:
@@ -34,7 +121,7 @@ class _Config:
         return f"{ASSISTANT_CONTEXT}/{self._context}"
 
     def get_client(self):
-        return unify.AsyncUnify(self._model, reasoning_effort=self._reasoning_effort)
+        return unify.Unify(self._model, reasoning_effort=self._reasoning_effort)
 
 
 class ToolCallPair(TypedDict):
@@ -71,7 +158,7 @@ def _simplify_tool_trajectory(tool_trajectory: list[ToolCallPair]):
     return ret
 
 
-async def _construct_new_user_message(
+def _construct_new_user_message(
     init_user_message,
     messages_history,
     full_messages_history,
@@ -129,12 +216,12 @@ Can you find the contact with the name John Smith?
     global _CONFIG
     client = _CONFIG.get_client()
     client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
-    return await client.generate(
+    return client.generate(
         user_message=f"Messages: {json.dumps(history)}\nPossible clarifications: {json.dumps(_user_clarifications)}",
     )
 
 
-async def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=None):
+def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=None):
 
     class PruneToolsResponseFormat(BaseModel):
         indices: list[int]
@@ -184,7 +271,7 @@ async def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=No
         you should return indicies of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
         """,
     )
-    res = await client.generate(
+    res = client.generate(
         user_message=f"User query: {user_message}\nTool trajectory: {json.dumps(cleaned_trajectory, indent=2)}",
         response_format=PruneToolsResponseFormat,
     )
@@ -361,22 +448,29 @@ async def get_dummy_tool(
     ]
 
 
-async def save_semantic_cache(
+def save_semantic_cache(
     initial_user_message,
     user_message_visible_history,
     messages_history,
     previous_tool_trajectory=None,
 ):
-    new_user_message = await _construct_new_user_message(
-        initial_user_message,
-        user_message_visible_history,
-        messages_history,
-    )
+    def _save_semantic_cache():
+        new_user_message = _construct_new_user_message(
+            initial_user_message,
+            user_message_visible_history,
+            messages_history,
+        )
 
-    tool_trajectory = await _clean_tool_trajectory(
-        new_user_message,
-        messages_history,
-        previous_tool_trajectory=previous_tool_trajectory,
-    )
+        tool_trajectory = _clean_tool_trajectory(
+            new_user_message,
+            messages_history,
+            previous_tool_trajectory=previous_tool_trajectory,
+        )
 
-    _save_to_cache(new_user_message, tool_trajectory)
+        _save_to_cache(new_user_message, tool_trajectory)
+
+    global _BACKGROUND_SAVER
+    if _BACKGROUND_SAVER is None:
+        _BACKGROUND_SAVER = _BackgroundSaver()
+
+    _BACKGROUND_SAVER.submit(_save_semantic_cache)
