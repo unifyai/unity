@@ -236,47 +236,52 @@ class ScreenShareManager:
         Orchestrates the analysis of a user's turn, gathering context,
         calling the LLM, and dispatching the results.
         """
-        async with self._analysis_lock:
-            # Capture and clear pending visual events
-            visual_events = list(self._pending_vision_events)
-            self._pending_vision_events.clear()
-            if not speech_event and not visual_events:
-                return
-            key_events, frame_map = await self._get_llm_analysis(
-                speech_event, visual_events
-            )
-            if not key_events:
-                # If there was a speech event but no key events (e.g., LLM error),
-                # we should still log the basic speech message.
+        try:
+            async with self._analysis_lock:
+                visual_events = list(self._pending_vision_events)
+                self._pending_vision_events.clear()
+                if not speech_event and not visual_events:
+                    return
+
+                key_events, frame_map = await self._get_llm_analysis(
+                    speech_event, visual_events
+                )
+
+                if not key_events:
+                    if speech_event:
+                        await self._log_turn_to_transcript(speech_event, [], {})
+                    return
+
                 if speech_event:
-                    await self._log_turn_to_transcript(speech_event, [], {})
-                return
-            if speech_event:
-                # If there's speech, log everything immediately                
-                combined_frame_map = self._stored_silent_frame_map.copy()
-                combined_frame_map.update(frame_map)
-                await self._log_turn_to_transcript(
-                    speech_event, key_events, combined_frame_map
-                )
-                self._stored_silent_frame_map.clear()
-            else:
-                # If it's a silent visual event, store it for the next turn
-                logger.info(f"Storing {len(key_events)} silent visual event(s).")
-                self._stored_silent_key_events.extend(key_events)
-                self._stored_silent_frame_map.update(
-                    frame_map
-                )
-            # Publish real-time annotations for the ConversationManager                
-            for event in key_events:
-                await self._event_broker.publish(
-                    "app:comms:screen_annotation",
-                    json.dumps(
-                        {
-                            "event_name": "ScreenAnnotationEvent",
-                            "payload": {"event_description": event.event_description},
-                        }
-                    ),
-                )
+                    combined_frame_map = self._stored_silent_frame_map.copy()
+                    combined_frame_map.update(frame_map)
+                    await self._log_turn_to_transcript(
+                        speech_event, key_events, combined_frame_map
+                    )
+                    self._stored_silent_frame_map.clear()
+                else:
+                    logger.info(f"Storing {len(key_events)} silent visual event(s).")
+                    self._stored_silent_key_events.extend(key_events)
+                    self._stored_silent_frame_map.update(frame_map)
+
+                for event in key_events:
+                    await self._event_broker.publish(
+                        "app:comms:screen_annotation",
+                        json.dumps(
+                            {
+                                "event_name": "ScreenAnnotationEvent",
+                                "payload": {
+                                    "event_description": event.event_description
+                                },
+                            }
+                        ),
+                    )
+        except Exception as e:
+            logger.error(
+                f"An unhandled exception occurred during turn analysis: {e}",
+                exc_info=True,
+            )
+        # --- MODIFICATION END ---
 
     async def _get_llm_analysis(
         self,
@@ -430,7 +435,9 @@ class ScreenShareManager:
             event_type = "speech" if event.triggering_phrase else "vision"
             ts_key = f"{event.timestamp:.2f}-{event.timestamp:.2f}"
             screen_share_dict[ts_key] = ScreenShareAnnotation(
-                caption=event.event_description, image_b64=screenshot_b64, type=event_type
+                caption=event.event_description,
+                image=screenshot_b64,
+                type=event_type,
             )
 
             # 3. Build images entry if there's a triggering phrase
