@@ -24,7 +24,7 @@ from tests.helpers import _handle_project, SETTINGS
 
 @unify.traced
 async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
-    await asyncio.sleep(0.01)  # prove we can yield control
+    await asyncio.sleep(0)  # yield control minimally
     return text.upper()
 
 

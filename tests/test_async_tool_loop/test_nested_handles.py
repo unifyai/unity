@@ -14,6 +14,7 @@ from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_result,
     _wait_for_assistant_call_prefix,
     _wait_for_tool_message_prefix,
+    _wait_for_condition,
 )
 
 
@@ -193,9 +194,9 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
     )
 
     # 3.  Interject: ask the assistant to stop the running tool call
-    # Give the assistant a moment to schedule `outer_tool` so that the
-    # dynamic `_stop_…` helper exists in the next turn.
-    await asyncio.sleep(3)
+    # Wait deterministically for `outer_tool` to be requested and the placeholder inserted
+    await _wait_for_tool_request(client, "outer_tool")
+    await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
     await outer_handle.interject("stop")
 
     # 4.  Wait for completion & check outcomes
@@ -616,6 +617,8 @@ async def test_handle_interject_method_appears_late():
     class SlowHandle(AsyncToolLoopHandle):
         pass  # will monkey-patch .interject later
 
+    helper_gate = asyncio.Event()
+
     async def dummy_tool() -> SlowHandle:
         handle = SlowHandle(
             task=asyncio.create_task(asyncio.sleep(6)),
@@ -626,7 +629,7 @@ async def test_handle_interject_method_appears_late():
 
         # after 1 s expose `.interject`
         async def add_interject():
-            await asyncio.sleep(1)
+            await helper_gate.wait()
 
             async def _interject(self, msg: str):
                 interject_seen["called"] = True
@@ -666,8 +669,9 @@ async def test_handle_interject_method_appears_late():
         timeout=240,
     )
 
-    # wait long enough for the handle to grow `.interject`
-    await asyncio.sleep(4)  # helper will exist now
+    # Wait deterministically until the tool has been scheduled so `_interject_…` exists
+    await _wait_for_tool_request(client, "dummy_tool")
+    helper_gate.set()
     await outer.interject("now")
 
     final = await outer.result()
@@ -731,8 +735,8 @@ async def test_pause_nested_loop_calls_pause():
         timeout=240,
     )
 
-    # helper exists next turn – now ask to pause
-    await asyncio.sleep(8)
+    # Wait deterministically until the tool has been scheduled so the pause helper exists
+    await _wait_for_tool_request(client, "dummy_long_job")
     await top.interject("pause")
 
     final = await top.result()
@@ -906,7 +910,8 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     # ── 4.  Pause soon after launch, wait 3 s, then resume ────────────────
     start_ts = time.perf_counter()
 
-    await asyncio.sleep(0.5)  # allow assistant to schedule the tool
+    # Wait deterministically until the assistant has scheduled the tool
+    await _wait_for_tool_request(client, "long_tool")
     outer_handle.pause()
 
     await asyncio.sleep(3.0)  # tool finishes while loop is paused
@@ -1039,8 +1044,8 @@ async def test_dynamic_handle_public_method():
         timeout=300,
     )
 
-    # Give the assistant a moment to launch the tool so `_ask_…` exists
-    await asyncio.sleep(5)
+    # Wait deterministically until the assistant has launched the tool so `_ask_…` exists
+    await _wait_for_tool_request(client, "long_compute")
     await top.interject("progress?")
 
     final_reply = await top.result()
@@ -1205,12 +1210,14 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
 
     await _wait_for_tool_request(client, "outer_tool")
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
-    # Give the outer loop a brief moment to adopt the nested handle
-    await asyncio.sleep(0.5)
 
-    # Pause outer; should propagate to inner handle if available
+    # Pause outer; should propagate to inner handle if available – wait until observed
     outer.pause()
-    await asyncio.sleep(0.1)
+
+    async def _paused_once():
+        return pause_calls["count"] >= 1
+
+    await _wait_for_condition(_paused_once, poll=0.05, timeout=10.0)
     outer.resume()  # unfreeze outer so the test completes
 
     await outer.result()
@@ -1290,13 +1297,20 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
 
     await _wait_for_tool_request(client, "outer_tool")
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
-    # Give the outer loop a brief moment to adopt the nested handle
-    await asyncio.sleep(0.5)
 
-    # Pause then resume outer; both should propagate
+    # Pause then resume outer; both should propagate – wait for each transition deterministically
     outer.pause()
-    await asyncio.sleep(0.1)
+
+    async def _saw_pause():
+        return counts["pause"] >= 1
+
+    await _wait_for_condition(_saw_pause, poll=0.05, timeout=10.0)
     outer.resume()
+
+    async def _saw_resume():
+        return counts["resume"] >= 1
+
+    await _wait_for_condition(_saw_resume, poll=0.05, timeout=10.0)
 
     await outer.result()
 

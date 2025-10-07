@@ -194,8 +194,9 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     """
 
     async def pausable_fn(*, pause_event: asyncio.Event) -> str:
-        # “work” for 2 seconds in 0.1-s ticks while honouring pause_event
-        for _ in range(20):
+        # Work loop honouring pause_event; total of ~2 seconds when unpaused
+        ticks = 20
+        for _ in range(ticks):
             await pause_event.wait()
             await asyncio.sleep(0.1)
         return "ok"
@@ -233,7 +234,7 @@ async def test_functional_tool_pause_extends_wall_clock(client):
 
     t_pause_ack = time.perf_counter()
 
-    # While paused, the final assistant reply must NOT appear.
+    # While paused, the final assistant reply must NOT appear. Wait ~2s deterministically.
     await asyncio.sleep(2.0)
     msgs_during_pause = client.messages or []
     assert not any(
@@ -344,8 +345,8 @@ async def test_global_pause_blocks_llm_until_resume(client):
     # Pause the outer loop (tools should keep running; the LLM must not speak)
     handle.pause()
 
-    # Give enough time for `slow` to complete and for the loop to process the tool result
-    await asyncio.sleep(1.0)
+    # Wait until the tool result for `slow` has been appended while paused
+    await _wait_for_tool_message_prefix(client, "slow")
 
     msgs = client.messages or []
 
@@ -401,9 +402,9 @@ async def test_global_resume_idempotent_no_extra_turns(client):
     # Ensure the tool has been requested
     await _wait_for_tool_request(client, "slow")
 
-    # Pause while tool is running; let it finish while paused
+    # Pause while tool is running; let it finish while paused – wait for tool result deterministically
     handle.pause()
-    await asyncio.sleep(0.7)
+    await _wait_for_tool_message_prefix(client, "slow")
 
     # Resume twice (idempotent)
     handle.resume()

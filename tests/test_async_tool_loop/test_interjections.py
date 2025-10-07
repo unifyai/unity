@@ -215,10 +215,10 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
     )
 
     # Allow the loop to process backfill/pruning
-    for _ in range(60):
-        await asyncio.sleep(0.05)
-        if client.messages:
-            break
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if any(m.get("role") == "assistant" for m in client.messages):
+            break  # backfill/pruning processed at least one new message
 
     # The pre-seeded helper assistant turn should be pruned
     assert assistant_msg not in client.messages
@@ -367,7 +367,7 @@ async def test_interjection_stops_ongoing_llm():
         {},
     )
 
-    await asyncio.sleep(0.02)
+    # Interject immediately; the loop will pre-empt in-flight generation if running
     await handle.interject("Actually, make it about dolphins instead!")
     await handle.result()
 

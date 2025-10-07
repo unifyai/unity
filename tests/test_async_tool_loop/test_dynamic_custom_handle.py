@@ -314,4 +314,5 @@ async def test_handle_cls_custom_outer_handle_is_instantiated(client):
 
     # Calling stop with cancel should not raise, even with no delegate
     outer.stop(cancel=True, reason="test")
-    await asyncio.sleep(0.05)
+    # Wait for graceful shutdown of the handle task
+    await outer.result()
