@@ -301,8 +301,10 @@ async def test_interject_nested_handle(monkeypatch):
         timeout=240,
     )
 
-    # give assistant time to schedule outer_tool so helper exists
-    await asyncio.sleep(5)
+    # Wait deterministically until the assistant has requested `outer_tool`
+    # and the nested loop has been started (placeholder tool message inserted)
+    await _wait_for_tool_request(client, "outer_tool")
+    await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
     await top_handle.interject("switch to dogs")
 
     await top_handle.result()
