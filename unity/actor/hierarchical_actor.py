@@ -39,7 +39,10 @@ from unity.task_scheduler.base import BaseActiveTask
 from unity.actor.action_provider import ActionProvider
 import unity.actor.prompt_builders as prompt_builders
 from unity.controller.browser_backends import BrowserAgentError, MagnitudeBrowserBackend
-
+from unity.common._async_tool.loop_config import (
+    LIVE_IMAGES_REGISTRY,
+    LIVE_IMAGES_LOG,
+)
 
 current_run_id_var = contextvars.ContextVar("hp_run_id", default=0)
 current_interaction_sink_var = contextvars.ContextVar(
@@ -437,6 +440,7 @@ async def llm_call(
     client: unify.AsyncUnify,
     prompt: str,
     screenshot: bytes | str | None = None,
+    images: Optional[dict[str, Any]] = None,
 ) -> str:
     """
     Convenience wrapper for a simple, stateless LLM call.
@@ -460,6 +464,23 @@ async def llm_call(
                 },
             },
         )
+
+    if images:
+        for key, handle in images.items():
+            try:
+                image_bytes = handle.raw()
+                b64_image = base64.b64encode(image_bytes).decode("utf-8")
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{b64_image}",
+                        },
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"Could not process image for prompt: {e}")
+
     messages_to_send = [{"role": "user", "content": content}]
     return await client.generate(messages=messages_to_send)
 
@@ -1239,6 +1260,7 @@ class HierarchicalPlan(BaseActiveTask):
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
         persist: bool = True,
+        images: Optional[dict[str, Any]] = None,
     ):
         """
         Initializes the Hierarchical Plan active task.
@@ -1252,9 +1274,11 @@ class HierarchicalPlan(BaseActiveTask):
             max_escalations: Max number of strategic replans before pausing.
             max_local_retries: Max number of tactical retries for a function.
             persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
+            images: Optional mapping of source-scoped keys to ImageHandle objects.
         """
         self.actor = actor
         self.goal = goal
+        self.images = images or {}
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.persist = persist
@@ -1314,6 +1338,31 @@ class HierarchicalPlan(BaseActiveTask):
         self.clarification_enabled = (
             clarification_up_q is not None and clarification_down_q is not None
         )
+
+        self._img_token = None
+        self._imglog_token = None
+        if self.images:
+            id_map: dict[int, Any] = {}
+            for _k, _ih in self.images.items():
+                try:
+                    _iid = int(getattr(_ih, "image_id", -1))
+                    if _iid >= 0:
+                        id_map[_iid] = _ih
+                except Exception:
+                    continue
+            self._img_token = LIVE_IMAGES_REGISTRY.set(id_map)
+
+            seed_log: list[str] = []
+            try:
+                for _k, _ih in self.images.items():
+                    try:
+                        _iid = int(getattr(_ih, "image_id", -1))
+                    except Exception:
+                        _iid = -1
+                    seed_log.append(f"user_message:{_iid}:{_k}")
+            except Exception:
+                pass
+            self._imglog_token = LIVE_IMAGES_LOG.set(seed_log)
 
         self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
@@ -2284,6 +2333,13 @@ class HierarchicalPlan(BaseActiveTask):
         of temporary files and modules in memory.
         """
         try:
+            if self._img_token:
+                LIVE_IMAGES_REGISTRY.reset(self._img_token)
+                self._img_token = None
+            if self._imglog_token:
+                LIVE_IMAGES_LOG.reset(self._imglog_token)
+                self._imglog_token = None
+
             if self._temp_file_path and self._temp_file_path.exists():
                 self._temp_file_path.unlink(missing_ok=True)
                 logger.debug(f"Deleted temporary plan file: {self._temp_file_path}")
@@ -2301,7 +2357,11 @@ class HierarchicalPlan(BaseActiveTask):
         except Exception as e:
             logger.warning(f"Error during cleanup: {e}")
 
-    async def interject(self, message: str) -> str:
+    async def interject(
+        self,
+        message: str,
+        images: Optional[dict[str, Any]] = None,
+    ) -> str:
         """
         Processes a user interjection by using an LLM to decide on the best course of action.
         """
@@ -2341,11 +2401,16 @@ class HierarchicalPlan(BaseActiveTask):
                     goal=self.goal,
                     idempotency_cache=self.idempotency_cache,
                     tools=self.actor.tools,
+                    images=images,
                 )
 
                 self.modification_client.set_response_format(InterjectionDecision)
                 try:
-                    decision_str = await llm_call(self.modification_client, prompt)
+                    decision_str = await llm_call(
+                        self.modification_client,
+                        prompt,
+                        images=images,
+                    )
                     decision = InterjectionDecision.model_validate_json(decision_str)
                     logger.debug(
                         f"{format_pydantic_model(decision, title='INTERJECTION DECISION', indent=2)}",
@@ -3225,6 +3290,7 @@ class HierarchicalActor(BaseActor):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         persist: bool = True,
+        images: Optional[dict[str, Any]] = None,
         **kwargs,
     ) -> HierarchicalPlan:
         """
@@ -3236,6 +3302,7 @@ class HierarchicalActor(BaseActor):
             clarification_up_q: Queue for sending clarification questions.
             clarification_down_q: Queue for receiving clarification answers.
             persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
+            images: Optional mapping of source-scoped keys to ImageHandle objects.
 
         Returns:
             An active handle to the running HierarchicalPlan.
@@ -3249,6 +3316,7 @@ class HierarchicalActor(BaseActor):
             max_escalations=self.max_escalations,
             max_local_retries=self.max_local_retries,
             persist=persist,
+            images=images,
         )
         self._plan_handles.add(plan_handle)
         return plan_handle
@@ -4246,8 +4314,13 @@ class HierarchicalActor(BaseActor):
                         if attempt == 0
                         else f"Last attempt failed: {last_error}. Please fix."
                     ),
+                    images=plan.images,
                 )
-                response = await llm_call(plan.plan_generation_client, prompt)
+                response = await llm_call(
+                    plan.plan_generation_client,
+                    prompt,
+                    images=plan.images,
+                )
                 code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
                 )
@@ -4376,6 +4449,7 @@ class HierarchicalActor(BaseActor):
                 recent_transcript=recent_transcript,
                 parent_chat_context=plan.parent_chat_context,
                 failed_interactions_trace=failed_interactions_trace,
+                images=plan.images,
             )
             plan.implementation_client.set_response_format(ImplementationDecision)
             try:
@@ -4383,6 +4457,7 @@ class HierarchicalActor(BaseActor):
                     plan.implementation_client,
                     prompt,
                     screenshot=browser_screenshot,
+                    images=plan.images,
                 )
                 decision = ImplementationDecision.model_validate_json(response_str)
                 logger.debug(
