@@ -117,6 +117,26 @@ def _format_cache_summary(idempotency_cache: Dict[tuple, Any], last_n: int = 20)
     return "\n".join(summary_lines)
 
 
+def _format_images_for_prompt(images: Optional[dict[str, Any]]) -> str:
+    """Creates a markdown section for images if they are provided."""
+    if not images:
+        return ""
+
+    image_lines = [
+        "The user has provided the following images for additional context. "
+        "Each image is associated with a specific part of the user's request, indicated by the 'span' (e.g., [start:end]). "
+        "Refer to these images to better understand the user's intent and the visual elements they are describing.",
+    ]
+    for key, handle in images.items():
+        try:
+            caption = getattr(handle, "caption", "No caption provided.")
+            image_lines.append(f"- Image for span `{key}`: {caption}")
+        except Exception:
+            continue
+
+    return "\n\n" + "\n".join(image_lines)
+
+
 def _build_shared_strategy_principles() -> str:
     """
     Builds the reusable block of strategic principles for automation prompts.
@@ -1910,11 +1930,13 @@ def build_initial_plan_prompt(
     retry_msg: str,
     *,
     tools: Dict[str, Callable],
+    images: Optional[dict[str, Any]] = None,
 ) -> str:
     """
     Dynamically builds the system prompt for the Hierarchical Actor.
     """
     formatted_functions = _format_existing_functions(existing_functions)
+    image_context_str = _format_images_for_prompt(images)
 
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
 
@@ -1938,6 +1960,7 @@ def build_initial_plan_prompt(
         ---
         {retry_msg}
 
+        {image_context_str}
         Begin your response now. Your response must start immediately with the code.
     """,
     ).strip()
@@ -1962,6 +1985,7 @@ def build_dynamic_implement_prompt(
     recent_transcript: Optional[str] = None,
     parent_chat_context: Optional[list] = None,
     failed_interactions_trace: Optional[list] = None,
+    images: Optional[dict[str, Any]] = None,
 ) -> str:
     """Builds the system prompt for dynamically implementing or modifying a function."""
 
@@ -1979,6 +2003,7 @@ def build_dynamic_implement_prompt(
         """,
     )
     modification_instructions = ""
+    image_context_str = _format_images_for_prompt(images)
     if existing_code_for_modification:
         modification_instructions = textwrap.dedent(
             f"""
@@ -2131,6 +2156,7 @@ def build_dynamic_implement_prompt(
         A screenshot of the current browser page has been provided. **Use it as the primary source of truth.**
 
         {rules_and_examples}
+        {image_context_str}
 
         Respond with ONLY the JSON object matching the `ImplementationDecision` schema.
         """,
@@ -2474,6 +2500,7 @@ def build_interjection_prompt(
     idempotency_cache: Dict[tuple, Any],
     *,
     tools: Dict[str, Callable],
+    images: Optional[dict[str, Any]] = None,
 ) -> str:
     """Builds the system prompt for the Interjection Handler LLM."""
     tool_reference = _build_tool_signatures(tools)
@@ -2481,6 +2508,7 @@ def build_interjection_prompt(
     strategy_principles = _build_shared_strategy_principles()
 
     cache_summary = _format_cache_summary(idempotency_cache)
+    image_context_str = _format_images_for_prompt(images)
 
     call_stack_str = (
         " -> ".join(call_stack) if call_stack else "Not inside any function."
@@ -2507,6 +2535,7 @@ def build_interjection_prompt(
     - **Current Execution Point (Call Stack):** `{call_stack_str}`
     - **Most Recent Plan Actions:**
       {recent_actions}
+    {image_context_str}
 
     {cache_summary}
     ---
@@ -3103,3 +3132,17 @@ def build_proactive_correction_prompt(
         Respond with ONLY the JSON object matching the `CourseCorrectionDecision` schema. Set `correction_needed` to `true` if you write a script.
         """,
     )
+
+
+#   1.  **Dual Environments**: You can see and interact with two main components:
+#             - A **Chromium web browser** for all internet-related tasks.
+#             - An **`xterm` terminal** for all command-line operations.
+
+#         2.  **Workflow Integration**: The most powerful solutions often involve using both environments together. A common workflow is to use the browser to find and download a file, then use the terminal to install or process that file.
+
+#         3.  **OS-Awareness**: The terminal is a standard Debian Linux environment.
+#             - Use `apt-get` for package management (e.g., `apt-get update && apt-get install -y <package>`).
+#             - Use `dpkg -i <file.deb>` to install downloaded Debian packages.
+#             - The default download directory for the browser is `/tmp/unify/assistant/browser/install`. You must use this full path when accessing downloaded files from the terminal.
+
+#         4.  **Command Chaining**: For multi-step terminal operations, chain commands with `&&` within a single `act` call to ensure they execute in the correct sequence and context (e.g., `cd /tmp/downloads && ./install.sh`).
