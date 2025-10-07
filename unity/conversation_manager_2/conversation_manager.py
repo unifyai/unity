@@ -31,7 +31,7 @@ MAX_PENDING_EVENTS = 10
 
 CONV_CONTEXT_LENGTH = 50
 
-with open(Path(__file__).parent.resolve() / "prompts" / "v1.md") as f:
+with open(Path(__file__).parent.resolve() / "prompts" / "v2.md") as f:
     SYS = f.read()
 
 
@@ -249,6 +249,7 @@ class ConversationManager:
                         action["last_name"],
                         phone_number=action["number"],
                     )
+                    print("contact found=", contact)
                     if self.state.mode == "call":
                         error = Error(
                             "You can not make a call while on a call, wait till the call ends."
@@ -416,8 +417,8 @@ class ConversationManager:
 
         # every interaction with the managers worker happens through the conversation
         # manager instead of the state, which is why we need to publish the events here
-        if event.__class__.loggable:
-            asyncio.create_task(self.publish_bus_events(event))
+        # if event.__class__.loggable:
+        #     asyncio.create_task(self.publish_bus_events(event))
 
         if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
             # start phone call process and wait untils its done, we should probably make sure
