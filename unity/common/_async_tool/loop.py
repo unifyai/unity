@@ -2702,9 +2702,7 @@ async def async_tool_loop_inner(
                 LIVE_IMAGES_LOG.reset(_imglog_token)
 
         if semantic_cache:
-            # TODO: ideally, should not be blocking and more of a background task
-            # but ensure it is saved before the session ends
-            await sc.save_semantic_cache(
+            sc.save_semantic_cache(
                 _initial_user_message,
                 last_valid_user_history,
                 client.messages,

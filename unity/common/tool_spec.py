@@ -24,6 +24,7 @@ class ToolSpec:
     # any additional invocations are minimally acknowledged without
     # revealing quota details to the LLM.
     max_total_calls: Optional[int] = None
+    read_only: Optional[bool] = None
 
     # Let a ToolSpec be invoked like the underlying callable (nice for tests)
     def __call__(self, *a, **kw):  # pragma: no cover
@@ -40,5 +41,16 @@ def normalise_tools(
     """
     out: Dict[str, ToolSpec] = {}
     for n, v in raw.items():
-        out[n] = v if isinstance(v, ToolSpec) else ToolSpec(fn=v)
+        if isinstance(v, ToolSpec):
+            out[n] = v
+        else:
+            out[n] = ToolSpec(fn=v, read_only=getattr(v, "_tool_spec_read_only", None))
     return out
+
+
+def read_only(fn: Callable) -> Callable:
+    """
+    Mark a tool as read-only. these tools will be re-called and evaluated for semantic cache.
+    """
+    setattr(fn, "_tool_spec_read_only", True)
+    return fn
