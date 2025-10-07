@@ -121,13 +121,13 @@ class _SemanticCacheSaver:
         else:
             history = messages_history
 
-        # TODO Update prompt
         _user_clarifications = {}
         for msg in full_messages_history:
             if msg.get("role") == "tool" and msg.get("name").startswith(
                 "request_clarification",
             ):
                 _user_clarifications[msg["tool_call_id"]] = {
+                    "assistant_question": "",
                     "user_answer": msg["content"],
                 }
 
@@ -141,7 +141,10 @@ class _SemanticCacheSaver:
                         ]
 
         CLEAN_USER_MESSAGE_PROMPT = """
-    Task: From the conversation history, return the final intended user message.
+    You are a specialist assistant that extracts the user's final intended message from a conversation.
+
+    Task:
+    - From the conversation history, return the final intended user message.
 
     Rules:
     - Apply all user interjections/corrections; the latest user message overrides earlier ones.
@@ -153,27 +156,42 @@ class _SemanticCacheSaver:
     Examples:
 
     Input:
+    Messages:
     [
     "user: Hi, what is the weather in Tokyo?",
     "user: Actually, I meant in Cairo"
     ]
+    Clarifications: {}
     Output:
     Hi, what is the weather in Cairo?
 
     Input:
+    Messages:
     [
     "user: Can you find the contact with the name John Doe?",
     "user: Sorry it's actually John Smith"
     ]
+    Clarifications: {}
     Output:
     Can you find the contact with the name John Smith?
+
+    Input:
+    Messages:
+    [
+    "user: Book a flight to Paris",
+    "user: Actually, make it Berlin"
+    ]
+    Clarifications:
+    [{"assistant_question": "What date should I book it for?", "user_answer": "Next Friday"}]
+    Output:
+    Book a flight to Berlin next Friday.
     """
 
         global _CONFIG
         client = _CONFIG.get_client()
         client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
         return client.generate(
-            user_message=f"Messages: {json.dumps(history)}\nPossible clarifications: {json.dumps(_user_clarifications)}",
+            user_message=f"Messages: {json.dumps(history)}\nClarifications: {json.dumps([v for _, v in _user_clarifications.items()])}",
         )
 
     def _clean_tool_trajectory(self, user_message, msgs, previous_tool_trajectory=None):
