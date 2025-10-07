@@ -27,8 +27,8 @@ def mocked_screen_share_manager(event_loop):
     with patch(
         "unity.screen_share_manager.screen_share_manager.get_event_broker",
     ) as mock_get_broker, patch(
-        "unity.screen_share_manager.screen_share_manager.AsyncOpenAI",
-    ) as mock_openai, patch(
+        "unity.screen_share_manager.screen_share_manager.unify.AsyncUnify",
+    ) as mock_unify, patch(
         "unity.screen_share_manager.screen_share_manager.ImageManager",
     ) as mock_image_manager, patch(
         "unity.screen_share_manager.screen_share_manager.TranscriptManager",
@@ -42,21 +42,21 @@ def mocked_screen_share_manager(event_loop):
         mock_broker.publish = AsyncMock()
         mock_get_broker.return_value = mock_broker
 
-        # Mock OpenAI Client
-        mock_openai_instance = MagicMock()
-        mock_openai_instance.chat.completions.create = AsyncMock()
-        mock_openai.return_value = mock_openai_instance
+        # Mock Unify Client
+        mock_unify_instance = MagicMock()
+        mock_unify_instance.generate = AsyncMock()
+        mock_unify.return_value = mock_unify_instance
 
         # Mock ImageManager
         mock_image_manager_instance = MagicMock()
-        mock_image_manager_instance.add_images.return_value = [
-            42,
-        ]  # Return a predictable image_id
+        # Make add_images return a dynamic list of ids based on input length
+        mock_image_manager_instance.add_images.side_effect = lambda items: list(
+            range(42, 42 + len(items))
+        )
         mock_image_manager.return_value = mock_image_manager_instance
 
         # Mock TranscriptManager
         mock_transcript_manager_instance = MagicMock()
-        # Make log_messages return a mock with an ID to test back-patching
         mock_logged_message = Message(
             message_id=123,
             medium="phone_call",
@@ -75,10 +75,12 @@ def mocked_screen_share_manager(event_loop):
 
         # Override the event loop for the manager's async tasks
         manager._event_broker = mock_broker
+        # Rename _openai_client to _analysis_client to match the manager's code
+        manager._analysis_client = mock_unify_instance
 
         mocks = {
             "event_broker": mock_broker,
-            "openai_client": mock_openai_instance,
+            "analysis_client": mock_unify_instance,
             "image_manager": mock_image_manager_instance,
             "transcript_manager": mock_transcript_manager_instance,
         }
