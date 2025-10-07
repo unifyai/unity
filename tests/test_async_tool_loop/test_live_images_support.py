@@ -227,7 +227,10 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
                 ],
             }
         else:
-            msg = {"role": "assistant", "content": "done", "tool_calls": []}
+            # After image is attached, the next assistant turn should be able to
+            # reason about the attached image. Simulate this by answering with the
+            # dominant colour of the solid PNG (red).
+            msg = {"role": "assistant", "content": "red", "tool_calls": []}
         client.messages.append(msg)
         return msg
 
@@ -251,7 +254,7 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
         images=images,
     )
 
-    await handle.result()
+    final_reply = await handle.result()
 
     # Look for a user message that contains an image_url with a data URL
     has_data_url = False
@@ -270,3 +273,9 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
             break
 
     assert has_data_url, "Expected an attached data:image/* URL in a user message"
+
+    # Verify that the assistant could "see" and reason over the attached image
+    # by answering with the correct colour.
+    assert (
+        final_reply.strip().lower().startswith("red")
+    ), f"Assistant did not identify the image colour – got: {final_reply!r}"
