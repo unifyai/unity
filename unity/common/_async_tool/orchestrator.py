@@ -437,6 +437,16 @@ class Orchestrator:
                         )
 
                         async def live_images_overview() -> Dict[str, str]:  # type: ignore[name-defined]
+                            """
+                            Live images aligned to the current `user_message`.
+
+                            Returns
+                            -------
+                            Dict[str, str]
+                                Simple acknowledgement; details are provided via the function
+                                description which lists currently aligned images and recently
+                                appended dynamic entries.
+                            """
                             return {"status": "ok"}
 
                         live_images_overview.__doc__ = overview_doc  # type: ignore[attr-defined]
@@ -454,6 +464,26 @@ class Orchestrator:
                             id_to_handle = {}
 
                         async def ask_image(*, image_id: int, question: str, images: dict | None = None) -> Any:  # type: ignore[valid-type]
+                            """
+                            Ask a question about a live image by its unique id.
+
+                            Parameters
+                            ----------
+                            image_id : int
+                                The unique identifier of the live image (see overview).
+                            question : str
+                                The question to ask about this image.
+                            images : dict | None
+                                Optional source‑scoped images mapping to append with this
+                                question (keys `<source>[start:end]`; use `this[:]` to
+                                associate with the question text). Values are image ids or
+                                live image handle objects.
+
+                            Returns
+                            -------
+                            Any
+                                The answer from the image handle, or an error dict if unknown id.
+                            """
                             ih = id_to_handle.get(int(image_id))
                             if ih is None:
                                 return {"error": f"image_id {image_id} not found"}
@@ -467,6 +497,23 @@ class Orchestrator:
                                 return {"error": str(_exc)}
 
                         async def attach_image_raw(*, image_id: int, note: str | None = None) -> Dict[str, Any]:  # type: ignore[valid-type,name-defined]
+                            """
+                            Attach the selected image to the transcript as an image content block
+                            so the model can inspect it on subsequent turns.
+
+                            Parameters
+                            ----------
+                            image_id : int
+                                The unique identifier of the live image (see overview).
+                            note : str | None
+                                Optional short note to attach alongside the image.
+
+                            Returns
+                            -------
+                            Dict[str, Any]
+                                Status dict indicating attachment or error. Re‑attaching the same
+                                id is a no‑op and returns `already_attached`.
+                            """
                             iid = int(image_id)
                             ih = id_to_handle.get(iid)
                             if ih is None:

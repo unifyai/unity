@@ -514,7 +514,31 @@ async def async_tool_loop_inner(
         ) -> Any:
             """
             Ask a question about a live image by its unique id.
-            Returns a nested handle; await its result for the answer.
+
+            Parameters
+            ----------
+            image_id : int
+                The unique identifier of the live image (as listed in `live_images_overview`).
+            question : str
+                The question to ask about this image. Keep it concise and specific.
+            images : dict | None
+                Optional source‑scoped images mapping to append at the time of this question.
+                Keys use `<source>[start:end]`. Supported sources include: `this`, `user_message`,
+                `interjectionN`, `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`.
+                Use `this[:]` to associate images with the question text itself. Values are image ids
+                or live image handle objects.
+
+            Returns
+            -------
+            Any
+                The answer returned by the image handle. If the id is unknown, returns an
+                error object: `{ "error": "image_id <id> not found" }`.
+
+            Notes
+            -----
+            - Any provided `images` are appended to the live images log and reflected in
+              `live_images_overview` under a `source=ask` entry.
+            - The question is routed to the corresponding image handle's `ask` method.
             """
             ih = id_to_handle.get(int(image_id))
             if ih is None:
@@ -538,8 +562,30 @@ async def async_tool_loop_inner(
             note: str | None = None,
         ) -> Dict[str, Any]:
             """
-            Attach the selected image to the current chat as an image block so the model can see it.
-            Idempotent: re-attaching the same id has no effect.
+            Attach the selected image to the current chat as an `image_url` content block so the
+            model can see and reason over it on subsequent turns.
+
+            Parameters
+            ----------
+            image_id : int
+                The unique identifier of the live image (as listed in `live_images_overview`).
+            note : str | None
+                Optional short note to include alongside the attached image (as text content).
+
+            Returns
+            -------
+            Dict[str, Any]
+                A status object, e.g. `{ "status": "attached", "image_id": 42 }` or
+                `{ "status": "already_attached", "image_id": 42 }`. If the id is unknown,
+                returns `{ "error": "image_id <id> not found" }`.
+
+            Notes
+            -----
+            - Idempotent per `image_id`: re‑attaching the same id in a session is a no‑op.
+            - If the underlying image is a GCS object, a signed URL is generated; otherwise the
+              bytes are embedded as a `data:image/*;base64,...` URL.
+            - The attachment appears as a user message with a mixed content array that includes
+              the image block (and the optional note when provided).
             """
             iid = int(image_id)
             if iid in attached_ids:

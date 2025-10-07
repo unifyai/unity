@@ -128,15 +128,23 @@ class DynamicToolFactory:
             "Parameters\n"
             "----------\n"
             "reason : str | None\n"
-            "    Optional reason for stopping.\n"
+            "    Optional human‑readable reason for stopping the running tool call.\n"
             "images : dict | None\n"
-            "    Optional source-scoped images mapping to append at the time of this command.\n"
-            "    Keys use `<source>[start:end]`. Use `this[:]` to associate images with the stop command itself, even when no text is provided."
+            "    Optional source‑scoped images mapping to append at the time of this command.\n"
+            "    Keys use `<source>[start:end]`. Supported sources include: `this`, `user_message`, `interjectionN`,\n"
+            "    `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`. Use `this[:]` to associate images\n"
+            "    with the stop command itself. Values are image ids or live image handle objects.\n\n"
+            "Returns\n"
+            "-------\n"
+            "Dict[str, str]\n"
+            "    Status acknowledgement including the underlying call id.\n\n"
+            "Notes\n"
+            "-----\n"
+            "- Images are appended to the live images log immediately and reflected in `live_images_overview`.\n"
+            "- The stop request is forwarded to the underlying handle when available."
         )
 
-        async def _stop(
-            **_kw,
-        ) -> Dict[str, str]:
+        async def _stop(**_kw) -> Dict[str, str]:
             # Forward stop intent to the running handle with any extra kwargs
             if handle is not None and hasattr(handle, "stop"):
                 await forward_handle_call(
@@ -156,7 +164,11 @@ class DynamicToolFactory:
             if not task.done():
                 task.cancel()  # kill the waiter coroutine
             self.tools_data.pop_task(task)
-            return {"status": "stopped", "call_id": tool_context.call_id, **_kw}
+            return {
+                "status": "stopped",
+                "call_id": tool_context.call_id,
+                **{k: v for k, v in _kw.items() if k != "images"},
+            }
 
         self._register_tool(
             func_name=f"stop_{tool_context.fn_name}_{tool_context.safe_call_id}",
@@ -164,9 +176,43 @@ class DynamicToolFactory:
             fn=_stop,
         )
         # Expose full argspec of handle.stop in the helper schema
+        # Ensure helper schema mirrors underlying handle.stop parameters and adds `images`.
         with suppress(Exception):
+            import inspect as _inspect
+
+            params: list[_inspect.Parameter] = []
+            annotations: dict = {"return": Dict[str, str]}
             if handle is not None and hasattr(handle, "stop"):
-                self._adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
+                sig = _inspect.signature(getattr(handle, "stop"))
+                for name, p in sig.parameters.items():
+                    if name == "self":
+                        continue
+                    params.append(
+                        _inspect.Parameter(
+                            name,
+                            kind=_inspect.Parameter.KEYWORD_ONLY,
+                            default=p.default,
+                            annotation=p.annotation,
+                        ),
+                    )
+                    if p.annotation is not _inspect._empty:  # type: ignore[attr-defined]
+                        annotations[name] = p.annotation
+            # Append images param if not already present
+            if not any(p.name == "images" for p in params):
+                params.append(
+                    _inspect.Parameter(
+                        "images",
+                        kind=_inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Optional[dict],
+                    ),
+                )
+                annotations["images"] = Optional[dict]
+            _stop.__signature__ = _inspect.Signature(
+                parameters=params,
+                return_annotation=Dict[str, str],
+            )
+            _stop.__annotations__ = annotations
 
     def _create_interject_tool(
         self,
@@ -178,11 +224,19 @@ class DynamicToolFactory:
             f"Inject additional instructions for {tool_context.fn_name}({tool_context.arg_repr}).\n\n"
             "Parameters\n"
             "----------\n"
-            "content/message : str\n"
-            "    Interjection text.\n"
+            "content : str | None\n"
+            "    Interjection text. When omitted, `message` may be used as a synonym.\n"
+            "message : str | None\n"
+            "    Synonym for `content`. If both are provided, `content` takes precedence.\n"
             "images : dict | None\n"
-            "    Optional source-scoped images mapping to append at the time of this interjection.\n"
-            "    Keys use `<source>[start:end]`. Use `this[:]` to associate images with the interjection text."
+            "    Optional source‑scoped images mapping to append at the time of this interjection.\n"
+            "    Keys use `<source>[start:end]`. Supported sources include: `this`, `user_message`, `interjectionN`,\n"
+            "    `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`. Use `this[:]` to associate images with\n"
+            "    the interjection text itself. Values are image ids or live image handle objects.\n\n"
+            "Returns\n"
+            "-------\n"
+            "Dict[str, str]\n"
+            "    Status acknowledgement including the underlying call id.\n"
         )
 
         if handle is not None:
@@ -207,25 +261,83 @@ class DynamicToolFactory:
                 return {
                     "status": "interjected",
                     "call_id": tool_context.call_id,
-                    **{k: v for k, v in _kw.items()},
+                    **{k: v for k, v in _kw.items() if k != "images"},
                 }
 
             # Expose the downstream handle's signature to the LLM
             with suppress(Exception):
-                self._adopt_signature_and_annotations(
-                    getattr(handle, "interject"),
-                    _interject,
+                import inspect as _inspect
+
+                params: list[_inspect.Parameter] = []
+                annotations: dict = {"return": Dict[str, str]}
+                if hasattr(handle, "interject"):
+                    sig = _inspect.signature(getattr(handle, "interject"))
+                    for name, p in sig.parameters.items():
+                        if name == "self":
+                            continue
+                        params.append(
+                            _inspect.Parameter(
+                                name,
+                                kind=_inspect.Parameter.KEYWORD_ONLY,
+                                default=p.default,
+                                annotation=p.annotation,
+                            ),
+                        )
+                        if p.annotation is not _inspect._empty:  # type: ignore[attr-defined]
+                            annotations[name] = p.annotation
+                # Ensure common aliases are visible in schema if not present
+                existing = {p.name for p in params}
+                if "content" not in existing and "message" not in existing:
+                    params.insert(
+                        0,
+                        _inspect.Parameter(
+                            "content",
+                            kind=_inspect.Parameter.KEYWORD_ONLY,
+                            default=None,
+                            annotation=Optional[str],
+                        ),
+                    )
+                    annotations["content"] = Optional[str]
+                # Append images param if not already present
+                if not any(p.name == "images" for p in params):
+                    params.append(
+                        _inspect.Parameter(
+                            "images",
+                            kind=_inspect.Parameter.KEYWORD_ONLY,
+                            default=None,
+                            annotation=Optional[dict],
+                        ),
+                    )
+                    annotations["images"] = Optional[dict]
+                _interject.__signature__ = _inspect.Signature(
+                    parameters=params,
+                    return_annotation=Dict[str, str],
                 )
+                _interject.__annotations__ = annotations
 
         else:
 
-            async def _interject(content: str) -> Dict[str, str]:
+            async def _interject(
+                *,
+                content: Optional[str] = None,
+                message: Optional[str] = None,
+                images: dict | None = None,
+            ) -> Dict[str, str]:
                 # regular tool: push onto its private queue
-                await task_info.interject_queue.put(content)
+                actual = content if content is not None else (message or "")
+                await task_info.interject_queue.put(actual)
+                # Append any provided images into the live registry/log
+                try:
+                    append_source_scoped_images(
+                        images,
+                        default_source_label("interjection"),
+                    )
+                except Exception:
+                    pass
                 return {
                     "status": "interjected",
                     "call_id": tool_context.call_id,
-                    "content": content,
+                    **({"content": actual} if actual else {}),
                 }
 
         self._register_tool(
@@ -233,6 +345,38 @@ class DynamicToolFactory:
             fallback_doc=doc,
             fn=_interject,
         )
+        with suppress(Exception):
+            import inspect as _inspect
+
+            _interject.__annotations__ = {
+                "content": Optional[str],
+                "message": Optional[str],
+                "images": Optional[dict],
+                "return": Dict[str, str],
+            }
+            _interject.__signature__ = _inspect.Signature(
+                parameters=[
+                    _inspect.Parameter(
+                        "content",
+                        kind=_inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Optional[str],
+                    ),
+                    _inspect.Parameter(
+                        "message",
+                        kind=_inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Optional[str],
+                    ),
+                    _inspect.Parameter(
+                        "images",
+                        kind=_inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Optional[dict],
+                    ),
+                ],
+                return_annotation=Dict[str, str],
+            )
 
     def _create_clarify_tool(
         self,
@@ -246,8 +390,14 @@ class DynamicToolFactory:
             "answer : str\n"
             "    The answer text.\n"
             "images : dict | None\n"
-            "    Optional source-scoped images mapping to append at the time of this answer.\n"
-            "    Keys use `<source>[start:end]`. Use `this[:]` to associate images with the answer text."
+            "    Optional source‑scoped images mapping to append alongside this answer.\n"
+            "    Keys use `<source>[start:end]`. Supported sources include: `this`, `user_message`, `interjectionN`,\n"
+            "    `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`. Use `this[:]` to associate images\n"
+            "    with the answer text itself. Values are image ids or live image handle objects.\n\n"
+            "Returns\n"
+            "-------\n"
+            "Dict[str, str]\n"
+            "    Status acknowledgement including the underlying call id.\n"
         )
 
         async def _clarify(answer: str, images: dict | None = None) -> Dict[str, str]:  # type: ignore[valid-type]
