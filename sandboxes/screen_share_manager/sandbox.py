@@ -276,6 +276,9 @@ async def _main_async() -> None:
         while not _main_stop_event.is_set():
             try:
                 utterance = ""
+
+                turn_start_time = time.time() - session_start_time
+
                 # Use asyncio.to_thread to run the blocking input() in a separate thread
                 if args.voice:
                     _wait_for_tts_end()
@@ -294,6 +297,8 @@ async def _main_async() -> None:
                     utterance = await asyncio.to_thread(input, "command> ")
                     utterance = utterance.strip()
 
+                turn_end_time = time.time() - session_start_time
+
                 if not utterance:
                     continue
 
@@ -304,9 +309,6 @@ async def _main_async() -> None:
                     continue
 
                 # --- Publish Utterance for Background Processing ---
-
-                turn_start_time = session_start_time
-                turn_end_time = time.time() - session_start_time
                 event_payload = {
                     "event_name": "PhoneUtterance",
                     "payload": {
