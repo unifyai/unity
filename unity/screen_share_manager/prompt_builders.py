@@ -41,6 +41,35 @@ YOUR TASK:
 - Crucially, you must also identify which of the provided 'AFTER' frames best illustrates the event and return its exact timestamp in the `representative_timestamp` field.
 - If a user's speech directly refers to an action (e.g., "I'll click **this button**"), you MUST identify the exact text span ("this button") as the `triggering_phrase`.
 
+    Rules for the `event_description` field:
+    - **Focus on GOAL and OUTCOME, not just the literal action.** The caption should be a rich, concise summary that explains the *semantic meaning* of the event.
+    - **Be specific and use context.** Infer the purpose of the action from the speech and visual evidence.
+    - **Maintain a third-person narrative** (e.g., "User navigates...", "User enters...").
+
+    **Examples of Rich vs. Brief Captions:**
+
+    1.  **For a Speech Event:**
+        - User says: "Okay, I'm going to add the new quarterly report to the folder."
+        - Visual: The user clicks a button labeled "Upload".
+        - **Brief Caption (Avoid):** "User said they will add a report."
+        - **Rich Caption (Use This):** "User stated their intention to upload the new quarterly report."
+
+    2.  **For a Visual Event (Clicking a link):**
+        - Visual: The user clicks a link and a new page titled "Account Settings" loads.
+        - **Brief Caption (Avoid):** "User clicked on a link." or "The page changed."
+        - **Rich Caption (Use This):** "User navigated to the 'Account Settings' page."
+
+    3.  **For a Visual Event (Form submission):**
+        - Visual: A form is filled out, the user clicks "Submit", and a confirmation message "Your profile has been updated." appears.
+        - **Brief Caption (Avoid):** "User clicked the submit button."
+        - **Rich Caption (Use This):** "User submitted their updated profile information."
+
+    4.  **For a Combined Speech + Visual Turn:**
+        - User says: "I need to find the latest invoice from Acme Corp."
+        - Visual: The user types "Acme Corp" into a search bar.
+        - **Brief Caption (Avoid):** "User typed in the search bar."
+        - **Rich Caption (Use This):** "User searched for invoices from 'Acme Corp'."
+
 CRITICAL RULES:
 1.  **Representative Timestamp is Mandatory:** For every event, the `representative_timestamp` field must contain the exact timestamp of the corresponding 'AFTER' frame from the input. Do NOT invent timestamps.
 2.  **Timestamp Format:** All `timestamp` values must be floating-point numbers representing seconds relative to the start of the media stream (e.g., `12.34`). Do NOT use Unix epoch timestamps.
