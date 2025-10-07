@@ -9,15 +9,15 @@ class KeyEvent(BaseModel):
 
     timestamp: float = Field(
         ...,
-        description="The precise timestamp (in seconds, matching the media stream time) of when this specific event occurred.",
+        description="The precise timestamp (in seconds, matching the media stream time) of when this specific event occurred. Example: 15.2",
     )
     event_description: str = Field(
         ...,
         description="A concise, third-person summary of what occurred at this moment (e.g., 'User clicked the submit button').",
     )
-    screenshot_b64: str = Field(
+    representative_timestamp: float = Field(
         ...,
-        description="The base64-encoded screenshot representing the key visual frame for this event.",
+        description="The timestamp of the single 'AFTER' frame that best represents the visual state of this event. This must exactly match one of the timestamps provided in the input.",
     )
     triggering_phrase: Optional[str] = Field(
         None,

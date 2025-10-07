@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Deque, List, Optional, Tuple, Dict
 
 import redis.asyncio as redis
-from openai import AsyncOpenAI
+import unify
 from PIL import Image
 from skimage.metrics import structural_similarity as ssim
 import numpy as np
@@ -106,13 +106,16 @@ class ScreenShareManager:
         # Configuration
         self.SSIM_THRESHOLD = 0.97
         self.INACTIVITY_TIMEOUT_SEC = 10.0
-        self.FRAME_BUFFER_SIZE = 100  # Approx 10 seconds at 10fps
+        self.FRAME_BUFFER_SIZE = 100
         self.VISUAL_EVENT_SAMPLING_THRESHOLD = 3
         self.BURST_DETECTION_THRESHOLD_SEC = 2.0
 
         # Clients and Managers
         self._event_broker: redis.Redis = get_event_broker()
-        self._openai_client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        self._openai_client = unify.AsyncUnify(
+            "gpt-4o@openai",
+            response_format=TurnAnalysisResponse,
+        )
         self._image_manager = ImageManager()
         self._transcript_manager = TranscriptManager()
 
@@ -122,7 +125,8 @@ class ScreenShareManager:
             maxlen=self.FRAME_BUFFER_SIZE,
         )
         self._pending_vision_events: List[Dict] = []
-        self._stored_silent_key_events: List[KeyEvent] = []  # Store silent events here
+        self._stored_silent_key_events: List[KeyEvent] = []
+        self._stored_silent_frame_map: Dict[float, str] = {}
         self._last_significant_frame_b64: Optional[str] = None
         self._last_user_utterance_message_id: Optional[int] = None
         self._last_activity_time: float = asyncio.get_event_loop().time()
@@ -158,7 +162,6 @@ class ScreenShareManager:
                 "app:comms:screen_frame",
                 "app:comms:phone_utterance",
             )
-
             while not self._stop_event.is_set():
                 try:
                     # Wait for a message with a timeout to check for inactivity
@@ -166,64 +169,55 @@ class ScreenShareManager:
                         ignore_subscribe_messages=True,
                         timeout=1.0,
                     )
-
                     if message:
                         channel = message["channel"]
                         event_data = json.loads(message["data"])
-
                         if channel == "app:comms:screen_frame":
                             asyncio.create_task(self._handle_frame_event(event_data))
                         elif channel == "app:comms:phone_utterance":
                             asyncio.create_task(
-                                self._handle_utterance_event(event_data),
+                                self._handle_utterance_event(event_data)
                             )
 
                     # Check for inactivity and flush pending events
                     await self._flush_pending_events_on_timeout()
-
                 except asyncio.TimeoutError:
-                    continue  # No message, just loop to check timeout
+                    continue
                 except Exception as e:
                     logger.error(f"Error in event listener loop: {e}", exc_info=True)
-                    await asyncio.sleep(1)  # Prevent rapid-fire errors
+                    await asyncio.sleep(1)
 
     async def _handle_frame_event(self, event_data: dict):
         """Processes a single video frame event."""
         self._last_activity_time = asyncio.get_event_loop().time()
         timestamp = event_data["payload"]["timestamp"]
         frame_b64 = event_data["payload"]["frame_b64"]
-
         self._frame_buffer.append((timestamp, frame_b64))
-
         if self._last_significant_frame_b64 is None:
             self._last_significant_frame_b64 = frame_b64
             return
-
         current_img = self._b64_to_image(frame_b64)
         last_img = self._b64_to_image(self._last_significant_frame_b64)
-
         if current_img is None or last_img is None:
             return
-
         score = ssim(np.array(last_img), np.array(current_img))
-
         if score < self.SSIM_THRESHOLD:
             logger.info(
-                f"Significant visual change detected at t={timestamp:.2f}s (SSIM: {score:.2f})",
+                f"Significant visual change detected at t={timestamp:.2f}s (SSIM: {score:.2f})"
             )
             self._pending_vision_events.append(
                 {
                     "timestamp": timestamp,
                     "before_frame_b64": self._last_significant_frame_b64,
                     "after_frame_b64": frame_b64,
-                },
+                }
             )
             self._last_significant_frame_b64 = frame_b64
 
     async def _handle_utterance_event(self, event_data: dict):
         """Processes a speech event, triggering a full turn analysis."""
         self._last_activity_time = asyncio.get_event_loop().time()
-        logger.info(f"Utterance event received. Triggering turn analysis.")
+        logger.info("Utterance event received. Triggering turn analysis.")
         asyncio.create_task(self._analyze_turn(speech_event=event_data))
 
     async def _flush_pending_events_on_timeout(self):
@@ -234,7 +228,6 @@ class ScreenShareManager:
             and self._pending_vision_events
         ):
             logger.info("Inactivity timeout reached. Flushing pending vision events.")
-            # Reset activity time to prevent continuous flushing
             self._last_activity_time = asyncio.get_event_loop().time()
             asyncio.create_task(self._analyze_turn(speech_event=None))
 
@@ -247,27 +240,33 @@ class ScreenShareManager:
             # Capture and clear pending visual events
             visual_events = list(self._pending_vision_events)
             self._pending_vision_events.clear()
-
             if not speech_event and not visual_events:
                 return
-
-            key_events = await self._get_llm_analysis(speech_event, visual_events)
+            key_events, frame_map = await self._get_llm_analysis(
+                speech_event, visual_events
+            )
             if not key_events:
                 # If there was a speech event but no key events (e.g., LLM error),
                 # we should still log the basic speech message.
                 if speech_event:
-                    await self._log_turn_to_transcript(speech_event, [])
+                    await self._log_turn_to_transcript(speech_event, [], {})
                 return
-
             if speech_event:
-                # If there's speech, log everything immediately
-                await self._log_turn_to_transcript(speech_event, key_events)
+                # If there's speech, log everything immediately                
+                combined_frame_map = self._stored_silent_frame_map.copy()
+                combined_frame_map.update(frame_map)
+                await self._log_turn_to_transcript(
+                    speech_event, key_events, combined_frame_map
+                )
+                self._stored_silent_frame_map.clear()
             else:
                 # If it's a silent visual event, store it for the next turn
                 logger.info(f"Storing {len(key_events)} silent visual event(s).")
                 self._stored_silent_key_events.extend(key_events)
-
-            # Publish real-time annotations for the ConversationManager
+                self._stored_silent_frame_map.update(
+                    frame_map
+                )
+            # Publish real-time annotations for the ConversationManager                
             for event in key_events:
                 await self._event_broker.publish(
                     "app:comms:screen_annotation",
@@ -275,7 +274,7 @@ class ScreenShareManager:
                         {
                             "event_name": "ScreenAnnotationEvent",
                             "payload": {"event_description": event.event_description},
-                        },
+                        }
                     ),
                 )
 
@@ -283,29 +282,25 @@ class ScreenShareManager:
         self,
         speech_event: Optional[dict],
         visual_events: List[Dict],
-    ) -> List[KeyEvent]:
-        """Constructs the prompt and calls the LLM to get turn analysis."""
+    ) -> Tuple[List[KeyEvent], Dict[float, str]]:
+        """Constructs the prompt and calls the LLM to get turn analysis."""        
         system_prompt = build_turn_analysis_prompt()
-
         user_content = []
+        timestamp_to_frame_map: Dict[float, str] = {}
         if speech_event:
             payload = speech_event["payload"]
             user_content.append(
-                {"type": "text", "text": f"User Speech: \"{payload['content']}\""},
+                {"type": "text", "text": f"User Speech: \"{payload['content']}\""}
             )
-            # Check for optional timestamp keys before accessing them
             if "start_time" in payload and "end_time" in payload:
                 user_content.append(
                     {
                         "type": "text",
                         "text": f"Speech Timestamps: Start={payload['start_time']:.2f}s, End={payload['end_time']:.2f}s",
-                    },
+                    }
                 )
-
         if visual_events:
             user_content.append({"type": "text", "text": "\n--- Key Visual Frames ---"})
-
-            # Burst detection logic
             bursts: List[List[Dict]] = []
             if visual_events:
                 current_burst = [visual_events[0]]
@@ -313,97 +308,119 @@ class ScreenShareManager:
                     prev_event = visual_events[i - 1]
                     current_event = visual_events[i]
                     time_diff = current_event["timestamp"] - prev_event["timestamp"]
-
                     if time_diff <= self.BURST_DETECTION_THRESHOLD_SEC:
                         current_burst.append(current_event)
                     else:
                         bursts.append(current_burst)
                         current_burst = [current_event]
-                bursts.append(current_burst)  # Add the last burst
-
-            # Process each burst (sampling if necessary) and build prompt
+                bursts.append(current_burst)
+            # Process each burst (sampling if necessary) and build prompt                
             frame_counter = 0
             for burst in bursts:
-                events_to_process_for_burst = burst
+                events_to_process = burst
                 if len(burst) > self.VISUAL_EVENT_SAMPLING_THRESHOLD:
                     logger.info(
-                        f"Detected a burst of {len(burst)} events. Sampling down to 3.",
+                        f"Detected a burst of {len(burst)} events. Sampling down to 3."
                     )
                     user_content.append(
                         {
                             "type": "text",
                             "text": "\nNOTE: The following frames are a sampled summary (first, middle, last) of a rapid sequence of screen changes.",
-                        },
+                        }
                     )
                     middle_index = len(burst) // 2
-                    events_to_process_for_burst = [
-                        burst[0],
-                        burst[middle_index],
-                        burst[-1],
-                    ]
-
-                for ve in events_to_process_for_burst:
+                    events_to_process = [burst[0], burst[middle_index], burst[-1]]
+                for ve in events_to_process:
                     frame_counter += 1
-                    user_content.append(
-                        {
-                            "type": "text",
-                            "text": f"\nVisual Change #{frame_counter} at t={ve['timestamp']:.2f}s:",
-                        },
+                    timestamp_to_frame_map[ve["timestamp"]] = ve["after_frame_b64"]
+                    user_content.extend(
+                        [
+                            {
+                                "type": "text",
+                                "text": f"\nVisual Change #{frame_counter} at t={ve['timestamp']:.2f}s:",
+                            },
+                            {"type": "text", "text": "BEFORE:"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": ve["before_frame_b64"]},
+                            },
+                            {"type": "text", "text": "AFTER:"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": ve["after_frame_b64"]},
+                            },
+                        ]
                     )
-                    user_content.append({"type": "text", "text": "BEFORE:"})
-                    user_content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": ve["before_frame_b64"]},
-                        },
-                    )
-                    user_content.append({"type": "text", "text": "AFTER:"})
-                    user_content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": ve["after_frame_b64"]},
-                        },
-                    )
-
         if not self._openai_client:
-            logger.warning("OpenAI client not initialized. Skipping analysis.")
-            return []
-
+            logger.warning("Unify client not initialized. Skipping analysis.")
+            return [], {}
         try:
-            response = await self._openai_client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                response_model=TurnAnalysisResponse,
-            )
-            return response.events
+            self._openai_client.set_system_message(system_prompt)
+            response = await self._openai_client.generate(user_message=user_content)
+            if isinstance(response, TurnAnalysisResponse):
+                return response.events, timestamp_to_frame_map
+            elif isinstance(response, str):
+                logger.warning(
+                    "LLM analysis returned a raw string, indicating a schema validation failure. Attempting manual parse."
+                )
+                try:
+                    validated_response = TurnAnalysisResponse.model_validate(
+                        json.loads(response)
+                    )
+                    return validated_response.events, timestamp_to_frame_map
+                except (json.JSONDecodeError, Exception) as e:
+                    logger.error(
+                        f"Failed to manually parse or validate LLM string response: {e}",
+                        exc_info=True,
+                    )
+                    logger.debug(f"Malformed LLM response string: {response}")
+                    return [], {}
+            else:
+                logger.error(
+                    f"Unexpected response type from LLM analysis: {type(response)}"
+                )
+                return [], {}
         except Exception as e:
             logger.error(f"Error during LLM analysis: {e}", exc_info=True)
-            return []
+            return [], {}
 
     async def _log_turn_to_transcript(
         self,
         speech_event: dict,
         key_events: List[KeyEvent],
+        frame_map: Dict[float, str],
     ):
-        """Logs a speech-based turn to the TranscriptManager, including any stored silent events."""
-        # Merge current key events with any stored silent events
+        """Logs a speech-based turn to the TranscriptManager, including any stored silent events."""        
         all_events = sorted(
-            self._stored_silent_key_events + key_events,
-            key=lambda e: e.timestamp,
+            self._stored_silent_key_events + key_events, key=lambda e: e.timestamp
         )
         self._stored_silent_key_events.clear()
-
         speech_payload = speech_event["payload"]
         images_dict = {}
         screen_share_dict = {}
 
         for event in all_events:
             # 1. Register image, get ID
+            rep_ts = event.representative_timestamp
+            screenshot_b64 = frame_map.get(rep_ts)
+
+            # Implement closest-match fallback for timestamps
+            if not screenshot_b64 and frame_map:
+                closest_ts = min(frame_map.keys(), key=lambda ts: abs(ts - rep_ts))
+                if abs(closest_ts - rep_ts) < 1.0:  # 1-second tolerance
+                    logger.warning(
+                        f"Could not find exact frame for timestamp {rep_ts}. Using closest match: {closest_ts}."
+                    )
+                    screenshot_b64 = frame_map[closest_ts]
+
+            if not screenshot_b64:
+                logger.warning(
+                    f"Could not find frame for representative_timestamp: {event.representative_timestamp}"
+                )
+                continue
+
             image_ids = self._image_manager.add_images(
-                [{"data": event.screenshot_b64, "caption": event.event_description}],
+                [{"data": screenshot_b64, "caption": event.event_description}]
             )
             if not image_ids:
                 continue
@@ -412,27 +429,26 @@ class ScreenShareManager:
             # 2. Build screen_share entry
             ts_key = f"{event.timestamp:.2f}-{event.timestamp:.2f}"
             screen_share_dict[ts_key] = ScreenShareAnnotation(
-                caption=event.event_description,
-                image_b64=event.screenshot_b64,
+                caption=event.event_description, image_b64=screenshot_b64
             )
 
             # 3. Build images entry if there's a triggering phrase
             if event.triggering_phrase:
                 try:
                     start_index = speech_payload["content"].index(
-                        event.triggering_phrase,
+                        event.triggering_phrase
                     )
                     end_index = start_index + len(event.triggering_phrase)
                     span_key = f"[{start_index}:{end_index}]"
                     images_dict[span_key] = image_id
                 except ValueError:
                     logger.warning(
-                        f"Triggering phrase '{event.triggering_phrase}' not found in content.",
+                        f"Triggering phrase '{event.triggering_phrase}' not found in content."
                     )
 
         # 4. Construct and log the Message
         message_to_log = Message(
-            medium=Medium.PHONE_CALL,  # Or derive from event context if available
+            medium=Medium.PHONE_CALL,
             sender_id=speech_payload["contact_details"]["contact_id"],
             receiver_ids=[0],
             timestamp=datetime.fromisoformat(speech_payload["timestamp"]),
@@ -440,10 +456,9 @@ class ScreenShareManager:
             screen_share=screen_share_dict,
             images=images_dict,
         )
-
         logged_messages = self._transcript_manager.log_messages([message_to_log])
         if logged_messages:
             self._last_user_utterance_message_id = logged_messages[0].message_id
             logger.info(
-                f"Logged turn to transcript with message_id: {self._last_user_utterance_message_id}",
+                f"Logged turn to transcript with message_id: {self._last_user_utterance_message_id}"
             )
