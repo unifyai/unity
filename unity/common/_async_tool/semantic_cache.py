@@ -23,7 +23,7 @@ _USER_MESSAGE_EMBEDDING_FIELD_NAME = "_user_message_emb"
 logger = logging.getLogger(__name__)
 
 
-class _BackgroundSaver:
+class _SemanticCacheSaver:
     """
     A singleton background task handler that manages saving tasks in a thread pool.
     Automatically cleans up all saving tasks before application exit.
@@ -48,7 +48,7 @@ class _BackgroundSaver:
                 f"SemanticCacheBackgroundSaver initialized with {max_workers} workers",
             )
 
-    def submit(self, fn: Callable, *args, **kwargs) -> Any:
+    def _submit(self, fn: Callable, *args, **kwargs) -> Any:
         """
         Submit a task to be executed in the background.
 
@@ -84,6 +84,199 @@ class _BackgroundSaver:
         self._executor.shutdown(wait=True)
         logger.info("All saving tasks completed")
 
+    def _save_to_cache(self, user_message, tool_trajectory):
+        global _CONFIG
+        store_context = _CONFIG.context
+
+        # Ensure context exists
+        context_exist = store_context in unify.get_contexts(prefix=store_context)
+        if not context_exist:
+            unify.create_context(store_context)
+
+        log_id = unify.log(
+            context=store_context,
+            user_message=user_message,
+            tool_trajectory=json.dumps(tool_trajectory),
+        )
+
+        embed_expr = f"embed({{logs:user_message}}, model='{_CONFIG.embedding_model}')"
+        unify.create_derived_logs(
+            context=store_context,
+            key=_USER_MESSAGE_EMBEDDING_FIELD_NAME,
+            equation=embed_expr,
+            referenced_logs={"logs": [log_id.id]},
+        )
+
+        return log_id
+
+    def _construct_new_user_message(
+        self,
+        init_user_message,
+        messages_history,
+        full_messages_history,
+    ):
+        history = None
+        if not messages_history:
+            history = init_user_message
+        else:
+            history = messages_history
+
+        # TODO Update prompt
+        _user_clarifications = {}
+        for msg in full_messages_history:
+            if msg.get("role") == "tool" and msg.get("name").startswith(
+                "request_clarification",
+            ):
+                _user_clarifications[msg["tool_call_id"]] = {
+                    "user_answer": msg["content"],
+                }
+
+        for msg in full_messages_history:
+            if msg.get("role") == "assistant" and msg.get("tool_calls") is not None:
+                for tool_call in msg.get("tool_calls"):
+                    if (id := tool_call["id"]) in _user_clarifications.keys():
+                        args = json.loads(tool_call["function"]["arguments"])
+                        _user_clarifications[id]["assistant_question"] = args[
+                            "question"
+                        ]
+
+        CLEAN_USER_MESSAGE_PROMPT = """
+    Task: From the conversation history, return the final intended user message.
+
+    Rules:
+    - Apply all user interjections/corrections; the latest user message overrides earlier ones.
+    - Ignore assistant messages; they are never part of the output.
+    - Output exactly one plain string: the final corrected user message. No quotes, JSON, or explanation.
+    - Do not add new information. Remove redundant or off-topic words.
+    - If clarifications are provided, use them to construct the new user message.
+
+    Examples:
+
+    Input:
+    [
+    "user: Hi, what is the weather in Tokyo?",
+    "user: Actually, I meant in Cairo"
+    ]
+    Output:
+    Hi, what is the weather in Cairo?
+
+    Input:
+    [
+    "user: Can you find the contact with the name John Doe?",
+    "user: Sorry it's actually John Smith"
+    ]
+    Output:
+    Can you find the contact with the name John Smith?
+    """
+
+        global _CONFIG
+        client = _CONFIG.get_client()
+        client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
+        return client.generate(
+            user_message=f"Messages: {json.dumps(history)}\nPossible clarifications: {json.dumps(_user_clarifications)}",
+        )
+
+    def _clean_tool_trajectory(self, user_message, msgs, previous_tool_trajectory=None):
+
+        class PruneToolsResponseFormat(BaseModel):
+            indices: list[int]
+
+        global _CONFIG
+
+        cleaned_trajectory = []
+        if previous_tool_trajectory:
+            cleaned_trajectory.extend(previous_tool_trajectory)
+
+        _flatten_tools = {}
+
+        for msg in msgs:
+            if msg.get("role") == "tool":
+                # Skip completion status tools or anything not an actual tool call
+                if not msg["tool_call_id"].startswith("call_"):
+                    continue
+
+                _flatten_tools[msg["tool_call_id"]] = msg
+
+        for msg in msgs:
+            if msg.get("role") != "assistant":
+                continue
+
+            if msg.get("tool_calls") is not None:
+                for tool_call in msg.get("tool_calls"):
+                    if (id := tool_call.get("id")) in _flatten_tools.keys():
+                        if _flatten_tools[id].get("name") == "semantic_search":
+                            continue
+
+                        request = tool_call
+                        request.pop("id")
+
+                        response = _flatten_tools[id]
+                        response.pop("tool_call_id")
+
+                        pair = ToolCallPair(
+                            request=request,
+                            response=response,
+                        )
+                        cleaned_trajectory.append(pair)
+
+        client = _CONFIG.get_client()
+        client.set_system_message(
+            """
+            You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
+            you should return indicies of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
+            """,
+        )
+        res = client.generate(
+            user_message=f"User query: {user_message}\nTool trajectory: {json.dumps(cleaned_trajectory, indent=2)}",
+            response_format=PruneToolsResponseFormat,
+        )
+
+        res = PruneToolsResponseFormat.model_validate_json(res)
+
+        cleaned_trajectory = [
+            tool_call_pair
+            for idx, tool_call_pair in enumerate(cleaned_trajectory)
+            if idx not in res.indices
+        ]
+
+        return cleaned_trajectory
+
+    def _save_semantic_cache(
+        self,
+        initial_user_message,
+        user_message_visible_history,
+        messages_history,
+        previous_tool_trajectory,
+    ):
+        new_user_message = self._construct_new_user_message(
+            initial_user_message,
+            user_message_visible_history,
+            messages_history,
+        )
+
+        tool_trajectory = self._clean_tool_trajectory(
+            new_user_message,
+            messages_history,
+            previous_tool_trajectory=previous_tool_trajectory,
+        )
+
+        self._save_to_cache(new_user_message, tool_trajectory)
+
+    def save(
+        self,
+        initial_user_message,
+        user_message_visible_history,
+        messages_history,
+        previous_tool_trajectory,
+    ):
+        self._submit(
+            self._save_semantic_cache,
+            initial_user_message,
+            user_message_visible_history,
+            messages_history,
+            previous_tool_trajectory,
+        )
+
     def wait(self, timeout: int = 360) -> bool:
         """
         Wait for all pending saving tasks to complete
@@ -103,7 +296,7 @@ class _BackgroundSaver:
         return True
 
 
-_BACKGROUND_SAVER = None
+_SEMANTIC_CACHE_SAVER = None
 
 
 class _Config:
@@ -156,161 +349,6 @@ def _simplify_tool_trajectory(tool_trajectory: list[ToolCallPair]):
         )
 
     return ret
-
-
-def _construct_new_user_message(
-    init_user_message,
-    messages_history,
-    full_messages_history,
-):
-    history = None
-    if not messages_history:
-        history = init_user_message
-    else:
-        history = messages_history
-
-    # TODO Update prompt
-    _user_clarifications = {}
-    for msg in full_messages_history:
-        if msg.get("role") == "tool" and msg.get("name").startswith(
-            "request_clarification",
-        ):
-            _user_clarifications[msg["tool_call_id"]] = {"user_answer": msg["content"]}
-
-    for msg in full_messages_history:
-        if msg.get("role") == "assistant" and msg.get("tool_calls") is not None:
-            for tool_call in msg.get("tool_calls"):
-                if (id := tool_call["id"]) in _user_clarifications.keys():
-                    args = json.loads(tool_call["function"]["arguments"])
-                    _user_clarifications[id]["assistant_question"] = args["question"]
-
-    CLEAN_USER_MESSAGE_PROMPT = """
-Task: From the conversation history, return the final intended user message.
-
-Rules:
-- Apply all user interjections/corrections; the latest user message overrides earlier ones.
-- Ignore assistant messages; they are never part of the output.
-- Output exactly one plain string: the final corrected user message. No quotes, JSON, or explanation.
-- Do not add new information. Remove redundant or off-topic words.
-- If clarifications are provided, use them to construct the new user message.
-
-Examples:
-
-Input:
-[
-"user: Hi, what is the weather in Tokyo?",
-"user: Actually, I meant in Cairo"
-]
-Output:
-Hi, what is the weather in Cairo?
-
-Input:
-[
-"user: Can you find the contact with the name John Doe?",
-"user: Sorry it's actually John Smith"
-]
-Output:
-Can you find the contact with the name John Smith?
-"""
-
-    global _CONFIG
-    client = _CONFIG.get_client()
-    client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
-    return client.generate(
-        user_message=f"Messages: {json.dumps(history)}\nPossible clarifications: {json.dumps(_user_clarifications)}",
-    )
-
-
-def _clean_tool_trajectory(user_message, msgs, previous_tool_trajectory=None):
-
-    class PruneToolsResponseFormat(BaseModel):
-        indices: list[int]
-
-    global _CONFIG
-
-    cleaned_trajectory = []
-    if previous_tool_trajectory:
-        cleaned_trajectory.extend(previous_tool_trajectory)
-
-    _flatten_tools = {}
-
-    for msg in msgs:
-        if msg.get("role") == "tool":
-            # Skip completion status tools or anything not an actual tool call
-            if not msg["tool_call_id"].startswith("call_"):
-                continue
-
-            _flatten_tools[msg["tool_call_id"]] = msg
-
-    for msg in msgs:
-        if msg.get("role") != "assistant":
-            continue
-
-        if msg.get("tool_calls") is not None:
-            for tool_call in msg.get("tool_calls"):
-                if (id := tool_call.get("id")) in _flatten_tools.keys():
-                    if _flatten_tools[id].get("name") == "semantic_search":
-                        continue
-
-                    request = tool_call
-                    request.pop("id")
-
-                    response = _flatten_tools[id]
-                    response.pop("tool_call_id")
-
-                    pair = ToolCallPair(
-                        request=request,
-                        response=response,
-                    )
-                    cleaned_trajectory.append(pair)
-
-    client = _CONFIG.get_client()
-    client.set_system_message(
-        """
-        You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
-        you should return indicies of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
-        """,
-    )
-    res = client.generate(
-        user_message=f"User query: {user_message}\nTool trajectory: {json.dumps(cleaned_trajectory, indent=2)}",
-        response_format=PruneToolsResponseFormat,
-    )
-
-    res = PruneToolsResponseFormat.model_validate_json(res)
-
-    cleaned_trajectory = [
-        tool_call_pair
-        for idx, tool_call_pair in enumerate(cleaned_trajectory)
-        if idx not in res.indices
-    ]
-
-    return cleaned_trajectory
-
-
-def _save_to_cache(user_message, tool_trajectory):
-    global _CONFIG
-    store_context = _CONFIG.context
-
-    # Ensure context exists
-    context_exist = store_context in unify.get_contexts(prefix=store_context)
-    if not context_exist:
-        unify.create_context(store_context)
-
-    log_id = unify.log(
-        context=store_context,
-        user_message=user_message,
-        tool_trajectory=json.dumps(tool_trajectory),
-    )
-
-    embed_expr = f"embed({{logs:user_message}}, model='{_CONFIG.embedding_model}')"
-    unify.create_derived_logs(
-        context=store_context,
-        key=_USER_MESSAGE_EMBEDDING_FIELD_NAME,
-        equation=embed_expr,
-        referenced_logs={"logs": [log_id.id]},
-    )
-
-    return log_id
 
 
 def search_semantic_cache(user_message) -> SemanticCacheResult | None:
@@ -454,23 +492,13 @@ def save_semantic_cache(
     messages_history,
     previous_tool_trajectory=None,
 ):
-    def _save_semantic_cache():
-        new_user_message = _construct_new_user_message(
-            initial_user_message,
-            user_message_visible_history,
-            messages_history,
-        )
+    global _SEMANTIC_CACHE_SAVER
+    if _SEMANTIC_CACHE_SAVER is None:
+        _SEMANTIC_CACHE_SAVER = _SemanticCacheSaver()
 
-        tool_trajectory = _clean_tool_trajectory(
-            new_user_message,
-            messages_history,
-            previous_tool_trajectory=previous_tool_trajectory,
-        )
-
-        _save_to_cache(new_user_message, tool_trajectory)
-
-    global _BACKGROUND_SAVER
-    if _BACKGROUND_SAVER is None:
-        _BACKGROUND_SAVER = _BackgroundSaver()
-
-    _BACKGROUND_SAVER.submit(_save_semantic_cache)
+    _SEMANTIC_CACHE_SAVER.save(
+        initial_user_message,
+        user_message_visible_history,
+        messages_history,
+        previous_tool_trajectory,
+    )
