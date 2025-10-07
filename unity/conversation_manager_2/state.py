@@ -230,6 +230,7 @@ class ConversationManagerState:
                         e.timestamp,
                     )
                 )
+                self.phone_contact = None
 
             case SMSRecieved() as e:
                 contact = self.get_contact(phone_number=e.contact)
@@ -391,11 +392,17 @@ class ConversationManagerState:
             )
         if id:
             contact = self.inverted_contacts_map.get(id)
+            if contact:
+                return contact
+            
         if phone_number:
             contact = self.phone_contacts_map.get(phone_number)
+            if contact:
+                return contact
         else:
             contact = self.email_contacts_map.get(email)
-        return contact
+            if contact:
+                return contact
 
     def create_new_contact(
         self,
@@ -422,17 +429,23 @@ class ConversationManagerState:
         phone_number: Optional[str] = None,
     ):
         contact = None
+        print("curernt contacts", self.inverted_contacts_map)
         if id != "-1":  # update branch
             contact = self.get_contact(id, phone_number, email)
             if contact:
-                if phone_number and contact.phone_number != phone_number:
+                # TODO: pop old emails or phone numbers if they exist
+                if phone_number and (contact.phone_number != phone_number):
                     contact.phone_number = phone_number
-                if email and contact.email != email:
+                    self.phone_contacts_map[phone_number] = contact
+
+                if email and (contact.email != email):
                     contact.email = email
+                    self.email_contacts_map[email] = contact
             else:
                 self.create_new_contact(id, first_name, last_name, email, phone_number)
         else:
             new_contact = self.create_new_contact(
+                # must make sure ids are aligned with the database here actually..
                 str(len(self.phone_contacts_map) + 1),
                 first_name,
                 last_name,
@@ -447,12 +460,13 @@ class ConversationManagerState:
     # rendering methods
     def _render_contact(self, contact: Contact):
         threads = []
+        on_phone = self.phone_contact is contact
         for t_name, t in contact.threads.items():
             if t:
                 threads.append(self._render_thread(t_name, t))
         threads = "\n\n".join(threads)
         return f"""
-<contact id="{contact.id}" first_name="{contact.first_name}" last_name="{contact.last_name}" is_boss="{contact.is_boss}" phone_number="{contact.phone_number or ""}" email="{contact.email or ""}">
+<contact id="{contact.id}" first_name="{contact.first_name}" last_name="{contact.last_name}" is_boss="{contact.is_boss}" phone_number="{contact.phone_number or ""}" email="{contact.email or ""}" on_phone="{on_phone}">
 {self._add_spaces(threads)}
 </contact>""".strip()
 
