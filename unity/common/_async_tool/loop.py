@@ -24,6 +24,7 @@ from .tools_utils import (
     create_tool_call_message,
     append_source_scoped_images,
     default_source_label,
+    extract_alignment_text_from_value,
 )
 from ..llm_helpers import method_to_schema, _dumps
 from .loop_config import (
@@ -68,7 +69,6 @@ class LoopLogger:
         LOGGER.error(txt)
 
 
-# TODO this is not really required, but this just simplifies the extraction of the logic from the loop.
 class _LoopToolFailureTracker:
     def __init__(self, max_consecutive_failures: int):
         self._consecutive_failures = 0
@@ -377,43 +377,7 @@ async def async_tool_loop_inner(
     # The docstring for `live_images_overview` is visible every turn; calling it is
     # not required and it's a cheap no-op.
 
-    def _extract_reference_text(src: str | dict | list[str | dict]) -> str:
-        try:
-            if isinstance(src, str):
-                return src
-            if isinstance(src, dict):
-                return str(src.get("content", ""))
-            if isinstance(src, list):
-                # Distinguish between chat messages vs content blocks
-                # Case 1: chat messages (dicts with 'role') → first with role=='user'
-                for m in src:
-                    if isinstance(m, dict) and "role" in m and m.get("role") == "user":
-                        c = m.get("content")
-                        return str(
-                            (
-                                c
-                                if not isinstance(c, list)
-                                else "".join(
-                                    [
-                                        (
-                                            it.get("text")
-                                            if isinstance(it, dict)
-                                            and it.get("type") == "text"
-                                            else str(it)
-                                        )
-                                        for it in c
-                                    ],
-                                )
-                            ),
-                        )
-                # Case 2: content blocks (no roles) → first block's textual portion
-                for it in src:
-                    if isinstance(it, dict) and it.get("type") == "text":
-                        return str(it.get("text", ""))
-                # Fallback: stringify the first element
-                return str(src[0]) if src else ""
-        except Exception:
-            return ""
+    # Use shared text extraction helper from tools_utils instead of local duplicate
 
     # Build live image helpers only when images were supplied and non-empty
     live_image_tools: Dict[str, Callable] = {}
@@ -423,7 +387,7 @@ async def async_tool_loop_inner(
         except Exception:
             substring_from_span = None  # type: ignore[assignment]
 
-        reference_text = _extract_reference_text(message)
+        reference_text = extract_alignment_text_from_value(message)
         # Build id → handle map and enriched listings
         id_to_handle: dict[int, Any] = {}
         listings: list[str] = []
@@ -690,14 +654,6 @@ async def async_tool_loop_inner(
                     ],
                 )
                 attached_ids.add(iid)
-                # If incoming images are provided with source-scoped spans, append them
-                try:
-                    append_source_scoped_images(
-                        images,
-                        default_source_label("attach"),
-                    )
-                except Exception:
-                    pass
                 return {"status": "attached", "image_id": iid}
             except Exception as _exc:  # noqa: BLE001
                 return {"error": str(_exc)}
@@ -941,16 +897,8 @@ async def async_tool_loop_inner(
 
     # ── small local helpers to dedupe repeated logic ─────────────────────────
     def _pretty(tool_name: str, payload: Any) -> str:
-        try:
-            content_payload = (
-                payload if isinstance(payload, dict) else {"message": str(payload)}
-            )
-            return _dumps({"tool": tool_name, **content_payload}, indent=4)
-        except Exception:
-            try:
-                return _dumps({"tool": tool_name, "message": str(payload)}, indent=4)
-            except Exception:
-                return _dumps({"tool": tool_name}, indent=4)
+        # Deprecated local helper removed; use ToolsData._pretty_tool_payload instead
+        return ToolsData._pretty_tool_payload(tool_name, payload)
 
     async def _handle_clarification(
         src_task: asyncio.Task,
@@ -1024,7 +972,7 @@ async def async_tool_loop_inner(
         call_id = tools_data.info[src_task].call_id
         tool_name = tools_data.info[src_task].name
 
-        pretty = _pretty(tool_name, payload)
+        pretty = ToolsData._pretty_tool_payload(tool_name, payload)
 
         placeholder = tools_data.info[src_task].tool_reply_msg
         if placeholder is None:
@@ -1445,57 +1393,7 @@ async def async_tool_loop_inner(
                     # Process any notifications that arrived in the same tick
                     if done & notif_waiters.keys():
                         for pw in done & notif_waiters.keys():
-                            payload = pw.result()
-                            src_task = notif_waiters[pw]
-                            call_id = tools_data.info[src_task].call_id
-                            tool_name = tools_data.info[src_task].name
-
-                            try:
-                                content_payload = (
-                                    payload
-                                    if isinstance(payload, dict)
-                                    else {"message": str(payload)}
-                                )
-                                pretty = _dumps(
-                                    {"tool": tool_name, **content_payload},
-                                    indent=4,
-                                )
-                            except Exception:
-                                pretty = _dumps(
-                                    {"tool": tool_name, "message": str(payload)},
-                                    indent=4,
-                                )
-
-                            placeholder = tools_data.info[src_task].tool_reply_msg
-                            if placeholder is None:
-                                placeholder = create_tool_call_message(
-                                    name=tool_name,
-                                    call_id=call_id,
-                                    content=pretty,
-                                )
-                                await insert_tool_message_after_assistant(
-                                    assistant_meta,
-                                    tools_data.info[src_task].assistant_msg,
-                                    placeholder,
-                                    client,
-                                    _msg_dispatcher,
-                                )
-                                tools_data.info[src_task].tool_reply_msg = placeholder
-                            else:
-                                placeholder["content"] = pretty
-
-                            try:
-                                images_from_child = (
-                                    payload.get("images")
-                                    if isinstance(payload, dict)
-                                    else None
-                                )
-                                append_source_scoped_images(
-                                    images_from_child,
-                                    default_source_label("notification"),
-                                )
-                            except Exception:
-                                pass
+                            await _handle_notification(notif_waiters[pw], pw.result())
 
                     llm_turn_required = True
                     continue

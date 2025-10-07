@@ -13,7 +13,7 @@ class ToolCallMetadata:
     call_id: str
     call_dict: dict
     call_idx: int
-    chat_context: str
+    chat_context: Any
     assistant_msg: dict
     is_interjectable: bool
     tool_schema: dict
