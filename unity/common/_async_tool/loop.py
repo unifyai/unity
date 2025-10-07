@@ -247,11 +247,9 @@ async def async_tool_loop_inner(
     cfg = LoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
     # Expose the resolved human-friendly label (with 4-hex suffix) to the outer handle
     # so that any steering logs (stop/pause/resume/interject/ask) include the same suffix.
-    try:
+    with suppress(Exception):
         if outer_handle_container and outer_handle_container[0] is not None:
             setattr(outer_handle_container[0], "_log_label", cfg.label)
-    except Exception:
-        pass
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
     _img_token = None
@@ -261,24 +259,18 @@ async def async_tool_loop_inner(
         if images:
             id_map: dict[int, Any] = {}
             for _k, _ih in images.items():
-                try:
+                with suppress(Exception):
                     _iid = int(getattr(_ih, "image_id", -1))
                     if _iid >= 0:
                         id_map[_iid] = _ih
-                except Exception:
-                    continue
             _img_token = LIVE_IMAGES_REGISTRY.set(id_map)
             # Seed the overview log with user_message sourced images
             seed_log: list[str] = []
-            try:
+            with suppress(Exception):
                 for _k, _ih in images.items():
-                    try:
+                    with suppress(Exception):
                         _iid = int(getattr(_ih, "image_id", -1))
-                    except Exception:
-                        _iid = -1
                     seed_log.append(f"user_message:{_iid}:{_k}")
-            except Exception:
-                pass
             _imglog_token = LIVE_IMAGES_LOG.set(seed_log)
     except Exception:
         _img_token = None
@@ -382,31 +374,27 @@ async def async_tool_loop_inner(
     # Build live image helpers only when images were supplied and non-empty
     live_image_tools: Dict[str, Callable] = {}
     if images:
-        try:
-            from unity.image_manager.utils import substring_from_span  # local import
-        except Exception:
-            substring_from_span = None  # type: ignore[assignment]
+        substring_from_span = None  # type: ignore[assignment]
+        with suppress(Exception):
+            from unity.image_manager.utils import substring_from_span  # type: ignore[assignment]  # local import
 
         reference_text = extract_alignment_text_from_value(message)
         # Build id → handle map and enriched listings
         id_to_handle: dict[int, Any] = {}
         listings: list[str] = []
         for span_key, ih in list(images.items()):
-            try:
+            img_id = -1
+            with suppress(Exception):
                 img_id = int(getattr(ih, "image_id", -1))
-            except Exception:
-                img_id = -1
             id_to_handle[img_id] = ih
             substr = ""
             if substring_from_span is not None:
-                try:
+                substr = ""
+                with suppress(Exception):
                     substr = substring_from_span(str(reference_text), str(span_key))
-                except Exception:
-                    substr = ""
-            try:
+            caption = None
+            with suppress(Exception):
                 caption = getattr(ih, "caption", None)
-            except Exception:
-                caption = None
             listings.append(
                 f"- id={img_id}, span={span_key}, substring={substr!r}, caption={caption!r}",
             )
@@ -441,21 +429,18 @@ async def async_tool_loop_inner(
             return {"status": "ok"}
 
         # Merge previously appended images (if any)
-        try:
+        prior = []
+        with suppress(Exception):
             prior = LIVE_IMAGES_LOG.get()
-        except Exception:
-            prior = []
         if prior:
             # Enrich prior entries for display (best-effort; do not re-fetch substrings)
             prior_lines = []
             for rec in prior:
-                try:
+                with suppress(Exception):
                     src, iid_s, span_key = rec.split(":", 2)
                     prior_lines.append(
                         f"- source={src}, id={int(iid_s)}, span={span_key}",
                     )
-                except Exception:
-                    continue
             if prior_lines:
                 overview_doc = (
                     overview_doc
@@ -508,13 +493,11 @@ async def async_tool_loop_inner(
             if ih is None:
                 return {"error": f"image_id {image_id} not found"}
             # If incoming images are provided with source-scoped spans, append them
-            try:
+            with suppress(Exception):
                 append_source_scoped_images(
                     images,
                     default_source_label("ask"),
                 )
-            except Exception:
-                pass
             try:
                 return await ih.ask(question)
             except Exception as _exc:  # noqa: BLE001
@@ -897,7 +880,6 @@ async def async_tool_loop_inner(
 
     # ── small local helpers to dedupe repeated logic ─────────────────────────
     def _pretty(tool_name: str, payload: Any) -> str:
-        # Deprecated local helper removed; use ToolsData._pretty_tool_payload instead
         return ToolsData._pretty_tool_payload(tool_name, payload)
 
     async def _handle_clarification(
@@ -945,7 +927,7 @@ async def async_tool_loop_inner(
         )
 
         # Forward programmatic clarification event to outer handle
-        try:
+        with suppress(Exception):
             outer = outer_handle_container[0] if outer_handle_container else None
             if outer is not None and hasattr(outer, "_clar_q"):
                 await outer._clar_q.put(
@@ -956,17 +938,13 @@ async def async_tool_loop_inner(
                         "question": question_text,
                     },
                 )
-        except Exception:
-            pass
 
         # Append any images sent alongside the clarification request
-        try:
+        with suppress(Exception):
             append_source_scoped_images(
                 images_from_child,
                 default_source_label("clar_request"),
             )
-        except Exception:
-            pass
 
     async def _handle_notification(src_task: asyncio.Task, payload: Any) -> None:
         call_id = tools_data.info[src_task].call_id
@@ -993,7 +971,7 @@ async def async_tool_loop_inner(
             placeholder["content"] = pretty
 
         # Forward programmatic notification event to the outer handle
-        try:
+        with suppress(Exception):
             outer = outer_handle_container[0] if outer_handle_container else None
             if outer is not None and hasattr(outer, "_notification_q"):
                 event_payload = (
@@ -1007,11 +985,9 @@ async def async_tool_loop_inner(
                         **event_payload,
                     },
                 )
-        except Exception:
-            pass
 
         # Append images provided with the notification payload
-        try:
+        with suppress(Exception):
             images_from_child = (
                 payload.get("images") if isinstance(payload, dict) else None
             )
@@ -1019,8 +995,6 @@ async def async_tool_loop_inner(
                 images_from_child,
                 default_source_label("notification"),
             )
-        except Exception:
-            pass
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
@@ -1207,17 +1181,15 @@ async def async_tool_loop_inner(
                     _msg_text = str(extra.get("message", "")).strip()
                     _ctx_cont = extra.get("parent_chat_context_continuted")
                     _incoming_images = extra.get("images")
-                    try:
+                    with suppress(Exception):
                         _ctx_str = (
                             json.dumps(_ctx_cont, indent=2)
                             if _ctx_cont is not None
                             else None
                         )
-                    except Exception:
-                        _ctx_str = None
 
                     sys_content = (
-                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                        "The user *cannot* see *any* of the contents of this ongoing tool use chat context. "
                         "They have just interjected with the following message (in bold at the bottom). "
                         "From their perspective, the conversation thus far is as follows:\n"
                         "--\n"
@@ -1239,7 +1211,7 @@ async def async_tool_loop_inner(
                     _msg_text = str(extra)
                     _incoming_images = None
                     sys_content = (
-                        "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                        "The user *cannot* see *any* of the contents of this ongoing tool use chat context. "
                         "They have just interjected with the following message (in bold at the bottom). "
                         "From their perspective, the conversation thus far is as follows:\n"
                         "--\n"
@@ -1256,13 +1228,11 @@ async def async_tool_loop_inner(
                 last_valid_user_history = history_lines + [f"user: {extra}"]
 
                 # If images accompany this interjection, accept source-scoped keys and append
-                try:
+                with suppress(Exception):
                     append_source_scoped_images(
                         _incoming_images,
                         default_source_label("interjection"),
                     )
-                except Exception:
-                    pass
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
@@ -1760,13 +1730,14 @@ async def async_tool_loop_inner(
             await to_event_bus(msg, cfg)
 
             if log_steps:
-                try:
+                with suppress(Exception):
                     logger.info(f"{json.dumps(msg, indent=4)}\n", prefix="🤖")
-                except Exception:
-                    logger.info(
-                        f"Assistant message appended (unserializable)",
-                        prefix="🤖",
-                    )
+                if not isinstance(msg, dict) or True:
+                    with suppress(Exception):
+                        logger.info(
+                            f"Assistant message appended (unserializable)",
+                            prefix="🤖",
+                        )
 
             # ── timeout guard (post-LLM) ───────────────────────────────
             if timer.has_exceeded_time():
@@ -1914,9 +1885,9 @@ async def async_tool_loop_inner(
                         pretty_name = f"stop   {orig_fn}({arg_json})"
 
                         # Parse payload to forward extras to handle.stop if available
-                        try:
+                        with suppress(Exception):
                             payload = json.loads(call["function"]["arguments"]) or {}
-                        except Exception:
+                        if "payload" not in locals():
                             payload = {}
 
                         # ── gracefully shut down any *nested* async-tool loop first ──────
@@ -1938,13 +1909,11 @@ async def async_tool_loop_inner(
                             tools_data.pop_task(task_to_cancel)
 
                         # Record any images provided with the stop helper
-                        try:
+                        with suppress(Exception):
                             append_source_scoped_images(
                                 payload.get("images"),
                                 default_source_label("stop"),
                             )
-                        except Exception:
-                            pass
 
                         tool_msg = create_tool_call_message(
                             name=pretty_name,
@@ -1987,9 +1956,9 @@ async def async_tool_loop_inner(
                         pretty_name = f"pause {orig_fn}({arg_json})"
 
                         # Forward any extra kwargs to handle.pause if available
-                        try:
+                        with suppress(Exception):
                             payload = json.loads(call["function"]["arguments"]) or {}
-                        except Exception:
+                        if "payload" not in locals():
                             payload = {}
 
                         if tgt_task:
@@ -2040,9 +2009,9 @@ async def async_tool_loop_inner(
                         pretty_name = f"resume {orig_fn}({arg_json})"
 
                         # Forward any extra kwargs to handle.resume if available
-                        try:
+                        with suppress(Exception):
                             payload = json.loads(call["function"]["arguments"]) or {}
-                        except Exception:
+                        if "payload" not in locals():
                             payload = {}
 
                         if tgt_task:
@@ -2106,13 +2075,11 @@ async def async_tool_loop_inner(
                                     break
 
                         # Record any images provided with the clarification answer
-                        try:
+                        with suppress(Exception):
                             append_source_scoped_images(
                                 args.get("images") if isinstance(args, dict) else None,
                                 default_source_label("clar_answer"),
                             )
-                        except Exception:
-                            pass
                         # Always publish a tool reply acknowledging the clarify helper
                         tool_reply_msg = create_tool_call_message(
                             name=name,
@@ -2139,12 +2106,12 @@ async def async_tool_loop_inner(
 
                     if name.startswith("interject_"):
                         # helper signature mirrors downstream handle.interject (content plus any extras)
-                        try:
+                        with suppress(Exception):
                             payload = json.loads(call["function"]["arguments"]) or {}
                             new_text = payload.get("content") or payload.get("message")
                             if new_text is None:
                                 new_text = ""
-                        except Exception:
+                        if "payload" not in locals():
                             payload = {}
                             new_text = "<unparsable>"
 
@@ -2183,13 +2150,11 @@ async def async_tool_loop_inner(
                                 )
 
                         # Record any images provided with the interjection helper
-                        try:
+                        with suppress(Exception):
                             append_source_scoped_images(
                                 payload.get("images"),
                                 default_source_label("interjection"),
                             )
-                        except Exception:
-                            pass
 
                         # ― emit a tool message so the chat log stays tidy ---
                         tool_msg = create_tool_call_message(

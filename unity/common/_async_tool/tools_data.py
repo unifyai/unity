@@ -15,7 +15,11 @@ from typing import (
     TYPE_CHECKING,
 )
 from .tools_utils import ToolCallMetadata, create_tool_call_message
-from .messages import insert_tool_message_after_assistant, chat_context_repr
+from .messages import (
+    insert_tool_message_after_assistant,
+    chat_context_repr,
+    _normalise_kwargs_for_bound_method,
+)
 from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
 from ..llm_helpers import method_to_schema, _collect_images, _strip_image_keys, _dumps
@@ -46,13 +50,12 @@ class ToolsData:
     # Local helper: pretty-print tool payloads consistently
     @staticmethod
     def _pretty_tool_payload(tool_name: str, payload: Any) -> str:
-        try:
+        with suppress(Exception):
             content_payload = (
                 payload if isinstance(payload, dict) else {"message": str(payload)}
             )
             return _dumps({"tool": tool_name, **content_payload}, indent=4)
-        except Exception:
-            return _dumps({"tool": tool_name, "message": str(payload)}, indent=4)
+        return _dumps({"tool": tool_name, "message": str(payload)}, indent=4)
 
     def _quota_count(self, task_name: str) -> int:
         return self.call_counts.get(task_name, 0)
@@ -154,9 +157,9 @@ class ToolsData:
 
             kept: list = []
             for call in tool_calls:
-                try:
+                with suppress(Exception):
                     fn_name = call.get("function", {}).get("name")
-                except Exception:
+                if "fn_name" not in locals():
                     fn_name = None
 
                 # Only enforce quota on base tools that define a limit
@@ -245,27 +248,20 @@ class ToolsData:
             extra_kwargs["interject_queue"] = sub_q
 
         # Parse args
-        try:
+        with suppress(Exception):
             call_args = (
                 json.loads(args_json)
                 if isinstance(args_json, str)
                 else (args_json or {})
             )
-        except Exception:
+        if "call_args" not in locals():
             call_args = {}
 
-        # Filter extras to match fn signature
+        # Filter extras to match fn signature, and normalise base call args via shared helper
         filtered_extras = {
             k: v for k, v in extra_kwargs.items() if k in params or has_varkw
         }
-
-        # Forward base-tool call args, but drop any unknown keys unless **kwargs is accepted.
-        # This mirrors our dynamic helper normalisation and avoids spurious TypeErrors
-        # when the model invents arguments that are not part of the tool schema.
-        if isinstance(call_args, dict) and not has_varkw:
-            allowed_call_args = {k: v for k, v in call_args.items() if k in params}
-        else:
-            allowed_call_args = call_args
+        allowed_call_args = _normalise_kwargs_for_bound_method(fn, call_args)
         merged_kwargs = {**allowed_call_args, **filtered_extras}
 
         # ── Normalise arg-scoped image mapping for inner tools, but skip
@@ -426,7 +422,6 @@ class ToolsData:
         info: ToolCallMetadata = self.pop_task(task)
         name = info.name
         call_id = info.call_id
-        # remove unused locals
 
         # 1️⃣-a. Drain any pending notifications that arrived just before completion
         #      (prevents missing progress events when the tool finishes quickly).
@@ -466,7 +461,7 @@ class ToolsData:
                     placeholder["content"] = pretty
 
                 # Forward a programmatic notification event to the outer handle
-                try:
+                with suppress(Exception):
                     outer = (
                         outer_handle_container[0] if outer_handle_container else None
                     )
@@ -484,8 +479,6 @@ class ToolsData:
                                 **event_payload,
                             },
                         )
-                except Exception:
-                    pass
 
         # 2️⃣  obtain result -------------------------------------------------
         try:
@@ -655,7 +648,7 @@ class ToolsData:
                 # Additional debug context: show the exact tool schema and arguments
                 # that were presented to the LLM for this failed call. This helps
                 # diagnose docstrings/argspec mismatches that cause tool misuse.
-                try:
+                with suppress(Exception):
                     debug_payload = {
                         "tool_name": name,
                         "call_id": call_id,
@@ -667,8 +660,6 @@ class ToolsData:
                         f"FAILED TOOL SCHEMA (as given to LLM):\n{json.dumps(debug_payload, indent=2)}",
                         prefix="🧩",
                     )
-                except Exception:
-                    pass
 
         # 3️⃣  remember so later lookups can answer instantly
         self.completed_results[call_id] = result
@@ -694,9 +685,9 @@ class ToolsData:
                 # If the current tail tool message looks like a progress payload,
                 # do NOT emit another tool reply for the same call_id – instead
                 # create a synthetic assistant→tool pair to carry the final result.
-                try:
+                with suppress(Exception):
                     _content_str = tool_reply_msg.get("content") or ""
-                except Exception:
+                if "_content_str" not in locals():
                     _content_str = ""
                 if isinstance(_content_str, str) and '"tool"' in _content_str:
                     tool_msg = await self._emit_completion_pair(

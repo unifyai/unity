@@ -8,13 +8,7 @@ from typing import Callable, Optional, Dict, Union
 
 @dataclass(slots=True)
 class ToolSpec:
-    """
-    Wrap the real *callable* together with optional metadata.
-
-    Only ``max_concurrent`` is required today but we deliberately keep this
-    extensible – adding cost caps, rate limits, auth scopes, … later will not
-    change any external API.
-    """
+    """Wrap the callable with optional metadata (e.g., max_concurrent)."""
 
     fn: Callable
     max_concurrent: Optional[int] = None  # «None» ⇒ unlimited
@@ -34,11 +28,7 @@ class ToolSpec:
 def normalise_tools(
     raw: Dict[str, Union[Callable, "ToolSpec"]],
 ) -> Dict[str, "ToolSpec"]:
-    """
-    Accept the *legacy* ``dict[name → callable]`` or the new
-    ``dict[name → ToolSpec]`` and always return a *uniform*
-    ``dict[name → ToolSpec]``.
-    """
+    """Return a uniform ``dict[name → ToolSpec]`` from callables or ToolSpec values."""
     out: Dict[str, ToolSpec] = {}
     for n, v in raw.items():
         if isinstance(v, ToolSpec):

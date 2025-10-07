@@ -3,6 +3,7 @@ import unify
 import os
 import functools
 import json
+from contextlib import suppress
 from typing import (
     Optional,
     Awaitable,
@@ -207,8 +208,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         message: str,
         parent_chat_context_cont: list[dict] | None,
     ) -> None:
-        try:
-            # NOTE: key name 'parent_chat_context_continuted' is legacy and intentional
+        # NOTE: key name 'parent_chat_context_continuted' is legacy and intentional
+        with suppress(Exception):
             if parent_chat_context_cont is not None:
                 self._user_visible_history.append(
                     {
@@ -223,23 +224,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 self._user_visible_history.append(
                     {"role": "user", "content": message},
                 )
-        except Exception:
-            pass
 
     def _append_user_visible_assistant(self, message: str) -> None:
-        try:
+        with suppress(Exception):
             self._user_visible_history.append(
                 {"role": "assistant", "content": message},
             )
-        except Exception:
-            pass
 
     # ── internal: passthrough forwarding/buffering helpers ──────────────────
     def _iter_passthrough_handles(self):
-        try:
+        task_info = {}
+        with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
-        except Exception:
-            task_info = {}
         if not isinstance(task_info, dict):
             return []
         out = []
@@ -251,11 +247,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         return out
 
     def _has_scheduled_tools(self) -> bool:
-        try:
+        with suppress(Exception):
             ti = getattr(self._task, "task_info", {})
             return isinstance(ti, dict) and len(ti) > 0
-        except Exception:
-            return False
+        return False
 
     async def _forward_call_to_handle(
         self,
@@ -264,15 +259,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         kwargs: dict,
         fallback: tuple[str, ...],
     ):
-        try:
+        with suppress(Exception):
             return await forward_handle_call(
                 handle,
                 method_name,
                 kwargs,
                 fallback_positional_keys=fallback,
             )
-        except Exception:
-            return None
+        return None
 
     async def _replay_pending_passthrough_ops(self) -> None:
         if not self._pending_passthrough_ops:
@@ -371,13 +365,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             return _StaticHandle()  # pragma: no cover
 
         # 1.  Gather a *read-only* snapshot of the parent chat.
-        try:
+        parent_ctx = []
+        with suppress(Exception):
             msgs = getattr(self._client, "messages", []) if self._client else []
             if msgs is None:
                 msgs = []
             parent_ctx = list(msgs)
-        except Exception:
-            parent_ctx = []
 
         # 2.  Prepare an *in-memory* Unify client for the **inspection** loop
         #     (LLM sees only the system header + follow-up user question).
@@ -410,10 +403,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         #
         # NOTE: this is best-effort – individual callers can override ask()
         # for richer behaviour if desired.
-        try:
+        task_info = {}
+        with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
-        except Exception:
-            task_info = {}
 
         recursive_tools: dict[str, Callable] = {}
 
@@ -430,10 +422,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 return await nested.result()
 
             # tool name encodes the call-id so collisions are impossible
-            try:
+            _cid = None
+            with suppress(Exception):
                 _cid = getattr(_inf, "call_id", None)
-            except Exception:
-                _cid = None
             _proxy.__name__ = f"ask_{_cid or 'unknown'}"
             recursive_tools[_proxy.__name__] = _proxy
         # ----------------------------------------------------------------
@@ -453,24 +444,22 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # question refers to, e.g. "Question(TaskScheduler.execute)" or
         # "Question(TaskScheduler.execute->TaskScheduler.ask)" when a single
         # nested handle is present.
-        try:
-            parent_label: str = (
+        parent_label: str = "unknown"
+        with suppress(Exception):
+            parent_label = (
                 getattr(self, "_log_label", None)
                 or getattr(self, "_loop_id", "unknown")
                 or "unknown"
             )
-        except Exception:
-            parent_label = "unknown"
 
         loop_id_label = f"Question({parent_label})"
 
         # Build the message for the inspection loop – either a plain string or
         # a single string that embeds the continued parent context.
         if parent_chat_context_cont is not None:
-            try:
+            _ctx_text = str(parent_chat_context_cont)
+            with suppress(Exception):
                 _ctx_text = json.dumps(parent_chat_context_cont, indent=2)
-            except Exception:
-                _ctx_text = str(parent_chat_context_cont)
             _ask_message = {
                 "role": "user",
                 "content": f"{question}\n\nparent_chat_context_continuted:\n{_ctx_text}",
@@ -560,12 +549,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
         # Replay any pending buffered passthrough ops
-        try:
+        with suppress(Exception):
             asyncio.get_running_loop().create_task(
                 self._replay_pending_passthrough_ops(),
             )
-        except Exception:
-            pass
         # Idempotent guard: if already stopping, do nothing and DO NOT log again
         if self._cancel_event.is_set():
             return
@@ -587,40 +574,26 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Pre-adoption nested handles are stopped by the inner loop via propagate_stop_once.
 
         # Expedite shutdown of the outer task and signal stop_event for any waiters
-        try:
+        with suppress(Exception):
             self._task.cancel()
-        except Exception:
-            pass
-        try:
+        with suppress(Exception):
             self._stop_event.set()
-        except Exception:
-            pass
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
     def pause(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
         # Propagate pause to any nested handles first (always)
-        try:
+        with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
-        except Exception:
-            task_info = {}
-        try:
             items = task_info.items() if isinstance(task_info, dict) else []
             for _t, _inf in items:
-                try:
-                    h = _inf.handle
-                except Exception:
-                    h = None
+                h = getattr(_inf, "handle", None)
                 if h is not None and hasattr(h, "pause"):
-                    try:
+                    with suppress(Exception):
                         maybe = h.pause()  # may be sync or async
                         if asyncio.iscoroutine(maybe):
                             asyncio.create_task(maybe)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
 
         self._pause_event.clear()
 
@@ -629,26 +602,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
         # Propagate resume to any nested handles first (always)
-        try:
+        with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
-        except Exception:
-            task_info = {}
-        try:
             items = task_info.items() if isinstance(task_info, dict) else []
             for _t, _inf in items:
-                try:
-                    h = _inf.handle
-                except Exception:
-                    h = None
+                h = getattr(_inf, "handle", None)
                 if h is not None and hasattr(h, "resume"):
-                    try:
+                    with suppress(Exception):
                         maybe = h.resume()  # may be sync or async
                         if asyncio.iscoroutine(maybe):
                             asyncio.create_task(maybe)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
 
         self._pause_event.set()
 
@@ -684,11 +647,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         This looks up the down-queue for the given call and pushes the answer.
         Falls through silently if the mapping is missing (tool may have finished).
         """
-        try:
+        task_info, clar_map = {}, {}
+        with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             clar_map = getattr(self._task, "clarification_channels", {})
-        except Exception:
-            task_info, clar_map = {}, {}
 
         # Direct lookup by full ID; if not present, try suffix matching
         down_q = None
@@ -703,11 +665,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         except Exception:
             down_q = None
 
-        try:
+        with suppress(Exception):
             if down_q is not None:
                 await down_q.put(answer)
-        except Exception:
-            pass
 
     # No _adopt: passthrough no longer adopts delegates; outer loop remains active.
 
@@ -839,16 +799,12 @@ def start_async_tool_loop(
     )
 
     # Attach lineage to handle for optional external inspection
-    try:
+    with suppress(Exception):
         handle._lineage = list(_lineage)  # type: ignore[attr-defined]
-    except Exception:
-        pass
 
     # Mark this handle as the root/top-level for single-stop logging semantics
-    try:
+    with suppress(Exception):
         handle._is_root_handle = True  # type: ignore[attr-defined]
-    except Exception:
-        pass
 
     # Let the inner coroutine discover the outer handle so it can switch
     # steering when a nested handle requests pass-through behaviour.
