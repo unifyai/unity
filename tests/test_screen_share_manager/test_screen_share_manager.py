@@ -120,7 +120,7 @@ async def test_speech_event_triggers_analysis_and_logging(mocked_screen_share_ma
         ],
     )
     # The Pydantic model now returns a model instance, not a raw dict
-    mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
+    mocks["analysis_client"].generate.return_value = mock_llm_response
 
     # 2. Define the incoming speech event with clear start/end times
     speech_event_data = {
@@ -144,7 +144,7 @@ async def test_speech_event_triggers_analysis_and_logging(mocked_screen_share_ma
     await manager._logging_worker(log_job)
 
     # 4. Assertions
-    mocks["openai_client"].chat.completions.create.assert_called_once()
+    mocks["analysis_client"].generate.assert_called_once()
     mocks["image_manager"].add_images.assert_called_once()
     mocks["transcript_manager"].log_messages.assert_called_once()
     mocks["event_broker"].publish.assert_called_once()
@@ -203,14 +203,14 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
             ),
         ],
     )
-    mocks["openai_client"].chat.completions.create.return_value = silent_event_analysis
+    mocks["analysis_client"].generate.return_value = silent_event_analysis
 
     # Flush the silent event, which should store it
     await manager._flush_pending_events_on_timeout()
     await asyncio.sleep(0.1)  # Allow async task to run
 
     # Assertions for the silent part
-    mocks["openai_client"].chat.completions.create.assert_called_once()
+    mocks["analysis_client"].generate.assert_called_once()
     assert len(manager._stored_silent_key_events) == 1
     assert manager._stored_silent_key_events[0].timestamp == 25.0
     mocks["transcript_manager"].log_messages.assert_not_called()  # Not logged yet
@@ -238,7 +238,7 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
             ),
         ],
     )
-    mocks["openai_client"].chat.completions.create.return_value = speech_event_analysis
+    mocks["analysis_client"].generate.return_value = speech_event_analysis
 
     # Handle the utterance event and subsequent logging
     await manager._analyze_turn(speech_event=speech_event_data, visual_events=[])
@@ -246,7 +246,7 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
     await manager._logging_worker(log_job)
 
     # Assertions for the combined logging
-    assert mocks["openai_client"].chat.completions.create.call_count == 2
+    assert mocks["analysis_client"].generate.call_count == 2
     mocks["transcript_manager"].log_messages.assert_called_once()
 
     logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
@@ -304,7 +304,7 @@ async def test_combined_turn_logs_multiple_events(mocked_screen_share_manager):
             ),
         ],
     )
-    mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
+    mocks["analysis_client"].generate.return_value = mock_llm_response
 
     speech_event_data = {
         "payload": {
@@ -354,7 +354,7 @@ async def test_llm_failure_is_handled_gracefully(mocked_screen_share_manager):
     a transcript message is still created, just without screen events.
     """
     manager, mocks = mocked_screen_share_manager
-    mocks["openai_client"].chat.completions.create.side_effect = Exception("API Error")
+    mocks["analysis_client"].generate.side_effect = Exception("API Error")
 
     speech_event_data = {
         "payload": {
@@ -367,7 +367,7 @@ async def test_llm_failure_is_handled_gracefully(mocked_screen_share_manager):
     log_job = await manager._logging_queue.get()
     await manager._logging_worker(log_job)
 
-    mocks["openai_client"].chat.completions.create.assert_called_once()
+    mocks["analysis_client"].generate.assert_called_once()
 
     # MODIFIED: Assert that a message IS logged, as per product logic.
     # The message will simply be empty of screen_share annotations.
@@ -390,7 +390,7 @@ async def test_empty_llm_response_logs_message_without_events(
     for the utterance, but with no screen share annotations.
     """
     manager, mocks = mocked_screen_share_manager
-    mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
+    mocks["analysis_client"].generate.return_value = TurnAnalysisResponse(
         events=[],
     )
 
@@ -405,7 +405,7 @@ async def test_empty_llm_response_logs_message_without_events(
     log_job = await manager._logging_queue.get()
     await manager._logging_worker(log_job)
 
-    mocks["openai_client"].chat.completions.create.assert_called_once()
+    mocks["analysis_client"].generate.assert_called_once()
 
     # MODIFIED: Assert that a message IS logged, as per product logic.
     mocks["transcript_manager"].log_messages.assert_called_once()
@@ -431,7 +431,7 @@ async def test_analysis_clears_pending_vision_events(mocked_screen_share_manager
     assert len(manager._pending_vision_events) == 1
 
     # Mock LLM to return an empty response, the simplest case
-    mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
+    mocks["analysis_client"].generate.return_value = TurnAnalysisResponse(
         events=[],
     )
 
@@ -477,7 +477,7 @@ async def test_silent_event_without_prior_utterance_is_stored(
             ),
         ],
     )
-    mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
+    mocks["analysis_client"].generate.return_value = mock_llm_response
 
     # Analyze as a silent turn (speech_event=None)
     await manager._analyze_turn(
@@ -489,7 +489,7 @@ async def test_silent_event_without_prior_utterance_is_stored(
     log_job = await manager._logging_queue.get()
     await manager._logging_worker(log_job)
 
-    mocks["openai_client"].chat.completions.create.assert_called_once()
+    mocks["analysis_client"].generate.assert_called_once()
     # The key assertion: no attempt to log, but the event is stored
     mocks["transcript_manager"].log_messages.assert_not_called()
     assert len(manager._stored_silent_key_events) == 1
@@ -520,7 +520,7 @@ async def test_triggering_phrase_not_found_in_content_is_handled(
             ),
         ],
     )
-    mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
+    mocks["analysis_client"].generate.return_value = mock_llm_response
 
     speech_event_data = {
         "payload": {
@@ -580,7 +580,7 @@ async def test_realtime_annotation_is_published_for_each_key_event(
             ),
         ],
     )
-    mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
+    mocks["analysis_client"].generate.return_value = mock_llm_response
 
     # 2. Define a simple speech event to trigger the analysis
     speech_event_data = {
@@ -652,13 +652,13 @@ async def test_rapid_event_burst_is_sampled(mocked_screen_share_manager):
         },
     ]
 
-    mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
+    mocks["analysis_client"].generate.return_value = TurnAnalysisResponse(
         events=[],
     )
     await manager._analyze_turn(speech_event=None, visual_events=visual_events)
 
-    mocks["openai_client"].chat.completions.create.assert_called_once()
-    call_args = mocks["openai_client"].chat.completions.create.call_args
+    mocks["analysis_client"].generate.assert_called_once()
+    call_args = mocks["analysis_client"].generate.call_args
     user_content = call_args.kwargs["user_message"]
 
     # Verify the sampling note was added
@@ -709,13 +709,13 @@ async def test_slow_events_are_not_sampled(mocked_screen_share_manager):
         {"timestamp": 19.0, "before_frame_b64": "b4", "after_frame_b64": PNG_CYAN_B64},
     ]
 
-    mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
+    mocks["analysis_client"].generate.return_value = TurnAnalysisResponse(
         events=[],
     )
     await manager._analyze_turn(speech_event=None, visual_events=visual_events)
 
-    mocks["openai_client"].chat.completions.create.assert_called_once()
-    call_args = mocks["openai_client"].chat.completions.create.call_args
+    mocks["analysis_client"].generate.assert_called_once()
+    call_args = mocks["analysis_client"].generate.call_args
     user_content = call_args.kwargs["user_message"]
 
     # Verify the sampling note was NOT added
@@ -780,13 +780,13 @@ async def test_mixed_bursts_and_single_events_are_handled_correctly(
         {"timestamp": 18.0, "before_frame_b64": "b6", "after_frame_b64": PNG_WHITE_B64},
     ]
 
-    mocks["openai_client"].chat.completions.create.return_value = TurnAnalysisResponse(
+    mocks["analysis_client"].generate.return_value = TurnAnalysisResponse(
         events=[],
     )
     await manager._analyze_turn(speech_event=None, visual_events=visual_events)
 
-    mocks["openai_client"].chat.completions.create.assert_called_once()
-    call_args = mocks["openai_client"].chat.completions.create.call_args
+    mocks["analysis_client"].generate.assert_called_once()
+    call_args = mocks["analysis_client"].generate.call_args
     user_content = call_args.kwargs["user_message"]
 
     # Verify the sampling note WAS added for the burst
@@ -830,7 +830,7 @@ async def test_analysis_queues_job_for_logging_worker(mocked_screen_share_manage
         representative_timestamp=10.0,
     )
     mock_llm_response = TurnAnalysisResponse(events=[key_event])
-    mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
+    mocks["analysis_client"].generate.return_value = mock_llm_response
 
     speech_event_data = {
         "payload": {
@@ -883,7 +883,7 @@ async def test_summary_is_updated_after_turn_analysis(mocked_screen_share_manage
             ),
         ],
     )
-    mocks["openai_client"].chat.completions.create.return_value = mock_llm_response
+    mocks["analysis_client"].generate.return_value = mock_llm_response
 
     # We need to mock the summary client, which is a separate instance
     with patch(
@@ -895,7 +895,7 @@ async def test_summary_is_updated_after_turn_analysis(mocked_screen_share_manage
 
         # The manager __init__ creates two AsyncUnify clients. The fixture mocks the
         # first one. We use side_effect to provide our own mocks for both.
-        mock_unify.side_effect = [mocks["openai_client"], mock_summary_instance]
+        mock_unify.side_effect = [mocks["analysis_client"], mock_summary_instance]
 
         # Re-initialize the client in the manager to use our new mock
         manager._summary_client = mock_summary_instance

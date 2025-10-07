@@ -27,8 +27,8 @@ def mocked_screen_share_manager(event_loop):
     with patch(
         "unity.screen_share_manager.screen_share_manager.get_event_broker",
     ) as mock_get_broker, patch(
-        "unity.screen_share_manager.screen_share_manager.AsyncOpenAI",
-    ) as mock_openai, patch(
+        "unity.screen_share_manager.screen_share_manager.unify.AsyncUnify",
+    ) as mock_unify, patch(
         "unity.screen_share_manager.screen_share_manager.ImageManager",
     ) as mock_image_manager, patch(
         "unity.screen_share_manager.screen_share_manager.TranscriptManager",
@@ -42,10 +42,11 @@ def mocked_screen_share_manager(event_loop):
         mock_broker.publish = AsyncMock()
         mock_get_broker.return_value = mock_broker
 
-        # Mock OpenAI Client
-        mock_openai_instance = MagicMock()
-        mock_openai_instance.chat.completions.create = AsyncMock()
-        mock_openai.return_value = mock_openai_instance
+        # Mock Unify Client (replaces OpenAI)
+        mock_unify_instance = MagicMock()
+        # The manager calls .generate(), not .chat.completions.create
+        mock_unify_instance.generate = AsyncMock()
+        mock_unify.return_value = mock_unify_instance
 
         # Mock ImageManager
         mock_image_manager_instance = MagicMock()
@@ -78,7 +79,7 @@ def mocked_screen_share_manager(event_loop):
 
         mocks = {
             "event_broker": mock_broker,
-            "openai_client": mock_openai_instance,
+            "analysis_client": mock_unify_instance,  # Key name kept for test compatibility
             "image_manager": mock_image_manager_instance,
             "transcript_manager": mock_transcript_manager_instance,
         }
