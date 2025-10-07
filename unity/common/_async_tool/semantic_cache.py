@@ -70,10 +70,8 @@ class _SemanticCacheSaver:
         logger.info("Shutting down SemanticCacheSaver...")
         self._executor.shutdown(wait=True)
 
-    def _save_to_cache(self, user_message, tool_trajectory):
-        global _CONFIG
-        store_context = _CONFIG.context
-
+    def _save_to_cache(self, store_context, user_message, tool_trajectory):
+        # store_context is captured at call-time to avoid thread-local context loss
         # Ensure context exists
         context_exist = store_context in unify.get_contexts(prefix=store_context)
         if not context_exist:
@@ -174,11 +172,17 @@ class _SemanticCacheSaver:
     """
 
         global _CONFIG
-        client = _CONFIG.get_client()
-        client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
-        return client.generate(
-            user_message=f"Messages: {json.dumps(history)}\nClarifications: {json.dumps([v for _, v in _user_clarifications.items()])}",
-        )
+        # Fast path: if there were no interjections and no clarifications, keep the
+        # original initial message verbatim to preserve exact-match behaviour for cache keys.
+        if (not messages_history) and not _user_clarifications:
+            result = init_user_message
+        else:
+            client = _CONFIG.get_client()
+            client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
+            result = client.generate(
+                user_message=f"Messages: {json.dumps(history)}\nClarifications: {json.dumps([v for _, v in _user_clarifications.items()])}",
+            )
+        return result
 
     def _clean_tool_trajectory(self, user_message, msgs, previous_tool_trajectory=None):
 
@@ -251,6 +255,7 @@ class _SemanticCacheSaver:
         user_message_visible_history,
         messages_history,
         previous_tool_trajectory,
+        store_context,
     ):
         new_user_message = self._construct_new_user_message(
             initial_user_message,
@@ -264,7 +269,7 @@ class _SemanticCacheSaver:
             previous_tool_trajectory=previous_tool_trajectory,
         )
 
-        self._save_to_cache(new_user_message, tool_trajectory)
+        self._save_to_cache(store_context, new_user_message, tool_trajectory)
 
     def save(
         self,
@@ -273,12 +278,17 @@ class _SemanticCacheSaver:
         messages_history,
         previous_tool_trajectory,
     ):
+        # Capture the resolved store context at submission time. This avoids
+        # losing the context when executing inside a background thread where
+        # contextvars are not propagated by default.
+        store_context = _CONFIG.context
         self._submit(
             self._save_semantic_cache,
             initial_user_message,
             user_message_visible_history,
             messages_history,
             previous_tool_trajectory,
+            store_context,
         )
 
     def wait(self, timeout: int = 360) -> bool:
@@ -364,13 +374,18 @@ def search_semantic_cache(user_message) -> SemanticCacheResult | None:
     if not context_exist:
         unify.create_context(store_context)
 
+    # Build distance/similarity expression once for consistent logging and querying
+    _escaped = escape_single_quotes(user_message)
+    metric_expr = f"cosine({_USER_MESSAGE_EMBEDDING_FIELD_NAME}, embed('{_escaped}', model='{_CONFIG.embedding_model}'))"
+    # NOTE: On this backend, `cosine(a,b)` acts like a distance (lower is better).
+    # We keep candidates with distance <= threshold and sort ascending so exact/close matches win.
+    filter_expr = f"{metric_expr} <= {_CONFIG.threshold}"
+
     logs = unify.get_logs(
         context=store_context,
         exclude_fields=[_USER_MESSAGE_EMBEDDING_FIELD_NAME],
-        filter=f"cosine({_USER_MESSAGE_EMBEDDING_FIELD_NAME}, embed('{escape_single_quotes(user_message)}', model='{_CONFIG.embedding_model}')) < {_CONFIG.threshold}",
-        sorting={
-            f"cosine({_USER_MESSAGE_EMBEDDING_FIELD_NAME}, embed('{escape_single_quotes(user_message)}', model='{_CONFIG.embedding_model}'))": "descending",
-        },
+        filter=filter_expr,
+        sorting={metric_expr: "ascending"},
         limit=_CONFIG.top_k,
     )
 
