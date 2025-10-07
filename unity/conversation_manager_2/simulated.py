@@ -184,6 +184,15 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
             async def ask(self, *args, **kwargs):
                 return self
 
+            async def next_clarification(self) -> dict:
+                return {}
+
+            async def next_notification(self) -> dict:
+                return {}
+
+            async def answer_clarification(self, call_id: str, answer: str) -> None:
+                pass
+
         return _AnswerHandle(ask_client, self._llm, prompt, response_format)
 
     async def interject(self, message: str) -> None:
@@ -217,3 +226,12 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
         while not self._stopped:
             await asyncio.sleep(0.1)
         return self._final_result
+
+    async def next_clarification(self) -> dict:
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        pass
