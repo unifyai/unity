@@ -112,6 +112,31 @@ class ScreenShareManager:
       creating a durable, precise link between the user's words and their actions.
       This association is only created when speech and vision events are analyzed
       together.
+
+    Architecture for Parallelism
+    ----------------------------
+    This manager uses a highly concurrent, dynamic architecture to ensure
+    responsiveness under variable load.
+
+    1. State Protection with a Narrow Lock:
+       - A lock (`_state_lock`) protects shared lists that accumulate events
+         between turns. It is held only for the brief moment required to
+         atomically capture the current state.
+
+    2. Lock-Free Parallel Analysis:
+       - The `_analyze_turn` method is stateless, allowing multiple analysis
+         tasks (slow LLM calls) to run concurrently without interference.
+
+    3. Dynamic Logging Worker Pool with a Semaphore:
+       - Instead of a fixed pool, workers are spawned on-demand.
+       - An `asyncio.Semaphore` limits the number of concurrent logging tasks
+         to a configured maximum (`MAX_CONCURRENT_LOGGING_TASKS`), preventing
+         system overload.
+       - A single `_logging_dispatcher` task waits for results from the analysis
+         phase. When a job arrives, it acquires the semaphore and spawns a
+         one-shot `_logging_worker` task to handle the slow I/O.
+       - This is highly resource-efficient, as no workers are active during
+         idle periods, but the system can instantly scale up to handle bursts.
     """
 
     def __init__(self):
@@ -121,6 +146,7 @@ class ScreenShareManager:
         self.FRAME_BUFFER_SIZE = 100
         self.VISUAL_EVENT_SAMPLING_THRESHOLD = 3
         self.BURST_DETECTION_THRESHOLD_SEC = 2.0
+        self.MAX_CONCURRENT_LOGGING_TASKS = 5
 
         # Clients and Managers
         self._event_broker: redis.Redis = get_event_broker()
@@ -142,21 +168,23 @@ class ScreenShareManager:
         self._last_significant_frame_b64: Optional[str] = None
         self._last_user_utterance_message_id: Optional[int] = None
         self._last_activity_time: float = asyncio.get_event_loop().time()
-        self._analysis_lock = asyncio.Lock()
+        self._state_lock = asyncio.Lock()
+        self._analyses_in_flight = 0
         self._logging_queue = asyncio.Queue()
-        self._logging_task: Optional[asyncio.Task] = None
+        self._logging_semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_LOGGING_TASKS)
+        self._dispatcher_task: Optional[asyncio.Task] = None
 
     async def start(self):
-        """Starts the main event listening and logging worker loops."""
+        """Starts the main event listening and the logging dispatcher."""
         logger.info("ScreenShareManager started. Initializing background tasks...")
-        self._logging_task = asyncio.create_task(self._logging_worker())
+        self._dispatcher_task = asyncio.create_task(self._logging_dispatcher())
         await self._listen_for_events()
 
     def stop(self):
         """Signals the manager to gracefully shut down."""
         self._stop_event.set()
-        if self._logging_task and not self._logging_task.done():
-            self._logging_task.cancel()
+        if self._dispatcher_task and not self._dispatcher_task.done():
+            self._dispatcher_task.cancel()
         logger.info("ScreenShareManager stopping...")
 
     def _b64_to_image(self, b64_string: str) -> Image.Image:
@@ -170,18 +198,15 @@ class ScreenShareManager:
             return None
 
     async def _listen_for_events(self):
-        """
-        The core loop that subscribes to Redis and dispatches events.
-        Also handles the inactivity timeout for flushing silent visual events.
-        """
+        """The core loop that subscribes to Redis and dispatches events."""
         async with self._event_broker.pubsub() as pubsub:
             await pubsub.psubscribe(
                 "app:comms:screen_frame",
                 "app:comms:phone_utterance",
             )
+            logger.info("Subscribed to event channels. Listening for events...")
             while not self._stop_event.is_set():
                 try:
-                    # Wait for a message with a timeout to check for inactivity
                     message = await pubsub.get_message(
                         ignore_subscribe_messages=True,
                         timeout=1.0,
@@ -192,11 +217,8 @@ class ScreenShareManager:
                         if channel == "app:comms:screen_frame":
                             asyncio.create_task(self._handle_frame_event(event_data))
                         elif channel == "app:comms:phone_utterance":
-                            asyncio.create_task(
-                                self._handle_utterance_event(event_data)
-                            )
+                            await self._trigger_turn_analysis(speech_event=event_data)
 
-                    # Check for inactivity and flush pending events
                     await self._flush_pending_events_on_timeout()
                 except asyncio.TimeoutError:
                     continue
@@ -204,22 +226,36 @@ class ScreenShareManager:
                     logger.error(f"Error in event listener loop: {e}", exc_info=True)
                     await asyncio.sleep(1)
 
-    async def _logging_worker(self):
-        """Continuously processes analysis results from a queue and logs them."""
-        logger.info("Logging worker started.")
+    async def _logging_dispatcher(self):
+        """
+        Waits for jobs in the queue, acquires the semaphore, and spawns
+        a one-shot worker task for each job.
+        """
+        logger.info("Logging dispatcher started.")
         while not self._stop_event.is_set():
             try:
                 log_job = await self._logging_queue.get()
-                speech_event, key_events, frame_map = log_job
-
-                await self._log_turn_to_transcript(speech_event, key_events, frame_map)
-
+                await self._logging_semaphore.acquire()
+                asyncio.create_task(self._logging_worker(log_job))
                 self._logging_queue.task_done()
             except asyncio.CancelledError:
-                logger.info("Logging worker received cancellation request.")
+                logger.info("Logging dispatcher received cancellation request.")
                 break
             except Exception as e:
-                logger.error(f"Error in logging worker: {e}", exc_info=True)
+                logger.error(f"Error in logging dispatcher: {e}", exc_info=True)
+        logger.info("Logging dispatcher stopped.")
+
+    async def _logging_worker(self, log_job: tuple):
+        """
+        Processes a single log job and releases the semaphore upon completion.
+        """
+        try:
+            speech_event, key_events, frame_map = log_job
+            await self._log_turn_to_transcript(speech_event, key_events, frame_map)
+        except Exception as e:
+            logger.error(f"Error in logging worker: {e}", exc_info=True)
+        finally:
+            self._logging_semaphore.release()
 
     async def _handle_frame_event(self, event_data: dict):
         """Processes a single video frame event."""
@@ -227,86 +263,101 @@ class ScreenShareManager:
         timestamp = event_data["payload"]["timestamp"]
         frame_b64 = event_data["payload"]["frame_b64"]
         self._frame_buffer.append((timestamp, frame_b64))
+
         if self._last_significant_frame_b64 is None:
             self._last_significant_frame_b64 = frame_b64
             return
+
         current_img = self._b64_to_image(frame_b64)
         last_img = self._b64_to_image(self._last_significant_frame_b64)
         if current_img is None or last_img is None:
             return
+
         score = ssim(np.array(last_img), np.array(current_img))
         if score < self.SSIM_THRESHOLD:
             logger.info(
                 f"Significant visual change detected at t={timestamp:.2f}s (SSIM: {score:.2f})"
             )
-            self._pending_vision_events.append(
-                {
-                    "timestamp": timestamp,
-                    "before_frame_b64": self._last_significant_frame_b64,
-                    "after_frame_b64": frame_b64,
-                }
-            )
+            async with self._state_lock:
+                self._pending_vision_events.append(
+                    {
+                        "timestamp": timestamp,
+                        "before_frame_b64": self._last_significant_frame_b64,
+                        "after_frame_b64": frame_b64,
+                    }
+                )
             self._last_significant_frame_b64 = frame_b64
 
-    async def _handle_utterance_event(self, event_data: dict):
-        """Processes a speech event, triggering a full turn analysis."""
+    async def _trigger_turn_analysis(self, speech_event: Optional[dict]):
+        """
+        Atomically captures the current pending visual events and launches a
+        stateless, parallel-safe analysis task.
+        """
         self._last_activity_time = asyncio.get_event_loop().time()
-        logger.info("Utterance event received. Triggering turn analysis.")
-        asyncio.create_task(self._analyze_turn(speech_event=event_data))
+
+        visual_events_for_turn = []
+        async with self._state_lock:
+            if self._pending_vision_events:
+                visual_events_for_turn = list(self._pending_vision_events)
+                self._pending_vision_events.clear()
+
+        if not speech_event and not visual_events_for_turn:
+            return
+
+        logger.info("Triggering turn analysis...")
+        asyncio.create_task(self._analyze_turn(speech_event, visual_events_for_turn))
 
     async def _flush_pending_events_on_timeout(self):
-        """Analyzes buffered vision-only events if no speech has occurred recently."""
+        """
+        On inactivity, triggers a silent turn analysis, but only if no other
+        analyses are in progress.
+        """
         time_since_activity = asyncio.get_event_loop().time() - self._last_activity_time
+
         if (
             time_since_activity > self.INACTIVITY_TIMEOUT_SEC
+            and self._analyses_in_flight == 0
             and self._pending_vision_events
         ):
             logger.info("Inactivity timeout reached. Flushing pending vision events.")
-            self._last_activity_time = asyncio.get_event_loop().time()
-            asyncio.create_task(self._analyze_turn(speech_event=None))
+            await self._trigger_turn_analysis(speech_event=None)
 
-    async def _analyze_turn(self, speech_event: Optional[dict]):
+    async def _analyze_turn(
+        self, speech_event: Optional[dict], visual_events: List[Dict]
+    ):
         """
-        Orchestrates the analysis of a user's turn, then hands off the
-        results to the logging queue.
+        A stateless method that analyzes a turn and queues the result for logging.
         """
-        if self._analysis_lock.locked():
-            logger.warning("Analysis already in progress. Skipping this trigger.")
-            return
+        async with self._state_lock:
+            self._analyses_in_flight += 1
 
-        async with self._analysis_lock:
-            try:
-                visual_events = list(self._pending_vision_events)
-                self._pending_vision_events.clear()
-                if not speech_event and not visual_events:
-                    return
+        try:
+            key_events, frame_map = await self._get_llm_analysis(
+                speech_event, visual_events
+            )
 
-                key_events, frame_map = await self._get_llm_analysis(
-                    speech_event, visual_events
+            if key_events or speech_event:
+                log_job = (speech_event, key_events, frame_map)
+                await self._logging_queue.put(log_job)
+
+            for event in key_events:
+                await self._event_broker.publish(
+                    "app:comms:screen_annotation",
+                    json.dumps(
+                        {
+                            "event_name": "ScreenAnnotationEvent",
+                            "payload": {"event_description": event.event_description},
+                        }
+                    ),
                 )
-
-                if key_events or speech_event:
-                    log_job = (speech_event, key_events, frame_map)
-                    self._logging_queue.put_nowait(log_job)
-
-                # Publish real-time annotations immediately
-                for event in key_events:
-                    await self._event_broker.publish(
-                        "app:comms:screen_annotation",
-                        json.dumps(
-                            {
-                                "event_name": "ScreenAnnotationEvent",
-                                "payload": {
-                                    "event_description": event.event_description
-                                },
-                            }
-                        ),
-                    )
-            except Exception as e:
-                logger.error(
-                    f"An unhandled exception occurred during turn analysis: {e}",
-                    exc_info=True,
-                )
+        except Exception as e:
+            logger.error(
+                f"An unhandled exception occurred during turn analysis task: {e}",
+                exc_info=True,
+            )
+        finally:
+            async with self._state_lock:
+                self._analyses_in_flight -= 1
 
     async def _get_llm_analysis(
         self,
@@ -422,26 +473,25 @@ class ScreenShareManager:
     ):
         """
         Handles the slow I/O of logging a turn to the TranscriptManager.
-        This method is called by the dedicated logging worker.
         """
-        # If this is a silent turn, store the events and wait for the next speech turn
         if not speech_event:
             if key_events:
                 logger.info(f"Storing {len(key_events)} silent visual event(s).")
-                self._stored_silent_key_events.extend(key_events)
-                self._stored_silent_frame_map.update(frame_map)
+                async with self._state_lock:
+                    self._stored_silent_key_events.extend(key_events)
+                    self._stored_silent_frame_map.update(frame_map)
             return
 
-        # This is a speech turn; combine with any previously stored silent events
-        all_events = sorted(
-            self._stored_silent_key_events + key_events, key=lambda e: e.timestamp
-        )
-        self._stored_silent_key_events.clear()
+        async with self._state_lock:
+            all_events = sorted(
+                self._stored_silent_key_events + key_events, key=lambda e: e.timestamp
+            )
+            self._stored_silent_key_events.clear()
 
-        combined_frame_map = self._stored_silent_frame_map.copy()
+            combined_frame_map = self._stored_silent_frame_map.copy()
+            self._stored_silent_frame_map.clear()
+
         combined_frame_map.update(frame_map)
-        self._stored_silent_frame_map.clear()
-
         speech_payload = speech_event["payload"]
 
         images_to_add = []
