@@ -749,10 +749,9 @@ class ContactManager(BaseContactManager):
             ),
         )
 
+        use_semantic_cache = is_semantic_cache_enabled()
         # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
-        tool_policy_fn = (
-            None if is_semantic_cache_enabled() else self._default_ask_tool_policy
-        )
+        tool_policy_fn = None if use_semantic_cache else self._default_ask_tool_policy
 
         handle = start_async_tool_loop(
             client,
