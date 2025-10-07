@@ -2997,7 +2997,7 @@ def build_precondition_prompt(
     return textwrap.dedent(
         f"""
         You are a state analysis expert for an autonomous web agent.
-        A function that interacts with a web browser has just executed successfully. Your task is to describe the necessary **precondition** for this function to run correctly based on its first few actions and the visual state when it started.
+        A function that interacts with a web browser has just executed successfully. Your task is to describe the necessary **precondition** for this function to run correctly. A good precondition is general enough to be reusable but specific enough to ensure the function works.
 
         **Function Source Code:**
         ```python
@@ -3011,16 +3011,20 @@ def build_precondition_prompt(
 
         {screenshot_section}
 
-        **Your Task:**
-        1.  Analyze the function's code, its interactions, and the entry screenshot.
-        2.  If the first action is `navigate`, your primary goal is to populate the `precondition.url` field.
-        3.  If the first action is `act` or `observe`, your primary goal is to populate the `precondition.description` field with a clear, verifiable description of the page state seen in the screenshot.
-        4.  If the function does not interact with the browser at all, the status should be "not_applicable".
+        **Your Task & Reasoning Framework:**
+        1.  **Analyze the function's purpose.** What is the core task? (e.g., "extracting search results", "clicking the main login button", "navigating to a specific settings page").
+        2.  **Determine the required state.** Based on the function's first few actions and the visual screenshot, what *must* be true about the page for this function to succeed?
+        3.  **Prioritize Description Over Specific URLs.**
+            * If the function's purpose is generic (like extracting search results or items from a list), the **URL is incidental**. The important precondition is the *type* of page. In this case, provide a `description` like "A search results page must be visible" or "A product listing page must be displayed." **Do not include a specific URL.**
+            * If the function's purpose is tied to a **specific, static page** (like a homepage, a login page, or a settings dashboard), then the **URL is essential**. Provide the `url` in the precondition. A `description` can still be added for clarity (e.g., "The main login form must be visible").
+        4.  **Be concise and verifiable.** The description should be a simple statement about the visual state of the page.
+
+        **Examples:**
+        * **Good (Generic):** `{{ "status": "ok", "description": "A list of search results for a recipe is displayed." }}`
+        * **Good (Specific):** `{{ "status": "ok", "url": "https://example.com/login", "description": "The main login form is visible." }}`
+        * **Bad (Too Rigid):** `{{ "status": "ok", "url": "https://example.com/search?q=laptops" }}` (This is not reusable for other searches).
 
         Respond with ONLY the JSON object matching the `PreconditionDecision` schema.
-        - `status`: "ok" if a precondition was identified, or "not_applicable" if none is needed.
-        - `url`: If status is "ok", the URL of the page that must be present for the function to run. This is highly recommended.
-        - `description`: If status is "ok", a description of the page state that must be present for the function to run. This is required if URL is not provided.
         """,
     )
 
@@ -3045,11 +3049,12 @@ def build_state_verification_prompt(
             ```
         2.  **Visual Evidence:** A screenshot of the current browser page is provided. This is your primary source of truth.
 
-        **Your Decision:**
-        Compare the **Required Precondition** against the **Current Browser State**.
-        - Does the current URL match the required URL (if specified)?
-        - More importantly, does the visual content of the page (from the screenshot) match the required `description`?
-        - For example, if the description is "The 'Admin Panel' dialog must be open", you must visually confirm that this dialog is present and visible in the screenshot.
+        **Your Decision Framework:**
+        1.  **Prioritize the `description`:** If a `description` is provided in the precondition, it is the most important requirement. Visually confirm if the screenshot matches this description. For example, if the description is "A search results page is visible," check if the image shows a list of results.
+        2.  **Check the `url` (if relevant):**
+            * If a `description` is present, the `url` is a secondary hint. The state can still match if the description is met, even if the URL is slightly different (e.g., different query parameters).
+            * If **only** a `url` is provided, you must verify that the current URL in the browser matches it exactly.
+        3.  **Make a Decision:** Based on the above, decide if the current state `matches` the precondition.
 
         Respond with ONLY the JSON object matching the `StateVerificationDecision` schema.
         """,
