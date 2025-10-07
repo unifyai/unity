@@ -56,6 +56,18 @@ class ScreenShareManager:
        - This event immediately triggers a full "turn analysis," which gathers the
          user's speech and any pending vision events that occurred recently.
 
+    3. Decoupled Architecture (Analysis vs. Logging):
+       - To maintain responsiveness, the manager separates fast analysis from slow logging.
+       - The `_analyze_turn` method, protected by a lock, performs the quick task
+         of gathering context and calling the LLM.
+       - As soon as the LLM responds, `_analyze_turn` places the results into a
+         dedicated `_logging_queue` and immediately releases its lock.
+       - A separate, long-running `_logging_worker` task continuously pulls from
+         this queue and handles the slow, I/O-bound operations of batch-uploading
+         images to the backend and persisting the final transcript message.
+       - This ensures the manager is always ready to process new screen or speech
+         events without getting blocked by network latency from previous events.
+
     Event Processing Scenarios
     --------------------------
     The manager is designed to handle three primary scenarios to ensure all
@@ -131,15 +143,20 @@ class ScreenShareManager:
         self._last_user_utterance_message_id: Optional[int] = None
         self._last_activity_time: float = asyncio.get_event_loop().time()
         self._analysis_lock = asyncio.Lock()
+        self._logging_queue = asyncio.Queue()
+        self._logging_task: Optional[asyncio.Task] = None
 
     async def start(self):
-        """Starts the main event listening loop for the manager."""
-        logger.info("ScreenShareManager started. Listening for events...")
+        """Starts the main event listening and logging worker loops."""
+        logger.info("ScreenShareManager started. Initializing background tasks...")
+        self._logging_task = asyncio.create_task(self._logging_worker())
         await self._listen_for_events()
 
     def stop(self):
         """Signals the manager to gracefully shut down."""
         self._stop_event.set()
+        if self._logging_task and not self._logging_task.done():
+            self._logging_task.cancel()
         logger.info("ScreenShareManager stopping...")
 
     def _b64_to_image(self, b64_string: str) -> Image.Image:
@@ -187,6 +204,23 @@ class ScreenShareManager:
                     logger.error(f"Error in event listener loop: {e}", exc_info=True)
                     await asyncio.sleep(1)
 
+    async def _logging_worker(self):
+        """Continuously processes analysis results from a queue and logs them."""
+        logger.info("Logging worker started.")
+        while not self._stop_event.is_set():
+            try:
+                log_job = await self._logging_queue.get()
+                speech_event, key_events, frame_map = log_job
+
+                await self._log_turn_to_transcript(speech_event, key_events, frame_map)
+
+                self._logging_queue.task_done()
+            except asyncio.CancelledError:
+                logger.info("Logging worker received cancellation request.")
+                break
+            except Exception as e:
+                logger.error(f"Error in logging worker: {e}", exc_info=True)
+
     async def _handle_frame_event(self, event_data: dict):
         """Processes a single video frame event."""
         self._last_activity_time = asyncio.get_event_loop().time()
@@ -233,11 +267,15 @@ class ScreenShareManager:
 
     async def _analyze_turn(self, speech_event: Optional[dict]):
         """
-        Orchestrates the analysis of a user's turn, gathering context,
-        calling the LLM, and dispatching the results.
+        Orchestrates the analysis of a user's turn, then hands off the
+        results to the logging queue.
         """
-        try:
-            async with self._analysis_lock:
+        if self._analysis_lock.locked():
+            logger.warning("Analysis already in progress. Skipping this trigger.")
+            return
+
+        async with self._analysis_lock:
+            try:
                 visual_events = list(self._pending_vision_events)
                 self._pending_vision_events.clear()
                 if not speech_event and not visual_events:
@@ -247,23 +285,11 @@ class ScreenShareManager:
                     speech_event, visual_events
                 )
 
-                if not key_events:
-                    if speech_event:
-                        await self._log_turn_to_transcript(speech_event, [], {})
-                    return
+                if key_events or speech_event:
+                    log_job = (speech_event, key_events, frame_map)
+                    self._logging_queue.put_nowait(log_job)
 
-                if speech_event:
-                    combined_frame_map = self._stored_silent_frame_map.copy()
-                    combined_frame_map.update(frame_map)
-                    await self._log_turn_to_transcript(
-                        speech_event, key_events, combined_frame_map
-                    )
-                    self._stored_silent_frame_map.clear()
-                else:
-                    logger.info(f"Storing {len(key_events)} silent visual event(s).")
-                    self._stored_silent_key_events.extend(key_events)
-                    self._stored_silent_frame_map.update(frame_map)
-
+                # Publish real-time annotations immediately
                 for event in key_events:
                     await self._event_broker.publish(
                         "app:comms:screen_annotation",
@@ -276,12 +302,11 @@ class ScreenShareManager:
                             }
                         ),
                     )
-        except Exception as e:
-            logger.error(
-                f"An unhandled exception occurred during turn analysis: {e}",
-                exc_info=True,
-            )
-        # --- MODIFICATION END ---
+            except Exception as e:
+                logger.error(
+                    f"An unhandled exception occurred during turn analysis: {e}",
+                    exc_info=True,
+                )
 
     async def _get_llm_analysis(
         self,
@@ -391,15 +416,32 @@ class ScreenShareManager:
 
     async def _log_turn_to_transcript(
         self,
-        speech_event: dict,
+        speech_event: Optional[dict],
         key_events: List[KeyEvent],
         frame_map: Dict[float, str],
     ):
-        """Logs a speech-based turn to the TranscriptManager, including any stored silent events."""
+        """
+        Handles the slow I/O of logging a turn to the TranscriptManager.
+        This method is called by the dedicated logging worker.
+        """
+        # If this is a silent turn, store the events and wait for the next speech turn
+        if not speech_event:
+            if key_events:
+                logger.info(f"Storing {len(key_events)} silent visual event(s).")
+                self._stored_silent_key_events.extend(key_events)
+                self._stored_silent_frame_map.update(frame_map)
+            return
+
+        # This is a speech turn; combine with any previously stored silent events
         all_events = sorted(
             self._stored_silent_key_events + key_events, key=lambda e: e.timestamp
         )
         self._stored_silent_key_events.clear()
+
+        combined_frame_map = self._stored_silent_frame_map.copy()
+        combined_frame_map.update(frame_map)
+        self._stored_silent_frame_map.clear()
+
         speech_payload = speech_event["payload"]
 
         images_to_add = []
@@ -408,13 +450,15 @@ class ScreenShareManager:
         for event in all_events:
             # 1. Register image, get ID
             rep_ts = event.representative_timestamp
-            screenshot_b64 = frame_map.get(rep_ts)
+            screenshot_b64 = combined_frame_map.get(rep_ts)
 
             # Implement closest-match fallback for timestamps
-            if not screenshot_b64 and frame_map:
-                closest_ts = min(frame_map.keys(), key=lambda ts: abs(ts - rep_ts))
+            if not screenshot_b64 and combined_frame_map:
+                closest_ts = min(
+                    combined_frame_map.keys(), key=lambda ts: abs(ts - rep_ts)
+                )
                 if abs(closest_ts - rep_ts) < 1.0:
-                    screenshot_b64 = frame_map[closest_ts]
+                    screenshot_b64 = combined_frame_map[closest_ts]
 
             if screenshot_b64:
                 images_to_add.append(
@@ -437,19 +481,19 @@ class ScreenShareManager:
 
         for event in all_events:
             image_id = timestamp_to_image_id.get(event.timestamp)
-            if not image_id:
-                logger.warning(
-                    f"Could not find a logged image_id for event at timestamp: {event.timestamp}"
-                )
-                continue
 
-            screenshot_b64 = frame_map.get(event.representative_timestamp)
-            if not screenshot_b64 and frame_map:
-                closest_ts = min(frame_map.keys(), key=lambda ts: abs(ts - rep_ts))
+            screenshot_b64 = combined_frame_map.get(event.representative_timestamp)
+            if not screenshot_b64 and combined_frame_map:
+                closest_ts = min(
+                    combined_frame_map.keys(), key=lambda ts: abs(ts - rep_ts)
+                )
                 if abs(closest_ts - rep_ts) < 1.0:
-                    screenshot_b64 = frame_map[closest_ts]
+                    screenshot_b64 = combined_frame_map[closest_ts]
 
             if not screenshot_b64:
+                logger.warning(
+                    f"Could not find screenshot for event at {event.timestamp}"
+                )
                 continue
 
             # 2. Build screen_share entry
@@ -462,7 +506,7 @@ class ScreenShareManager:
             )
 
             # 3. Build images entry if there's a triggering phrase
-            if event.triggering_phrase:
+            if event.triggering_phrase and image_id:
                 try:
                     start_index = speech_payload["content"].index(
                         event.triggering_phrase
