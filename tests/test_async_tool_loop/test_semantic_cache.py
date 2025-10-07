@@ -3,12 +3,10 @@ import asyncio
 import pytest
 
 from unity.common.async_tool_loop import start_async_tool_loop
-from unity.common._async_tool.semantic_cache import (
-    _construct_new_user_message,
-    _clean_tool_trajectory,
-)
+from unity.common._async_tool import semantic_cache as sc
 from tests.helpers import _handle_project
 from unity.common._async_tool.semantic_cache import _Config
+from unity.common.tool_spec import read_only
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +29,7 @@ def create_client():
 @pytest.mark.asyncio
 @_handle_project
 async def test_single_tool_exact_match():
+    @read_only
     def say_hello():
         return "Hello from Unity!"
 
@@ -55,6 +54,8 @@ async def test_single_tool_exact_match():
     assert (
         say_hello_first_count == 1
     ), f"Expected 1 say_hello tool call in first run, got {say_hello_first_count}"
+
+    sc._SEMANTIC_CACHE_SAVER.wait()
 
     client = create_client()
     handle = start_async_tool_loop(
@@ -83,6 +84,7 @@ async def test_single_tool_exact_match():
 @pytest.mark.asyncio
 @_handle_project
 async def test_single_tool_no_exact_match():
+    @read_only
     def say_hello():
         return "Hello from Unity!"
 
@@ -107,6 +109,8 @@ async def test_single_tool_no_exact_match():
     assert (
         say_hello_first_count == 1
     ), f"Expected 1 say_hello tool call in first run, got {say_hello_first_count}"
+
+    sc._SEMANTIC_CACHE_SAVER.wait()
 
     client = create_client()
     handle = start_async_tool_loop(
@@ -136,9 +140,11 @@ async def test_single_tool_no_exact_match():
 @_handle_project
 async def test_tool_with_different_arguments():
 
+    @read_only
     def search_contact(name: str):
         return f"Contact found: {name}"
 
+    @read_only
     def find_contact(name: str):
         return f"Contact not found: {name}"
 
@@ -151,6 +157,7 @@ async def test_tool_with_different_arguments():
     )
     res = await handle.result()
     assert "John Doe" in res
+    sc._SEMANTIC_CACHE_SAVER.wait()
 
     client = create_client()
     handle = start_async_tool_loop(
@@ -170,6 +177,7 @@ async def test_tool_with_different_arguments():
 async def test_tool_is_re_called():
     _call_count = 0
 
+    @read_only
     def current_weather():
         nonlocal _call_count
         if _call_count == 0:
@@ -190,6 +198,8 @@ async def test_tool_is_re_called():
     assert "The weather is sunny" in res
     assert _call_count == 1
 
+    sc._SEMANTIC_CACHE_SAVER.wait()
+
     client = create_client()
     handle = start_async_tool_loop(
         client,
@@ -198,17 +208,19 @@ async def test_tool_is_re_called():
         semantic_cache=True,
     )
     res = await handle.result()
-    assert "The weather is cloudy" in res
+    assert "cloudy" in res.lower()
     assert _call_count == 2, f"Expected 2 calls, got {_call_count}"
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_construct_new_user_message():
+    @read_only
     async def say_hello():
         await asyncio.sleep(1)
         return "Hello from Unity!"
 
+    @read_only
     async def say_goodbye():
         return "Goodbye from Unity!"
 
@@ -224,9 +236,10 @@ async def test_construct_new_user_message():
     await handle.result()
 
     msgs = client.messages
-    new_user_message = await _construct_new_user_message(
+    new_user_message = sc._SEMANTIC_CACHE_SAVER._construct_new_user_message(
         initial_user_message,
         msgs,
+        client.messages,
     )
 
     assert "say_goodbye" in new_user_message
@@ -236,12 +249,15 @@ async def test_construct_new_user_message():
 @pytest.mark.asyncio
 @_handle_project
 async def test_prune_tools():
+    @read_only
     def say_hello(data: str) -> str:
         return f"Hello from Unity!"
 
+    @read_only
     def say_goodbye(data: str) -> str:
         return f"Goodbye from Unity!"
 
+    @read_only
     def find_contact(name: str) -> str:
         return f"Contact found: {name}"
 
@@ -264,7 +280,7 @@ async def test_prune_tools():
     )
 
     await handle.result()
-    cleaned = await _clean_tool_trajectory(
+    cleaned = sc._SEMANTIC_CACHE_SAVER._clean_tool_trajectory(
         "respond with the result of the find_contact tool",
         client.messages,
     )
@@ -278,6 +294,7 @@ async def test_prune_tools():
 @pytest.mark.asyncio
 @_handle_project
 async def test_tool_call_signature_updated():
+    @read_only
     def say_hello():
         return "Hello from Unity!"
 
@@ -290,7 +307,9 @@ async def test_tool_call_signature_updated():
     )
     res = await handle.result()
     assert "Hello from Unity!" in res
+    sc._SEMANTIC_CACHE_SAVER.wait()
 
+    @read_only
     def _say_hello_new(user: str):
         return f"Hello from {user}!"
 

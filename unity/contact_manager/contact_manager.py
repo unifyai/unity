@@ -10,6 +10,7 @@ from ..knowledge_manager.types import ColumnType
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
+from ..common.tool_spec import read_only
 
 import unify
 from .types.contact import Contact
@@ -31,6 +32,7 @@ from ..common.semantic_search import (
     fetch_top_k_by_references,
     backfill_rows,
 )
+from ..constants import is_semantic_cache_enabled
 
 
 class ContactManager(BaseContactManager):
@@ -450,6 +452,7 @@ class ContactManager(BaseContactManager):
         return self._store.get_columns()
 
     # Apply timing to tool methods
+    @read_only
     def _list_columns(
         self,
         *,
@@ -745,6 +748,11 @@ class ContactManager(BaseContactManager):
                 include_activity=include_activity,
             ),
         )
+
+        use_semantic_cache = is_semantic_cache_enabled()
+        # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
+        tool_policy_fn = None if use_semantic_cache else self._default_ask_tool_policy
+
         handle = start_async_tool_loop(
             client,
             text,
@@ -752,8 +760,9 @@ class ContactManager(BaseContactManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=self._default_ask_tool_policy,
+            tool_policy=tool_policy_fn,
             preprocess_msgs=inject_broader_context,
+            semantic_cache=use_semantic_cache,
         )
 
         if _return_reasoning_steps:
@@ -1492,6 +1501,7 @@ class ContactManager(BaseContactManager):
             },
         }
 
+    @read_only
     def _search_contacts(
         self,
         *,
@@ -1562,6 +1572,7 @@ class ContactManager(BaseContactManager):
         )
         return [Contact(**r) for r in filled]
 
+    @read_only
     def _filter_contacts(
         self,
         *,
