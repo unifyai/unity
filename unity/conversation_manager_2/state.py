@@ -459,7 +459,7 @@ class ConversationManagerState:
     def _render_thread_message(self, message: Message | EmailMessage):
         is_new = self.last_snapshot_time < message.timestamp
 
-        if isinstance(message, EmailMessage) == "email":
+        if isinstance(message, EmailMessage):
             return f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]:
 Subject: {message.subject}
 Body:
