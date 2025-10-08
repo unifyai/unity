@@ -23,13 +23,12 @@ from .tools_utils import (
     create_tool_call_message,
 )
 from .images import (
-    append_source_scoped_images,
-    default_source_label,
     set_live_images_context,
     reset_live_images_context,
     align_images_for as _align_images_for,
     build_live_image_tools,
     refresh_overview_doc_if_present,
+    append_source_scoped_images_with_text,
 )
 from ..llm_helpers import method_to_schema, _dumps
 from .loop_config import (
@@ -545,9 +544,10 @@ async def async_tool_loop_inner(
 
         # Append any images sent alongside the clarification request
         with suppress(Exception):
-            append_source_scoped_images(
+            append_source_scoped_images_with_text(
                 images_from_child,
-                default_source_label("clar_request"),
+                "clar_request",
+                question_text,
             )
 
     async def _handle_notification(src_task: asyncio.Task, payload: Any) -> None:
@@ -595,9 +595,18 @@ async def async_tool_loop_inner(
             images_from_child = (
                 payload.get("images") if isinstance(payload, dict) else None
             )
-            append_source_scoped_images(
+            try:
+                base_text = (
+                    payload.get("message")
+                    if isinstance(payload, dict)
+                    else str(payload)
+                )
+            except Exception:
+                base_text = ""
+            append_source_scoped_images_with_text(
                 images_from_child,
-                default_source_label("notification"),
+                "notification",
+                base_text,
             )
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
@@ -828,9 +837,10 @@ async def async_tool_loop_inner(
 
                 # If images accompany this interjection, accept source-scoped keys and append
                 with suppress(Exception):
-                    append_source_scoped_images(
+                    append_source_scoped_images_with_text(
                         _incoming_images,
-                        default_source_label("interjection"),
+                        "interjection",
+                        _msg_text,
                     )
 
                 # Append this interjection to the user-visible history for future context
@@ -1476,11 +1486,16 @@ async def async_tool_loop_inner(
                         if task_to_cancel:
                             tools_data.pop_task(task_to_cancel)
 
-                        # Record any images provided with the stop helper
+                        # Record any images provided with the stop helper and capture reason text
                         with suppress(Exception):
-                            append_source_scoped_images(
+                            try:
+                                reason_txt = payload.get("reason")
+                            except Exception:
+                                reason_txt = ""
+                            append_source_scoped_images_with_text(
                                 payload.get("images"),
-                                default_source_label("stop"),
+                                "stop",
+                                reason_txt or "",
                             )
 
                         tool_msg = create_tool_call_message(
@@ -1644,9 +1659,10 @@ async def async_tool_loop_inner(
 
                         # Record any images provided with the clarification answer
                         with suppress(Exception):
-                            append_source_scoped_images(
+                            append_source_scoped_images_with_text(
                                 args.get("images") if isinstance(args, dict) else None,
-                                default_source_label("clar_answer"),
+                                "clar_answer",
+                                ans,
                             )
                         # Always publish a tool reply acknowledging the clarify helper
                         tool_reply_msg = create_tool_call_message(
@@ -1719,9 +1735,10 @@ async def async_tool_loop_inner(
 
                         # Record any images provided with the interjection helper
                         with suppress(Exception):
-                            append_source_scoped_images(
+                            append_source_scoped_images_with_text(
                                 payload.get("images"),
-                                default_source_label("interjection"),
+                                "interjection",
+                                new_text,
                             )
 
                         # ― emit a tool message so the chat log stays tidy ---

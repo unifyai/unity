@@ -9,7 +9,9 @@ from contextlib import suppress
 from .tools_data import ToolsData
 from .messages import forward_handle_call
 from .tools_utils import ToolCallMetadata
-from .images import append_source_scoped_images, default_source_label
+from .images import (
+    append_source_scoped_images_with_text,
+)
 from .utils import maybe_await
 
 
@@ -178,9 +180,10 @@ class DynamicToolFactory:
                 )
             # Append any provided images into the live registry/log
             try:
-                append_source_scoped_images(
+                append_source_scoped_images_with_text(
                     _kw.get("images"),
-                    default_source_label("stop"),
+                    "stop",
+                    _kw.get("reason") or "",
                 )
             except Exception:
                 pass
@@ -243,9 +246,10 @@ class DynamicToolFactory:
                     )
                 # Append any provided images into the live registry/log
                 try:
-                    append_source_scoped_images(
+                    append_source_scoped_images_with_text(
                         _kw.get("images"),
-                        default_source_label("interjection"),
+                        "interjection",
+                        _kw.get("content") or _kw.get("message") or "",
                     )
                 except Exception:
                     pass
@@ -289,9 +293,10 @@ class DynamicToolFactory:
                 await task_info.interject_queue.put(actual)
                 # Append any provided images into the live registry/log
                 try:
-                    append_source_scoped_images(
+                    append_source_scoped_images_with_text(
                         images,
-                        default_source_label("interjection"),
+                        "interjection",
+                        actual,
                     )
                 except Exception:
                     pass
@@ -363,9 +368,10 @@ class DynamicToolFactory:
 
         async def _clarify(answer: str, images: dict | None = None) -> Dict[str, str]:  # type: ignore[valid-type]
             try:
-                append_source_scoped_images(
+                append_source_scoped_images_with_text(
                     images,
-                    default_source_label("clar_answer"),
+                    "clar_answer",
+                    answer,
                 )
             except Exception:
                 pass
