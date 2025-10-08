@@ -350,3 +350,25 @@ def test_private_merge_contacts_returns_structured_outcome():
     assert kept is not None and deleted is not None and kept != deleted
     assert {kept, deleted} == {cid1, cid2}
     assert isinstance(details.get("overrides", {}), dict)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 14. Private: _create_contact                                               #
+# ────────────────────────────────────────────────────────────────────────────
+@_handle_project
+def test_private_create_contact_returns_structured_outcome():
+    cm = SimulatedContactManager()
+
+    outcome = cm._create_contact(
+        first_name="Alice",
+        surname="Example",
+        email_address="alice@example.com",
+        respond_to=True,
+        custom_fields={"priority": "high"},
+    )
+
+    assert isinstance(outcome, dict)
+    assert "outcome" in outcome and isinstance(outcome["outcome"], str)
+    assert "details" in outcome and isinstance(outcome["details"], dict)
+    cid = outcome["details"].get("contact_id")
+    assert isinstance(cid, int)
