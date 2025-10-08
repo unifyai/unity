@@ -8,6 +8,7 @@ from unity.contact_manager.simulated import (
     SimulatedContactManager,
     _SimulatedContactHandle,
 )
+from unity.contact_manager.types.contact import Contact
 
 # keeps each test isolated in its own Unify project / trace context
 from tests.helpers import _handle_project
@@ -267,3 +268,85 @@ async def test_handle_ask():
     assert isinstance(handle_answer, str) and handle_answer.strip(), (
         "Handle should still yield a non-empty answer after nested ask",
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 10. Private: _filter_contacts                                              #
+# ────────────────────────────────────────────────────────────────────────────
+@_handle_project
+def test_private_filter_contacts_basic():
+    cm = SimulatedContactManager(
+        "Simulated CRM for private method tests.",
+    )
+
+    # Use a permissive filter and small limit to keep runtime low
+    results = cm._filter_contacts(
+        filter="first_name is None or first_name is not None",
+        offset=0,
+        limit=3,
+    )
+
+    assert isinstance(results, list)
+    assert len(results) <= 3
+    # All returned items should be Contact models
+    assert all(isinstance(c, Contact) for c in results)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 11. Private: _update_contact                                               #
+# ────────────────────────────────────────────────────────────────────────────
+@_handle_project
+def test_private_update_contact_returns_structured_outcome():
+    cm = SimulatedContactManager()
+
+    outcome = cm._update_contact(
+        contact_id=42,
+        first_name="Alice",
+        surname="Example",
+        response_policy="Share weekly updates",
+        custom_fields={"priority": "high"},
+    )
+
+    assert isinstance(outcome, dict)
+    assert "outcome" in outcome and isinstance(outcome["outcome"], str)
+    assert "details" in outcome and isinstance(outcome["details"], dict)
+    assert outcome["details"].get("contact_id") == 42
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 12. Private: _delete_contact                                               #
+# ────────────────────────────────────────────────────────────────────────────
+@_handle_project
+def test_private_delete_contact_returns_structured_outcome():
+    cm = SimulatedContactManager()
+
+    outcome = cm._delete_contact(contact_id=77)
+
+    assert isinstance(outcome, dict)
+    assert outcome.get("details", {}).get("contact_id") == 77
+    assert isinstance(outcome.get("outcome", ""), str)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 13. Private: _merge_contacts                                               #
+# ────────────────────────────────────────────────────────────────────────────
+@_handle_project
+def test_private_merge_contacts_returns_structured_outcome():
+    cm = SimulatedContactManager()
+
+    cid1, cid2 = 12, 34
+    outcome = cm._merge_contacts(
+        contact_id_1=cid1,
+        contact_id_2=cid2,
+        overrides={"email_address": 2},
+    )
+
+    assert isinstance(outcome, dict)
+    details = outcome.get("details", {})
+    assert isinstance(details, dict)
+
+    kept = details.get("kept_contact_id")
+    deleted = details.get("deleted_contact_id")
+    assert kept is not None and deleted is not None and kept != deleted
+    assert {kept, deleted} == {cid1, cid2}
+    assert isinstance(details.get("overrides", {}), dict)
