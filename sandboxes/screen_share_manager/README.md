@@ -20,7 +20,7 @@ Running the sandbox
     *   `redis`: Tells Docker to download and run the official Redis image.
 3. **Install required libraries** 
     ```bash
-    pip install mss redis numpy Pillow
+    pip install mss redis numpy Pillow opencv-python
     ```
 4. **Setup environment variables** 
     | Variable Name | Requirement | Description |

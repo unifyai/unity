@@ -7,7 +7,7 @@ voice or text input to simulate a user turn. It then fetches and displays the
 richly annotated transcript message created by the ScreenShareManager.
 
 Prerequisites:
-- `pip install mss redis numpy Pillow`
+- `pip install mss redis numpy Pillow opencv-python`
 
 Example Usage (after getting coordinates):
 ------------------------------------------
