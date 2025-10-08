@@ -20,6 +20,13 @@ LIVE_IMAGES_LOG: ContextVar[list[str]] = ContextVar(
     default=[],
 )
 
+# Loop-scoped mapping of source label (e.g. "user_message", "interjection0")
+# to the base text used for span alignment so we can display substrings.
+LIVE_IMAGES_SOURCE_TEXTS: ContextVar[dict[str, str]] = ContextVar(
+    "LIVE_IMAGES_SOURCE_TEXTS",
+    default={},
+)
+
 
 # ── Helpers for arg-scoped span keys (e.g. "question[2:9]") ─────────────———
 _ARG_SPAN_RX = re.compile(
@@ -144,6 +151,49 @@ def append_source_scoped_images(images: dict | None, default_source_label: str) 
                 reg[int(getattr(handle, "image_id", -1))] = handle
             with suppress(Exception):
                 log.append(f"{src}:{int(getattr(handle, 'image_id', -1))}:{span}")
+    except Exception:
+        return
+
+
+def append_source_scoped_images_with_text(
+    images: dict | None,
+    prefix: str,
+    text: Any,
+) -> str | None:
+    """
+    Convenience wrapper: generate a new source label for the given prefix (e.g.,
+    "interjection" → "interjectionN"), record the base text for substring display,
+    and append the provided images under that source.
+    Returns the computed source label, or None on failure.
+    """
+    try:
+        label = default_source_label(prefix)
+        record_source_text(label, text)
+        append_source_scoped_images(images, label)
+        return label
+    except Exception:
+        return None
+
+
+def record_source_text(source_label: str, text: Any) -> None:
+    """
+    Record a human-readable base text for a given dynamic image source label.
+
+    The text is later used to render the extracted substring alongside indices
+    (e.g., for entries like "interjection0[5:11]") in the live overview.
+    """
+    try:
+        if not source_label:
+            return
+        base_text = extract_alignment_text_from_value(text)
+        if base_text is None:
+            return
+        mapping = LIVE_IMAGES_SOURCE_TEXTS.get()
+        if not isinstance(mapping, dict):
+            mapping = {}
+        mapping = dict(mapping)
+        mapping[str(source_label)] = str(base_text)
+        LIVE_IMAGES_SOURCE_TEXTS.set(mapping)
     except Exception:
         return
 
@@ -285,6 +335,18 @@ def set_live_images_context(
                     _iid = int(getattr(_ih, "image_id", -1))
                 seed_log.append(f"user_message:{_iid}:{_k}")
         log_token = LIVE_IMAGES_LOG.set(seed_log)
+
+        # Also seed source→text mapping so substrings can be shown for user_message
+        try:
+            base_text = extract_alignment_text_from_value(reference_message)
+            mapping = LIVE_IMAGES_SOURCE_TEXTS.get()
+            if not isinstance(mapping, dict):
+                mapping = {}
+            mapping = dict(mapping)
+            mapping["user_message"] = str(base_text)
+            LIVE_IMAGES_SOURCE_TEXTS.set(mapping)
+        except Exception:
+            pass
         return reg_token, log_token
     except Exception:
         return None, None
@@ -375,8 +437,16 @@ def build_live_image_tools(
         for rec in prior:
             with _suppress(Exception):
                 src, iid_s, span_key = rec.split(":", 2)
+                base_text = ""
+                try:
+                    base_text = (LIVE_IMAGES_SOURCE_TEXTS.get() or {}).get(src, "")
+                except Exception:  # pragma: no cover - defensive
+                    base_text = ""
+                _substr = ""
+                with _suppress(Exception):
+                    _substr = substring_from_span(str(base_text), str(span_key))
                 prior_lines.append(
-                    f"- source={src}, id={int(iid_s)}, span={span_key}",
+                    f"- source={src}, id={int(iid_s)}, span={span_key}, substring={_substr!r}",
                 )
         if prior_lines:
             overview_doc = (
@@ -402,8 +472,11 @@ def build_live_image_tools(
         ih = id_to_handle.get(int(image_id))
         if ih is None:
             return {"error": f"image_id {int(image_id)} not found"}
+        # Record source text for this ask-turn so appended images can show substrings
         with _suppress(Exception):
-            append_source_scoped_images(images, default_source_label("ask"))
+            _label = default_source_label("ask")
+            record_source_text(_label, question)
+            append_source_scoped_images(images, _label)
         try:
             return await ih.ask(question)
         except Exception as _exc:  # noqa: BLE001
@@ -627,8 +700,15 @@ def refresh_overview_doc_if_present(normalized_tools: dict) -> None:
             for rec in LIVE_IMAGES_LOG.get() or []:
                 try:
                     src, iid_s, span_key = rec.split(":", 2)
+                    # Attempt to compute substring if we have source text
+                    base_text = (LIVE_IMAGES_SOURCE_TEXTS.get() or {}).get(src, "")
+                    _substr = ""
+                    try:
+                        _substr = substring_from_span(str(base_text), str(span_key))
+                    except Exception:
+                        _substr = ""
                     prior_lines.append(
-                        f"- source={src}, id={int(iid_s)}, span={span_key}",
+                        f"- source={src}, id={int(iid_s)}, span={span_key}, substring={_substr!r}",
                     )
                 except Exception:
                     continue
