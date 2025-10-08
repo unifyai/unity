@@ -129,11 +129,14 @@ class AudioPlayer(App):
     }
     """
 
-    def __init__(self, assistant_id: str, assistant_name: str, timestamp_str: str):
+    def __init__(
+        self, assistant_id: str, assistant_name: str, timestamp_str: str, call_url: str
+    ):
         super().__init__()
         self.assistant_id = assistant_id
         self.assistant_name = assistant_name
         self.timestamp_str = timestamp_str
+        self.call_url = call_url
         self.audio_file = None
         self.phone_utterance_seconds = []
         self.is_playing = False
@@ -176,8 +179,11 @@ class AudioPlayer(App):
         try:
             # Fetch data
             timestamp = datetime.strptime(self.timestamp_str, "%Y-%m-%dT%H:%M:%S.%f%z")
-            recording = fetch_nearest_recording(self.assistant_id, timestamp)
-            self.audio_file = fetch_audio_file(recording["url"])
+            if self.call_url:
+                self.audio_file = fetch_audio_file(self.call_url)
+            else:
+                recording = fetch_nearest_recording(self.assistant_id, timestamp)
+                self.audio_file = fetch_audio_file(recording["url"])
             context = f"{self.assistant_name.replace(' ', '')}/Events/Comms"
 
             # Get transcript events
@@ -456,10 +462,13 @@ class AudioPlayer(App):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--assistant-id", type=str, required=True)
-    parser.add_argument("--assistant-name", type=str, required=True)
-    parser.add_argument("--timestamp", type=str, required=True)
+    parser.add_argument("--call-url", type=str)
+    parser.add_argument("--assistant-id", type=str)
+    parser.add_argument("--assistant-name", type=str)
+    parser.add_argument("--timestamp", type=str)
     args = parser.parse_args()
 
-    app = AudioPlayer(args.assistant_id, args.assistant_name, args.timestamp)
+    app = AudioPlayer(
+        args.assistant_id, args.assistant_name, args.timestamp, args.call_url
+    )
     app.run()
