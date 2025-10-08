@@ -42,32 +42,25 @@ async def test_full_change_detection_pipeline_creates_event(
     creates a 'pending_vision_event' via the new sequencer pipeline.
     """
     manager, mocks = mocked_screen_share_manager
-
-    # Manually start the sequencer for the test
     sequencer_task = asyncio.create_task(manager._sequencer())
 
-    # Set initial frame
+    # Set initial frame state in the sequencer
     manager._last_significant_frame_b64 = PNG_BLUE_B64
+    manager._last_significant_frame_pil = manager._b64_to_image(PNG_BLUE_B64)
 
-    # Mock the worker's analysis to return a significant change
+    # Mock the slow comparison functions to return a significant change
     with patch.object(
         manager, "_is_semantically_significant", return_value=True
     ), patch.object(manager, "_calculate_mse", return_value=150.0), patch(
         "unity.screen_share_manager.screen_share_manager.ssim", return_value=0.5
     ):
 
-        # Simulate the worker processing a frame and putting the result on the queue
-        await manager._results_queue.put(
-            {
-                "seq_id": 1,
-                "is_significant": True,
-                "timestamp": 10.0,
-                "frame_b64": PNG_RED_B64,
-                "before_frame_b64": PNG_BLUE_B64,
-            }
-        )
+        # Simulate a worker decoding a frame and putting it on the results queue
+        event_data = {"payload": {"timestamp": 10.0, "frame_b64": PNG_RED_B64}}
+        pil_image = manager._b64_to_image(PNG_RED_B64)
+        await manager._results_queue.put((1, event_data, pil_image))
 
-        await asyncio.sleep(0.01)  # Allow sequencer to run
+        await asyncio.sleep(0.01)  # Allow sequencer to process the result
 
         assert len(manager._pending_vision_events) == 1
         assert manager._pending_vision_events[0]["timestamp"] == 10.0
@@ -88,30 +81,25 @@ async def test_semantic_filter_prevents_event_creation(
     manager, mocks = mocked_screen_share_manager
     sequencer_task = asyncio.create_task(manager._sequencer())
     manager._last_significant_frame_b64 = PNG_BLUE_B64
+    manager._last_significant_frame_pil = manager._b64_to_image(PNG_BLUE_B64)
 
-    # This time, the semantic check returns False, so is_significant is False
+    # This time, the semantic check returns False
     with patch.object(
         manager, "_is_semantically_significant", return_value=False
     ), patch.object(manager, "_calculate_mse", return_value=150.0), patch(
         "unity.screen_share_manager.screen_share_manager.ssim", return_value=0.5
     ):
 
-        # Simulate worker result
-        await manager._results_queue.put(
-            {
-                "seq_id": 1,
-                "is_significant": False,  # The key difference
-                "timestamp": 10.0,
-                "frame_b64": PNG_RED_B64,
-                "before_frame_b64": PNG_BLUE_B64,
-            }
-        )
+        event_data = {"payload": {"timestamp": 10.0, "frame_b64": PNG_RED_B64}}
+        pil_image = manager._b64_to_image(PNG_RED_B64)
+        await manager._results_queue.put((1, event_data, pil_image))
 
         await asyncio.sleep(0.01)
 
-        # The key assertion: no event was created, but the last frame state does NOT update
         assert len(manager._pending_vision_events) == 0
-        assert manager._last_significant_frame_b64 == PNG_BLUE_B64
+        assert (
+            manager._last_significant_frame_b64 == PNG_BLUE_B64
+        )  # State should not change
 
     sequencer_task.cancel()
 
@@ -129,22 +117,14 @@ async def test_initial_frame_sets_baseline_and_creates_no_event(
     manager, mocks = mocked_screen_share_manager
     sequencer_task = asyncio.create_task(manager._sequencer())
     assert manager._last_significant_frame_b64 is None
-    assert len(manager._pending_vision_events) == 0
 
-    # Simulate the first frame result
-    await manager._results_queue.put(
-        {
-            "seq_id": 1,
-            "is_significant": False,  # First frame is never "significant" vs None
-            "timestamp": 1.0,
-            "frame_b64": PNG_BLUE_B64,
-            "before_frame_b64": PNG_BLUE_B64,
-        }
-    )
+    # Simulate the first-ever frame
+    event_data = {"payload": {"timestamp": 1.0, "frame_b64": PNG_BLUE_B64}}
+    pil_image = manager._b64_to_image(PNG_BLUE_B64)
+    await manager._results_queue.put((1, event_data, pil_image))
 
     await asyncio.sleep(0.01)
 
-    # It should set the baseline but not create a pending event
     assert manager._last_significant_frame_b64 == PNG_BLUE_B64
     assert len(manager._pending_vision_events) == 0
 
@@ -162,90 +142,34 @@ async def test_sequencer_processes_events_in_order(mocked_screen_share_manager):
     manager, mocks = mocked_screen_share_manager
     sequencer_task = asyncio.create_task(manager._sequencer())
 
-    # 1. Set initial state
-    await manager._results_queue.put(
-        {
-            "seq_id": 1,
-            "is_significant": False,
-            "timestamp": 1.0,
-            "frame_b64": PNG_BLUE_B64,
-            "before_frame_b64": PNG_BLUE_B64,
-        }
-    )
+    # 1. Manually process initial frame to set baseline state
+    event1 = {"payload": {"timestamp": 1.0, "frame_b64": PNG_BLUE_B64}}
+    pil1 = manager._b64_to_image(PNG_BLUE_B64)
+    await manager._results_queue.put((1, event1, pil1))
     await asyncio.sleep(0.01)
     assert manager._last_significant_frame_b64 == PNG_BLUE_B64
 
     # 2. Put results on the queue OUT of order (3, then 2)
-    await manager._results_queue.put(
-        {
-            "seq_id": 3,
-            "is_significant": True,
-            "timestamp": 3.0,
-            "frame_b64": PNG_GREEN_B64,
-            "before_frame_b64": PNG_RED_B64,
-        }
-    )
-    await manager._results_queue.put(
-        {
-            "seq_id": 2,
-            "is_significant": True,
-            "timestamp": 2.0,
-            "frame_b64": PNG_RED_B64,
-            "before_frame_b64": PNG_BLUE_B64,
-        }
-    )
+    event3 = {"payload": {"timestamp": 3.0, "frame_b64": PNG_GREEN_B64}}
+    pil3 = manager._b64_to_image(PNG_GREEN_B64)
+    await manager._results_queue.put((3, event3, pil3))
 
-    await asyncio.sleep(0.01)  # Allow sequencer to process buffered results
+    event2 = {"payload": {"timestamp": 2.0, "frame_b64": PNG_RED_B64}}
+    pil2 = manager._b64_to_image(PNG_RED_B64)
+    await manager._results_queue.put((2, event2, pil2))
+
+    # Allow sequencer to process both buffered and new results
+    await asyncio.sleep(0.05)
 
     # 3. Assertions
-    # The state should have been updated in the correct order: Blue -> Red -> Green
     assert manager._last_significant_frame_b64 == PNG_GREEN_B64
     assert len(manager._pending_vision_events) == 2
-    # The pending events should also be in the correct chronological order
     assert manager._pending_vision_events[0]["timestamp"] == 2.0
     assert manager._pending_vision_events[0]["after_frame_b64"] == PNG_RED_B64
     assert manager._pending_vision_events[1]["timestamp"] == 3.0
     assert manager._pending_vision_events[1]["after_frame_b64"] == PNG_GREEN_B64
 
     sequencer_task.cancel()
-
-
-@pytest.mark.unit
-@_handle_project
-@pytest.mark.asyncio
-async def test_adaptive_frame_dropping_on_queue_backlog(mocked_screen_share_manager):
-    """
-    Tests that the listener proactively drops frames if the frame queue is backlogged.
-    """
-    manager, mocks = mocked_screen_share_manager
-    manager.FRAME_QUEUE_SIZE = 10  # Lower for easier testing
-    manager.ADAPTIVE_DROP_THRESHOLD = 0.75
-
-    # Fill the queue to 80% capacity (8/10)
-    for i in range(8):
-        await manager._frame_queue.put((i, {}))
-
-    assert manager._frame_queue.qsize() == 8
-
-    # Simulate the listener loop (this is a simplified version of the logic in _listen_for_events)
-    with patch.object(manager, "_frame_queue") as mock_queue:
-        mock_queue.qsize.return_value = 8
-        mock_queue.put_nowait = MagicMock()
-
-        # This would be the new frame data
-        event_data = {"payload": {"timestamp": 10.0, "frame_b64": PNG_RED_B64}}
-
-        # Since qsize > threshold * size (8 > 7.5), we expect it to drop
-        if mock_queue.qsize() > (
-            manager.FRAME_QUEUE_SIZE * manager.ADAPTIVE_DROP_THRESHOLD
-        ):
-            # Dropped, so put_nowait is not called
-            pass
-        else:
-            manager._frame_sequence_id += 1
-            mock_queue.put_nowait((manager._frame_sequence_id, event_data))
-
-        mock_queue.put_nowait.assert_not_called()
 
 
 @pytest.mark.unit
@@ -260,8 +184,6 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
-
-    # 1. Mock the LLM's response with high-quality output
     mock_llm_response = TurnAnalysisResponse(
         events=[
             KeyEvent(
@@ -269,12 +191,10 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
                 event_description="User clicked the 'Submit Application' button.",
                 triggering_phrase="submit the application",
                 representative_timestamp=15.5,
-            ),
-        ],
+            )
+        ]
     )
     mocks["analysis_client"].generate.return_value = mock_llm_response
-
-    # 2. Define the incoming speech event
     speech_event_data = {
         "payload": {
             "contact_details": {"contact_id": 1},
@@ -282,10 +202,8 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
             "content": "Okay, I am ready to submit the application now.",
             "start_time": 15.0,
             "end_time": 16.5,
-        },
+        }
     }
-
-    # 3. Act
     async with manager._state_lock:
         manager._pending_vision_events.append(
             {
@@ -296,25 +214,17 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
         )
     manager._trigger_turn_analysis(speech_event=speech_event_data)
     await asyncio.sleep(0.01)
-
     log_job = await manager._logging_queue.get()
     await manager._logging_worker(log_job)
-
-    # 4. Assertions
     mocks["transcript_manager"].log_messages.assert_called_once()
     logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
-
-    # Assert specific caption
     annotation = logged_message.screen_share["15.00-16.50"]
     assert annotation.caption == "User clicked the 'Submit Application' button."
-
-    # Assert precise trigger phrase span
     content = "Okay, I am ready to submit the application now."
     phrase = "submit the application"
     start_index = content.find(phrase)
     end_index = start_index + len(phrase)
     expected_key = f"[{start_index}:{end_index}]"
-
     assert expected_key in logged_message.images
     assert logged_message.images[expected_key] == 42
 
@@ -340,31 +250,31 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
                 "timestamp": 25.0,
                 "before_frame_b64": PNG_BLUE_B64,
                 "after_frame_b64": PNG_RED_B64,
-            },
+            }
         )
     manager._last_activity_time = asyncio.get_event_loop().time() - 1.0
-
     silent_event_analysis = TurnAnalysisResponse(
         events=[
             KeyEvent(
                 timestamp=25.0,
                 event_description="User navigated to the 'Profile' page.",
                 representative_timestamp=25.0,
-            ),
-        ],
+            )
+        ]
     )
     mocks["analysis_client"].generate.return_value = silent_event_analysis
-
     await manager._flush_pending_events_on_timeout()
     await asyncio.sleep(0.01)
     log_job_silent = await manager._logging_queue.get()
     await manager._logging_worker(log_job_silent)
-
     mocks["analysis_client"].generate.assert_called_once()
     assert len(manager._stored_silent_key_events) == 1
     mocks["transcript_manager"].log_messages.assert_not_called()
 
     # 2. Now, simulate a subsequent user utterance
+    # FIX: Add a frame to the buffer to simulate the current screen state for the speech event
+    manager._frame_buffer.append((30.0, PNG_GREEN_B64))
+
     speech_event_data = {
         "payload": {
             "contact_details": {"contact_id": 1},
@@ -372,7 +282,7 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
             "content": "Okay, I see my profile.",
             "start_time": 30.0,
             "end_time": 31.0,
-        },
+        }
     }
     speech_event_analysis = TurnAnalysisResponse(
         events=[
@@ -380,11 +290,10 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
                 timestamp=30.0,
                 event_description="User confirmed seeing their profile.",
                 representative_timestamp=30.0,
-            ),
-        ],
+            )
+        ]
     )
     mocks["analysis_client"].generate.return_value = speech_event_analysis
-
     manager._trigger_turn_analysis(speech_event=speech_event_data)
     await asyncio.sleep(0.01)
     log_job_speech = await manager._logging_queue.get()
@@ -406,16 +315,14 @@ async def test_combined_turn_logs_multiple_events(mocked_screen_share_manager):
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
-
     async with manager._state_lock:
         manager._pending_vision_events.append(
             {
                 "timestamp": 14.5,
                 "before_frame_b64": PNG_BLUE_B64,
                 "after_frame_b64": PNG_RED_B64,
-            },
+            }
         )
-
     mock_llm_response = TurnAnalysisResponse(
         events=[
             KeyEvent(
@@ -430,10 +337,9 @@ async def test_combined_turn_logs_multiple_events(mocked_screen_share_manager):
                 triggering_phrase="I will click submit",
                 representative_timestamp=14.5,
             ),
-        ],
+        ]
     )
     mocks["analysis_client"].generate.return_value = mock_llm_response
-
     speech_event_data = {
         "payload": {
             "contact_details": {"contact_id": 1},
@@ -441,17 +347,14 @@ async def test_combined_turn_logs_multiple_events(mocked_screen_share_manager):
             "content": "I will click submit",
             "start_time": 15.0,
             "end_time": 16.0,
-        },
+        }
     }
-
     manager._trigger_turn_analysis(speech_event=speech_event_data)
     await asyncio.sleep(0.01)
     log_job = await manager._logging_queue.get()
     await manager._logging_worker(log_job)
-
     mocks["transcript_manager"].log_messages.assert_called_once()
     logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
-
     assert len(logged_message.screen_share) == 2
     assert "14.50-14.50" in logged_message.screen_share
     assert "15.00-16.00" in logged_message.screen_share
@@ -476,19 +379,17 @@ async def test_llm_failure_is_handled_gracefully(mocked_screen_share_manager):
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
     mocks["analysis_client"].generate.side_effect = Exception("API Error")
-
     speech_event_data = {
         "payload": {
             "contact_details": {"contact_id": 1},
             "content": "test",
             "timestamp": datetime.now().isoformat(),
-        },
+        }
     }
     manager._trigger_turn_analysis(speech_event=speech_event_data)
     await asyncio.sleep(0.01)
     log_job = await manager._logging_queue.get()
     await manager._logging_worker(log_job)
-
     mocks["analysis_client"].generate.assert_called_once()
     mocks["transcript_manager"].log_messages.assert_called_once()
     logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
@@ -508,19 +409,17 @@ async def test_empty_llm_response_logs_message_without_events(
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
     mocks["analysis_client"].generate.return_value = TurnAnalysisResponse(events=[])
-
     speech_event_data = {
         "payload": {
             "contact_details": {"contact_id": 1},
             "content": "test",
             "timestamp": datetime.now().isoformat(),
-        },
+        }
     }
     manager._trigger_turn_analysis(speech_event=speech_event_data)
     await asyncio.sleep(0.01)
     log_job = await manager._logging_queue.get()
     await manager._logging_worker(log_job)
-
     mocks["analysis_client"].generate.assert_called_once()
     mocks["transcript_manager"].log_messages.assert_called_once()
     logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
@@ -537,24 +436,18 @@ async def test_analysis_clears_pending_vision_events(mocked_screen_share_manager
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
-    async with manager._state_lock:
-        manager._pending_vision_events.append(
-            {"timestamp": 1.0, "before_frame_b64": "b", "after_frame_b64": "a"},
-        )
+    manager._pending_vision_events.append(
+        {"timestamp": 1.0, "before_frame_b64": "b", "after_frame_b64": "a"}
+    )
     assert len(manager._pending_vision_events) == 1
-
     mocks["analysis_client"].generate.return_value = TurnAnalysisResponse(events=[])
-
     manager._trigger_turn_analysis(
         speech_event={
             "payload": {"content": "go", "contact_details": {"contact_id": 1}}
-        },
+        }
     )
     await asyncio.sleep(0.01)
-
-    # The logic inside _debounced_analysis_runner now clears the list
-    async with manager._state_lock:
-        assert len(manager._pending_vision_events) == 0
+    assert len(manager._pending_vision_events) == 0
 
 
 @pytest.mark.unit
@@ -569,7 +462,6 @@ async def test_realtime_annotation_is_published_for_each_key_event(
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
-
     mock_llm_response = TurnAnalysisResponse(
         events=[
             KeyEvent(
@@ -582,17 +474,14 @@ async def test_realtime_annotation_is_published_for_each_key_event(
                 event_description="Event B",
                 representative_timestamp=14.5,
             ),
-        ],
+        ]
     )
     mocks["analysis_client"].generate.return_value = mock_llm_response
-
     speech_event_data = {
         "payload": {"contact_details": {"contact_id": 1}, "content": "dummy"}
     }
     manager._trigger_turn_analysis(speech_event=speech_event_data)
-    await asyncio.sleep(0.01)  # Allow analysis task to complete
-
-    # The publish calls happen inside _analyze_turn
+    await asyncio.sleep(0.01)
     assert mocks["event_broker"].publish.call_count == 2
     published_events = [
         json.loads(call.args[1])["payload"]["event_description"]
@@ -611,27 +500,20 @@ async def test_analysis_queues_job_for_logging_worker(mocked_screen_share_manage
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
-
     key_event = KeyEvent(
         timestamp=10.0, event_description="Test event", representative_timestamp=10.0
     )
     mock_llm_response = TurnAnalysisResponse(events=[key_event])
     mocks["analysis_client"].generate.return_value = mock_llm_response
-
     speech_event_data = {
         "payload": {"contact_details": {"contact_id": 1}, "content": "test"}
     }
-
     assert manager._logging_queue.qsize() == 0
-
     manager._trigger_turn_analysis(speech_event=speech_event_data)
-    await asyncio.sleep(0.01)  # Allow analysis task to complete
-
+    await asyncio.sleep(0.01)
     assert manager._logging_queue.qsize() == 1
-
     queued_job = await manager._logging_queue.get()
     (job_speech_event, job_key_events, job_frame_map) = queued_job
-
     assert job_speech_event == speech_event_data
     assert len(job_key_events) == 1
     assert job_key_events[0].event_description == "Test event"
@@ -647,7 +529,6 @@ async def test_summary_is_updated_after_turn_analysis(mocked_screen_share_manage
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
     manager._session_summary = "The session has just begun."
-
     mock_llm_response = TurnAnalysisResponse(
         events=[
             KeyEvent(
@@ -655,15 +536,13 @@ async def test_summary_is_updated_after_turn_analysis(mocked_screen_share_manage
                 event_description="User navigated to billing.",
                 representative_timestamp=15.5,
             )
-        ],
+        ]
     )
     mocks["analysis_client"].generate.return_value = mock_llm_response
-
     with patch.object(
         manager, "_summary_client", new_callable=AsyncMock
     ) as mock_summary_client:
         mock_summary_client.generate.return_value = "User navigated to billing."
-
         speech_event_data = {
             "payload": {
                 "contact_details": {"contact_id": 1},
@@ -671,14 +550,10 @@ async def test_summary_is_updated_after_turn_analysis(mocked_screen_share_manage
             }
         }
         manager._trigger_turn_analysis(speech_event=speech_event_data)
-        await asyncio.sleep(0.01)  # Let analysis task run
-
-        # Manually trigger summary update, as it's normally delayed
+        await asyncio.sleep(0.01)
         await manager._update_summary()
-
         mock_summary_client.generate.assert_called_once()
         assert manager._session_summary == "User navigated to billing."
-        # Check that the unsummarized events were cleared
         assert len(manager._unsummarized_events) == 0
 
 
@@ -692,25 +567,16 @@ async def test_turn_analysis_is_debounced(mocked_screen_share_manager):
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0.1
-
     speech_event = {
         "payload": {"content": "test", "contact_details": {"contact_id": 1}}
     }
-
-    # Trigger multiple times within the debounce window
     manager._trigger_turn_analysis(speech_event)
     await asyncio.sleep(0.02)
     manager._trigger_turn_analysis(speech_event)
     await asyncio.sleep(0.02)
     manager._trigger_turn_analysis(speech_event)
-
-    # _analyze_turn should not have been called yet
     mocks["analysis_client"].generate.assert_not_called()
-
-    # Wait for the debounce period to expire
     await asyncio.sleep(0.15)
-
-    # Now it should have been called exactly once
     mocks["analysis_client"].generate.assert_called_once()
 
 
@@ -724,11 +590,9 @@ async def test_image_upload_retries_on_failure(mocked_screen_share_manager):
     manager, mocks = mocked_screen_share_manager
     manager.IMAGE_UPLOAD_MAX_RETRIES = 2
     manager.IMAGE_UPLOAD_INITIAL_BACKOFF = 0.01
-
     add_images_mock = MagicMock()
     add_images_mock.side_effect = [Exception("Network Error"), [42]]
     mocks["image_manager"].add_images = add_images_mock
-
     speech_event = {
         "payload": {
             "content": "test",
@@ -740,9 +604,7 @@ async def test_image_upload_retries_on_failure(mocked_screen_share_manager):
         KeyEvent(timestamp=1.0, event_description="desc", representative_timestamp=1.0)
     ]
     frame_map = {1.0: PNG_BLUE_B64}
-
     await manager._logging_worker((speech_event, key_events, frame_map))
-
     assert add_images_mock.call_count == 2
     mocks["transcript_manager"].log_messages.assert_called_once()
 
@@ -757,14 +619,9 @@ async def test_set_session_context_updates_summary(mocked_screen_share_manager):
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
     initial_context = "The user is an admin trying to reset a password."
-
     manager.set_session_context(initial_context)
-    await asyncio.sleep(0.01)  # Allow async task in set_session_context to run
-
-    # Verify internal state
+    await asyncio.sleep(0.01)
     assert manager._session_summary == initial_context
-
-    # Now trigger an analysis and check if the prompt builder receives this context
     with patch(
         "unity.screen_share_manager.screen_share_manager.build_turn_analysis_prompt"
     ) as mock_build_prompt:
@@ -772,11 +629,7 @@ async def test_set_session_context_updates_summary(mocked_screen_share_manager):
             {"payload": {"content": "test", "contact_details": {"contact_id": 1}}}
         )
         await asyncio.sleep(0.01)
-
-        # Let the debounced task run and trigger the analysis
         await asyncio.sleep(manager.DEBOUNCE_DELAY_SEC + 0.01)
-
         mock_build_prompt.assert_called_once()
         call_args, _ = mock_build_prompt.call_args
-        # The first argument to the prompt builder is `current_summary`
         assert call_args[0] == initial_context

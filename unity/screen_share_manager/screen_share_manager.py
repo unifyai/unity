@@ -139,10 +139,10 @@ class ScreenShareManager:
     2.  **Concurrent Workers (Computation)**: A pool of `_frame_processing_worker`
         tasks (size determined by `MAX_FRAME_WORKERS`) act as consumers. They pull
         items from the `_frame_queue` and perform the slow, CPU-intensive image
-        analysis (MSE, SSIM, contours). Crucially, these workers are stateless;
-        they do not read or modify the shared screen state (`_last_significant_frame_b64`).
-        Once done, they place their result, tagged with the original `sequence_id`,
-        onto a second queue: `_results_queue`.
+        analysis (decoding and comparisons). Crucially, these workers are stateless;
+        they do not read or modify the shared screen state. Once done, they place
+        their result, tagged with the original `sequence_id`, onto a second queue:
+        `_results_queue`.
 
     3.  **Sequencer (State Management)**: A single, dedicated `_sequencer_task` is
         the only part of the system authorized to modify the screen state. It reads
@@ -199,6 +199,7 @@ class ScreenShareManager:
         self._stored_silent_key_events: List[KeyEvent] = []
         self._stored_silent_frame_map: Dict[float, str] = {}
         self._last_significant_frame_b64: Optional[str] = None
+        self._last_significant_frame_pil: Optional[Image.Image] = None
         self._last_user_utterance_message_id: Optional[int] = None
         self._last_activity_time: float = asyncio.get_event_loop().time()
         self._state_lock = asyncio.Lock()
@@ -243,11 +244,11 @@ class ScreenShareManager:
         """Starts the main event listening and the logging dispatcher."""
         logger.info("ScreenShareManager started. Initializing background tasks...")
         self._dispatcher_task = asyncio.create_task(self._logging_dispatcher())
+        self._sequencer_task = asyncio.create_task(self._sequencer())
         self._frame_workers = [
             asyncio.create_task(self._frame_processing_worker())
             for _ in range(self.MAX_FRAME_WORKERS)
         ]
-        self._sequencer_task = asyncio.create_task(self._sequencer())
         await self._listen_for_events()
 
     def stop(self):
@@ -295,30 +296,23 @@ class ScreenShareManager:
         of the difference between two frames. It filters out noise like cursors
         or small, irrelevant artifacts.
         """
-        cv_before = np.array(img_before)
-        cv_after = np.array(img_after)
-
+        cv_before, cv_after = np.array(img_before), np.array(img_after)
         diff = cv2.absdiff(cv_before, cv_after)
         _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(
             thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-
         for contour in contours:
             area = cv2.contourArea(contour)
             if area < self.MIN_CONTOUR_AREA:
                 continue
-
             x, y, w, h = cv2.boundingRect(contour)
             if w == 0 or h == 0:
                 continue
-
             aspect_ratio = float(w) / h if h > w else float(h) / w
             if aspect_ratio > self.MAX_ASPECT_RATIO:
                 continue
-
             return True
-
         return False
 
     async def _listen_for_events(self):
@@ -332,8 +326,7 @@ class ScreenShareManager:
             while not self._stop_event.is_set():
                 try:
                     message = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
-                        timeout=1.0,
+                        ignore_subscribe_messages=True, timeout=1.0
                     )
                     if message:
                         channel = message["channel"]
@@ -357,7 +350,6 @@ class ScreenShareManager:
                                 )
                         elif channel == "app:comms:phone_utterance":
                             self._trigger_turn_analysis(speech_event=event_data)
-
                     await self._flush_pending_events_on_timeout()
                 except asyncio.TimeoutError:
                     continue
@@ -376,63 +368,11 @@ class ScreenShareManager:
         while not self._stop_event.is_set():
             try:
                 seq_id, event_data = await self._frame_queue.get()
-
-                timestamp = event_data["payload"]["timestamp"]
                 frame_b64 = event_data["payload"]["frame_b64"]
-
-                # Find the most recent "last significant frame" from the buffer for comparison
-                async with self._state_lock:
-                    last_sig_frame_b64 = self._last_significant_frame_b64
-
-                # Buffer frame for context, even if it's not significant
-                self._frame_buffer.append((timestamp, frame_b64))
-
-                is_significant = False
-                if last_sig_frame_b64 is not None:
-                    try:
-                        current_img, last_img = await asyncio.gather(
-                            loop.run_in_executor(
-                                self._cpu_executor, self._b64_to_image, frame_b64
-                            ),
-                            loop.run_in_executor(
-                                self._cpu_executor,
-                                self._b64_to_image,
-                                last_sig_frame_b64,
-                            ),
-                        )
-                        mse = await loop.run_in_executor(
-                            self._cpu_executor,
-                            self._calculate_mse,
-                            current_img,
-                            last_img,
-                        )
-                        if mse > self.MSE_THRESHOLD:
-                            score = await loop.run_in_executor(
-                                self._cpu_executor,
-                                ssim,
-                                np.array(last_img),
-                                np.array(current_img),
-                            )
-                            if score < self.SSIM_THRESHOLD:
-                                is_significant = await loop.run_in_executor(
-                                    self._cpu_executor,
-                                    self._is_semantically_significant,
-                                    last_img,
-                                    current_img,
-                                )
-                    except ValueError:
-                        logger.warning(
-                            "Could not process images for comparison. Skipping frame."
-                        )
-
-                result = {
-                    "seq_id": seq_id,
-                    "is_significant": is_significant,
-                    "timestamp": timestamp,
-                    "frame_b64": frame_b64,
-                    "before_frame_b64": last_sig_frame_b64 or frame_b64,
-                }
-                await self._results_queue.put(result)
+                current_img_pil = await loop.run_in_executor(
+                    self._cpu_executor, self._b64_to_image, frame_b64
+                )
+                await self._results_queue.put((seq_id, event_data, current_img_pil))
                 self._frame_queue.task_done()
             except asyncio.CancelledError:
                 logger.info("Frame processing worker cancelled.")
@@ -450,47 +390,72 @@ class ScreenShareManager:
         logger.info("Sequencer task started.")
         next_seq_id = 1
         results_buffer: Dict[int, Any] = {}
+        loop = asyncio.get_running_loop()
 
         while not self._stop_event.is_set():
             try:
                 if next_seq_id in results_buffer:
-                    result = results_buffer.pop(next_seq_id)
+                    seq_id, event_data, current_img_pil = results_buffer.pop(
+                        next_seq_id
+                    )
                 else:
-                    result = await self._results_queue.get()
+                    (
+                        seq_id,
+                        event_data,
+                        current_img_pil,
+                    ) = await self._results_queue.get()
 
-                if result["seq_id"] != next_seq_id:
-                    results_buffer[result["seq_id"]] = result
+                if seq_id != next_seq_id:
+                    results_buffer[seq_id] = (seq_id, event_data, current_img_pil)
                     continue
 
                 self._last_activity_time = asyncio.get_event_loop().time()
+                timestamp = event_data["payload"]["timestamp"]
+                frame_b64 = event_data["payload"]["frame_b64"]
+                self._frame_buffer.append((timestamp, frame_b64))
 
                 if self._last_significant_frame_b64 is None:
-                    async with self._state_lock:
-                        self._last_significant_frame_b64 = result["frame_b64"]
-
-                elif result["is_significant"]:
-                    logger.info(
-                        f"Sequencer: Significant visual event detected at t={result['timestamp']:.2f}s"
+                    self._last_significant_frame_b64 = frame_b64
+                    self._last_significant_frame_pil = current_img_pil
+                else:
+                    mse = self._calculate_mse(
+                        current_img_pil, self._last_significant_frame_pil
                     )
-                    async with self._state_lock:
-                        self._pending_vision_events.append(
-                            {
-                                "timestamp": result["timestamp"],
-                                "before_frame_b64": result["before_frame_b64"],
-                                "after_frame_b64": result["frame_b64"],
-                            }
+                    if mse > self.MSE_THRESHOLD:
+                        score = await loop.run_in_executor(
+                            self._cpu_executor,
+                            ssim,
+                            np.array(self._last_significant_frame_pil),
+                            np.array(current_img_pil),
                         )
-                        self._last_significant_frame_b64 = result["frame_b64"]
+                        if score < self.SSIM_THRESHOLD:
+                            is_significant = await loop.run_in_executor(
+                                self._cpu_executor,
+                                self._is_semantically_significant,
+                                self._last_significant_frame_pil,
+                                current_img_pil,
+                            )
+                            if is_significant:
+                                logger.info(
+                                    f"Sequencer: Significant visual event detected at t={timestamp:.2f}s"
+                                )
+                                self._pending_vision_events.append(
+                                    {
+                                        "timestamp": timestamp,
+                                        "before_frame_b64": self._last_significant_frame_b64,
+                                        "after_frame_b64": frame_b64,
+                                    }
+                                )
+                                self._last_significant_frame_b64 = frame_b64
+                                self._last_significant_frame_pil = current_img_pil
 
                 next_seq_id += 1
-                if self._results_queue.qsize() == 0:
-                    await asyncio.sleep(0.01)  # Yield if queue is empty
-
             except asyncio.CancelledError:
                 logger.info("Sequencer task cancelled.")
                 break
             except Exception as e:
                 logger.error(f"Error in sequencer: {e}", exc_info=True)
+                await asyncio.sleep(1)
         logger.info("Sequencer task stopped.")
 
     async def _logging_dispatcher(self):
@@ -535,10 +500,8 @@ class ScreenShareManager:
     async def _update_summary(self):
         """A serialized task that updates the session summary using the latest events."""
         await asyncio.sleep(3.0)
-
         async with self._summary_update_lock:
-            events_to_summarize = []
-            current_summary = ""
+            events_to_summarize, current_summary = [], ""
             async with self._state_lock:
                 if not self._unsummarized_events:
                     logger.debug("No new events to summarize.")
@@ -546,7 +509,6 @@ class ScreenShareManager:
                 events_to_summarize = list(self._unsummarized_events)
                 self._unsummarized_events.clear()
                 current_summary = self._session_summary
-
             logger.info(
                 f"Updating summary with {len(events_to_summarize)} new event(s)."
             )
@@ -555,7 +517,6 @@ class ScreenShareManager:
                     current_summary, events_to_summarize
                 )
                 new_summary = await self._summary_client.generate(prompt)
-
                 if new_summary and isinstance(new_summary, str):
                     async with self._state_lock:
                         self._session_summary = new_summary.strip()
@@ -565,7 +526,6 @@ class ScreenShareManager:
                     logger.warning(
                         "Summary update LLM call did not return a valid string."
                     )
-
             except asyncio.CancelledError:
                 logger.info("Summary update task cancelled.")
                 async with self._state_lock:
@@ -585,10 +545,8 @@ class ScreenShareManager:
         Schedules a debounced turn analysis, cancelling any previously scheduled one.
         """
         self._last_activity_time = asyncio.get_event_loop().time()
-
         if self._debounce_task and not self._debounce_task.done():
             self._debounce_task.cancel()
-
         logger.info(f"Debouncing turn analysis for {self.DEBOUNCE_DELAY_SEC}s...")
         self._debounce_task = asyncio.create_task(
             self._debounced_analysis_runner(speech_event)
@@ -598,20 +556,17 @@ class ScreenShareManager:
         """Waits for the debounce delay then runs the analysis."""
         try:
             await asyncio.sleep(self.DEBOUNCE_DELAY_SEC)
+            visual_events_for_turn, latest_frame_for_turn = [], None
 
-            visual_events_for_turn = []
-            latest_frame_for_turn = None
-            async with self._state_lock:
-                if self._pending_vision_events:
-                    visual_events_for_turn = list(self._pending_vision_events)
-                    self._pending_vision_events.clear()
+            if self._pending_vision_events:
+                visual_events_for_turn = list(self._pending_vision_events)
+                self._pending_vision_events.clear()
 
-                if speech_event and not visual_events_for_turn and self._frame_buffer:
-                    latest_frame_for_turn = self._frame_buffer[-1]
+            if speech_event and not visual_events_for_turn and self._frame_buffer:
+                latest_frame_for_turn = self._frame_buffer[-1]
 
             if not speech_event and not visual_events_for_turn:
                 return
-
             logger.info("Debounce window ended. Triggering turn analysis...")
             asyncio.create_task(
                 self._analyze_turn(
@@ -627,18 +582,12 @@ class ScreenShareManager:
         analyses are in progress.
         """
         time_since_activity = asyncio.get_event_loop().time() - self._last_activity_time
-
         is_debouncing = self._debounce_task and not self._debounce_task.done()
-
-        has_pending_events = False
-        async with self._state_lock:
-            has_pending_events = bool(self._pending_vision_events)
-
         if (
             time_since_activity > self.INACTIVITY_TIMEOUT_SEC
             and self._analyses_in_flight == 0
             and not is_debouncing
-            and has_pending_events
+            and self._pending_vision_events
         ):
             logger.info("Inactivity timeout reached. Flushing pending vision events.")
             self._trigger_turn_analysis(speech_event=None)
@@ -654,30 +603,25 @@ class ScreenShareManager:
         """
         async with self._state_lock:
             self._analyses_in_flight += 1
-
         try:
             response, frame_map = await self._get_llm_analysis(
                 speech_event, visual_events, latest_frame
             )
             key_events = response.events if response else []
-
             if key_events:
                 async with self._state_lock:
                     for event in key_events:
                         self._recent_key_events.append(event)
                         self._unsummarized_events.append(event)
                 self._trigger_summary_update()
-
             if key_events or speech_event:
                 log_job = (speech_event, key_events, frame_map)
                 try:
                     self._logging_queue.put_nowait(log_job)
                 except asyncio.QueueFull:
                     logger.error(
-                        "Logging queue is full. Dropping latest analysis result. "
-                        "This indicates a bottleneck in logging to the backend."
+                        "Logging queue is full. Dropping latest analysis result."
                     )
-
             for event in key_events:
                 await self._event_broker.publish(
                     "app:comms:screen_annotation",
@@ -715,13 +659,10 @@ class ScreenShareManager:
         async with self._state_lock:
             current_summary = self._session_summary
             recent_key_events_copy = self._recent_key_events.copy()
-
         system_prompt = build_turn_analysis_prompt(
             current_summary, recent_key_events_copy
         )
-        user_content = []
-        timestamp_to_frame_map: Dict[float, str] = {}
-
+        user_content, timestamp_to_frame_map = [], {}
         if speech_event:
             payload = speech_event["payload"]
             user_content.append(
@@ -734,23 +675,21 @@ class ScreenShareManager:
                         "text": f"Speech Timestamps: Start={payload['start_time']:.2f}s, End={payload['end_time']:.2f}s",
                     }
                 )
-
         if visual_events:
             user_content.append({"type": "text", "text": "\n--- Key Visual Frames ---"})
             bursts: List[List[Dict]] = []
             if visual_events:
                 current_burst = [visual_events[0]]
                 for i in range(1, len(visual_events)):
-                    prev_event = visual_events[i - 1]
-                    current_event = visual_events[i]
-                    time_diff = current_event["timestamp"] - prev_event["timestamp"]
-                    if time_diff <= self.BURST_DETECTION_THRESHOLD_SEC:
-                        current_burst.append(current_event)
+                    if (
+                        visual_events[i]["timestamp"]
+                        - visual_events[i - 1]["timestamp"]
+                    ) <= self.BURST_DETECTION_THRESHOLD_SEC:
+                        current_burst.append(visual_events[i])
                     else:
                         bursts.append(current_burst)
-                        current_burst = [current_event]
+                        current_burst = [visual_events[i]]
                 bursts.append(current_burst)
-
             frame_counter = 0
             for burst in bursts:
                 events_to_process = burst
@@ -764,8 +703,7 @@ class ScreenShareManager:
                             "text": "\nNOTE: The following frames are a sampled summary (first, middle, last) of a rapid sequence of screen changes.",
                         }
                     )
-                    middle_index = len(burst) // 2
-                    events_to_process = [burst[0], burst[middle_index], burst[-1]]
+                    events_to_process = [burst[0], burst[len(burst) // 2], burst[-1]]
                 for ve in events_to_process:
                     frame_counter += 1
                     timestamp_to_frame_map[ve["timestamp"]] = ve["after_frame_b64"]
@@ -802,11 +740,8 @@ class ScreenShareManager:
                     {"type": "image_url", "image_url": {"url": b64}},
                 ]
             )
-
         if not user_content:
-            logger.debug("No content to send for LLM analysis.")
             return None, {}
-
         try:
             self._analysis_client.set_system_message(system_prompt)
             response = await self._analysis_client.generate(user_message=user_content)
@@ -814,19 +749,18 @@ class ScreenShareManager:
                 return response, timestamp_to_frame_map
             elif isinstance(response, str):
                 logger.warning(
-                    "LLM analysis returned a raw string, indicating a schema validation failure. Attempting manual parse."
+                    "LLM analysis returned raw string. Attempting manual parse."
                 )
                 try:
-                    validated_response = TurnAnalysisResponse.model_validate_json(
-                        response
+                    return (
+                        TurnAnalysisResponse.model_validate_json(response),
+                        timestamp_to_frame_map,
                     )
-                    return validated_response, timestamp_to_frame_map
                 except (json.JSONDecodeError, Exception) as e:
                     logger.error(
-                        f"Failed to manually parse or validate LLM string response: {e}",
+                        f"Failed to manually parse LLM string response: {e}",
                         exc_info=True,
                     )
-                    logger.debug(f"Malformed LLM response string: {response}")
                     return None, {}
             else:
                 logger.error(
@@ -867,41 +801,33 @@ class ScreenShareManager:
                         self._stored_silent_key_events.extend(visual_only_events)
                         self._stored_silent_frame_map.update(filtered_frame_map)
             return
-
         async with self._state_lock:
             all_events = sorted(
                 self._stored_silent_key_events + key_events, key=lambda e: e.timestamp
             )
             self._stored_silent_key_events.clear()
-
             combined_frame_map = self._stored_silent_frame_map.copy()
             self._stored_silent_frame_map.clear()
-            combined_frame_map.update(frame_map)
-
+        combined_frame_map.update(frame_map)
         speech_payload = speech_event["payload"]
-        speech_start_time = speech_payload.get("start_time")
-        speech_end_time = speech_payload.get("end_time")
-
-        images_to_add = []
-        event_to_image_map = {}
-
+        speech_start_time, speech_end_time = speech_payload.get(
+            "start_time"
+        ), speech_payload.get("end_time")
+        images_to_add, event_to_image_map = [], {}
         for event in all_events:
             rep_ts = event.representative_timestamp
             screenshot_b64 = combined_frame_map.get(rep_ts)
-
             if not screenshot_b64 and combined_frame_map:
                 closest_ts = min(
                     combined_frame_map.keys(), key=lambda ts: abs(ts - rep_ts)
                 )
                 if abs(closest_ts - rep_ts) < 1.0:
                     screenshot_b64 = combined_frame_map[closest_ts]
-
             if screenshot_b64:
                 images_to_add.append(
                     {"data": screenshot_b64, "caption": event.event_description}
                 )
                 event_to_image_map[event.timestamp] = len(images_to_add) - 1
-
         logged_image_ids = []
         if images_to_add:
             for attempt in range(self.IMAGE_UPLOAD_MAX_RETRIES):
@@ -915,45 +841,38 @@ class ScreenShareManager:
                         f"Image upload failed on attempt {attempt + 1}/{self.IMAGE_UPLOAD_MAX_RETRIES}: {e}"
                     )
                     if attempt + 1 == self.IMAGE_UPLOAD_MAX_RETRIES:
-                        logger.error(
-                            "Image upload failed after all retries. Proceeding without images for this turn."
-                        )
+                        logger.error("Image upload failed after all retries.")
                         break
-                    backoff_time = self.IMAGE_UPLOAD_INITIAL_BACKOFF * (
-                        2**attempt
-                    ) + random.uniform(0, 1)
-                    await asyncio.sleep(backoff_time)
-
+                    await asyncio.sleep(
+                        self.IMAGE_UPLOAD_INITIAL_BACKOFF * (2**attempt)
+                        + random.uniform(0, 1)
+                    )
         timestamp_to_image_id = {}
         for ts, index in event_to_image_map.items():
             if index < len(logged_image_ids):
                 timestamp_to_image_id[ts] = logged_image_ids[index]
-
-        images_dict = {}
-        screen_share_dict = {}
-        primary_speech_event_handled = False
-
+        images_dict, screen_share_dict, primary_speech_event_handled = {}, {}, False
         for event in all_events:
             image_id = timestamp_to_image_id.get(event.timestamp)
-
-            rep_ts = event.representative_timestamp
-            screenshot_b64 = combined_frame_map.get(rep_ts)
+            (
+                rep_ts,
+                screenshot_b64,
+            ) = event.representative_timestamp, combined_frame_map.get(
+                event.representative_timestamp
+            )
             if not screenshot_b64 and combined_frame_map:
                 closest_ts = min(
                     combined_frame_map.keys(), key=lambda ts: abs(ts - rep_ts)
                 )
                 if abs(closest_ts - rep_ts) < 1.0:
                     screenshot_b64 = combined_frame_map[closest_ts]
-
             if not screenshot_b64:
                 logger.warning(
                     f"Could not find screenshot for event at {event.timestamp}"
                 )
                 continue
-
             event_type = "speech" if event.triggering_phrase else "vision"
             ts_key = ""
-
             if (
                 event.triggering_phrase
                 and not primary_speech_event_handled
@@ -964,22 +883,18 @@ class ScreenShareManager:
                 primary_speech_event_handled = True
             else:
                 ts_key = f"{event.timestamp:.2f}-{event.timestamp:.2f}"
-
             screen_share_dict[ts_key] = ScreenShareAnnotation(
-                caption=event.event_description,
-                image=screenshot_b64,
-                type=event_type,
+                caption=event.event_description, image=screenshot_b64, type=event_type
             )
-
             if event.triggering_phrase and image_id:
                 try:
                     start_index = speech_payload["content"].find(
                         event.triggering_phrase
                     )
                     if start_index != -1:
-                        end_index = start_index + len(event.triggering_phrase)
-                        span_key = f"[{start_index}:{end_index}]"
-                        images_dict[span_key] = image_id
+                        images_dict[
+                            f"[{start_index}:{start_index + len(event.triggering_phrase)}]"
+                        ] = image_id
                     else:
                         logger.warning(
                             f"Triggering phrase '{event.triggering_phrase}' not found in content."
@@ -988,7 +903,6 @@ class ScreenShareManager:
                     logger.warning(
                         f"Triggering phrase '{event.triggering_phrase}' not found in content."
                     )
-
         message_to_log = Message(
             medium=Medium.PHONE_CALL,
             sender_id=speech_payload["contact_details"]["contact_id"],
