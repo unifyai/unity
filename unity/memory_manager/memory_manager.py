@@ -20,12 +20,10 @@ from .prompt_builders import (
     build_bio_prompt,
     build_rolling_prompt,
     build_knowledge_prompt,
-    build_activity_events_summary_prompt,
     build_response_policy_prompt,
 )
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
-from .broader_context import set_broader_context
 
 
 # ---------------------------------------------------------------------------
@@ -51,80 +49,10 @@ def _env_flag(
 
 class MemoryManager(BaseMemoryManager):
     """
-    Offline helper invoked by a scheduler every ~30 messages (by default).
+    Offline helper that processes transcripts in chunks (~50 messages by default).
     """
 
-    _MANAGERS = {
-        "ContactManager": "contact_manager",
-        "TranscriptManager": "transcript_manager",
-        "KnowledgeManager": "knowledge_manager",
-        "TaskScheduler": "task_scheduler",
-        "Conductor": "conductor",
-    }
-
-    _TIME_WINDOWS = {  # seconds
-        "past_day": 60 * 60 * 24,
-        "past_week": 60 * 60 * 24 * 7,
-        "past_4_weeks": 60 * 60 * 24 * 7 * 4,
-        "past_12_weeks": 60 * 60 * 24 * 7 * 12,
-        "past_52_weeks": 60 * 60 * 24 * 7 * 52,
-    }
-    _COUNT_WINDOWS = {
-        "past_interaction": 1,
-        "past_10_interactions": 10,
-        "past_40_interactions": 40,
-        "past_120_interactions": 120,
-        "past_520_interactions": 520,
-    }
-
-    # ────────────────────────────────────────────────────────────────────
-    #   hierarchy helpers so higher-level windows summarise the lower
-    #       level rather than the raw ManagerMethod events
-    # ────────────────────────────────────────────────────────────────────
-    _TIME_ORDER = [
-        "past_day",
-        "past_week",
-        "past_4_weeks",
-        "past_12_weeks",
-        "past_52_weeks",
-    ]
-    _COUNT_ORDER = [
-        "past_interaction",
-        "past_10_interactions",
-        "past_40_interactions",
-        "past_120_interactions",
-        "past_520_interactions",
-    ]
-
-    # child_window → (immediate_lower_window, how_many_lower_summaries)
-    _TIME_PARENT: dict[str, tuple[str, int]] = {}
-    for i in range(1, len(_TIME_ORDER)):
-        child, parent = _TIME_ORDER[i], _TIME_ORDER[i - 1]
-        _TIME_PARENT[child] = (
-            parent,
-            _TIME_WINDOWS[child] // _TIME_WINDOWS[parent],
-        )
-
-    _COUNT_PARENT: dict[str, tuple[str, int]] = {}
-    for i in range(1, len(_COUNT_ORDER)):
-        child, parent = _COUNT_ORDER[i], _COUNT_ORDER[i - 1]
-        _COUNT_PARENT[child] = (
-            parent,
-            _COUNT_WINDOWS[child] // _COUNT_WINDOWS[parent],
-        )
-
-    _tmp_cols = []
-    for nick in _MANAGERS.values():
-        for window in list(_TIME_WINDOWS) + list(_COUNT_WINDOWS):
-            _tmp_cols.append(f"{nick}/{window}")
-
-    # ───────────────────────────  SUMMARY COLS  ───────────────────────────
-    _SUMMARY_TIME_COL = "time_based_activity"
-    _SUMMARY_COUNT_COL = "count_based_activity"
-    _tmp_cols.extend([_SUMMARY_TIME_COL, _SUMMARY_COUNT_COL])
-
-    _ROLLING_COLUMNS = tuple(_tmp_cols)
-    del _tmp_cols
+    # Rolling activity logic removed
 
     # ------------------------------------------------------------------ #
     #  Shared helper: convert Message / event dicts to plain-text transcript
@@ -206,34 +134,12 @@ class MemoryManager(BaseMemoryManager):
         self._task_scheduler = task_scheduler or TaskScheduler()
 
         # ── Environment-controlled callback registration -------------------------
-
-        #  Determine which groups of callbacks should be active based on
-        #  environment variables (defaults = enabled for full backward compatibility).
-        self._register_summary_callbacks: bool = _env_flag(
-            "REGISTER_SUMMARY_CALLBACKS",
-            True,
-        )
         self._register_update_callbacks: bool = _env_flag(
             "REGISTER_UPDATE_CALLBACKS",
             True,
         )
-
-        # ── Rolling-Activity context & subscriptions (summaries) ────────────────
-        self._rolling_ctx = self._ensure_rolling_context()
-        self._rolling_lock = asyncio.Lock()
-
-        # Expose a readiness Event so external callers/tests can await summary callbacks
-        self._callbacks_ready = asyncio.Event()
-
-        if self._register_summary_callbacks:
-            # Fire-and-forget registration of summary callbacks
-            asyncio.create_task(self._setup_rolling_callbacks())
-        else:
-            # No summary callbacks -> consider the system *ready* immediately
-            self._callbacks_ready.set()
-
-        # ── real-time 30-message trigger (update callbacks) --------------------
-        self._CHUNK_SIZE: int = 30
+        # ── real-time 50-message trigger (update callbacks) --------------------
+        self._CHUNK_SIZE: int = 50
         self._recent_messages: list[dict] = []
         self._messages_since_update: int = 0
 
@@ -259,8 +165,8 @@ class MemoryManager(BaseMemoryManager):
                 key_fn=lambda e: e.calling_id,
             )
 
-            # 2.  Listen to those explicit ManagerMethod events so they are included
-            #     in the 30-message rolling window given to the LLM.
+            # 2.  Listen to explicit ManagerMethod events so they can be included
+            #     in the transcript chunk payloads passed to the LLM.
             asyncio.create_task(self._setup_explicit_call_callbacks())
 
         # If update callbacks are disabled  no-op for message processing
@@ -898,48 +804,18 @@ class MemoryManager(BaseMemoryManager):
         return await handle.result()
 
     # ------------------------------------------------------------------ #
-    # 5  reset – new blocking helper                                     #
+    # 5  reset – simplified helper                                       #
     # ------------------------------------------------------------------ #
     async def reset(self) -> None:  # noqa: D401 – imperative name
-        """Completely reset the MemoryManager's rolling-activity state.
+        """Reset the event bus and re-register message-related callbacks."""
 
-        1. Delegates to ``EVENT_BUS.reset()`` to wipe all event history and
-           callback registrations.
-        2. Re-creates and waits for a fresh set of rolling-activity callback
-           subscriptions so callers can immediately publish new events without
-           manually re-registering helpers.
-        """
-
-        # 1. Reset the global EventBus singleton (clears callbacks & logs)
         EVENT_BUS.reset()
 
-        # Re-create readiness Event and schedule callback registrations according
-        # to the current environment flags so callers can rely on them right after
-        # this coroutine returns.
-
-        self._callbacks_ready = asyncio.Event()
-
-        tasks: list[asyncio.Task] = []
-
-        if self._register_summary_callbacks:
-            tasks.append(asyncio.create_task(self._setup_rolling_callbacks()))
-        else:
-            # Summary callbacks disabled – consider ready instantly
-            self._callbacks_ready.set()
-
         if self._register_update_callbacks:
-            tasks.extend(
-                [
-                    asyncio.create_task(self._setup_message_callbacks()),
-                    asyncio.create_task(self._setup_explicit_call_callbacks()),
-                ],
+            await asyncio.gather(
+                self._setup_message_callbacks(),
+                self._setup_explicit_call_callbacks(),
             )
-
-        if tasks:
-            await asyncio.gather(*tasks)
-
-        # Wait for summary callbacks (if any) to signal readiness – timeout safeguards
-        await asyncio.wait_for(self._callbacks_ready.wait(), timeout=5)
 
     # ───────────────────────────  MESSAGE-BASED CALLBACKS  ───────────────────────────
 
@@ -989,7 +865,11 @@ class MemoryManager(BaseMemoryManager):
 
     # ------------------------------------------------------------------
     async def _on_new_explicit_call(self, evt: Event) -> None:
-        """Append explicit ManagerMethod events to the rolling window."""
+        """Append explicit ManagerMethod events to the current buffer.
+
+        Note: These events do NOT advance the 50-message counter; only
+        actual chat `Message` events count towards flushing the chunk.
+        """
 
         # Keep the data lightweight & JSON-serialisable
         self._recent_messages.append(
@@ -1007,9 +887,7 @@ class MemoryManager(BaseMemoryManager):
             },
         )
 
-        self._messages_since_update += 1
-        if self._messages_since_update >= self._CHUNK_SIZE:
-            await self._flush_recent_items()
+        # Do not increment message counter for manager-method events
 
     # ------------------------------------------------------------------
     async def _flush_recent_items(self) -> None:
@@ -1057,7 +935,7 @@ class MemoryManager(BaseMemoryManager):
             await self._flush_recent_items()
 
     async def _process_message_chunk(self, messages: list[dict]) -> None:
-        """Run the full suite of memory updates for one 30-message chunk."""
+        """Run the full suite of memory updates for one 50-message chunk."""
 
         # Serialise – prevent concurrent chunks from interleaving updates
         async with self._chunk_lock:
@@ -1138,470 +1016,7 @@ class MemoryManager(BaseMemoryManager):
                 traceback.print_exc()
 
     # ───────────────────────────  HELPERS  ────────────────────────────
-    # 1. Context & schema ---------------------------------------------------
-    @classmethod
-    def _ensure_rolling_context(cls) -> str:
-        """Create the `RollingActivity` context (idempotent) and return its name."""
-        active_ctx = unify.get_active_context()["write"] or ""
-        if not active_ctx:
-            # Ensure the global assistant/context is selected before we derive our sub-context
-            try:
-                from .. import (
-                    ensure_initialised as _ensure_initialised,
-                )  # local to avoid cycles
-
-                _ensure_initialised()
-                active_ctx = unify.get_active_context()["write"] or ""
-            except Exception:
-                # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
-                pass
-        ctx = f"{active_ctx}/RollingActivity" if active_ctx else "RollingActivity"
-        if ctx not in unify.get_contexts():
-            unify.create_context(
-                ctx,
-                unique_keys={"row_id": "int"},
-                auto_counting={"row_id": None},
-            )
-            fields = {
-                col: {"type": "str", "mutable": True} for col in cls._ROLLING_COLUMNS
-            }
-            unify.create_fields(fields, context=ctx)
-        return ctx
-
-    # 2. Callback registration ---------------------------------------------
-    async def _setup_rolling_callbacks(self) -> None:
-        """
-        Register callbacks that build the Rolling-Activity hierarchy.
-
-        • Base-level snapshots
-            – past_interaction (count based)
-            – past_day         (time based)
-          are still triggered directly from *ManagerMethod* events.
-
-        • All higher-level windows are now triggered from the new
-          `_hierarchical_summaries` event that each completed snapshot emits.
-          The callback fires once *ratio* (= how many lower-level
-          summaries constitute this window) such events have arrived.
-        """
-
-        async def _register_for_manager(mgr_cls: str, nick: str):
-            # Register callbacks for one manager
-
-            def _mk_cb(col_name: str):
-                async def _cb(events, _col=col_name):
-                    await self._record_rolling_activity(_col, events)
-
-                    # schedule recording (silent now)
-
-                return _cb
-
-            mm_filter = (
-                f'evt.payload["manager"] == "{mgr_cls}" '
-                f'and evt.payload.get("phase") == "outgoing"'
-            )
-
-            async def _reg(cb_col: str, *, event_type: str, **kw):
-                try:
-                    await EVENT_BUS.register_callback(
-                        event_type=event_type,
-                        callback=_mk_cb(cb_col),
-                        **kw,
-                    )
-                except Exception as e:
-                    # propagate any registration error
-                    raise
-
-            # base-level
-            await _reg(
-                f"{nick}/past_interaction",
-                event_type="ManagerMethod",
-                filter=mm_filter,
-                every_n=self._COUNT_WINDOWS["past_interaction"],
-            )
-
-            await _reg(
-                f"{nick}/past_day",
-                event_type="ManagerMethod",
-                filter=mm_filter,
-                every_seconds=self._TIME_WINDOWS["past_day"],
-            )
-
-            # count hierarchy
-            for child, (parent, ratio) in self._COUNT_PARENT.items():
-                await _reg(
-                    f"{nick}/{child}",
-                    event_type="_hierarchical_summaries",
-                    filter=(
-                        f'evt.payload["manager"] == "{nick}" '
-                        f'and evt.payload["window"] == "{parent}"'
-                    ),
-                    every_n=ratio,
-                )
-
-            # time hierarchy
-            for child, (parent, ratio) in self._TIME_PARENT.items():
-                if child == "past_day":
-                    continue
-                await _reg(
-                    f"{nick}/{child}",
-                    event_type="_hierarchical_summaries",
-                    filter=(
-                        f'evt.payload["manager"] == "{nick}" '
-                        f'and evt.payload["window"] == "{parent}"'
-                    ),
-                    every_n=ratio,
-                )
-
-        # launch all manager registrations concurrently
-        await asyncio.gather(
-            *[
-                _register_for_manager(mgr_cls, nick)
-                for mgr_cls, nick in self._MANAGERS.items()
-            ],
-        )
-
-        # indicate readiness (useful for tests)
-        try:
-            self._callbacks_ready.set()  # type: ignore[attr-defined]
-        except AttributeError:
-            self._callbacks_ready = asyncio.Event()
-            self._callbacks_ready.set()
-
-    # 3. Persisting the new snapshot ---------------------------------------
-    async def _record_rolling_activity_body(
-        self,
-        column: str,
-        events: list[Event],
-    ) -> None:
-        """
-        Append a **new** row to RollingActivity, copying the previous one and
-        updating *column* with a fresh summary.
-
-        • Base-level windows (``past_day`` / ``past_interaction``) are generated
-          from the **raw** ManagerMethod events (unchanged behaviour).
-        • Higher-level windows are created **only** from the summaries of the
-          immediate lower-level window – thus forming a cascade:
-              raw events → day → week → 4 weeks → 12 weeks → 52 weeks
-              raw events → 1 interaction → 10 → 40 → 120 → 520
-        """
-
-        # ---- 0. previous snapshot ----------------------------------------
-        prev = unify.get_logs(
-            context=self._rolling_ctx,
-            sorting={"row_id": "descending"},
-            limit=1,
-        )
-        base_payload = prev[0].entries.copy() if prev else {}
-
-        # ---- helper: concise LLM summary ---------------------------------
-        async def _summarise(items: list[str | dict]) -> str:
-            if not items:
-                return ""
-            llm = unify.AsyncUnify(
-                "o4-mini@openai",
-                cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-                traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            )
-            llm.set_system_message(build_activity_events_summary_prompt())
-            return (await llm.generate(json.dumps(items, indent=2))).strip()
-
-        # ------------------------------------------------------------------
-        mgr_nick, window = column.split("/", 1)
-
-        # ── 1.  Decide data-source (raw events vs. lower-level summaries) ──
-        if window in {"past_day", "past_interaction"}:
-            # base-level – summarise RAW events
-            relevant = [
-                {
-                    "manager": ev.payload.get("manager"),
-                    "method": ev.payload.get("method"),
-                    "details": {
-                        k: v
-                        for k, v in ev.payload.items()
-                        if k not in {"manager", "method"}
-                    },
-                }
-                for ev in events
-            ]
-            summary = await _summarise(relevant)
-
-        else:
-            # higher-level – derive from lower-level summaries
-            if window in self._TIME_PARENT:
-                lower_window, need = self._TIME_PARENT[window]
-            elif window in self._COUNT_PARENT:
-                lower_window, need = self._COUNT_PARENT[window]
-            else:  # unexpected – fall back to raw events
-                lower_window, need = None, 0
-
-            if lower_window is None:
-                relevant = [
-                    {
-                        "manager": ev.payload.get("manager"),
-                        "method": ev.payload.get("method"),
-                        "details": {
-                            k: v
-                            for k, v in ev.payload.items()
-                            if k not in {"manager", "method"}
-                        },
-                    }
-                    for ev in events
-                ]
-                summary = await _summarise(relevant)
-            else:
-                # -----------------------  deterministic lineage  -----------------------
-                # Every *_hierarchical_summaries* event now carries the **row_id** of the
-                # lower-level RollingActivity snapshot it represents.  Using these ids removes
-                # the race where the child window used to look at “the most recent N” rows and
-                # could therefore pick up *newer* summaries written while it was waiting for the
-                # write-lock.
-
-                lower_col = f"{mgr_nick}/{lower_window}"
-
-                # 1.  Collect explicit row_ids from the triggering events (if present).
-                row_ids: list[int] = []
-                for ev in events:
-                    try:
-                        rid = int(ev.payload.get("row_id"))  # type: ignore[arg-type]
-                    except (ValueError, TypeError, AttributeError):
-                        rid = None
-                    if rid is not None:
-                        row_ids.append(rid)
-
-                collected: list[str] = []
-
-                # 2a. Fetch the *exact* rows referenced by the events.
-                if row_ids:
-                    for rid in row_ids:
-                        rows = unify.get_logs(
-                            context=self._rolling_ctx,
-                            filter=f"row_id == {rid}",
-                            limit=1,
-                        )
-                        if rows:
-                            txt = rows[0].entries.get(lower_col)
-                            if txt:
-                                collected.append(txt)
-
-                # 2b. If we still need more to reach the required `need` count
-                #     (because the callback only delivered the *latest* event),
-                #     back-fill by walking backwards from the current row_id.
-                if len(collected) < need:
-                    # Determine the highest row_id we already included so we
-                    # only look at *earlier* snapshots and therefore avoid the
-                    # original race condition.
-                    max_seen = max(row_ids) if row_ids else None
-
-                    extra_rows = unify.get_logs(
-                        context=self._rolling_ctx,
-                        sorting={"row_id": "descending"},
-                        limit=need * 5,  # generous buffer; we'll filter below
-                    )
-                    for lg in extra_rows:
-                        rid = lg.entries.get("row_id")
-                        if max_seen is not None and rid is not None and rid > max_seen:
-                            # newer than the latest row we already have → skip
-                            continue
-                        txt = lg.entries.get(lower_col)
-                        if not txt:
-                            continue
-                        if rid in row_ids:
-                            continue  # already have it
-                        collected.append(txt)
-                        if len(collected) >= need:
-                            break
-
-                summary = await _summarise(collected)
-
-        # ---- 2.  persist --------------------------------------------------
-        # Ensure **new** row creation: remove any inherited `row_id` so Unify
-        # allocates a fresh sequence number instead of silently updating the
-        # previous snapshot (which would make successive interactions appear
-        # as a single row and break tests expecting one row per call).
-        base_payload.pop("row_id", None)
-
-        base_payload[column] = summary
-
-        # ──────────────────────────  Pre-compute summaries  ────────────────
-        base_payload[self._SUMMARY_TIME_COL] = self._build_activity_summary(
-            base_payload,
-            "time",
-        )
-        base_payload[self._SUMMARY_COUNT_COL] = self._build_activity_summary(
-            base_payload,
-            "interaction",
-        )
-
-        # ------------------------------------------------------------------
-        # -----------------------  write new snapshot -----------------------
-        unify.log(
-            context=self._rolling_ctx,
-            new=True,
-            mutable=True,
-            **base_payload,
-        )
-
-        # Retrieve the *row_id* of the snapshot just written so that dependant
-        # windows know exactly which lower-level rows to aggregate.
-        try:
-            _last_row = unify.get_logs(
-                context=self._rolling_ctx,
-                sorting={"row_id": "descending"},
-                limit=1,
-            )[0]
-            new_row_id = _last_row.entries.get("row_id")
-        except Exception:
-            new_row_id = None
-
-        # ---- 2b.  update global cache --------------------------------------
-        # Keep the in-process snapshot in sync so prompt builders never have
-        # to query the backend after the initial bootstrap.
-        try:
-            set_broader_context(base_payload[self._SUMMARY_TIME_COL])
-        except Exception:
-            # Defensive guard – updating the cache must never break the caller.
-            pass
-
-        # ---- 3.  notify dependants ----------------------------------------
-        # Emit a *_hierarchical_summaries* event so higher-level windows trigger only
-        # after the lower-level snapshot is fully written.
-        await EVENT_BUS.publish(
-            Event(
-                type="_hierarchical_summaries",
-                payload={
-                    "manager": mgr_nick,  # e.g. "contact_manager"
-                    "window": window,  # e.g. "past_10_interactions"
-                    "row_id": new_row_id,  # lineage id for deterministic roll-ups
-                },
-            ),
-        )
-
-    # ------------------------------------------------------------------ #
-    #  Wrapper: guarantees single writer for RollingActivity             #
-    # ------------------------------------------------------------------ #
-    async def _record_rolling_activity(
-        self,
-        column: str,
-        events: list[Event],
-    ) -> None:
-        """
-        Thread-safe wrapper around :py:meth:`_record_rolling_activity_body` that
-        ensures only *one* coroutine at a time can append a new snapshot to the
-        ``RollingActivity`` context.  This prevents scenarios where two
-        concurrent callbacks would both read the same *latest* row, apply their
-        individual update, and then write out diverging successors derived from
-        an inconsistent base state.
-        """
-
-        async with self._rolling_lock:
-            await self._record_rolling_activity_body(column, events)
-
-    # ------------------------------------------------------------------ #
-    #  helper: build human-readable activity summary                     #
-    # ------------------------------------------------------------------ #
-    @classmethod
-    def _build_activity_summary(
-        cls,
-        entries: dict[str, str],
-        mode: str = "time",
-    ) -> str:
-        """Return the rolling activity summary Markdown for *entries*."""
-        mode = mode.lower()
-        if mode not in {"time", "interaction"}:
-            raise ValueError("mode must be either 'time' or 'interaction'")
-
-        windows: list[str] = (
-            list(cls._TIME_ORDER) if mode == "time" else list(cls._COUNT_ORDER)
-        )
-
-        def _pretty(w: str) -> str:
-            parts = w.split("_")
-            return "Past " + " ".join(
-                p.capitalize() if not p.isdigit() else p for p in parts[1:]
-            )
-
-        _TITLE_DESC = {
-            "task_scheduler": (
-                "Tasks",
-                "Overview of the tasks scheduled, updated, and performed.",
-            ),
-            "knowledge_manager": (
-                "Knowledge",
-                "Overview of the long-term memory (knowledge) added, updated, restructured, removed etc.",
-            ),
-            "contact_manager": (
-                "Contacts",
-                "Overview of contacts created or updated and related actions.",
-            ),
-            "transcript_manager": (
-                "Transcripts",
-                "Overview of messages and transcript summaries.",
-            ),
-            "conductor": (
-                "Orchestration",
-                "High-level orchestration and planning actions.",
-            ),
-        }
-
-        lines: list[str] = []
-        for mgr_cls, nick in cls._MANAGERS.items():
-            title, desc = _TITLE_DESC.get(
-                nick,
-                (mgr_cls.replace("Manager", ""), ""),
-            )
-
-            available: list[tuple[str, str]] = []
-            for w in windows:
-                col = f"{nick}/{w}"
-                summary = entries.get(col)
-                if summary:
-                    available.append((w, summary))
-
-            if not available:
-                continue
-
-            lines.append(f"# {title}")
-            if desc:
-                lines.append(desc)
-            lines.append("")
-
-            for w, summary in available:
-                lines.append(f"## {_pretty(w)}")
-                lines.append(summary)
-                lines.append("")
-
-        return "\n".join(lines).strip()
-
-    # ------------------------------------------------------------------ #
-    # 5  get_broader_context                                            #
-    # ------------------------------------------------------------------ #
     @classmethod
     def get_rolling_activity(cls, mode: str = "time") -> str:
-        """
-        Return the **latest** Rolling-Activity snapshot as a human-readable
-        Markdown string.
-        """
-        mode = mode.lower()
-        if mode not in {"time", "interaction"}:
-            raise ValueError("mode must be either 'time' or 'interaction'")
-
-        rows = unify.get_logs(
-            context=cls._ensure_rolling_context(),
-            sorting={"row_id": "descending"},
-            limit=1,
-        )
-        # If there is no stored rolling activity yet, return an *empty* string so
-        # callers can completely omit the Historic Activity block.  This avoids
-        # polluting system prompts with a verbose placeholder that carries no
-        # useful information.
-        if not rows:
-            return ""
-
-        latest = rows[0].entries
-        key = cls._SUMMARY_TIME_COL if mode == "time" else cls._SUMMARY_COUNT_COL
-        stored = latest.get(key)
-        if stored:
-            return stored
-
-        # Fallback – build on the fly if snapshot predates summary columns
-        return cls._build_activity_summary(latest, mode)
+        """Rolling activity has been removed; return an empty string."""
+        return ""
