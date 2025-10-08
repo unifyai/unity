@@ -63,7 +63,7 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(caplog) -> No
     )
 
     client = unify.AsyncUnify(
-        endpoint="gpt-4o@openai",
+        endpoint="gpt-5@openai",
         system_message=system_prompt,
     )
 
@@ -169,7 +169,7 @@ async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
     )
 
     client = unify.AsyncUnify(
-        endpoint="gpt-4o@openai",
+        endpoint="gpt-5@openai",
         system_message=system_prompt,
     )
 

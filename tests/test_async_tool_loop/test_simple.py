@@ -3,7 +3,7 @@ pytest tests for the async-tool loop helpers **using a real `unify.AsyncUnify`
 client for every test** – no stubs, no scripted completions.
 
 Running these tests will make real requests to the model you pass to
-`unify.AsyncUnify` (by default we use **GPT-4o**).
+`unify.AsyncUnify` (by default we use **GPT-5**).
 Make sure you have:
 
 * a valid OpenAI (or Unify-proxy) API key in your environment, and
@@ -40,7 +40,7 @@ from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.tool_spec import ToolSpec
 
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")  # override if you like
+MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")  # override if you like
 
 
 # --------------------------------------------------------------------------- #

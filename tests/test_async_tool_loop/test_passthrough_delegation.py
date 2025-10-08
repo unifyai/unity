@@ -535,7 +535,7 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
         return h2
 
     client = unify.AsyncUnify(
-        endpoint="o4-mini@openai",
+        endpoint="gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -604,7 +604,7 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
 
     # Inner real client; instruct it to call `sleeper` then finish
     inner_client = unify.AsyncUnify(
-        endpoint="o4-mini@openai",
+        endpoint="gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -634,7 +634,7 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
 
     # Outer client; spy wrapper records calls while still hitting the real LLM
     outer_client = unify.AsyncUnify(
-        endpoint="o4-mini@openai",
+        endpoint="gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

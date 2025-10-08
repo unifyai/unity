@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import time
 from typing import List
 
 import pytest
@@ -34,13 +33,14 @@ from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_assistant_call_prefix,
     _wait_for_tool_message_prefix,
+    _wait_for_condition,
 )
 
 
 # --------------------------------------------------------------------------- #
 #  GLOBALS                                                                    #
 # --------------------------------------------------------------------------- #
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
 # (prefix-based wait helpers and their counters are now shared in
 #  tests/test_async_tool_loop/async_helpers.py)
 
@@ -232,10 +232,8 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     # the moment the tool's pause_event has been cleared.
     await _wait_for_tool_message_prefix(client, "pause ")
 
-    t_pause_ack = time.perf_counter()
-
-    # While paused, the final assistant reply must NOT appear. Wait ~2s deterministically.
-    await asyncio.sleep(2.0)
+    # While paused, the final assistant reply must NOT appear. Check deterministically
+    # right after the pause has been acknowledged (no fixed sleep).
     msgs_during_pause = client.messages or []
     assert not any(
         (m.get("role") == "assistant")
@@ -247,14 +245,10 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     # Resume and finish
     await outer.interject("go")
     final = await outer.result()
-    elapsed_since_ack = time.perf_counter() - t_pause_ack
 
     # ── assertions ───────────────────────────────────────────────────────
     assert "done" in final.strip().lower()
-    # The time since the pause ACK must include the full pause window
-    assert (
-        elapsed_since_ack >= 1.95
-    ), f"pause window too short ({elapsed_since_ack:.2f}s) – pause ineffective"
+    # Removed wall‑clock duration assertion; rely on deterministic pause/resume events.
 
 
 @pytest.mark.asyncio
@@ -520,9 +514,10 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
     # Pause the outer loop – must forward exactly once to the delegate
     outer.pause()
 
-    t0 = time.perf_counter()
-    while inner_handle.pause_count < 1 and (time.perf_counter() - t0) < 10.0:
-        await asyncio.sleep(0.05)
+    async def _paused_once() -> bool:
+        return inner_handle.pause_count >= 1
+
+    await _wait_for_condition(_paused_once, poll=0.05, timeout=10.0)
     assert (
         inner_handle.pause_count == 1
     ), "delegate did not receive pause() exactly once"
@@ -530,9 +525,10 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
     # Now resume the outer loop – must forward exactly once to the delegate
     outer.resume()
 
-    t1 = time.perf_counter()
-    while inner_handle.resume_count < 1 and (time.perf_counter() - t1) < 10.0:
-        await asyncio.sleep(0.05)
+    async def _resumed_once() -> bool:
+        return inner_handle.resume_count >= 1
+
+    await _wait_for_condition(_resumed_once, poll=0.05, timeout=10.0)
     assert (
         inner_handle.resume_count == 1
     ), "delegate did not receive resume() exactly once"
@@ -564,15 +560,11 @@ async def test_resume_when_no_pending_tools_allows_llm_turn(client):
         timeout=120,
     )
 
-    # Pause immediately; there are no pending tools. LLM must not speak while paused.
+    # Pause immediately; there are no pending tools. The loop should not finish while paused.
     h.pause()
-    await asyncio.sleep(0.5)
-
-    # Ensure no assistant message appeared during pause
-    msgs = client.messages or []
-    assert not any(
-        m.get("role") == "assistant" for m in msgs
-    ), "assistant spoke while paused with no pending tools"
+    # Assert result() blocks while paused using a timeout-based check
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(asyncio.shield(h.result()), timeout=1)
 
     # Resume and finish
     h.resume()

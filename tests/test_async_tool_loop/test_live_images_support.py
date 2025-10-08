@@ -75,7 +75,7 @@ async def test_live_images_helpers_exposed_with_alignment_description(
     monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -126,7 +126,7 @@ async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> Non
     """
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -170,7 +170,7 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
     """
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -244,7 +244,7 @@ async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
     monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp2, raising=True)
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

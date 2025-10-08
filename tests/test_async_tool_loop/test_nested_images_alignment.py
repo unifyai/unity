@@ -58,7 +58,7 @@ async def test_align_images_for_helper_builds_arg_scoped_mapping() -> None:
     """
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -119,7 +119,7 @@ async def test_inner_tool_receives_and_resolves_arg_scoped_images() -> None:
         return {"received": {"keys": keys, "ids": ids, "question": question}}
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -170,7 +170,7 @@ async def test_invalid_arg_or_span_entries_are_dropped() -> None:
         return {"received_keys": list((images or {}).keys())}
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -219,7 +219,7 @@ async def test_no_implicit_images_pass_when_omitted() -> None:
         return {"ok": True}
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -265,7 +265,7 @@ async def test_images_value_may_be_handle_objects() -> None:
         return {"ids": ids}
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
