@@ -6,82 +6,7 @@ import pytest
 import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project
-
-
-class SpyAsyncUnify:
-    """A minimal AsyncUnify stub that records the *visible* message list each
-    time ``generate`` is invoked so that we can assert that the
-    ``preprocess_msgs`` callback patched placeholders *before* the LLM saw
-    them.
-    """
-
-    def __init__(self):
-        # The conversation state the tool-loop mutates.
-        self.messages: List[dict] = []
-        # Snapshots of what *generate* saw on every call.
-        self.seen_messages: List[List[dict]] = []
-        self._step = 0  # 0 → ask for tool, 1 → final answer
-
-    # ------------------------------------------------------------------ #
-    # Minimal surface expected by _async_tool_use_loop_inner             #
-    # ------------------------------------------------------------------ #
-    def append_messages(self, msgs):
-        self.messages.extend(msgs)
-
-    async def generate(self, **_):  # noqa: D401 – minimal stub
-        # Record a *deep* copy of the messages visible to the model.
-        self.seen_messages.append(copy.deepcopy(self.messages))
-
-        # Step-wise canned replies to drive the outer loop.
-        if self._step == 0:
-            self._step += 1
-            assistant_msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "dummy_tool",
-                            "arguments": "{}",
-                        },
-                    },
-                ],
-            }
-        else:
-            self._step += 1
-            assistant_msg = {
-                "role": "assistant",
-                "content": "all done",
-                "tool_calls": [],
-            }
-
-        self.messages.append(assistant_msg)
-        return assistant_msg
-
-    # Property used only for logging in our loop, safe to stub.
-    @property
-    def system_message(self) -> str:  # noqa: D401
-        return ""
-
-    # Convenience helpers for tests ----------------------------------- #
-    def seen_contexts(self) -> List[str]:
-        """Return the *unique* substituted context tokens the stub saw."""
-        out: List[str] = []
-        for snap in self.seen_messages:
-            for m in snap:
-                if isinstance(m.get("content"), str) and "context_" in m["content"]:
-                    # extract the token – e.g. "context_0" / "context_1"
-                    parts = [p for p in m["content"].split() if "context_" in p]
-                    out.extend(parts)
-        # keep order of appearance but drop duplicates
-        seen: List[str] = []
-        for p in out:
-            if p not in seen:
-                seen.append(p.replace(".", ""))
-        return seen
+from tests.helpers import _handle_project, SETTINGS
 
 
 # --------------------------------------------------------------------------- #
@@ -91,11 +16,15 @@ class SpyAsyncUnify:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_preprocess_msgs_dynamic_placeholder():
+async def test_preprocess_msgs_dynamic_placeholder(monkeypatch):
     """Verify that the preprocess hook patches placeholders *per-LLM-call* and
     that the modifications never leak into the persistent chat history."""
 
-    client = SpyAsyncUnify()
+    client = unify.AsyncUnify(
+        "o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
 
     # Counter so each invocation produces a fresh replacement value.
     counter = {"n": 0}
@@ -109,6 +38,33 @@ async def test_preprocess_msgs_dynamic_placeholder():
             if isinstance(m.get("content"), str):
                 m["content"] = m["content"].replace("{context}", replacement)
         return new_msgs
+
+    # Spy the preprocess application at the exact callsite while still hitting the real LLM.
+    from unity.common._async_tool import loop as _loop
+
+    seen_contexts: List[str] = []
+
+    orig_gwp = _loop.generate_with_preprocess
+
+    async def _spy_gwp(_client, _preprocess, **gen_kwargs):
+        def _spy_preprocess(msgs: List[dict]) -> List[dict]:
+            out = _preprocess(msgs)
+            # Extract any context_ tokens for assertions
+            for m in out:
+                try:
+                    if isinstance(m.get("content"), str) and "context_" in m["content"]:
+                        parts = [p for p in m["content"].split() if "context_" in p]
+                        for p in parts:
+                            tok = p.replace(".", "")
+                            if tok not in seen_contexts:
+                                seen_contexts.append(tok)
+                except Exception:
+                    pass
+            return out
+
+        return await orig_gwp(_client, _spy_preprocess, **gen_kwargs)
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
 
     # ------------------------------------------------------------------ #
     # Dummy tool – returns almost instantly so the loop needs two LLM     #
@@ -135,7 +91,7 @@ async def test_preprocess_msgs_dynamic_placeholder():
     # ------------------------------------------------------------------ #
 
     # 1️⃣  The placeholder was substituted differently on successive calls.
-    assert client.seen_contexts()[:2] == [
+    assert seen_contexts[:2] == [
         "context_0",
         "context_1",
     ], "Preprocessed contexts not observed in order or missing."

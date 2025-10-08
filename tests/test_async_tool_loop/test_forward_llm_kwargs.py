@@ -7,21 +7,36 @@ import unify
 from unity.common.async_tool_loop import start_async_tool_loop
 
 
-class _StubUnify:
-    """Tiny stub that produces a single tool call with predefined arguments
-    followed by a final assistant turn with plain text.
+@pytest.mark.asyncio
+async def test_all_llm_kwargs_are_forwarded_verbatim(monkeypatch):
+    """Regression test: ensure all LLM-provided kwargs reach the tool.
+
+    Prior behaviour filtered kwargs against the tool signature, which
+    dropped legitimate fields when the tool accepted only **kwargs.
     """
 
-    def __init__(self):
-        self.messages: list[dict] = []
-        self._step = 0
+    received: dict[str, str] = {}
 
-    def append_messages(self, msgs):
-        self.messages.extend(msgs)
+    @unify.traced
+    def accept_any(**kwargs):  # type: ignore[no-untyped-def]
+        nonlocal received
+        received = dict(kwargs)
+        return "ok"
 
-    async def generate(self, **_):  # noqa: D401 – minimal stub
-        if self._step == 0:
-            self._step += 1
+    # give the tool stable names for readability
+    accept_any.__name__ = "accept_any"
+    accept_any.__qualname__ = "accept_any"
+
+    client = unify.AsyncUnify("o4-mini@openai")
+
+    # Monkeypatch the client's generate to emit a single tool call with kwargs,
+    # then fall back to the real generation for the final turn.
+    orig_generate = client.generate
+    step = {"n": 0}
+
+    async def _driver(**kwargs):
+        if step["n"] == 0:
+            step["n"] += 1
             msg = {
                 "role": "assistant",
                 "content": "",
@@ -43,45 +58,14 @@ class _StubUnify:
                     },
                 ],
             }
-        else:
-            self._step += 1
-            msg = {
-                "role": "assistant",
-                "content": "done",
-                "tool_calls": [],
-            }
-        self.messages.append(msg)
-        return msg
+            client.append_messages([msg])
+            return msg
+        return await orig_generate(**kwargs)
 
-    @property
-    def system_message(self) -> str:  # noqa: D401 – unused in stub
-        return ""
-
-
-@pytest.mark.asyncio
-async def test_all_llm_kwargs_are_forwarded_verbatim():
-    """Regression test: ensure all LLM-provided kwargs reach the tool.
-
-    Prior behaviour filtered kwargs against the tool signature, which
-    dropped legitimate fields when the tool accepted only **kwargs.
-    """
-
-    received: dict[str, str] = {}
-
-    @unify.traced
-    def accept_any(**kwargs):  # type: ignore[no-untyped-def]
-        nonlocal received
-        received = dict(kwargs)
-        return "ok"
-
-    # give the tool stable names for readability
-    accept_any.__name__ = "accept_any"
-    accept_any.__qualname__ = "accept_any"
-
-    client = _StubUnify()
+    monkeypatch.setattr(client, "generate", _driver, raising=True)
 
     handle = start_async_tool_loop(
-        client=client,  # type: ignore[arg-type]
+        client=client,
         message="Start",
         tools={"accept_any": accept_any},
     )
