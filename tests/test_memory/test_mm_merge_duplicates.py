@@ -102,10 +102,30 @@ async def test_update_contacts_merges_duplicate_contacts(monkeypatch):
     # 3.  Instantiate MemoryManager wired to simulated managers
     # ------------------------------------------------------------------
     mm = MemoryManager(
-        contact_manager=SimulatedContactManager(description="merge-test"),
-        transcript_manager=SimulatedTranscriptManager(description="merge-test"),
-        knowledge_manager=SimulatedKnowledgeManager(description="merge-test"),
-        task_scheduler=SimulatedTaskScheduler(description="merge-test"),
+        contact_manager=SimulatedContactManager(
+            description=(
+                "TEST SCENARIO: Merge duplicates. As a simulated ContactManager, expose"
+                " merge capabilities deterministically and avoid external I/O."
+            ),
+        ),
+        transcript_manager=SimulatedTranscriptManager(
+            description=(
+                "TEST SCENARIO: Merge duplicates. Provide simple answers for transcript"
+                " queries without side effects."
+            ),
+        ),
+        knowledge_manager=SimulatedKnowledgeManager(
+            description=(
+                "TEST SCENARIO: Merge duplicates. Keep behaviour lightweight; no assumption"
+                " about pre-existing knowledge is required."
+            ),
+        ),
+        task_scheduler=SimulatedTaskScheduler(
+            description=(
+                "TEST SCENARIO: Merge duplicates. Accept task updates deterministically;"
+                " no external I/O."
+            ),
+        ),
     )
 
     # ------------------------------------------------------------------

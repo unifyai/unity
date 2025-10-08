@@ -113,10 +113,34 @@ async def test_memory_manager_parse_transcript_for_updates(monkeypatch):
     # 2.  Instantiate MemoryManager wired to simulated sub-managers
     # ------------------------------------------------------------------
     mm = MemoryManager(
-        contact_manager=SimulatedContactManager(description="chunk-test"),
-        transcript_manager=SimulatedTranscriptManager(description="chunk-test"),
-        knowledge_manager=SimulatedKnowledgeManager(description="chunk-test"),
-        task_scheduler=SimulatedTaskScheduler(description="chunk-test"),
+        contact_manager=SimulatedContactManager(
+            description=(
+                "TEST SCENARIO: Chunk processing. You are a simulated ContactManager used"
+                " inside a real MemoryManager; behave deterministically and lightweight,"
+                " avoiding any external I/O. Accept updates when asked without requiring"
+                " clarification, and keep outputs concise so the MemoryManager can run a"
+                " single maintenance cycle."
+            ),
+        ),
+        transcript_manager=SimulatedTranscriptManager(
+            description=(
+                "TEST SCENARIO: Chunk processing. Simulated TranscriptManager should return"
+                " straightforward results for simple ask operations and avoid side effects."
+            ),
+        ),
+        knowledge_manager=SimulatedKnowledgeManager(
+            description=(
+                "TEST SCENARIO: Chunk processing. Simulated KnowledgeManager can assume an"
+                " empty store and respond quickly; no refusers or clarifications—just"
+                " lightweight acknowledgements."
+            ),
+        ),
+        task_scheduler=SimulatedTaskScheduler(
+            description=(
+                "TEST SCENARIO: Chunk processing. Simulated TaskScheduler should accept"
+                " simple updates without hesitation and keep responses minimal."
+            ),
+        ),
     )
 
     # Shrink the chunk size to just **3** messages so the test runs fast.
