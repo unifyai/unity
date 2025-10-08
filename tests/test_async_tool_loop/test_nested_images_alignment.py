@@ -9,27 +9,7 @@ from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
 
 
-class _SpyClient:
-    """Minimal AsyncUnify-compatible stub used by these tests.
-
-    Mirrors the subset used by async tool loop tests: a `messages` list,
-    `append_messages`, and a `system_message` property and setter.
-    """
-
-    def __init__(self):
-        self.messages: list[dict] = []
-        self._system: str = ""
-
-    def append_messages(self, msgs):
-        self.messages.extend(msgs)
-
-    @property
-    def system_message(self) -> str:
-        return self._system
-
-    def set_system_message(self, msg: str):
-        self._system = msg
-        return self
+# Removed stub client; tests use real AsyncUnify with spies only.
 
 
 def _solid_png_bytes() -> bytes:
@@ -71,58 +51,21 @@ class DummyImageHandle:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_align_images_for_helper_builds_arg_scoped_mapping(monkeypatch) -> None:
+async def test_align_images_for_helper_builds_arg_scoped_mapping() -> None:
     """
     Calling align_images_for returns a dict suitable for a subsequent inner tool
     call: keys are arg-scoped spans like "question[15:28]" and values are ids.
     """
 
-    snapshots: list[list[dict]] = []
-
-    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):
-        tools = gen_kwargs.get("tools") or []
-        snapshots.append(tools)
-
-        # First turn: call helper
-        msg = {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call_ALIGN",
-                    "type": "function",
-                    "function": {
-                        "name": "align_images_for",
-                        "arguments": json.dumps(
-                            {
-                                "args": {
-                                    "question": "Please compare the Cairo skyline images for clarity",
-                                },
-                                "hints": [
-                                    {
-                                        "arg": "question",
-                                        "substring": "Cairo skyline",
-                                        "image_id": 42,
-                                    },
-                                ],
-                            },
-                        ),
-                    },
-                },
-            ],
-        }
-
-        client.messages.append(msg)
-        return msg
-
-    from unity.common._async_tool import loop as _loop
-
-    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
-
     client = unify.AsyncUnify(
         "o4-mini@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the helper `align_images_for` "
+        'with arguments: {\n  "args": { "question": "Please compare the Cairo skyline images for clarity" },\n  "hints": [{ "arg": "question", "substring": "Cairo skyline", "image_id": 42 }]\n}. '
+        "After the helper returns, provide a short final reply.",
     )
     images = {
         "[0:5]": DummyImageHandle(
@@ -158,7 +101,7 @@ async def test_align_images_for_helper_builds_arg_scoped_mapping(monkeypatch) ->
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_inner_tool_receives_and_resolves_arg_scoped_images(monkeypatch) -> None:
+async def test_inner_tool_receives_and_resolves_arg_scoped_images() -> None:
     """
     A base tool that accepts `images` should receive a dict keyed by arg-scoped
     spans where values are resolved to live image handles.
@@ -175,43 +118,14 @@ async def test_inner_tool_receives_and_resolves_arg_scoped_images(monkeypatch) -
                 ids.append(-1)
         return {"received": {"keys": keys, "ids": ids, "question": question}}
 
-    step = {"n": 0}
-
-    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):
-        if step["n"] == 0:
-            step["n"] += 1
-            msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_ANALYZE",
-                        "type": "function",
-                        "function": {
-                            "name": "analyze",
-                            "arguments": json.dumps(
-                                {
-                                    "question": "Hello world",
-                                    "images": {"question[0:5]": 42},
-                                },
-                            ),
-                        },
-                    },
-                ],
-            }
-        else:
-            msg = {"role": "assistant", "content": "done", "tool_calls": []}
-        client.messages.append(msg)
-        return msg
-
-    from unity.common._async_tool import loop as _loop
-
-    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
-
     client = unify.AsyncUnify(
         "o4-mini@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
+        '{\n  "question": "Hello world",\n  "images": { "question[0:5]": 42 }\n}. Then provide a short final reply.',
     )
     images = {
         "[0:5]": DummyImageHandle(
@@ -247,7 +161,7 @@ async def test_inner_tool_receives_and_resolves_arg_scoped_images(monkeypatch) -
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_invalid_arg_or_span_entries_are_dropped(monkeypatch) -> None:
+async def test_invalid_arg_or_span_entries_are_dropped() -> None:
     """
     Entries with invalid arg names or out-of-range spans are ignored by the scheduler.
     """
@@ -255,44 +169,15 @@ async def test_invalid_arg_or_span_entries_are_dropped(monkeypatch) -> None:
     def analyze(*, question: str, images: dict[str, object]) -> dict:
         return {"received_keys": list((images or {}).keys())}
 
-    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):
-        msg = {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call_ANALYZE",
-                    "type": "function",
-                    "function": {
-                        "name": "analyze",
-                        "arguments": json.dumps(
-                            {
-                                "question": "Hello",
-                                # valid, in-range
-                                "images": {
-                                    "question[0:5]": 42,
-                                    # invalid arg name
-                                    "text[0:4]": 42,
-                                    # out-of-range span
-                                    "question[10:20]": 42,
-                                },
-                            },
-                        ),
-                    },
-                },
-            ],
-        }
-        client.messages.append(msg)
-        return msg
-
-    from unity.common._async_tool import loop as _loop
-
-    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
-
     client = unify.AsyncUnify(
         "o4-mini@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
+        '{\n  "question": "Hello",\n  "images": { "question[0:5]": 42, "text[0:4]": 42, "question[10:20]": 42 }\n}. '
+        "Then provide a short final reply.",
     )
     images = {
         "[0:5]": DummyImageHandle(
@@ -324,7 +209,7 @@ async def test_invalid_arg_or_span_entries_are_dropped(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_no_implicit_images_pass_when_omitted(monkeypatch) -> None:
+async def test_no_implicit_images_pass_when_omitted() -> None:
     """
     If `images` is omitted in the inner tool call, no images are passed implicitly
     even when the outer loop had live images.
@@ -333,32 +218,14 @@ async def test_no_implicit_images_pass_when_omitted(monkeypatch) -> None:
     def analyze(*, question: str) -> dict:
         return {"ok": True}
 
-    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):
-        msg = {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call_ANALYZE",
-                    "type": "function",
-                    "function": {
-                        "name": "analyze",
-                        "arguments": json.dumps({"question": "Hello"}),
-                    },
-                },
-            ],
-        }
-        client.messages.append(msg)
-        return msg
-
-    from unity.common._async_tool import loop as _loop
-
-    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
-
     client = unify.AsyncUnify(
         "o4-mini@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        'You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: { "question": "Hello" }. '
+        "Do NOT include an `images` field. Then provide a short final reply.",
     )
     images = {
         "[0:5]": DummyImageHandle(
@@ -388,7 +255,7 @@ async def test_no_implicit_images_pass_when_omitted(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_images_value_may_be_handle_objects(monkeypatch) -> None:
+async def test_images_value_may_be_handle_objects() -> None:
     """
     The `images` mapping can include live handle objects as values instead of ids.
     """
@@ -397,37 +264,14 @@ async def test_images_value_may_be_handle_objects(monkeypatch) -> None:
         ids = [int(getattr(v, "image_id", -1)) for v in (images or {}).values()]
         return {"ids": ids}
 
-    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):
-        msg = {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call_ANALYZE",
-                    "type": "function",
-                    "function": {
-                        "name": "analyze",
-                        "arguments": json.dumps(
-                            {
-                                "question": "Hello world",
-                                "images": {"question[0:5]": {"__handle__": True}},
-                            },
-                        ),
-                    },
-                },
-            ],
-        }
-        client.messages.append(msg)
-        return msg
-
-    from unity.common._async_tool import loop as _loop
-
-    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
-
     client = unify.AsyncUnify(
         "o4-mini@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
+        '{\n  "question": "Hello world",\n  "images": { "question[0:5]": { "__handle__": true } }\n}. Then provide a short final reply.',
     )
 
     handle_obj = DummyImageHandle(
