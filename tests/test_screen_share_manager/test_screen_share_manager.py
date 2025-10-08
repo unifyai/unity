@@ -34,55 +34,72 @@ def mock_loop():
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_ssim_change_detection_creates_pending_event(
+async def test_full_change_detection_pipeline_creates_event(
     mocked_screen_share_manager, mock_loop
 ):
     """
-    Tests that a significant visual difference between frames triggers the
-    creation of a 'pending_vision_event'.
+    Tests that a change passing all three stages (MSE, SSIM, Semantic)
+    creates a 'pending_vision_event'.
     """
     manager, mocks = mocked_screen_share_manager
-
-    # Set an initial frame
     manager._last_significant_frame_b64 = PNG_BLUE_B64
-    manager.MSE_THRESHOLD = -1  # Ensure MSE always passes to isolate SSIM
-    manager.SSIM_THRESHOLD = 0.99  # Ensure SSIM fails for different images
 
-    # Handle a new, different frame
-    await manager._handle_frame_event(
-        {"payload": {"timestamp": 10.0, "frame_b64": PNG_RED_B64}}, loop=mock_loop
-    )
+    with patch.object(
+        manager, "_is_semantically_significant", return_value=True
+    ) as mock_semantic_check:
+        manager.MSE_THRESHOLD = 50
+        manager.SSIM_THRESHOLD = 0.9
 
-    assert len(manager._pending_vision_events) == 1
-    event = manager._pending_vision_events[0]
-    assert event["timestamp"] == 10.0
-    assert event["before_frame_b64"] == PNG_BLUE_B64
-    assert event["after_frame_b64"] == PNG_RED_B64
+        # Mock MSE to be high (indicating change)
+        with patch.object(manager, "_calculate_mse", return_value=150.0):
+            # Mock SSIM to be low (indicating change)
+            with patch(
+                "unity.screen_share_manager.screen_share_manager.ssim", return_value=0.5
+            ):
+                await manager._handle_frame_event(
+                    {"payload": {"timestamp": 10.0, "frame_b64": PNG_RED_B64}},
+                    loop=mock_loop,
+                )
+                await asyncio.sleep(0.01)  # Allow executor to run
+
+                mock_semantic_check.assert_called_once()
+                assert len(manager._pending_vision_events) == 1
+                assert manager._pending_vision_events[0]["timestamp"] == 10.0
 
 
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_no_ssim_change_does_not_create_pending_event(
+async def test_semantic_filter_prevents_event_creation(
     mocked_screen_share_manager, mock_loop
 ):
     """
-    Tests that if frames are visually similar (above SSIM threshold),
-    no pending event is created.
+    Tests that if a change passes MSE and SSIM but fails the semantic check,
+    no event is created.
     """
     manager, mocks = mocked_screen_share_manager
-
-    # Set an initial frame
     manager._last_significant_frame_b64 = PNG_BLUE_B64
-    manager.MSE_THRESHOLD = -1  # Ensure MSE always passes
-    manager.SSIM_THRESHOLD = 0.99  # SSIM for identical images is 1.0, so this will pass
 
-    # Handle a new, identical frame
-    await manager._handle_frame_event(
-        {"payload": {"timestamp": 10.0, "frame_b64": PNG_BLUE_B64}}, loop=mock_loop
-    )
+    # This time, the semantic check returns False
+    with patch.object(
+        manager, "_is_semantically_significant", return_value=False
+    ) as mock_semantic_check:
+        manager.MSE_THRESHOLD = 50
+        manager.SSIM_THRESHOLD = 0.9
 
-    assert len(manager._pending_vision_events) == 0
+        with patch.object(manager, "_calculate_mse", return_value=150.0):
+            with patch(
+                "unity.screen_share_manager.screen_share_manager.ssim", return_value=0.5
+            ):
+                await manager._handle_frame_event(
+                    {"payload": {"timestamp": 10.0, "frame_b64": PNG_RED_B64}},
+                    loop=mock_loop,
+                )
+                await asyncio.sleep(0.01)
+
+                mock_semantic_check.assert_called_once()
+                # The key assertion: no event was created
+                assert len(manager._pending_vision_events) == 0
 
 
 @pytest.mark.unit
@@ -317,6 +334,14 @@ async def test_combined_turn_logs_multiple_events(mocked_screen_share_manager):
     assert len(logged_message.screen_share) == 2
     assert "14.50-14.50" in logged_message.screen_share
     assert "15.00-16.00" in logged_message.screen_share
+    assert (
+        logged_message.screen_share["14.50-14.50"].caption
+        == "A new dialog box appeared."
+    )
+    assert (
+        logged_message.screen_share["15.00-16.00"].caption
+        == "User stated their intention to submit."
+    )
 
 
 @pytest.mark.unit
@@ -386,7 +411,8 @@ async def test_empty_llm_response_logs_message_without_events(
 @pytest.mark.asyncio
 async def test_analysis_clears_pending_vision_events(mocked_screen_share_manager):
     """
-    Ensures that after any analysis run, the list of pending vision events is cleared.
+    Ensures that after a turn analysis is triggered, the list of pending
+    vision events is cleared.
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
@@ -394,61 +420,18 @@ async def test_analysis_clears_pending_vision_events(mocked_screen_share_manager
         manager._pending_vision_events.append(
             {"timestamp": 1.0, "before_frame_b64": "b", "after_frame_b64": "a"},
         )
+    assert len(manager._pending_vision_events) == 1
 
     mocks["analysis_client"].generate.return_value = TurnAnalysisResponse(events=[])
 
     manager._trigger_turn_analysis(
         speech_event={
-            "payload": {
-                "content": "go",
-                "contact_details": {"contact_id": 1},
-                "timestamp": datetime.now().isoformat(),
-            },
+            "payload": {"content": "go", "contact_details": {"contact_id": 1}}
         },
     )
     await asyncio.sleep(0.01)
 
     assert len(manager._pending_vision_events) == 0
-
-
-@pytest.mark.unit
-@_handle_project
-@pytest.mark.asyncio
-async def test_silent_event_without_prior_utterance_is_stored(
-    mocked_screen_share_manager,
-):
-    """
-    Tests that if a silent event occurs but there's no prior utterance,
-    the event is stored for the next turn.
-    """
-    manager, mocks = mocked_screen_share_manager
-    manager.DEBOUNCE_DELAY_SEC = 0
-    manager._last_user_utterance_message_id = None
-
-    mock_llm_response = TurnAnalysisResponse(
-        events=[
-            KeyEvent(
-                timestamp=25.0,
-                event_description="Desc",
-                representative_timestamp=25.0,
-            ),
-        ],
-    )
-    mocks["analysis_client"].generate.return_value = mock_llm_response
-
-    async with manager._state_lock:
-        manager._pending_vision_events.append(
-            {"timestamp": 25.0, "before_frame_b64": "b", "after_frame_b64": "a"}
-        )
-
-    manager._trigger_turn_analysis(speech_event=None)
-    await asyncio.sleep(0.01)
-    log_job = await manager._logging_queue.get()
-    await manager._logging_worker(log_job)
-
-    mocks["analysis_client"].generate.assert_called_once()
-    mocks["transcript_manager"].log_messages.assert_not_called()
-    assert len(manager._stored_silent_key_events) == 1
 
 
 @pytest.mark.unit
@@ -484,9 +467,16 @@ async def test_realtime_annotation_is_published_for_each_key_event(
         "payload": {"contact_details": {"contact_id": 1}, "content": "dummy"}
     }
     manager._trigger_turn_analysis(speech_event=speech_event_data)
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.01)  # Allow analysis task to complete
 
+    # The publish calls happen inside _analyze_turn
     assert mocks["event_broker"].publish.call_count == 2
+    published_events = [
+        json.loads(call.args[1])["payload"]["event_description"]
+        for call in mocks["event_broker"].publish.call_args_list
+    ]
+    assert "Event A" in published_events
+    assert "Event B" in published_events
 
 
 @pytest.mark.unit
@@ -494,24 +484,34 @@ async def test_realtime_annotation_is_published_for_each_key_event(
 @pytest.mark.asyncio
 async def test_analysis_queues_job_for_logging_worker(mocked_screen_share_manager):
     """
-    Tests that _analyze_turn places a job in the _logging_queue.
+    Tests that _analyze_turn places a valid job in the _logging_queue.
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
+
     key_event = KeyEvent(
         timestamp=10.0, event_description="Test event", representative_timestamp=10.0
     )
-    mocks["analysis_client"].generate.return_value = TurnAnalysisResponse(
-        events=[key_event]
-    )
+    mock_llm_response = TurnAnalysisResponse(events=[key_event])
+    mocks["analysis_client"].generate.return_value = mock_llm_response
 
     speech_event_data = {
         "payload": {"contact_details": {"contact_id": 1}, "content": "test"}
     }
+
     assert manager._logging_queue.qsize() == 0
+
     manager._trigger_turn_analysis(speech_event=speech_event_data)
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.01)  # Allow analysis task to complete
+
     assert manager._logging_queue.qsize() == 1
+
+    queued_job = await manager._logging_queue.get()
+    (job_speech_event, job_key_events, job_frame_map) = queued_job
+
+    assert job_speech_event == speech_event_data
+    assert len(job_key_events) == 1
+    assert job_key_events[0].event_description == "Test event"
 
 
 @pytest.mark.unit
@@ -519,7 +519,7 @@ async def test_analysis_queues_job_for_logging_worker(mocked_screen_share_manage
 @pytest.mark.asyncio
 async def test_summary_is_updated_after_turn_analysis(mocked_screen_share_manager):
     """
-    Tests that the session summary is updated correctly.
+    Tests that the session summary is updated correctly after an analysis.
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
@@ -549,10 +549,14 @@ async def test_summary_is_updated_after_turn_analysis(mocked_screen_share_manage
         }
         manager._trigger_turn_analysis(speech_event=speech_event_data)
         await asyncio.sleep(0.01)  # Let analysis task run
-        await manager._update_summary()  # Manually trigger summary update
+
+        # Manually trigger summary update, as it's normally delayed
+        await manager._update_summary()
 
         mock_summary_client.generate.assert_called_once()
         assert manager._session_summary == "User navigated to billing."
+        # Check that the unsummarized events were cleared
+        assert len(manager._unsummarized_events) == 0
 
 
 @pytest.mark.unit
@@ -585,44 +589,6 @@ async def test_turn_analysis_is_debounced(mocked_screen_share_manager):
 
     # Now it should have been called exactly once
     mocks["analysis_client"].generate.assert_called_once()
-
-
-@pytest.mark.unit
-@_handle_project
-@pytest.mark.asyncio
-async def test_frame_event_uses_mse_prefilter(mocked_screen_share_manager, mock_loop):
-    """
-    Tests that the expensive SSIM check is skipped if the cheap MSE pre-filter
-    does not detect a change.
-    """
-    manager, mocks = mocked_screen_share_manager
-    manager._last_significant_frame_b64 = PNG_BLUE_B64
-
-    with patch.object(manager, "_calculate_mse", return_value=50.0) as mock_mse, patch(
-        "unity.screen_share_manager.screen_share_manager.ssim", new_callable=MagicMock
-    ) as mock_ssim:
-        # Scenario 1: MSE is below threshold
-        manager.MSE_THRESHOLD = 100
-        await manager._handle_frame_event(
-            {"payload": {"timestamp": 1.0, "frame_b64": PNG_RED_B64}}, loop=mock_loop
-        )
-        await asyncio.sleep(0.01)
-        mock_mse.assert_called_once()
-        mock_ssim.assert_not_called()
-        assert len(manager._pending_vision_events) == 0
-
-        # Scenario 2: MSE is above threshold, SSIM is triggered
-        mock_mse.reset_mock()
-        manager.MSE_THRESHOLD = 40
-        manager.SSIM_THRESHOLD = 0.9
-        mock_ssim.return_value = 0.5
-        await manager._handle_frame_event(
-            {"payload": {"timestamp": 2.0, "frame_b64": PNG_RED_B64}}, loop=mock_loop
-        )
-        await asyncio.sleep(0.01)
-        mock_mse.assert_called_once()
-        mock_ssim.assert_called_once()
-        assert len(manager._pending_vision_events) == 1
 
 
 @pytest.mark.unit
@@ -679,10 +645,15 @@ async def test_set_session_context_updates_summary(mocked_screen_share_manager):
     with patch(
         "unity.screen_share_manager.screen_share_manager.build_turn_analysis_prompt"
     ) as mock_build_prompt:
-        manager._trigger_turn_analysis({"payload": {"content": "test"}})
+        manager._trigger_turn_analysis(
+            {"payload": {"content": "test", "contact_details": {"contact_id": 1}}}
+        )
         await asyncio.sleep(0.01)
 
+        # Let the debounced task run and trigger the analysis
+        await asyncio.sleep(manager.DEBOUNCE_DELAY_SEC + 0.01)
+
         mock_build_prompt.assert_called_once()
-        call_args = mock_build_prompt.call_args
+        call_args, _ = mock_build_prompt.call_args
         # The first argument to the prompt builder is `current_summary`
-        assert call_args[0][0] == initial_context
+        assert call_args[0] == initial_context

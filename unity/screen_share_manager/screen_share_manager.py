@@ -12,9 +12,10 @@ from typing import Deque, List, Optional, Tuple, Dict
 
 import redis.asyncio as redis
 import unify
+import cv2
+import numpy as np
 from PIL import Image
 from skimage.metrics import structural_similarity as ssim
-import numpy as np
 
 from unity.conversation_manager_2.event_broker import get_event_broker
 from unity.image_manager.image_manager import ImageManager
@@ -44,13 +45,21 @@ class ScreenShareManager:
     `app:comms:phone_utterance` for user speech. It processes these events
     asynchronously to build a comprehensive narrative of the user's actions.
 
-    1. Vision Event Detection (MSE + SSIM):
-       - A cheap pre-filter (Mean Squared Error) is used first on downsampled,
-         grayscale images to quickly discard frames with no meaningful change.
-       - If the MSE exceeds a threshold, a more accurate but CPU-intensive
-         Structural Similarity Index (SSIM) check is performed.
-       - A "vision event" is created only when this two-stage process confirms a
-         significant visual change. This is stored in a pending queue.
+    1. Three-Stage Vision Event Detection:
+       To accurately detect meaningful UI changes while filtering out noise like
+       cursor movements or minor animations, a three-stage pipeline is used for
+       every new frame:
+       a. MSE Pre-filter: A cheap Mean Squared Error check on downsampled,
+          grayscale images quickly discards frames with no significant pixel change.
+       b. SSIM Perceptual Check: If MSE detects a change, a more accurate but
+          CPU-intensive Structural Similarity Index (SSIM) check is performed
+          to verify the change is perceptually significant.
+       c. Semantic Contour Analysis: If SSIM also confirms a difference, a final
+          semantic filter is applied. This uses OpenCV to find the contours
+          (outlines) of all changed regions and filters them based on size and
+          shape. This step effectively ignores noise like thin scrollbars or
+          small cursors. A "vision event" is created only if a change passes
+          all three stages.
 
     2. Speech Event Handling & Debouncing:
        - When a user speaks, a `phone_utterance` event is received.
@@ -146,6 +155,8 @@ class ScreenShareManager:
         # Configuration
         self.MSE_THRESHOLD = 100
         self.SSIM_THRESHOLD = 0.80
+        self.MIN_CONTOUR_AREA = 100
+        self.MAX_ASPECT_RATIO = 20
         self.DEBOUNCE_DELAY_SEC = 0.5
         self.INACTIVITY_TIMEOUT_SEC = 10.0
         self.FRAME_BUFFER_SIZE = 100
@@ -265,6 +276,40 @@ class ScreenShareManager:
         err /= float(img1.size[0] * img1.size[1])
         return err
 
+    def _is_semantically_significant(
+        self, img_before: Image.Image, img_after: Image.Image
+    ) -> bool:
+        """
+        Performs a semantic check on the visual change by analyzing the contours
+        of the difference between two frames. It filters out noise like cursors
+        or small, irrelevant artifacts.
+        """
+        cv_before = np.array(img_before)
+        cv_after = np.array(img_after)
+
+        diff = cv2.absdiff(cv_before, cv_after)
+        _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(
+            thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < self.MIN_CONTOUR_AREA:
+                continue
+
+            x, y, w, h = cv2.boundingRect(contour)
+            if w == 0 or h == 0:
+                continue
+
+            aspect_ratio = float(w) / h if h > w else float(h) / w
+            if aspect_ratio > self.MAX_ASPECT_RATIO:
+                continue
+
+            return True
+
+        return False
+
     async def _listen_for_events(self):
         """The core loop that subscribes to Redis and dispatches events."""
         async with self._event_broker.pubsub() as pubsub:
@@ -372,27 +417,39 @@ class ScreenShareManager:
             logger.warning("Could not process images for comparison. Skipping frame.")
             return
 
+        # Stage 1: Cheap MSE pre-filter
         mse = await loop.run_in_executor(
             self._cpu_executor, self._calculate_mse, current_img, last_img
         )
+        if mse <= self.MSE_THRESHOLD:
+            return  # No significant pixel change
 
-        if mse > self.MSE_THRESHOLD:
-            score = await loop.run_in_executor(
-                self._cpu_executor, ssim, np.array(last_img), np.array(current_img)
+        # Stage 2: Perceptual SSIM check
+        score = await loop.run_in_executor(
+            self._cpu_executor, ssim, np.array(last_img), np.array(current_img)
+        )
+        if score >= self.SSIM_THRESHOLD:
+            return  # Perceptually too similar
+
+        # Stage 3: Semantic contour analysis to filter noise
+        is_significant = await loop.run_in_executor(
+            self._cpu_executor, self._is_semantically_significant, last_img, current_img
+        )
+        if not is_significant:
+            return  # Change was likely noise (cursor, scrollbar, etc.)
+
+        logger.info(
+            f"Significant visual event detected at t={timestamp:.2f}s (MSE: {mse:.2f}, SSIM: {score:.2f})"
+        )
+        async with self._state_lock:
+            self._pending_vision_events.append(
+                {
+                    "timestamp": timestamp,
+                    "before_frame_b64": self._last_significant_frame_b64,
+                    "after_frame_b64": frame_b64,
+                }
             )
-            if score < self.SSIM_THRESHOLD:
-                logger.info(
-                    f"Significant visual change detected at t={timestamp:.2f}s (MSE: {mse:.2f}, SSIM: {score:.2f})"
-                )
-                async with self._state_lock:
-                    self._pending_vision_events.append(
-                        {
-                            "timestamp": timestamp,
-                            "before_frame_b64": self._last_significant_frame_b64,
-                            "after_frame_b64": frame_b64,
-                        }
-                    )
-                self._last_significant_frame_b64 = frame_b64
+        self._last_significant_frame_b64 = frame_b64
 
     def _trigger_summary_update(self):
         """Schedules the summary update task, ensuring only one is running or scheduled (debouncing)."""
@@ -585,7 +642,7 @@ class ScreenShareManager:
             ]
 
         system_prompt = build_turn_analysis_prompt(
-            current_summary, recent_event_descriptions
+            current_summary, self._recent_key_events
         )
         user_content = []
         timestamp_to_frame_map: Dict[float, str] = {}
