@@ -142,32 +142,41 @@ async def test_sequencer_processes_events_in_order(mocked_screen_share_manager):
     manager, mocks = mocked_screen_share_manager
     sequencer_task = asyncio.create_task(manager._sequencer())
 
-    # 1. Manually process initial frame to set baseline state
-    event1 = {"payload": {"timestamp": 1.0, "frame_b64": PNG_BLUE_B64}}
-    pil1 = manager._b64_to_image(PNG_BLUE_B64)
-    await manager._results_queue.put((1, event1, pil1))
-    await asyncio.sleep(0.01)
-    assert manager._last_significant_frame_b64 == PNG_BLUE_B64
+    # Mock the change detection to ensure every frame is treated as significant.
+    # This isolates the test to only the sequencer's ordering logic.
+    with patch.object(
+        manager, "_is_semantically_significant", return_value=True
+    ), patch.object(manager, "_calculate_mse", return_value=999.0), patch(
+        "unity.screen_share_manager.screen_share_manager.ssim", return_value=0.1
+    ):
+        # 1. Manually process initial frame to set baseline state
+        event1 = {"payload": {"timestamp": 1.0, "frame_b64": PNG_BLUE_B64}}
+        pil1 = manager._b64_to_image(PNG_BLUE_B64)
+        await manager._results_queue.put((1, event1, pil1))
+        await asyncio.sleep(0.01)
+        assert manager._last_significant_frame_b64 == PNG_BLUE_B64
+        # Clear pending events created by the first frame to isolate the next steps
+        manager._pending_vision_events.clear()
 
-    # 2. Put results on the queue OUT of order (3, then 2)
-    event3 = {"payload": {"timestamp": 3.0, "frame_b64": PNG_GREEN_B64}}
-    pil3 = manager._b64_to_image(PNG_GREEN_B64)
-    await manager._results_queue.put((3, event3, pil3))
+        # 2. Put results on the queue OUT of order (3, then 2)
+        event3 = {"payload": {"timestamp": 3.0, "frame_b64": PNG_GREEN_B64}}
+        pil3 = manager._b64_to_image(PNG_GREEN_B64)
+        await manager._results_queue.put((3, event3, pil3))
 
-    event2 = {"payload": {"timestamp": 2.0, "frame_b64": PNG_RED_B64}}
-    pil2 = manager._b64_to_image(PNG_RED_B64)
-    await manager._results_queue.put((2, event2, pil2))
+        event2 = {"payload": {"timestamp": 2.0, "frame_b64": PNG_RED_B64}}
+        pil2 = manager._b64_to_image(PNG_RED_B64)
+        await manager._results_queue.put((2, event2, pil2))
 
-    # Allow sequencer to process both buffered and new results
-    await asyncio.sleep(0.05)
+        # Allow sequencer to process both buffered and new results
+        await asyncio.sleep(0.05)
 
-    # 3. Assertions
-    assert manager._last_significant_frame_b64 == PNG_GREEN_B64
-    assert len(manager._pending_vision_events) == 2
-    assert manager._pending_vision_events[0]["timestamp"] == 2.0
-    assert manager._pending_vision_events[0]["after_frame_b64"] == PNG_RED_B64
-    assert manager._pending_vision_events[1]["timestamp"] == 3.0
-    assert manager._pending_vision_events[1]["after_frame_b64"] == PNG_GREEN_B64
+        # 3. Assertions
+        assert manager._last_significant_frame_b64 == PNG_GREEN_B64
+        assert len(manager._pending_vision_events) == 2
+        assert manager._pending_vision_events[0]["timestamp"] == 2.0
+        assert manager._pending_vision_events[0]["after_frame_b64"] == PNG_RED_B64
+        assert manager._pending_vision_events[1]["timestamp"] == 3.0
+        assert manager._pending_vision_events[1]["after_frame_b64"] == PNG_GREEN_B64
 
     sequencer_task.cancel()
 
