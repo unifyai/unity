@@ -650,11 +650,11 @@ class MemoryManager(BaseMemoryManager):
         )
         target_id = contact_id  # capture for closure
 
-        async def set_response_policy(contact_id: int, response_policy: str) -> str:
-            final_id = contact_id or target_id
+        async def set_response_policy(response_policy: str) -> str:
+            final_id = target_id
             if final_id is None:
                 raise ValueError(
-                    "contact_id must be supplied either via the method argument or the tool call.",
+                    "contact_id is required but was not provided by the caller.",
                 )
             await asyncio.to_thread(
                 self._contact_manager._update_contact,

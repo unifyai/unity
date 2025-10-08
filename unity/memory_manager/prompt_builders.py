@@ -246,12 +246,13 @@ def build_response_policy_prompt(
     *,
     guidance: Optional[str] = None,
 ) -> str:
-    """Return a system prompt guiding the LLM to maintain the *response_policy* column.
+    """Return a system prompt guiding the LLM to maintain the assistant's
+    own *response_policy* for replying to the target contact.
 
-    The *response policy* tells the assistant **how** to respond to inbound messages
-    from the target contact – tone, formality, level of initiative, topics to avoid,
-    escalation rules, etc.  It should be concise (≤ 300 words) and evolve over time
-    as the relationship matures.
+    The response policy defines how the assistant should respond to this
+    contact specifically – tone, formality, initiative, topics to avoid,
+    preferred channels, escalation rules, etc. Keep it concise (≤ 300 words)
+    and evolve it over time when the transcript provides clear directives.
     """
 
     lines: list[str] = [
@@ -263,40 +264,33 @@ def build_response_policy_prompt(
 
     lines.extend(
         [
-            f"You are updating the *response policy* for contact **{contact_name}**.",
-            f'This policy is written *for* {assistant_full} so always address them in second person ("you should…").',
-            f"Refer to **{contact_name}** in the third person so the instructions remain unambiguous.",
-            "",
-            "Actor and recipient (clarity)",
-            "------------------------------",
-            "• The target contact (whose policy you are updating) is the ACTOR. You are never choosing *who* to update—only *whether* to update this ACTOR’s policy.",
-            "• Directives like ‘be more formal when replying to <Recipient>’ describe how the ACTOR should behave toward the named RECIPIENT. Treat these as applicable to the ACTOR’s policy, scoped by recipient name.",
-            "• Ignore directives that clearly instruct a different person to act (e.g., ‘<Other person> should…’) when they do not describe the ACTOR’s behaviour.",
+            f"You are updating the assistant's OWN response policy for communicating with **{contact_name}**.",
+            f"Always address {assistant_full} in second person (e.g., 'you should …'). Refer to **{contact_name}** in the third person so the rules are unambiguous.",
             "",
             "What to include (concise)",
             "-------------------------",
             "• Tone and level of formality",
-            "• Response-time expectations",
+            "• Response‑time expectations",
             "• Topics to prioritise or avoid",
             "• Preferred channels",
             "• Escalation / fallback",
             "",
             "Decision rule",
             "--------------",
-            "• Apply an update when the transcript contains a directive that governs how the ACTOR should respond, including recipient-scoped rules expressed by name.",
-            "• If there is no directive for the ACTOR, keep the policy unchanged and explain why.",
+            "• Apply an update when the transcript contains a directive that governs how YOU (the assistant) should respond to **this contact**.",
+            "• If a directive clearly targets responses to a different person, do not include it in this contact's policy.",
+            "• If no relevant directive exists, keep the policy unchanged and briefly explain why.",
             "",
-            "Update steps (text-only policy)",
+            "Update steps (text‑only policy)",
             "--------------------------------",
             "1️⃣ Read the existing policy (if any) and the transcript.",
-            "2️⃣ Extract directives relevant to the ACTOR (global or recipient-scoped by name).",
+            "2️⃣ Extract directives that clearly instruct how you should reply to this contact.",
             "3️⃣ If applicable directives exist, revise the policy and persist via `set_response_policy` **exactly once**.",
             "4️⃣ Otherwise, return a brief explanation of no change.",
             "",
             "Representation suggestion",
             "-------------------------",
-            "• Keep a short Base section for globally applicable rules, then add a short Overrides section for named recipients, e.g.:",
-            "  - ‘When replying to <Recipient>: use a formal tone.’",
+            "• Keep a short Base section for globally applicable rules for this contact.",
             "• Keep it brief and readable—do not try to turn it into a schema.",
             "",
             "Please do *not* perform the same action more than once. If you already called `set_response_policy` successfully, do **not** repeat it.",
