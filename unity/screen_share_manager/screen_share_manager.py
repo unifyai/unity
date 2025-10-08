@@ -161,14 +161,14 @@ class ScreenShareManager:
         self.MIN_CONTOUR_AREA = 100
         self.MAX_ASPECT_RATIO = 20
         self.DEBOUNCE_DELAY_SEC = 0.5
-        self.INACTIVITY_TIMEOUT_SEC = 10.0
+        self.INACTIVITY_TIMEOUT_SEC = 5.0
         self.FRAME_BUFFER_SIZE = 100
         self.MAX_FRAME_WORKERS = os.cpu_count() or 4
-        self.FRAME_QUEUE_SIZE = 100
+        self.FRAME_QUEUE_SIZE = 150
         self.RESULTS_QUEUE_SIZE = 200
         self.LOGGING_QUEUE_SIZE = 50
         self.VISUAL_EVENT_SAMPLING_THRESHOLD = 3
-        self.BURST_DETECTION_THRESHOLD_SEC = 2.0
+        self.BURST_DETECTION_THRESHOLD_SEC = 1.0
         self.MAX_CONCURRENT_LOGGING_TASKS = 5
         self.IMAGE_UPLOAD_MAX_RETRIES = 3
         self.IMAGE_UPLOAD_INITIAL_BACKOFF = 1.0
