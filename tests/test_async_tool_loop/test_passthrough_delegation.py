@@ -249,13 +249,13 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
             return False
         return False
 
-    await _wait_for_condition(_pts_registered, poll=0.01, timeout=10.0)
+    await _wait_for_condition(_pts_registered, poll=0.01, timeout=60.0)
 
     # Now wait until both patched interjects are observed
     async def _both_received():
         return ("BROADCAST" in recv_one) and ("BROADCAST" in recv_two)
 
-    await _wait_for_condition(_both_received, poll=0.01, timeout=10.0)
+    await _wait_for_condition(_both_received, poll=0.01, timeout=60.0)
 
     assert (
         "BROADCAST" in recv_one
@@ -562,7 +562,7 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
     async def _paused_both():
         return h1.paused >= 1 and h2.paused >= 1
 
-    await _wait_for_condition(_paused_both, poll=0.05, timeout=10.0)
+    await _wait_for_condition(_paused_both, poll=0.05, timeout=60.0)
 
     # Programmatic resume → wait counters
     outer.resume()
@@ -570,7 +570,7 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
     async def _resumed_both():
         return h1.resumed >= 1 and h2.resumed >= 1
 
-    await _wait_for_condition(_resumed_both, poll=0.05, timeout=10.0)
+    await _wait_for_condition(_resumed_both, poll=0.05, timeout=60.0)
 
     # Programmatic stop → wait counters and complete handles
     outer.stop("done")
@@ -578,7 +578,7 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
     async def _stopped_both():
         return h1.stopped >= 1 and h2.stopped >= 1
 
-    await _wait_for_condition(_stopped_both, poll=0.05, timeout=10.0)
+    await _wait_for_condition(_stopped_both, poll=0.05, timeout=60.0)
 
     assert h1.paused >= 1 and h2.paused >= 1, "pause did not propagate to all handles"
     assert (

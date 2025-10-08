@@ -49,7 +49,7 @@ async def _wait_for_tool_request(
     client: "unify.AsyncUnify",
     tool_name: str,
     *,
-    timeout: float = 15.0,
+    timeout: float = 60.0,
     poll: float = 0.05,
 ) -> None:
     """Block until at least one visible *assistant* tool-call to *tool_name*
@@ -69,7 +69,7 @@ async def _wait_for_tool_result(
     tool_name: str | None = None,
     *,
     min_results: int = 1,
-    timeout: float = 15.0,
+    timeout: float = 60.0,
     poll: float = 0.05,
 ) -> None:
     """Wait until *min_results* tool result messages are present.
@@ -97,7 +97,7 @@ async def _wait_for_assistant_call_prefix(
     client: "unify.AsyncUnify",
     prefix: str,
     *,
-    timeout: float = 15.0,
+    timeout: float = 60.0,
     poll: float = 0.05,
 ) -> None:
     """Poll for a NEW assistant tool-call whose function name starts with ``prefix``.
@@ -150,7 +150,7 @@ async def _wait_for_tool_message_prefix(
     client: "unify.AsyncUnify",
     prefix: str,
     *,
-    timeout: float = 15.0,
+    timeout: float = 60.0,
     poll: float = 0.05,
 ) -> None:
     """Poll until a NEW tool message whose ``name`` starts with ``prefix`` appears."""

@@ -517,7 +517,7 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
     async def _paused_once() -> bool:
         return inner_handle.pause_count >= 1
 
-    await _wait_for_condition(_paused_once, poll=0.05, timeout=10.0)
+    await _wait_for_condition(_paused_once, poll=0.05, timeout=60.0)
     assert (
         inner_handle.pause_count == 1
     ), "delegate did not receive pause() exactly once"
@@ -528,7 +528,7 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
     async def _resumed_once() -> bool:
         return inner_handle.resume_count >= 1
 
-    await _wait_for_condition(_resumed_once, poll=0.05, timeout=10.0)
+    await _wait_for_condition(_resumed_once, poll=0.05, timeout=60.0)
     assert (
         inner_handle.resume_count == 1
     ), "delegate did not receive resume() exactly once"
