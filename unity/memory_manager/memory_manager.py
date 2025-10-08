@@ -666,7 +666,6 @@ class MemoryManager(BaseMemoryManager):
             )
 
         tools: Dict[str, Callable[..., Any]] = {
-            "contact_ask": self._contact_manager.ask,
             "set_response_policy": set_response_policy,
         }
 
