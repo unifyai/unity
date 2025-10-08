@@ -8,28 +8,7 @@ from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
 
 
-class _SpyClient:
-    """Minimal AsyncUnify-compatible stub used by these tests.
-
-    Exposes only the attributes the loop actually uses when we monkeypatch
-    generate_with_preprocess: a `messages` list, `append_messages`, and a
-    `system_message` property (plus an optional setter for completeness).
-    """
-
-    def __init__(self):
-        self.messages: list[dict] = []
-        self._system: str = ""
-
-    def append_messages(self, msgs):
-        self.messages.extend(msgs)
-
-    @property
-    def system_message(self) -> str:
-        return self._system
-
-    def set_system_message(self, msg: str):
-        self._system = msg
-        return self
+# Removed stub client; tests use real AsyncUnify with spies only.
 
 
 def _solid_png_bytes() -> bytes:
