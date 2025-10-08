@@ -1056,6 +1056,12 @@ async def async_tool_loop_inner(
                 tool_choice_mode = "auto"
                 policy_tools_norm = tools_data.normalized
 
+            # Force tool usage when a response_format is required so the model
+            # must submit the final JSON via the strongly-typed `final_answer` tool.
+            # This preserves flexible tool use while guaranteeing typed completion.
+            if response_format is not None and tool_choice_mode != "required":
+                tool_choice_mode = "required"
+
             # Refresh live-images overview with the latest appended images
             try:
                 if images:
