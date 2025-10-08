@@ -65,9 +65,10 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
 
     # --- run the method ----------------------------------------------------
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: CRM enrichment demo. The inner simulated managers should behave"
-        " deterministically, avoid external I/O, and accept straightforward updates so"
-        " that the real MemoryManager can decide which inner tools to call.",
+        "TEST SCENARIO: Contacts update path. SimulatedContactManager MUST treat the address book as missing"
+        " the named person; its ask helpers must NOT invent existing records. It should deterministically"
+        " accept create/update calls and return concise confirmations. SimulatedTranscriptManager should"
+        " return straightforward results. No external I/O.",
     )
     transcript = _build_transcript(
         "FYI: New contact – Dana Fox, dana.fox@example.com, phone +14155550123.",
@@ -100,8 +101,9 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
 
     # run --------------------------------------------------------------------
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Bio refresh demo. The inner simulated managers should accept"
-        " simple updates deterministically with concise outputs.",
+        "TEST SCENARIO: Bio refresh. SimulatedContactManager MUST accept a single deterministic update to the"
+        " 'bio' column for the target contact; it must NOT refuse and must NOT claim the bio is already"
+        " correct. SimulatedTranscriptManager should provide straightforward results. No external I/O.",
     )
     transcript = _build_transcript("BTW – Dana just moved to Berlin.")
     new_bio = await mm.update_contact_bio(
@@ -135,8 +137,9 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 
     # run --------------------------------------------------------------------
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Rolling-summary refresh demo. The inner simulated managers should"
-        " accept simple updates deterministically with concise outputs.",
+        "TEST SCENARIO: Rolling summary refresh. SimulatedContactManager MUST accept a single deterministic"
+        " update to 'rolling_summary' for the target contact; do NOT claim it's already up to date."
+        " SimulatedTranscriptManager answers simply. No external I/O.",
     )
     transcript = _build_transcript(
         "Action items: finalise KPI dashboard by Friday and schedule follow-up.",
@@ -176,9 +179,11 @@ async def test_mm_update_knowledge_invokes_kb_update(monkeypatch):
     )
 
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Knowledge update. Assume the knowledge base is EMPTY unless an"
-        " explicit KnowledgeManager.update manager-method in the transcript proves"
-        " otherwise; answer ask/retrieve as 'not found' so the flow proceeds to update.",
+        "TEST SCENARIO: Knowledge update. SimulatedKnowledgeManager MUST treat the knowledge base as EMPTY for"
+        " this run. All KnowledgeManager.ask calls MUST respond 'not found/absent' for facts introduced in"
+        " this transcript unless the transcript itself includes an explicit KnowledgeManager.update"
+        " manager-method proving prior storage. Therefore the flow should proceed to call"
+        " KnowledgeManager.update exactly once to store the new fact. No external I/O.",
     )
     transcript = _build_transcript(
         "Fun fact: The company standardised on Kubernetes for all deployments back in 2021.",
@@ -215,8 +220,9 @@ async def test_mm_update_tasks_invokes_scheduler_update(monkeypatch):
     )
 
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Task list update demo. The inner simulated TaskScheduler should"
-        " accept straightforward updates deterministically and respond concisely.",
+        "TEST SCENARIO: Task creation/update. SimulatedTaskScheduler MUST accept a deterministic update"
+        " creating the requested task; do NOT claim the task already exists. SimulatedTranscriptManager"
+        " returns straightforward results. No external I/O.",
     )
     transcript = _build_transcript(
         "Please create a task to organise the quarterly review meeting next Monday.",
@@ -248,8 +254,9 @@ async def test_mm_update_contact_response_policy_invocations(monkeypatch):
     monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
 
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Response policy helper. Inner simulated managers should allow"
-        " deterministic, minimal updates without external I/O.",
+        "TEST SCENARIO: Response policy update. SimulatedContactManager MUST accept a single deterministic"
+        " update to 'response_policy' for the target contact; do NOT claim it is already set."
+        " SimulatedTranscriptManager answers simply. No external I/O.",
     )
     transcript = _build_transcript("Please be more formal when replying to Jane.")
 
