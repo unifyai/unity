@@ -15,7 +15,7 @@ from unity.conversation_manager_2.actions import (
     _send_email_via_address,
     _start_call,
 )
-from unity.conversation_manager_2.state import ConversationManagerState, Notification
+from unity.conversation_manager_2.state import ConversationManagerState
 from unity.helpers import run_script, terminate_process
 from unity.conversation_manager_2.llm_utils import stream_llm_call, llm_call
 from unity.transcript_manager.types.message import UNASSIGNED
@@ -123,11 +123,6 @@ class ConversationManager:
 
         self.chat_history = []
         self.call_proc = None
-
-        # Channel for handle communication
-        self._handle_input_channel = (
-            f"app:conversation_manager:input:{self.assistant_id}"
-        )
 
     async def run_llm(self):
         self.state.snapshot()
@@ -323,7 +318,6 @@ class ConversationManager:
                 "app:comms:*",
                 "app:conductor:*",
                 "app:managers:output",
-                self._handle_input_channel,
             )
 
             # fetch contacts if env vars are already set
@@ -351,22 +345,7 @@ class ConversationManager:
                     # await self.schedule_llm_run(0)
                     ...
                 else:
-                    # Handle events from the steering handle
-                    if msg["channel"] == self._handle_input_channel:
-                        event = Event.from_json(msg["data"])
-                        if isinstance(event, NotificationInjectedEvent):
-                            notification_obj = Notification(
-                                type=event.source,
-                                content=event.content,
-                                timestamp=event.timestamp,
-                            )
-                            # Pass the single object to the method
-                            self.state.push_notif(notification_obj)
-                            # Trigger an LLM run to react to the new notification
-                            await self.schedule_llm_run(delay=0.1, cancel_running=True)
-                        continue
-
-                    # Process other events as before
+                    # process events
                     event = Event.from_json(msg["data"])
                     print(event)
                     await self.handle_event(event)
@@ -446,6 +425,14 @@ class ConversationManager:
     async def handle_event(self, event: Event):
         # update state
         self.state.update_state(event)
+
+        # Centralized handler for steering notifications from ConversationManagerHandle
+        if isinstance(event, NotificationInjectedEvent):
+            # Check if this notification is intended for this CM instance
+            if event.target_conversation_id == self.assistant_id:
+                print(f"INFO: Received steering notification: '{event.content}'")
+                await self.schedule_llm_run(delay=0.1, cancel_running=True)
+            return
 
         # every interaction with the managers worker happens through the conversation
         # manager instead of the state, which is why we need to publish the events here

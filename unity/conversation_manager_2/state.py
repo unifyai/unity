@@ -143,6 +143,18 @@ class ConversationManagerState:
                 payload = e.to_dict()["payload"]
                 self.set_details(payload)
 
+            # Handle steering notifications from external handles
+            case NotificationInjectedEvent() as e:
+                # Only process if it's for this conversation
+                if e.target_conversation_id == self.assistant_id:
+                    self.push_notif(
+                        Notification(
+                            type=e.source,
+                            content=e.content,
+                            timestamp=e.timestamp,
+                        ),
+                    )
+
             case PhoneCallRecieved() as e:
                 # contact should always exist here.
                 contact = self.get_contact(phone_number=e.contact)
