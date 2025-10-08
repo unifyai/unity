@@ -457,12 +457,12 @@ class MemoryManager(BaseMemoryManager):
         )
         target_id = contact_id  # capture for closure
 
-        async def set_bio(contact_id: int, bio: str) -> str:
-            """Update only the bio column for the supplied contact id."""
-            final_id = contact_id or target_id
+        async def set_bio(bio: str) -> str:
+            """Update only the bio column for the target contact id captured in the closure."""
+            final_id = target_id
             if final_id is None:
                 raise ValueError(
-                    "contact_id must be supplied either via the method argument or the tool call.",
+                    "contact_id is required but was not provided by the caller.",
                 )
             if self._cfg.strict_contact_updates:
                 await asyncio.to_thread(
@@ -566,11 +566,11 @@ class MemoryManager(BaseMemoryManager):
         )
         target_id = contact_id  # capture for closure
 
-        async def set_rolling_summary(contact_id: int, rolling_summary: str) -> str:
-            final_id = contact_id or target_id
+        async def set_rolling_summary(rolling_summary: str) -> str:
+            final_id = target_id
             if final_id is None:
                 raise ValueError(
-                    "contact_id must be supplied either via the method argument or the tool call.",
+                    "contact_id is required but was not provided by the caller.",
                 )
             if self._cfg.strict_contact_updates:
                 await asyncio.to_thread(
@@ -580,7 +580,7 @@ class MemoryManager(BaseMemoryManager):
                 )
                 return f"Rolling summary for contact with id {final_id} successfully updated"
             handle = await self._contact_manager.update(
-                f"Please set the bio for contact id {final_id} as follows:\n{rolling_summary}",
+                f"Please set the rolling summary for contact id {final_id} as follows:\n{rolling_summary}",
             )
             res = await handle.result()
             return res if isinstance(res, str) else str(res)
