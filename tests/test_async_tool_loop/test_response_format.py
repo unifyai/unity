@@ -30,7 +30,7 @@ async def test_structured_output_response_format() -> None:
     """
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -85,7 +85,7 @@ async def test_no_additional_formatting_roundtrip() -> None:  # noqa: D401
     """
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

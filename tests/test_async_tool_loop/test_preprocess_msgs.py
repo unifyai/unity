@@ -21,7 +21,7 @@ async def test_preprocess_msgs_dynamic_placeholder(monkeypatch):
     that the modifications never leak into the persistent chat history."""
 
     client = unify.AsyncUnify(
-        "o4-mini@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

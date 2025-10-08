@@ -19,7 +19,7 @@ from tests.helpers import _handle_project, SETTINGS
 #  CONSTANTS                                                                  #
 # --------------------------------------------------------------------------- #
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "o4-mini@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
 
 # Load cat image and convert to base64
 with open(Path(__file__).parent / "cat.jpg", "rb") as f:

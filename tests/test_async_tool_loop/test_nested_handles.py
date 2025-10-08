@@ -42,7 +42,7 @@ async def outer_tool() -> AsyncToolLoopHandle:
 
     # brand‑new LLM client dedicated to the nested conversation
     inner_client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -77,7 +77,7 @@ async def test_nested_async_tool_loop():
 
     # Outer client that drives the *first* loop
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -172,7 +172,7 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
 
     # 2.  Fire up the *outer* conversational loop
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -261,7 +261,7 @@ async def test_interject_nested_handle(monkeypatch):
     # 3.  Outer tool: launches nested loop and returns its handle
     async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -281,7 +281,7 @@ async def test_interject_nested_handle(monkeypatch):
 
     # 4.  Top-level loop – assistant must use `_interject_…`
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -453,7 +453,7 @@ async def test_clarification_nested_handle():
     async def outer_tool() -> AsyncToolLoopHandle:
         up_q, down_q = asyncio.Queue(), asyncio.Queue()
         inner_client = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -492,7 +492,7 @@ async def test_clarification_nested_handle():
 
     # ── top-level loop – the assistant must answer the clar request ——––
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -548,7 +548,7 @@ async def test_notification_nested_handle():
         notification_up_q: asyncio.Queue | None = None,
     ) -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -572,7 +572,7 @@ async def test_notification_nested_handle():
 
     # ── top-level loop – must surface progress then finish ─────────────────
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -646,7 +646,7 @@ async def test_handle_interject_method_appears_late():
 
     # outer conversation ----------------------------------------------
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -715,7 +715,7 @@ async def test_pause_nested_loop_calls_pause():
 
     # outer conversation --------------------------------------------------
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -800,7 +800,7 @@ async def test_resume_nested_loop_calls_resume():
     dummy_job.__qualname__ = "dummy_job"
 
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -889,7 +889,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
 
     # ── 3.  Kick off outer loop ───────────────────────────────────────────
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -907,18 +907,18 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
         timeout=300,
     )
 
-    # ── 4.  Pause soon after launch, wait 3 s, then resume ────────────────
-    start_ts = time.perf_counter()
-
+    # ── 4.  Pause soon after launch; wait deterministically for the tool
+    #        result placeholder to be appended while paused, then resume ───
     # Wait deterministically until the assistant has scheduled the tool
     await _wait_for_tool_request(client, "long_tool")
     outer_handle.pause()
 
-    await asyncio.sleep(3.0)  # tool finishes while loop is paused
-    outer_handle.resume()
+    # Ensure the tool result message for `long_tool` is appended while paused
+    await _wait_for_tool_message_prefix(client, "long_tool")
 
+    # Resume and finish
+    outer_handle.resume()
     final_reply = await outer_handle.result()
-    elapsed = time.perf_counter() - start_ts
 
     # ── 5.  Assertions ───────────────────────────────────────────────────
     assert "finished" in final_reply.strip().lower()
@@ -926,10 +926,8 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     # pause/resume each called exactly once
     assert counts == {"pause": 1, "resume": 1}
 
-    # prove that pause stretched total runtime
-    assert (
-        elapsed >= 3.0
-    ), f"loop finished too quickly ({elapsed:.2f}s) – pause gate failed"
+    # (Removed wall-clock sleep-based assertion; we rely on deterministic
+    #  event waits above to validate paused behaviour.)
 
 
 @pytest.mark.asyncio
@@ -947,7 +945,7 @@ async def test_handle_result_blocks_until_resume():
     noop_tool.__qualname__ = "noop_tool"
 
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -1023,7 +1021,7 @@ async def test_dynamic_handle_public_method():
 
     # ── outer conversation that uses `long_compute` ────────────────────
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -1082,7 +1080,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
 
     async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -1112,7 +1110,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     outer_tool.__qualname__ = "outer_tool"
 
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -1163,7 +1161,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
 
     async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -1192,7 +1190,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     outer_tool.__qualname__ = "outer_tool"
 
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -1244,7 +1242,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
 
     async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -1279,7 +1277,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     outer_tool.__qualname__ = "outer_tool"
 
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

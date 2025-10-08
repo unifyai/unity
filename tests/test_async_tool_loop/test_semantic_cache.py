@@ -23,7 +23,7 @@ def _patch_semantic_cache_config(monkeypatch):
 
 
 def create_client():
-    return unify.AsyncUnify("gpt-4o@openai", temperature=0.0, cache=False)
+    return unify.AsyncUnify("gpt-5@openai", temperature=0.0, cache=False)
 
 
 @pytest.mark.asyncio

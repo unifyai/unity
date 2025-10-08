@@ -24,7 +24,7 @@ from tests.helpers import _handle_project, SETTINGS
 
 @unify.traced
 async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
-    await asyncio.sleep(0)  # yield control minimally
+    # Avoid time-based sleeping; just return immediately
     return text.upper()
 
 
@@ -41,7 +41,7 @@ async def test_basic_event_flow() -> None:
     """
 
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     ).set_system_message(
@@ -94,7 +94,7 @@ async def test_interjection_publishes_user_event() -> None:
     """
 
     client = unify.AsyncUnify(
-        "gpt-4o@openai",
+        "gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

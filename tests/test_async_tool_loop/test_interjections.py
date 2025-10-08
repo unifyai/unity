@@ -30,7 +30,7 @@ from tests.test_async_tool_loop.async_helpers import (
 #  GLOBALS                                                                    #
 # --------------------------------------------------------------------------- #
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
 
 
 # --------------------------------------------------------------------------- #

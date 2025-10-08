@@ -17,7 +17,7 @@ from tests.helpers import _handle_project, SETTINGS
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "o4-mini@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
 
 
 @unify.traced

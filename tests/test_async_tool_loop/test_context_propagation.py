@@ -15,7 +15,7 @@ import unify
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
 
 
 def new_client() -> unify.AsyncUnify:
