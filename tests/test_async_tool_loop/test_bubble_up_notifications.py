@@ -40,7 +40,6 @@ async def send_email(
 
     # Emit notifications; loop will surface them and allow the assistant to react
     await notification_up_q.put({"message": "Composing email…"})
-    await asyncio.sleep(0)  # allow the loop to surface the first update
     await notification_up_q.put({"message": "Sending email…"})
     return "Email sent!"
 
@@ -134,7 +133,6 @@ async def test_notification_bubbles_up_two_tiers() -> None:
             outer_handle.stop("test cleanup")
         except Exception:
             pass
-        await asyncio.sleep(0)
 
     # ─────────────────────────
     # Assertions (chat transcript shape)
@@ -258,4 +256,3 @@ async def test_notification_bubbles_through_returned_handle() -> None:
             handle.stop("test cleanup")
         except Exception:
             pass
-        await asyncio.sleep(0)

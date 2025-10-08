@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import pytest
 import unify
 
@@ -27,42 +26,13 @@ async def test_all_llm_kwargs_are_forwarded_verbatim(monkeypatch):
     accept_any.__name__ = "accept_any"
     accept_any.__qualname__ = "accept_any"
 
-    client = unify.AsyncUnify("o4-mini@openai")
-
-    # Monkeypatch the client's generate to emit a single tool call with kwargs,
-    # then fall back to the real generation for the final turn.
-    orig_generate = client.generate
-    step = {"n": 0}
-
-    async def _driver(**kwargs):
-        if step["n"] == 0:
-            step["n"] += 1
-            msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_KWARGS",
-                        "type": "function",
-                        "function": {
-                            "name": "accept_any",
-                            "arguments": json.dumps(
-                                {
-                                    "first_name": "Luca",
-                                    "surname": "Renaldi",
-                                    "team": "Northbridge FC",
-                                    "position": "Forward",
-                                },
-                            ),
-                        },
-                    },
-                ],
-            }
-            client.append_messages([msg])
-            return msg
-        return await orig_generate(**kwargs)
-
-    monkeypatch.setattr(client, "generate", _driver, raising=True)
+    client = unify.AsyncUnify("gpt-5@openai")
+    # Instruct the real model to call `accept_any` once with the provided fields
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `accept_any` "
+        'with the following arguments exactly: { "first_name": "Luca", "surname": "Renaldi", "team": "Northbridge FC", "position": "Forward" }. '
+        "After the tool returns, provide a short final reply.",
+    )
 
     handle = start_async_tool_loop(
         client=client,
