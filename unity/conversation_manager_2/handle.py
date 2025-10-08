@@ -54,7 +54,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         self.contact_id = contact_id
         self._tm = transcript_manager or TranscriptManager()
 
-        self._input_channel = f"app:conversation_manager:input:{self.conversation_id}"
+        self._steering_channel = "app:comms:steering"
         self._stopped = False
         self._final_result = "Handle is active."
 
@@ -144,8 +144,14 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         if self._stopped:
             return {"status": "error", "message": "Handle is stopped."}
 
-        event = NotificationInjectedEvent(content=content, source=source)
-        await self.event_broker.publish(self._input_channel, event.to_json())
+        # Include target conversation ID so CM knows if the event is for it
+        event = NotificationInjectedEvent(
+            content=content,
+            source=source,
+            target_conversation_id=self.conversation_id,
+        )
+        # Publish to unified steering channel (picked up by app:comms:* subscription)
+        await self.event_broker.publish(self._steering_channel, event.to_json())
 
         return {
             "status": "ok",
