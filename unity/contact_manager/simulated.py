@@ -81,6 +81,30 @@ class _UpdateOutcome(BaseModel):
 _UpdateOutcome.model_rebuild()
 
 
+class _CreateDetails(BaseModel):
+    contact_id: int
+
+    # Disallow extra keys; keeps schema strict for OpenAI parser
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
+
+
+class _CreateOutcome(BaseModel):
+    outcome: str
+    details: _CreateDetails
+
+    # Enforce top-level additionalProperties=false for structured output
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
+
+
+_CreateOutcome.model_rebuild()
+
+
 class _DeleteDetails(BaseModel):
     contact_id: int
 
@@ -539,6 +563,84 @@ class SimulatedContactManager(BaseContactManager):
             if limit is not None
             else model.contacts[offset:]
         )
+
+    # ------------------------------------------------------------------ #
+    #  Simulated _create_contact                                         #
+    # ------------------------------------------------------------------ #
+    def _create_contact(
+        self,
+        *,
+        first_name: Optional[str] = None,
+        surname: Optional[str] = None,
+        email_address: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        whatsapp_number: Optional[str] = None,
+        bio: Optional[str] = None,
+        rolling_summary: Optional[str] = None,
+        respond_to: bool = False,
+        response_policy: Optional[str] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> "ToolOutcome":
+        """
+        Simulated variant of :pyfunc:`ContactManager._create_contact` with strict
+        structured output enforced via ``response_format``. The shared stateful
+        LLM generates a JSON payload that we validate against ``_CreateOutcome``.
+        """
+
+        # Only include fields that are actually being provided
+        payload_fields: Dict[str, Any] = {
+            k: v
+            for k, v in {
+                "first_name": first_name,
+                "surname": surname,
+                "email_address": email_address,
+                "phone_number": phone_number,
+                "whatsapp_number": whatsapp_number,
+                "bio": bio,
+                "rolling_summary": rolling_summary,
+                "respond_to": respond_to,
+                "response_policy": response_policy,
+                **(custom_fields or {}),
+            }.items()
+            if v is not None and v != {}
+        }
+
+        # Always include respond_to explicitly (boolean) for clarity
+        if "respond_to" not in payload_fields:
+            payload_fields["respond_to"] = respond_to
+
+        instruction = (
+            "You are simulating the private helper `_create_contact` of a CRM. "
+            "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
+            "Create a new contact using the provided fields. "
+            "Respond ONLY with a JSON object that conforms to the provided response schema."
+        )
+
+        user_payload = json.dumps({"contact": payload_fields}, indent=2)
+
+        async def _call_llm() -> str:
+            self._llm.set_response_format(_CreateOutcome)
+            return await self._llm.generate(f"{instruction}\n\n{user_payload}")
+
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                raise RuntimeError(
+                    "SimulatedContactManager._create_contact cannot be invoked from within an active event loop.",
+                )
+            raw = asyncio.run(_call_llm())
+        finally:
+            try:
+                self._llm.reset_response_format()
+            except Exception:
+                pass
+
+        model = _CreateOutcome.model_validate_json(raw)
+        return model.model_dump()
 
     # ------------------------------------------------------------------ #
     #  Simulated _update_contact                                          #
