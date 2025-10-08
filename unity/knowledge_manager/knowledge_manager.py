@@ -36,6 +36,8 @@ from ..common.semantic_search import (
 from ..common.context_store import TableStore
 from ..events.event_bus import EVENT_BUS, Event
 from ..common.grouping_helpers import maybe_group_rows
+from ..common.tool_spec import read_only
+from ..constants import is_semantic_cache_enabled
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -637,6 +639,10 @@ class KnowledgeManager(BaseKnowledgeManager):
                 include_join_info=include_join_info,
             ),
         )
+
+        use_semantic_cache = is_semantic_cache_enabled()
+        tool_policy_fn = None if use_semantic_cache else self._default_ask_tool_policy
+
         handle = start_async_tool_loop(
             client,
             text,
@@ -644,9 +650,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
-            tool_policy=self._default_ask_tool_policy,
+            tool_policy=tool_policy_fn,
             preprocess_msgs=inject_broader_context,
             response_format=response_format,
+            semantic_cache=use_semantic_cache,
         )
 
         # Optionally wrap .result() to expose reasoning
@@ -745,6 +752,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             backfill_logs=False,
         )
 
+    @read_only
     def _tables_overview(
         self,
         *,
@@ -1633,6 +1641,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             from_ids=from_ids,
         )
 
+    @read_only
     def _search(
         self,
         *,
@@ -1681,6 +1690,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             enabled=self._group_results,
         )
 
+    @read_only
     def _search_join(
         self,
         *,
@@ -1777,6 +1787,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             except Exception:
                 pass
 
+    @read_only
     def _search_multi_join(
         self,
         *,
@@ -2022,6 +2033,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return dest_ctx
 
+    @read_only
     def _filter(
         self,
         *,
@@ -2122,6 +2134,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return results
 
+    @read_only
     def _filter_join(
         self,
         *,
@@ -2235,6 +2248,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             enabled=self._group_results,
         )
 
+    @read_only
     def _filter_multi_join(
         self,
         *,
