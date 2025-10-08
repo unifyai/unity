@@ -2,11 +2,27 @@ from __future__ import annotations
 
 import pytest
 import time
+import unify
 from typing import Dict
 from unittest.mock import patch
 
 from unity.contact_manager.contact_manager import ContactManager
 from tests.helpers import _handle_project
+from unity.common._async_tool import semantic_cache as sc
+from unity.common._async_tool.semantic_cache import _Config
+
+
+@pytest.fixture(autouse=True)
+def _patch_semantic_cache_config(monkeypatch):
+    class _DynamicConfig(_Config):
+        @property
+        def context(self):
+            return f"{unify.get_active_context()['write']}/SemanticCache"
+
+    monkeypatch.setattr(
+        "unity.common._async_tool.semantic_cache._CONFIG",
+        _DynamicConfig(),
+    )
 
 
 def _count_tool_calls_in_reasoning(reasoning_steps) -> int:
@@ -33,7 +49,10 @@ async def test_semantic_cache_exact_match_no_extra_tool_calls(
     cm, _ = contact_manager_scenario
 
     # Ensure semantic cache is enabled for this test
-    with patch("unity.constants.is_semantic_cache_enabled", return_value=True):
+    with patch(
+        "unity.contact_manager.contact_manager.is_semantic_cache_enabled",
+        return_value=True,
+    ):
         question = "What do you know about the contact Alice Smith?"
 
         # First run - should make tool calls
@@ -51,13 +70,15 @@ async def test_semantic_cache_exact_match_no_extra_tool_calls(
             "alice" in answer_1.lower() or "smith" in answer_1.lower()
         ), f"First answer should contain contact information about Alice Smith"
 
+        sc._SEMANTIC_CACHE_SAVER.wait()
+
         # Second run - should leverage cache with fewer or no tool calls
         handle_2 = await cm.ask(question, _return_reasoning_steps=True)
         answer_2, reasoning_2 = await handle_2.result()
         tool_calls_2 = _count_tool_calls_in_reasoning(reasoning_2)
 
         # Verify second run made fewer tool calls (ideally zero due to cache)
-        assert tool_calls_2 <= tool_calls_1, (
+        assert tool_calls_2 < tool_calls_1, (
             f"Second run should make fewer or equal tool calls than first run. "
             f"First: {tool_calls_1}, Second: {tool_calls_2}"
         )
@@ -84,7 +105,10 @@ async def test_semantic_cache_performance_improvement(
     question = "What is Bob Johnson's email and phone number?"
 
     # === Run WITHOUT semantic cache (baseline) ===
-    with patch("unity.constants.is_semantic_cache_enabled", return_value=False):
+    with patch(
+        "unity.contact_manager.contact_manager.is_semantic_cache_enabled",
+        return_value=False,
+    ):
         start_no_cache = time.time()
 
         # First query without cache
@@ -98,12 +122,17 @@ async def test_semantic_cache_performance_improvement(
         time_no_cache = time.time() - start_no_cache
 
     # === Run WITH semantic cache ===
-    with patch("unity.constants.is_semantic_cache_enabled", return_value=True):
+    with patch(
+        "unity.contact_manager.contact_manager.is_semantic_cache_enabled",
+        return_value=True,
+    ):
         start_with_cache = time.time()
 
         # First query with cache (cache miss, will populate cache)
         handle_3 = await cm.ask(question)
         answer_3 = await handle_3.result()
+
+        sc._SEMANTIC_CACHE_SAVER.wait()
 
         # Second query with cache (cache hit, should be faster)
         handle_4 = await cm.ask(question)
@@ -133,8 +162,6 @@ async def test_semantic_cache_performance_improvement(
 @_handle_project
 @pytest.mark.asyncio
 async def test_semantic_cache_similar_queries_benefit(
-    first_contact: str,
-    second_contact: str,
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """
@@ -147,11 +174,16 @@ async def test_semantic_cache_similar_queries_benefit(
     first_contact = "Alice Smith"
     second_contact = "Bob Johnson"
 
-    with patch("unity.constants.is_semantic_cache_enabled", return_value=True):
+    with patch(
+        "unity.contact_manager.contact_manager.is_semantic_cache_enabled",
+        return_value=True,
+    ):
         # First query - establish pattern
         question_1 = f"Find contact {first_contact}"
         handle_1 = await cm.ask(question_1, _return_reasoning_steps=True)
         answer_1, reasoning_1 = await handle_1.result()
+
+        sc._SEMANTIC_CACHE_SAVER.wait()
 
         # Verify first answer
         name_parts_1 = first_contact.lower().split()
