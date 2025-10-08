@@ -340,9 +340,11 @@ class MemoryManager(BaseMemoryManager):
 
         # ─ 2.  LLM client
         llm = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         llm.set_system_message(build_contact_update_prompt(tools, guidance))
 
@@ -446,9 +448,11 @@ class MemoryManager(BaseMemoryManager):
         }
 
         llm = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         contacts = await asyncio.to_thread(
             self._contact_manager._filter_contacts,
@@ -571,9 +575,11 @@ class MemoryManager(BaseMemoryManager):
 
         # ------------------------------------------------------------------
         llm = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         contact_label = (
             f"{contact_name_val} (id {contact_id})"
@@ -679,9 +685,11 @@ class MemoryManager(BaseMemoryManager):
 
         # ------------------------------------------------------------------
         llm = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         contact_label = (
             f"{contact_name_val} (id {contact_id})"
@@ -746,9 +754,11 @@ class MemoryManager(BaseMemoryManager):
         )
 
         llm = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
         llm.set_system_message(build_knowledge_prompt(tools, guidance))
 
@@ -784,9 +794,11 @@ class MemoryManager(BaseMemoryManager):
         )
 
         llm = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
 
         from .prompt_builders import build_task_prompt  # local import to avoid cycles
