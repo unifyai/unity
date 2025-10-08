@@ -51,7 +51,7 @@ class Message(BaseModel):
         default="",
         description="Timestamp of the utterance associated with calls",
     )
-    recorded_call_url: str = Field(
+    call_url: str = Field(
         default="",
         description="URL of the recorded call file associated with the call",
     )
