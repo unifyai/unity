@@ -144,3 +144,35 @@ async def test_semantic_cache_similar_queries_benefit(
             f"Second query should not make more tool calls. "
             f"First: {tool_calls_1} calls, Second: {tool_calls_2} calls"
         )
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_semantic_cache_partial_use(
+    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+):
+    """
+    Test that semantic cache mode does not make any tool calls.
+    """
+    cm, _ = contact_manager_scenario
+
+    with patch(
+        "unity.contact_manager.contact_manager.is_semantic_cache_enabled",
+        return_value=True,
+    ):
+        handle_1 = await cm.ask("What is Bob Johnson's full information?")
+        await handle_1.result()
+
+        sc._SEMANTIC_CACHE_SAVER.wait()
+
+        handle_2 = await cm.ask(
+            "Can you find Bob Johnson's email?",
+            _return_reasoning_steps=True,
+        )
+        answer_2, reasoning_2 = await handle_2.result()
+
+        assert "bobbyj@" in answer_2
+
+        assert (
+            _count_tool_calls_in_reasoning(reasoning_2) == 0
+        ), "All information should be avabile from the first query"
