@@ -27,7 +27,7 @@ async def sleeper(delay: float = 1.0) -> str:  # noqa: D401 – simple async
 async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
     """Return a nested async-tool loop *handle* that requests pass-through."""
     inner_client = unify.AsyncUnify(
-        endpoint="o4-mini@openai",
+        endpoint="gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -77,7 +77,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
     async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
         """Return a nested handle marked for pass-through with patched interject."""
         inner_client = unify.AsyncUnify(
-            endpoint="o4-mini@openai",
+            endpoint="gpt-5@openai",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -112,37 +112,16 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
     delegating_tool.__qualname__ = "delegating_tool_interject"
 
     # ---- start outer loop -------------------------------------------------
-    # Real client; monkeypatch generate to request the delegating tool on first turn
+    # Real client; strongly instruct the model to call our delegating tool
     client = unify.AsyncUnify(
-        endpoint="o4-mini@openai",
+        endpoint="gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
-    step = {"n": 0}
-    orig_gen = client.generate
-
-    async def _driver(**kwargs):
-        if step["n"] == 0:
-            step["n"] += 1
-            assistant_msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_outer_1",
-                        "type": "function",
-                        "function": {
-                            "name": "delegating_tool_interject",
-                            "arguments": "{}",
-                        },
-                    },
-                ],
-            }
-            client.append_messages([assistant_msg])
-            return assistant_msg
-        return await orig_gen(**kwargs)
-
-    monkeypatch.setattr(client, "generate", _driver, raising=True)
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call "
+        "`delegating_tool_interject` with no arguments. Then wait for it to complete before replying.",
+    )
 
     outer_handle = start_async_tool_loop(
         client,
@@ -170,61 +149,6 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-class _SpyAsyncUnify:
-    """Minimal AsyncUnify-compatible stub that records generate invocations.
-
-    It returns a single assistant turn that requests a tool, then (if called
-    again) returns a plain assistant message. Tests assert the outer loop does
-    not perform this second call in passthrough handover scenarios.
-    """
-
-    def __init__(self):
-        self.messages: list[dict] = []
-        self.seen_messages: list[list[dict]] = []
-        self._step = 0
-
-    def append_messages(self, msgs):
-        self.messages.extend(msgs)
-
-    async def generate(self, **_):
-        # Snapshot what the model "saw" at invocation time
-        import copy as _copy
-
-        self.seen_messages.append(_copy.deepcopy(self.messages))
-
-        if self._step == 0:
-            self._step += 1
-            assistant_msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_outer_1",
-                        "type": "function",
-                        "function": {
-                            "name": "delegating_tool_regression",
-                            "arguments": "{}",
-                        },
-                    },
-                ],
-            }
-        else:
-            # Any second outer LLM call would be a regression
-            self._step += 1
-            assistant_msg = {
-                "role": "assistant",
-                "content": "unexpected_extra_outer_turn",
-                "tool_calls": [],
-            }
-
-        self.messages.append(assistant_msg)
-        return assistant_msg
-
-    @property
-    def system_message(self) -> str:  # for logging access in the loop
-        return ""
-
-
 # ---------------------------------------------------------------------------
 #  Additional tests for new passthrough behaviour
 # ---------------------------------------------------------------------------
@@ -244,7 +168,7 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
 
     async def _make_inner(counter: list[str]) -> AsyncToolLoopHandle:
         client = unify.AsyncUnify(
-            endpoint="o4-mini@openai",
+            endpoint="gpt-5@openai",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -286,63 +210,15 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
         await gate.wait()
         return inner_two
 
-    # Spy client that requests both delegates on first turn
-    class _DualToolSpy(_SpyAsyncUnify):
-        async def generate(self, **_):
-            import copy as _copy
-
-            self.seen_messages.append(_copy.deepcopy(self.messages))
-            assistant_msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_d1",
-                        "type": "function",
-                        "function": {"name": "delegate_one", "arguments": "{}"},
-                    },
-                    {
-                        "id": "call_d2",
-                        "type": "function",
-                        "function": {"name": "delegate_two", "arguments": "{}"},
-                    },
-                ],
-            }
-            self.messages.append(assistant_msg)
-            return assistant_msg
-
     client = unify.AsyncUnify(
-        endpoint="o4-mini@openai",
+        endpoint="gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
-    step2 = {"n": 0}
-    orig2 = client.generate
-
-    async def _driver2(**kwargs):
-        if step2["n"] == 0:
-            step2["n"] += 1
-            assistant_msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_d1",
-                        "type": "function",
-                        "function": {"name": "delegate_one", "arguments": "{}"},
-                    },
-                    {
-                        "id": "call_d2",
-                        "type": "function",
-                        "function": {"name": "delegate_two", "arguments": "{}"},
-                    },
-                ],
-            }
-            client.append_messages([assistant_msg])
-            return assistant_msg
-        return await orig2(**kwargs)
-
-    monkeypatch.setattr(client, "generate", _driver2, raising=True)
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call both `delegate_one` and `delegate_two` "
+        "with no arguments, in the same turn, then wait for completion before replying.",
+    )
 
     outer = start_async_tool_loop(
         client=client,  # type: ignore[arg-type]
@@ -449,37 +325,14 @@ async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
         return h2
 
     client = unify.AsyncUnify(
-        endpoint="o4-mini@openai",
+        endpoint="gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
-    step = {"n": 0}
-    orig = client.generate
-
-    async def _driver(**kwargs):
-        if step["n"] == 0:
-            step["n"] += 1
-            msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "c1",
-                        "type": "function",
-                        "function": {"name": "d1", "arguments": "{}"},
-                    },
-                    {
-                        "id": "c2",
-                        "type": "function",
-                        "function": {"name": "d2", "arguments": "{}"},
-                    },
-                ],
-            }
-            client.append_messages([msg])
-            return msg
-        return await orig(**kwargs)
-
-    monkeypatch.setattr(client, "generate", _driver, raising=True)
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call both tools `d1` and `d2` "
+        "with no arguments, then wait for completion before replying.",
+    )
     outer = start_async_tool_loop(
         client=client,  # type: ignore[arg-type]
         message="start",
@@ -577,37 +430,16 @@ async def test_passthrough_clarification_bubbles_and_can_be_answered(monkeypatch
     async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner
 
-    # Force a single tool call to spawn the passthrough handle
+    # Force a single tool call to spawn the passthrough handle (via instruction to real LLM)
     client = unify.AsyncUnify(
-        endpoint="o4-mini@openai",
+        endpoint="gpt-5@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
-    step = {"n": 0}
-    orig = client.generate
-
-    async def _driver(**kwargs):
-        if step["n"] == 0:
-            step["n"] += 1
-            msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "spawn1",
-                        "type": "function",
-                        "function": {"name": "spawn", "arguments": "{}"},
-                    },
-                ],
-            }
-            client.append_messages([msg])
-            return msg
-        # After tool result and clarification handling, provide a final assistant turn
-        msg = {"role": "assistant", "content": "final", "tool_calls": []}
-        client.append_messages([msg])
-        return msg
-
-    monkeypatch.setattr(client, "generate", _driver, raising=True)
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
+        "Wait for it to finish before replying with a brief final message.",
+    )
     outer = start_async_tool_loop(
         client=client,  # type: ignore[arg-type]
         message="start",
@@ -702,29 +534,15 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
     async def t2():  # type: ignore[valid-type]
         return h2
 
-    class _DualSpy(_SpyAsyncUnify):
-        async def generate(self, **_):
-            self.messages.append(
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
-                        {
-                            "id": "c1",
-                            "type": "function",
-                            "function": {"name": "t1", "arguments": "{}"},
-                        },
-                        {
-                            "id": "c2",
-                            "type": "function",
-                            "function": {"name": "t2", "arguments": "{}"},
-                        },
-                    ],
-                },
-            )
-            return self.messages[-1]
-
-    client = _DualSpy()
+    client = unify.AsyncUnify(
+        endpoint="o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call both tools `t1` and `t2` "
+        "with no arguments in the same turn, then wait for completion before replying.",
+    )
     outer = start_async_tool_loop(
         client=client,  # type: ignore[arg-type]
         message="start",
@@ -784,38 +602,16 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
       2) a follow-up turn after the inner returns its final result.
     """
 
-    # Inner spy client drives the inner loop to (1) request sleeper, then (2) finish.
-    # Inner real client with monkeypatch driver
+    # Inner real client; instruct it to call `sleeper` then finish
     inner_client = unify.AsyncUnify(
         endpoint="o4-mini@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
-    inner_step = {"n": 0}
-    inner_orig = inner_client.generate
-
-    async def _inner_driver(**kwargs):
-        if inner_step["n"] == 0:
-            inner_step["n"] += 1
-            assistant_msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_inner_1",
-                        "type": "function",
-                        "function": {"name": "sleeper", "arguments": '{"delay": 0.01}'},
-                    },
-                ],
-            }
-            inner_client.append_messages([assistant_msg])
-            return assistant_msg
-        # Final assistant DONE
-        assistant_msg = {"role": "assistant", "content": "DONE", "tool_calls": []}
-        inner_client.append_messages([assistant_msg])
-        return assistant_msg
-
-    monkeypatch.setattr(inner_client, "generate", _inner_driver, raising=True)
+    inner_client.set_system_message(
+        'You are running inside an automated test. In your FIRST assistant turn, call `sleeper` with {"delay": 0.01}. '
+        "After it finishes, reply exactly with the single word DONE.",
+    )
 
     # Tool: quick async sleep
     @unify.traced
@@ -836,38 +632,23 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
     delegating_tool_regression.__name__ = "delegating_tool_regression"
     delegating_tool_regression.__qualname__ = "delegating_tool_regression"
 
-    # Outer spy client drives only one assistant turn (tool request)
+    # Outer client; spy wrapper records calls while still hitting the real LLM
     outer_client = unify.AsyncUnify(
         endpoint="o4-mini@openai",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
+    outer_client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call `delegating_tool_regression` "
+        "with no arguments, then wait for the inner task to complete before replying.",
+    )
     snapshots: list[list[dict]] = []
-    outer_step = {"n": 0}
     outer_orig = outer_client.generate
 
     async def _outer_driver(**kwargs):
         import copy as _copy
 
         snapshots.append(_copy.deepcopy(outer_client.messages))
-        if outer_step["n"] == 0:
-            outer_step["n"] += 1
-            assistant_msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_outer_1",
-                        "type": "function",
-                        "function": {
-                            "name": "delegating_tool_regression",
-                            "arguments": "{}",
-                        },
-                    },
-                ],
-            }
-            outer_client.append_messages([assistant_msg])
-            return assistant_msg
         return await outer_orig(**kwargs)
 
     monkeypatch.setattr(outer_client, "generate", _outer_driver, raising=True)
