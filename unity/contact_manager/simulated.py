@@ -9,6 +9,7 @@ import threading
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 import unify
+from pydantic import BaseModel, Field
 from .base import BaseContactManager
 from .types.contact import Contact
 from .prompt_builders import (
@@ -23,6 +24,58 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..common.simulated import mirror_contact_manager_tools
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Structured response models for simulated private methods
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _ContactsListResponse(BaseModel):
+    contacts: List[Contact]
+
+
+_ContactsListResponse.model_rebuild()
+
+
+class _UpdateDetails(BaseModel):
+    contact_id: int
+
+    model_config = {"extra": "allow"}  # allow arbitrary updated fields
+
+
+class _UpdateOutcome(BaseModel):
+    outcome: str
+    details: _UpdateDetails
+
+
+_UpdateOutcome.model_rebuild()
+
+
+class _DeleteDetails(BaseModel):
+    contact_id: int
+
+
+class _DeleteOutcome(BaseModel):
+    outcome: str
+    details: _DeleteDetails
+
+
+_DeleteOutcome.model_rebuild()
+
+
+class _MergeDetails(BaseModel):
+    kept_contact_id: int
+    deleted_contact_id: int
+    overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
+class _MergeOutcome(BaseModel):
+    outcome: str
+    details: _MergeDetails
+
+
+_MergeOutcome.model_rebuild()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -355,60 +408,59 @@ class SimulatedContactManager(BaseContactManager):
         limit: int = 100,
     ) -> List[Contact]:
         """
-        Simulated variant of :pyfunc:`ContactManager._search_contacts`.
+        Simulated variant of :pyfunc:`ContactManager._filter_contacts`.
 
-        Delegates the heavy lifting to the *stateful* LLM backing this
-        simulated manager.  We instruct the model to respond **only** with a
-        JSON array of contact records that match the requested *filter* so the
-        result can be parsed straight into :class:`Contact` objects.
-
-        The method guarantees a *non-empty* return value to satisfy downstream
-        components (e.g. TranscriptManager) that expect at least one contact.
+        The same stateful LLM used by the public methods generates a JSON
+        payload that strictly conforms to ``_ContactsListResponse`` via
+        ``response_format`` enforcement, ensuring scenario consistency.
         """
-        # Craft an instruction that re-uses the manager's description so the
-        # LLM keeps its narrative consistent across turns.
-        import json
 
         schema_json = json.dumps(Contact.model_json_schema(), indent=2)
-        filter_clause = f"Filter: `{filter}`." if filter else "No filter."
-
-        prompt = (
-            "The user has called _search_contacts with the following arguments. Please simulate the response. "
-            f"{filter_clause} Return ONLY a JSON array (no markdown) of up to {limit} contacts starting at index {offset}.\n\n"
-            f"Here is the Contact JSON schema for reference:\n{schema_json}"
+        filter_clause = (
+            f"Filter expression: `{filter}`."
+            if filter
+            else "No filter (return any plausible contacts)."
         )
 
-        # Because this helper is synchronous while the underlying LLM is async,
-        # we spin up a temporary event-loop when needed.
+        prompt = (
+            "You are simulating the private helper `_filter_contacts` of a CRM. "
+            "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
+            f"{filter_clause} Offset: {offset}. Limit: {limit}.\n\n"
+            "Respond ONLY with a JSON object that conforms to the provided response schema.\n\n"
+            f"Contact JSON schema (for each item in `contacts`):\n{schema_json}"
+        )
+
         async def _call_llm() -> str:
+            self._llm.set_response_format(_ContactsListResponse)
             return await self._llm.generate(prompt)
 
         try:
-            # Attempt to use an existing running loop if present (rare for sync callers)
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
 
-        try:
             if loop and loop.is_running():
-                # Synchronous function called from an active event loop: this is a misuse
-                # of the simulated contact manager – surface a clear error.
                 raise RuntimeError(
-                    "SimulatedContactManager._search_contacts cannot be invoked from within an active event loop.",
+                    "SimulatedContactManager._filter_contacts cannot be invoked from within an active event loop.",
                 )
-            else:
-                raw = asyncio.run(_call_llm())
+            raw = asyncio.run(_call_llm())
+        finally:
+            # Best-effort reset; ignore if unsupported on the client
+            try:
+                self._llm.reset_response_format()
+            except Exception:
+                pass
 
-            data = json.loads(raw)
-            if not isinstance(data, list):
-                raise ValueError("Model did not return a JSON array.")
-        except Exception as exc:
-            # Propagate parsing / generation errors to the caller – no silent fallbacks.
-            raise exc
-
-        # Apply offset/limit and convert to Contact objects
-        sliced = data[offset : offset + limit] if limit is not None else data[offset:]
-        return [Contact(**c) for c in sliced]
+        # Validate using the Pydantic model (enforced shape)
+        model = _ContactsListResponse.model_validate_json(raw)
+        # Apply slicing locally as a safety net (LLM should respect limit)
+        contacts = (
+            model.contacts[offset : offset + limit]
+            if limit is not None
+            else model.contacts[offset:]
+        )
+        return contacts
 
     # ------------------------------------------------------------------ #
     #  Simulated _update_contact                                          #
@@ -429,18 +481,12 @@ class SimulatedContactManager(BaseContactManager):
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> "ToolOutcome":
         """
-        Simulated variant of :pyfunc:`ContactManager._update_contact`.
-
-        The method formulates a short instruction to the **stateful** LLM
-        backing this simulated manager asking it to *pretend* that the given
-        contact has been updated.  The LLM must respond with a JSON object
-        matching the :class:`~unity.common.tool_outcome.ToolOutcome` schema so
-        downstream callers can parse the result.
+        Simulated variant of :pyfunc:`ContactManager._update_contact` with strict
+        structured output enforced via ``response_format``. The shared stateful
+        LLM generates a JSON payload that we validate against ``_UpdateOutcome``.
         """
 
-        import json
-
-        # Build a concise instruction that lists only the fields that are actually being modified
+        # Only include fields that are actually being modified
         updates = {
             k: v
             for k, v in {
@@ -461,11 +507,11 @@ class SimulatedContactManager(BaseContactManager):
         if not updates:
             updates = {"note": "no-op update requested – acknowledge anyway"}
 
-        prompt = (
+        instruction = (
             "You are simulating the private helper `_update_contact` of a CRM. "
-            f"Pretend that the contact with id {contact_id} has just been updated with the fields below. "
-            "Reply with a JSON object **without** markdown that contains keys 'outcome' and 'details'. "
-            "The 'details' object must include the 'contact_id' and the changed fields."
+            "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
+            f"Update the contact with id {contact_id} using the following fields (treat them as the diff to apply).\n"
+            "Respond ONLY with a JSON object that conforms to the provided response schema."
         )
 
         user_payload = json.dumps(
@@ -474,33 +520,28 @@ class SimulatedContactManager(BaseContactManager):
         )
 
         async def _call_llm() -> str:
-            return await self._llm.generate(f"{prompt}\n\n{user_payload}")
+            self._llm.set_response_format(_UpdateOutcome)
+            return await self._llm.generate(f"{instruction}\n\n{user_payload}")
 
         try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
 
-        try:
             if loop and loop.is_running():
                 raise RuntimeError(
                     "SimulatedContactManager._update_contact cannot be invoked from within an active event loop.",
                 )
-            else:
-                raw = asyncio.run(_call_llm())
+            raw = asyncio.run(_call_llm())
+        finally:
+            try:
+                self._llm.reset_response_format()
+            except Exception:
+                pass
 
-            data = json.loads(raw)
-            if not isinstance(data, dict):
-                raise ValueError("Model did not return a JSON object.")
-            if "outcome" not in data or "details" not in data:
-                raise ValueError("Returned JSON missing required keys.")
-        except Exception:
-            data = {
-                "outcome": "contact updated (simulated)",
-                "details": {"contact_id": contact_id, **updates},
-            }
-
-        return data
+        model = _UpdateOutcome.model_validate_json(raw)
+        return model.model_dump()
 
     # ------------------------------------------------------------------ #
     #  Simulated _delete_contact                                          #
@@ -510,12 +551,41 @@ class SimulatedContactManager(BaseContactManager):
         *,
         contact_id: int,
     ) -> "ToolOutcome":
-        """Simulate deletion of a contact and return a confirmation payload."""
-        # Compose a confirmation JSON manually – no actual storage.
-        return {
-            "outcome": "contact deleted (simulated)",
-            "details": {"contact_id": contact_id},
-        }
+        """
+        Simulate deletion through the shared stateful LLM and enforce a structured
+        confirmation via ``response_format``.
+        """
+
+        instruction = (
+            "You are simulating the private helper `_delete_contact` of a CRM. "
+            "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
+            f"Delete the contact with id {contact_id}. "
+            "Respond ONLY with a JSON object that conforms to the provided response schema."
+        )
+
+        async def _call_llm() -> str:
+            self._llm.set_response_format(_DeleteOutcome)
+            return await self._llm.generate(instruction)
+
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                raise RuntimeError(
+                    "SimulatedContactManager._delete_contact cannot be invoked from within an active event loop.",
+                )
+            raw = asyncio.run(_call_llm())
+        finally:
+            try:
+                self._llm.reset_response_format()
+            except Exception:
+                pass
+
+        model = _DeleteOutcome.model_validate_json(raw)
+        return model.model_dump()
 
     def _merge_contacts(
         self,
@@ -524,18 +594,49 @@ class SimulatedContactManager(BaseContactManager):
         contact_id_2: int,
         overrides: dict,
     ) -> "ToolOutcome":  # noqa: D401 – imperative helper
-        """Simulated merge that records the action but does no real I/O."""
+        """
+        Simulate a merge through the shared stateful LLM and return a structured
+        confirmation validated against ``_MergeOutcome``.
+        """
 
-        # For simulation purposes we simply return a deterministic payload –
-        # real de-duplication logic is unnecessary for offline tests.
-        return {
-            "outcome": "contacts merged (simulated)",
-            "details": {
-                "kept_contact_id": contact_id_1,
-                "deleted_contact_id": contact_id_2,
-                "overrides": overrides,
-            },
+        payload = {
+            "contact_id_1": contact_id_1,
+            "contact_id_2": contact_id_2,
+            "overrides": overrides or {},
         }
+
+        instruction = (
+            "You are simulating the private helper `_merge_contacts` of a CRM. "
+            "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
+            "Merge the two contacts described below using the overrides to pick winners per field. "
+            "Respond ONLY with a JSON object that conforms to the provided response schema."
+        )
+
+        async def _call_llm() -> str:
+            self._llm.set_response_format(_MergeOutcome)
+            return await self._llm.generate(
+                f"{instruction}\n\n{json.dumps(payload, indent=2)}",
+            )
+
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                raise RuntimeError(
+                    "SimulatedContactManager._merge_contacts cannot be invoked from within an active event loop.",
+                )
+            raw = asyncio.run(_call_llm())
+        finally:
+            try:
+                self._llm.reset_response_format()
+            except Exception:
+                pass
+
+        model = _MergeOutcome.model_validate_json(raw)
+        return model.model_dump()
 
 
 # --- TYPE CHECKING SUPPORT --------------------------------------------------
