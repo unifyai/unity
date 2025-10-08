@@ -55,7 +55,15 @@ async def test_prompt_shield_blocks_duplicate_kb_update(monkeypatch):
         raising=True,
     )
 
-    mm = SimulatedMemoryManager()
+    mm = SimulatedMemoryManager(
+        description=(
+            "TESTING MODE: The knowledge base starts empty. Whenever asked whether the"
+            " specific facts referenced in the current transcript already exist, always"
+            " answer that they do NOT exist yet. Do not claim that prior knowledge is"
+            " already stored unless the transcript itself includes an explicit"
+            " KnowledgeManager.update ManagerMethod covering that exact fact."
+        ),
+    )
 
     # Build a transcript that contains explicit KM.update incoming/outgoing events
     transcript = MemoryManager.build_plain_transcript(
@@ -146,7 +154,15 @@ async def test_prompt_shield_allows_km_update_when_irrelevant_explicit_call(
         raising=True,
     )
 
-    mm = SimulatedMemoryManager()
+    mm = SimulatedMemoryManager(
+        description=(
+            "TESTING MODE: The knowledge base starts empty. Whenever asked whether the"
+            " specific facts referenced in the current transcript already exist, always"
+            " answer that they do NOT exist yet. Do not claim that prior knowledge is"
+            " already stored unless the transcript itself includes an explicit"
+            " KnowledgeManager.update ManagerMethod covering that exact fact."
+        ),
+    )
 
     # Build a transcript that contains explicit ContactManager.update events (irrelevant to KM)
     transcript = MemoryManager.build_plain_transcript(
