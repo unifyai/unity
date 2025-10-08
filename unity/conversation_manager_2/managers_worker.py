@@ -193,7 +193,7 @@ class ManagersWorker:
             content = event.content
             timestamp = event.timestamp
             exchange_id = event.exchange_id
-            utterance_timestamp = event.utterance_timestamp
+            call_utterance_timestamp = event.call_utterance_timestamp
             call_url = event.call_url
             metadata = getattr(event, "metadata", None)
 
@@ -206,7 +206,7 @@ class ManagersWorker:
                     "timestamp": timestamp,
                     "content": content,
                     "exchange_id": exchange_id,
-                    "utterance_timestamp": utterance_timestamp,
+                    "call_utterance_timestamp": call_utterance_timestamp,
                     "call_url": call_url,
                     "_metadata": metadata,
                 },
