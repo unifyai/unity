@@ -102,7 +102,7 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
     # run --------------------------------------------------------------------
     mm = SimulatedMemoryManager(
         "TEST SCENARIO: Bio refresh. SimulatedContactManager MUST accept a single deterministic update to the"
-        " 'bio' column for the target contact; it must NOT refuse and must NOT claim the bio is already"
+        " 'bio' column for the target contact Dana; it must NOT refuse and must NOT claim the bio is already"
         " correct. SimulatedTranscriptManager should provide straightforward results. No external I/O.",
     )
     transcript = _build_transcript("BTW – Dana just moved to Berlin.")
