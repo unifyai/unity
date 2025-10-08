@@ -1,3 +1,4 @@
+from datetime import timedelta
 import os
 import asyncio
 
@@ -431,6 +432,18 @@ class ConversationManager:
         if medium == "phone_call":
             exchange_id = self.state.call_exchange_id
 
+        utterance_timestamp = ""
+        recorded_call_url = ""
+        if self.state.call_start_timestamp:
+            delta = datetime.now() - self.state.call_start_timestamp
+            minutes, seconds = divmod(int(delta.total_seconds()), 60)
+            utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
+        if "default-assistant" not in self.state.assistant_id:
+            recorded_call_url = (
+                "https://storage.cloud.google.com/assistant-call-recordings/staging/"
+                f"{self.state.assistant_id}/{self.state.conference_name}.mp3"
+            )
+
         await self.event_broker.publish(
             "app:managers:input",
             LogMessageInput(
@@ -439,6 +452,8 @@ class ConversationManager:
                 receiver_ids=receiver_ids,
                 content=content,
                 exchange_id=exchange_id,
+                utterance_timestamp=utterance_timestamp,
+                recorded_call_url=recorded_call_url,
                 metadata=None,
             ).to_json(),
         )
@@ -544,6 +559,8 @@ class ConversationManager:
                 terminate_process(self.call_proc)
                 self.call_proc = None
                 self.state.call_exchange_id = UNASSIGNED
+                self.state.call_start_timestamp = None
+                self.state.conference_name = ""
                 print(f"Call process terminated")
             except Exception as e:
                 print(f"Error terminating call process: {e}")

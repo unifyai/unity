@@ -192,7 +192,9 @@ class ManagersWorker:
             receiver_ids = [int(r) for r in (event.receiver_ids or [])]
             content = event.content
             timestamp = event.timestamp
-            exchange_id = getattr(event, "exchange_id", UNASSIGNED)
+            exchange_id = event.exchange_id
+            utterance_timestamp = event.utterance_timestamp
+            recorded_call_url = event.recorded_call_url
             metadata = getattr(event, "metadata", None)
 
             # Log the message
@@ -204,6 +206,8 @@ class ManagersWorker:
                     "timestamp": timestamp,
                     "content": content,
                     "exchange_id": exchange_id,
+                    "utterance_timestamp": utterance_timestamp,
+                    "recorded_call_url": recorded_call_url,
                     "_metadata": metadata,
                 },
                 synchronous=True,

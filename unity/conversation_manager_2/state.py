@@ -105,7 +105,11 @@ class ConversationManagerState:
         self.events = []
         self.last_snapshot_time = datetime.now()
         self.phone_contact: Optional[Contact] = None
+
+        # call details
         self.call_exchange_id = UNASSIGNED
+        self.call_start_timestamp = None
+        self.conference_name = ""
 
         # assistant details
         self.job_name = job_name
@@ -144,6 +148,8 @@ class ConversationManagerState:
                 self.set_details(payload)
 
             case PhoneCallRecieved() as e:
+                self.conference_name = e.conference_name
+
                 # contact should always exist here.
                 contact = self.get_contact(phone_number=e.contact)
                 self.push_message(
@@ -175,6 +181,7 @@ class ConversationManagerState:
                     ),
                 )
             case PhoneCallStarted() as e:
+                self.call_start_timestamp = e.timestamp
                 self.mode = "call"
                 contact = self.get_contact(phone_number=e.contact)
                 self.phone_contact = contact
