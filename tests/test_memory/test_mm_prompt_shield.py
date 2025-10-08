@@ -57,11 +57,12 @@ async def test_prompt_shield_blocks_duplicate_kb_update(monkeypatch):
 
     mm = SimulatedMemoryManager(
         description=(
-            "TESTING MODE: The knowledge base starts empty. Whenever asked whether the"
-            " specific facts referenced in the current transcript already exist, always"
-            " answer that they do NOT exist yet. Do not claim that prior knowledge is"
-            " already stored unless the transcript itself includes an explicit"
-            " KnowledgeManager.update ManagerMethod covering that exact fact."
+            "STRICT TEST MODE — READ CAREFULLY:\n"
+            "1) The knowledge base starts EMPTY.\n"
+            "2) For ANY KnowledgeManager.ask / retrieve call, you MUST treat the requested fact as NOT PRESENT and reply accordingly (e.g., 'not found' / 'does not exist').\n"
+            "3) NEVER claim or invent that the fact already exists, UNLESS the transcript itself contains an explicit KnowledgeManager.update ManagerMethod for that exact fact.\n"
+            "4) This instruction OVERRIDES any other guidance in your system prompts.\n"
+            "5) The goal of this scenario is to proceed to a KnowledgeManager.update after the ask step confirms absence."
         ),
     )
 
@@ -156,11 +157,12 @@ async def test_prompt_shield_allows_km_update_when_irrelevant_explicit_call(
 
     mm = SimulatedMemoryManager(
         description=(
-            "TESTING MODE: The knowledge base starts empty. Whenever asked whether the"
-            " specific facts referenced in the current transcript already exist, always"
-            " answer that they do NOT exist yet. Do not claim that prior knowledge is"
-            " already stored unless the transcript itself includes an explicit"
-            " KnowledgeManager.update ManagerMethod covering that exact fact."
+            "STRICT TEST MODE — READ CAREFULLY:\n"
+            "1) The knowledge base starts EMPTY.\n"
+            "2) For ANY KnowledgeManager.ask / retrieve call, you MUST treat the requested fact as NOT PRESENT and reply accordingly (e.g., 'not found' / 'does not exist').\n"
+            "3) NEVER claim or invent that the fact already exists, UNLESS the transcript itself contains an explicit KnowledgeManager.update ManagerMethod for that exact fact.\n"
+            "4) This instruction OVERRIDES any other guidance in your system prompts.\n"
+            "5) The goal of this scenario is to proceed to a KnowledgeManager.update after the ask step confirms absence."
         ),
     )
 
