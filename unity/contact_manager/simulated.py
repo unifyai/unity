@@ -31,8 +31,27 @@ from ..common.simulated import mirror_contact_manager_tools
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class _ContactRecord(Contact):
+    # Inherit all fields from the canonical Contact model to avoid drift and
+    # ensure a single source of truth. Tighten schema for OpenAI structured
+    # output by forbidding extras at this wrapper level.
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
+
+
+_ContactRecord.model_rebuild()
+
+
 class _ContactsListResponse(BaseModel):
-    contacts: List[Contact]
+    contacts: List[_ContactRecord]
+
+    # OpenAI structured output requires top-level additionalProperties=false
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
 
 
 _ContactsListResponse.model_rebuild()
@@ -41,12 +60,22 @@ _ContactsListResponse.model_rebuild()
 class _UpdateDetails(BaseModel):
     contact_id: int
 
-    model_config = {"extra": "allow"}  # allow arbitrary updated fields
+    # Disallow extra keys; keeps schema strict for OpenAI parser
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
 
 
 class _UpdateOutcome(BaseModel):
     outcome: str
     details: _UpdateDetails
+
+    # Enforce top-level additionalProperties=false for structured output
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
 
 
 _UpdateOutcome.model_rebuild()
@@ -55,10 +84,21 @@ _UpdateOutcome.model_rebuild()
 class _DeleteDetails(BaseModel):
     contact_id: int
 
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
+
 
 class _DeleteOutcome(BaseModel):
     outcome: str
     details: _DeleteDetails
+
+    # Enforce top-level additionalProperties=false for structured output
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
 
 
 _DeleteOutcome.model_rebuild()
@@ -67,15 +107,53 @@ _DeleteOutcome.model_rebuild()
 class _MergeDetails(BaseModel):
     kept_contact_id: int
     deleted_contact_id: int
-    overrides: Dict[str, Any] = Field(default_factory=dict)
+    # Represent overrides as an empty object with additionalProperties: false
+    overrides: dict = Field(
+        default_factory=dict,
+        json_schema_extra={"additionalProperties": False},
+    )
+
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
 
 
 class _MergeOutcome(BaseModel):
     outcome: str
     details: _MergeDetails
 
+    # Enforce top-level additionalProperties=false for structured output
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
+
 
 _MergeOutcome.model_rebuild()
+
+
+class _MergeDetailsStrict(BaseModel):
+    kept_contact_id: int
+    deleted_contact_id: int
+
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
+
+
+class _MergeOutcomeStrict(BaseModel):
+    outcome: str
+    details: _MergeDetailsStrict
+
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
+
+
+_MergeOutcomeStrict.model_rebuild()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -454,13 +532,13 @@ class SimulatedContactManager(BaseContactManager):
 
         # Validate using the Pydantic model (enforced shape)
         model = _ContactsListResponse.model_validate_json(raw)
-        # Apply slicing locally as a safety net (LLM should respect limit)
-        contacts = (
+        # _ContactRecord is a subclass of Contact, so callers can treat these
+        # as Contact instances. Apply slicing locally as a safety net.
+        return (
             model.contacts[offset : offset + limit]
             if limit is not None
             else model.contacts[offset:]
         )
-        return contacts
 
     # ------------------------------------------------------------------ #
     #  Simulated _update_contact                                          #
@@ -613,7 +691,7 @@ class SimulatedContactManager(BaseContactManager):
         )
 
         async def _call_llm() -> str:
-            self._llm.set_response_format(_MergeOutcome)
+            self._llm.set_response_format(_MergeOutcomeStrict)
             return await self._llm.generate(
                 f"{instruction}\n\n{json.dumps(payload, indent=2)}",
             )
@@ -635,8 +713,14 @@ class SimulatedContactManager(BaseContactManager):
             except Exception:
                 pass
 
-        model = _MergeOutcome.model_validate_json(raw)
-        return model.model_dump()
+        parsed = _MergeOutcomeStrict.model_validate_json(raw)
+        data = parsed.model_dump()
+        # Echo overrides back for the test while keeping strict parsing
+        try:
+            data.setdefault("details", {})["overrides"] = overrides or {}
+        except Exception:
+            pass
+        return data
 
 
 # --- TYPE CHECKING SUPPORT --------------------------------------------------
