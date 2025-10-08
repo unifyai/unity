@@ -23,6 +23,7 @@ from tests.helpers import _handle_project, SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
+    _wait_for_condition,
 )
 
 # --------------------------------------------------------------------------- #
@@ -214,11 +215,12 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
         tools={},  # helpers are acknowledged during backfill without execution
     )
 
-    # Allow the loop to process backfill/pruning
-    for _ in range(200):
-        await asyncio.sleep(0.01)
-        if any(m.get("role") == "assistant" for m in client.messages):
-            break  # backfill/pruning processed at least one new message
+    # Allow the loop to process backfill/pruning deterministically by waiting until
+    # the pre-seeded helper assistant turn is actually PRUNED from the transcript.
+    async def _helper_pruned() -> bool:
+        return assistant_msg not in (client.messages or [])
+
+    await _wait_for_condition(_helper_pruned, poll=0.05, timeout=10.0)
 
     # The pre-seeded helper assistant turn should be pruned
     assert assistant_msg not in client.messages
@@ -426,20 +428,20 @@ async def test_interjectable_tool_roundtrip() -> None:
         tools={"long_running": long_running},
     )
 
-    # Wait for long_running(topic="cats") to be scheduled
-    cats_call_seen = False
-    for _ in range(40):
-        await asyncio.sleep(0.1)
-        for m in client.messages:
-            if (
-                m.get("role") == "assistant"
-                and m.get("tool_calls")
-                and '"topic":"cats"' in m["tool_calls"][0]["function"]["arguments"]
-            ):
-                cats_call_seen = True
-                break
-        if cats_call_seen:
-            break
+    # Wait deterministically for the long_running tool to be requested
+    await _wait_for_tool_request(client, "long_running")
+    # Confirm that the request included the expected arguments once present
+    cats_call_seen = any(
+        m.get("role") == "assistant"
+        and m.get("tool_calls")
+        and any(
+            tc.get("function", {}).get("name") == "long_running"
+            and '"topic":"cats"'
+            in (tc.get("function", {}).get("arguments") or "").replace(" ", "")
+            for tc in (m.get("tool_calls") or [])
+        )
+        for m in (client.messages or [])
+    )
     assert cats_call_seen, "LLM never called long_running with cats."
 
     await handle.interject("Actually, please switch to dogs instead.")
@@ -482,41 +484,34 @@ async def test_immediate_interjection_after_toolcall_has_tool_reply() -> None:
         tools={"slow_tool": slow_tool},
     )
 
+    # Ensure the slow_tool call has been requested and capture its call id
+    await _wait_for_tool_request(client, "slow_tool")
     call_id: str | None = None
     assistant_idx: int | None = None
-    for _ in range(50):
-        await asyncio.sleep(0.1)
-        for i, m in enumerate(client.messages):
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                tc = m["tool_calls"][0]
-                if tc["function"]["name"] == "slow_tool" and '"x":1' in tc["function"][
-                    "arguments"
-                ].replace(" ", ""):
-                    call_id = tc["id"]
-                    assistant_idx = i
-                    break
-        if call_id is not None:
-            break
+    for i, m in enumerate(client.messages or []):
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            tc = m["tool_calls"][0]
+            if tc.get("function", {}).get("name") == "slow_tool" and '"x":1' in (
+                tc.get("function", {}).get("arguments") or ""
+            ).replace(" ", ""):
+                call_id = tc.get("id")
+                assistant_idx = i
+                break
     assert call_id is not None and assistant_idx is not None
 
     await handle.interject("finish")
 
-    saw_interjection = False
-    for _ in range(50):
-        await asyncio.sleep(0.1)
-        if any(
+    # Wait until the interjection system message appears; then assert placeholder adjacency
+    async def _saw_interjection_msg() -> bool:
+        return any(
             m.get("role") == "system" and "user: **finish**" in (m.get("content") or "")
-            for m in client.messages
-        ):
-            saw_interjection = True
-            assert (assistant_idx + 1) < len(client.messages)
-            next_msg = client.messages[assistant_idx + 1]
-            assert (
-                next_msg.get("role") == "tool"
-                and next_msg.get("tool_call_id") == call_id
-            )
-            break
-    assert saw_interjection
+            for m in (client.messages or [])
+        )
+
+    await _wait_for_condition(_saw_interjection_msg, poll=0.05, timeout=10.0)
+    assert (assistant_idx + 1) < len(client.messages)
+    next_msg = client.messages[assistant_idx + 1]
+    assert next_msg.get("role") == "tool" and next_msg.get("tool_call_id") == call_id
 
     final_ans = await handle.result()
     assert isinstance(final_ans, str) and len(final_ans) > 0
@@ -558,24 +553,37 @@ async def test_backfills_missing_tool_reply_for_prior_assistant_turn() -> None:
         tools={"slow_tool": slow_tool},
     )
 
-    assistant_idx: int | None = None
-    for _ in range(50):
-        await asyncio.sleep(0.05)
-        for i, m in enumerate(client.messages):
+    # Wait until the loop backfills a tool message immediately after the assistant helper call
+    async def _has_backfill_after_assistant() -> bool:
+        msgs = client.messages or []
+        has_assistant_with_call = any(
+            (m.get("role") == "assistant")
+            and (m.get("tool_calls"))
+            and any(tc.get("id") == call_id for tc in (m.get("tool_calls") or []))
+            for m in msgs
+        )
+        if not has_assistant_with_call:
+            return False
+        for i, m in enumerate(msgs):
             if (
                 m.get("role") == "assistant"
-                and m.get("tool_calls")
-                and any(tc.get("id") == call_id for tc in m["tool_calls"])
+                and (m.get("tool_calls"))
+                and any(tc.get("id") == call_id for tc in (m.get("tool_calls") or []))
             ):
-                assistant_idx = i
-                break
-        if assistant_idx is not None and len(client.messages) > assistant_idx + 1:
-            break
+                if (i + 1) < len(msgs) and msgs[i + 1].get("role") == "tool":
+                    return True
+        return False
 
-    assert assistant_idx is not None
-    assert (assistant_idx + 1) < len(client.messages)
-
-    next_msg = client.messages[assistant_idx + 1]
+    await _wait_for_condition(_has_backfill_after_assistant, poll=0.05, timeout=10.0)
+    # Locate the assistant turn and assert the next message is the tool backfill
+    assistant_idx = next(
+        i
+        for i, m in enumerate(client.messages or [])
+        if (m.get("role") == "assistant")
+        and (m.get("tool_calls"))
+        and any(tc.get("id") == call_id for tc in (m.get("tool_calls") or []))
+    )
+    next_msg = (client.messages or [])[assistant_idx + 1]
     assert next_msg.get("role") == "tool" and next_msg.get("tool_call_id") == call_id
 
     handle.stop()
