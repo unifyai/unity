@@ -279,3 +279,120 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
     assert (
         final_reply.strip().lower().startswith("red")
     ), f"Assistant did not identify the image colour – got: {final_reply!r}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
+    """
+    Motivating example: Given a message with two "this colour" spans – one for Susan and one
+    for Emily – seed two live images aligned to those spans. Verify that:
+      - the first exposure includes both spans with their substrings
+      - the model calls ask_image on the Emily-aligned image id
+      - the loop inserts the ask_image tool result and returns the final answer
+    """
+
+    tools_snapshots: list[list[dict]] = []
+    step = {"n": 0}
+
+    # We'll set these after we compute the message spans
+    chosen_emily_id = {"id": None}
+
+    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):
+        tools = gen_kwargs.get("tools") or []
+        tools_snapshots.append(tools)
+
+        if step["n"] == 0:
+            step["n"] += 1
+            # On the first turn, request ask_image on the Emily-aligned image id
+            msg = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_IMG_EMILY",
+                        "type": "function",
+                        "function": {
+                            "name": "ask_image",
+                            "arguments": (
+                                "{"
+                                + f"\"image_id\": {int(chosen_emily_id['id'])}, \"question\": \"What colour is this?\""
+                                + "}"
+                            ),
+                        },
+                    },
+                ],
+            }
+        else:
+            # Final answer (from image reasoning)
+            msg = {"role": "assistant", "content": "blue", "tool_calls": []}
+        client.messages.append(msg)
+        return msg
+
+    from unity.common._async_tool import loop as _loop
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
+
+    client = _SpyClient()
+
+    # Message with two "this colour" segments
+    message_text = (
+        "Susan likes this colour but Emily likes this colour, "
+        "which colour does Emily like?"
+    )
+    seg = "this colour"
+    pos1 = message_text.find(seg)
+    assert pos1 >= 0, "first 'this colour' not found"
+    pos2 = message_text.find(seg, pos1 + 1)
+    assert pos2 >= 0, "second 'this colour' not found"
+
+    # Two dummy image handles – first for Susan, second for Emily
+    susan_id = 201
+    emily_id = 202
+    images = {
+        f"[{pos1}:{pos1 + len(seg)}]": DummyImageHandle(
+            image_id=susan_id,
+            caption="red tile",
+            raw_bytes=_solid_png_bytes(),
+        ),
+        f"[{pos2}:{pos2 + len(seg)}]": DummyImageHandle(
+            image_id=emily_id,
+            caption="blue tile",
+            raw_bytes=_solid_png_bytes(),
+        ),
+    }
+    chosen_emily_id["id"] = emily_id
+
+    handle = start_async_tool_loop(
+        client=client,
+        message=message_text,
+        tools={},
+        images=images,
+    )
+
+    final = await handle.result()
+
+    # Verify the first exposure contains the overview with both spans and substrings
+    assert tools_snapshots, "No LLM call captured; expected at least one exposure set."
+    first_tools = tools_snapshots[0]
+    live_tool = next(
+        t for t in first_tools if t["function"]["name"] == "live_images_overview"
+    )
+    desc = live_tool["function"]["description"]
+
+    # Both occurrences should appear with their exact spans and substrings
+    assert f"span=[{pos1}:{pos1 + len(seg)}]" in desc
+    assert f"span=[{pos2}:{pos2 + len(seg)}]" in desc
+    assert "substring='this colour'" in desc
+
+    # Confirm an ask_image tool-result message exists and contains the BLUE payload
+    ask_msgs = [
+        m
+        for m in client.messages
+        if m.get("role") == "tool" and m.get("name") == "ask_image"
+    ]
+    assert ask_msgs, "Expected a tool-result message for ask_image"
+    assert any('"BLUE"' in (m.get("content") or "") for m in ask_msgs)
+
+    # Final answer should reflect Emily's colour
+    assert final.strip().lower().startswith("blue")
