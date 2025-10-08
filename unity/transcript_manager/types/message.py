@@ -47,6 +47,14 @@ class Message(BaseModel):
             "Supports negative indices and open-ended ranges (e.g., '[6:]', '[:10]')."
         ),
     )
+    utterance_timestamp: str = Field(
+        default="",
+        description="Timestamp of the utterance associated with calls",
+    )
+    recorded_call_url: str = Field(
+        default="",
+        description="URL of the recorded call file associated with the call",
+    )
     screen_share: dict[str, ScreenShareAnnotation] = Field(
         default_factory=dict,
         description="Mapping of timestamps to screen share annotation objects, capturing key visual events.",

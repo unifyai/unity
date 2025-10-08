@@ -77,7 +77,7 @@ class Event:
 @dataclass
 class PhoneCallRecieved(Event):
     contact: str
-    conference_name: str
+    conference_name: str = ""
 
 
 @dataclass
@@ -201,6 +201,8 @@ class LogMessageInput(Event):
     receiver_ids: list[int]
     content: str
     exchange_id: int
+    utterance_timestamp: str
+    recorded_call_url: str
     metadata: dict[str, Any]
 
 
