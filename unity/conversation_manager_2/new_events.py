@@ -202,7 +202,7 @@ class LogMessageInput(Event):
     content: str
     exchange_id: int
     utterance_timestamp: str
-    recorded_call_url: str
+    call_url: str
     metadata: dict[str, Any]
 
 
